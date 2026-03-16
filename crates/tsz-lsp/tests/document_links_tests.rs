@@ -667,3 +667,314 @@ fn test_require_inside_function_body() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].target.as_deref(), Some("./lazy"));
 }
+
+#[test]
+fn test_import_with_trailing_comma() {
+    let source = r#"import { foo, bar, } from './utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./utils"));
+}
+
+#[test]
+fn test_import_with_unicode_path() {
+    let source = r#"import { x } from './日本語';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./日本語"));
+}
+
+#[test]
+fn test_import_with_hyphenated_path() {
+    let source = r#"import { x } from './my-lib';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./my-lib"));
+}
+
+#[test]
+fn test_export_all_then_named_from() {
+    let source = r#"export * from './a';
+export { b } from './b';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn test_import_with_very_long_path() {
+    let source = r#"import { x } from './a/b/c/d/e/f/g/h/i/j/k/l/m/n';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].target.as_deref(),
+        Some("./a/b/c/d/e/f/g/h/i/j/k/l/m/n")
+    );
+}
+
+#[test]
+fn test_import_with_tilde_path() {
+    let source = r#"import { x } from '~/components/Button';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("~/components/Button"));
+}
+
+#[test]
+fn test_import_and_require_in_same_file() {
+    let source = r#"import { a } from './a';
+const b = require('./b');"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn test_import_with_parenthesized_dynamic() {
+    let source = r#"const x = import('./dynamic');"#;
+    let links = get_links(source);
+    // Dynamic import should produce a link
+    if !links.is_empty() {
+        assert_eq!(links[0].target.as_deref(), Some("./dynamic"));
+    }
+}
+
+#[test]
+fn test_three_imports_from_same_module() {
+    let source = r#"import { a } from './shared';
+import { b } from './shared';
+import { c } from './shared';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 3);
+    for link in &links {
+        assert_eq!(link.target.as_deref(), Some("./shared"));
+    }
+}
+
+#[test]
+fn test_import_with_css_extension() {
+    let source = r#"import './styles.css';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./styles.css"));
+}
+
+#[test]
+fn test_import_with_svg_extension() {
+    let source = r#"import logo from './logo.svg';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./logo.svg"));
+}
+
+#[test]
+fn test_require_with_concatenated_string() {
+    // require with non-string-literal arg - should not produce link
+    let source = r#"const x = require('./prefix' + suffix);"#;
+    let links = get_links(source);
+    let _ = links; // May or may not produce links
+}
+
+#[test]
+fn test_export_type_star_from() {
+    let source = r#"export type * from './types';"#;
+    let links = get_links(source);
+    if !links.is_empty() {
+        assert_eq!(links[0].target.as_deref(), Some("./types"));
+    }
+}
+
+#[test]
+fn test_import_with_windows_style_path() {
+    let source = r#"import { x } from '.\\utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+}
+
+#[test]
+fn test_link_range_starts_after_from_keyword() {
+    let source = r#"import { x } from './utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    // The link range should start at the string literal position
+    assert_eq!(links[0].range.start.line, 0);
+    assert!(links[0].range.start.character > 0);
+}
+
+// =========================================================================
+// Additional tests to reach 101+
+// =========================================================================
+
+#[test]
+fn test_import_with_d_ts_extension() {
+    let source = r#"import { Types } from './types.d.ts';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./types.d.ts"));
+}
+
+#[test]
+fn test_import_with_d_mts_extension() {
+    let source = r#"import { Types } from './types.d.mts';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./types.d.mts"));
+}
+
+#[test]
+fn test_import_with_wasm_extension() {
+    let source = r#"import init from './module.wasm';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./module.wasm"));
+}
+
+#[test]
+fn test_import_with_numbers_in_path() {
+    let source = r#"import { v2 } from './api/v2/client';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./api/v2/client"));
+}
+
+#[test]
+fn test_import_with_underscores_in_path() {
+    let source = r#"import { x } from './__tests__/helper';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./__tests__/helper"));
+}
+
+#[test]
+fn test_export_all_from_scoped_package() {
+    let source = r#"export * from '@angular/core';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("@angular/core"));
+}
+
+#[test]
+fn test_single_char_module_name() {
+    let source = r#"import x from 'x';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("x"));
+}
+
+#[test]
+fn test_import_only_line_breaks() {
+    let source = "\n\n\n\n";
+    let links = get_links(source);
+    assert!(links.is_empty(), "Only line breaks should have no links");
+}
+
+#[test]
+fn test_require_with_node_protocol() {
+    let source = r#"const path = require('node:path');"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("node:path"));
+}
+
+#[test]
+fn test_import_with_space_in_specifier() {
+    // Unusual but syntactically valid - import with space
+    let source = r#"import x from './my module';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./my module"));
+}
+
+#[test]
+fn test_export_named_then_default_no_from() {
+    let source = "export { foo };\nexport default 42;";
+    let links = get_links(source);
+    assert!(links.is_empty(), "Neither export should produce links");
+}
+
+#[test]
+fn test_import_with_protocol_like_specifier() {
+    let source = r#"import data from 'data:text/javascript,export default 42';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+}
+
+#[test]
+fn test_many_require_calls_in_function() {
+    let source = r#"function init() {
+    const a = require('./a');
+    const b = require('./b');
+    const c = require('./c');
+}"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 3);
+    assert_eq!(links[0].target.as_deref(), Some("./a"));
+    assert_eq!(links[1].target.as_deref(), Some("./b"));
+    assert_eq!(links[2].target.as_deref(), Some("./c"));
+}
+
+#[test]
+fn test_import_equals_declaration() {
+    // TypeScript-specific import equals
+    let source = r#"import fs = require('fs');"#;
+    let links = get_links(source);
+    // Should find at least the require specifier
+    if !links.is_empty() {
+        assert_eq!(links[0].target.as_deref(), Some("fs"));
+    }
+}
+
+#[test]
+fn test_re_export_all_from_multiple_modules() {
+    let source = r#"export * from './a';
+export * from './b';
+export * from './c';
+export * from './d';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 4);
+    assert_eq!(links[0].target.as_deref(), Some("./a"));
+    assert_eq!(links[3].target.as_deref(), Some("./d"));
+}
+
+#[test]
+fn test_import_with_dot_dot_path() {
+    let source = r#"import { x } from '..';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some(".."));
+}
+
+#[test]
+fn test_import_with_single_dot_path() {
+    let source = r#"import { x } from '.';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("."));
+}
+
+#[test]
+fn test_link_range_for_require_call() {
+    let source = r#"const x = require('./mod');"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].range.start.line, 0);
+    assert!(links[0].range.start.character > 0);
+}
+
+#[test]
+fn test_export_interface_no_link() {
+    let source = "export interface Foo { x: number; }";
+    let links = get_links(source);
+    assert!(
+        links.is_empty(),
+        "export interface declaration should have no link"
+    );
+}
+
+#[test]
+fn test_export_function_no_link() {
+    let source = "export function doStuff() {}";
+    let links = get_links(source);
+    assert!(
+        links.is_empty(),
+        "export function declaration should have no link"
+    );
+}

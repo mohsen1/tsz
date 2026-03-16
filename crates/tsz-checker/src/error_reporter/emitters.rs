@@ -77,6 +77,15 @@ impl<'a> CheckerState<'a> {
         String::new()
     }
 
+    /// Report a program-level error (no file location).
+    ///
+    /// Used for diagnostics that tsc emits globally (e.g., TS2468 "Cannot find
+    /// global value 'Promise'") rather than anchored to a specific source location.
+    pub(crate) fn error_program_level(&mut self, message: String, code: u32) {
+        self.ctx
+            .push_diagnostic(Diagnostic::error(String::new(), 0, 0, message, code));
+    }
+
     /// Report an error at a specific position.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
         self.ctx.diagnostics.push(Diagnostic::error(

@@ -1,4 +1,6 @@
-//! Type computation helpers, relationship queries, and format utilities for `CheckerState`.
+//! Type computation helpers, relationship queries, and format utilities.
+//! This module extends `CheckerState` with additional methods for type-related
+//! operations, providing cleaner APIs for common patterns.
 
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
@@ -508,16 +510,19 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
                 {
-                    // Skip uninformative element types (unknown, type parameters) for empty
-                    // arrays. These typically come from unresolved inference placeholders
-                    // (e.g., T[] where T is being inferred). In tsc, empty arrays contribute
-                    // `never` as the element type during inference, allowing contra-candidates
-                    // from other arguments to drive resolution. Using `unknown` here would
-                    // create a spurious covariant candidate that overwrites contravariant
-                    // inference (e.g., from callback parameters).
-                    let is_uninformative = matches!(t_elem, TypeId::UNKNOWN)
-                        || tsz_solver::visitor::is_type_parameter(self.ctx.types, t_elem);
-                    if !is_uninformative {
+                    // When the contextual element type is a TypeParameter, unknown, or any,
+                    // it carries no useful type information for an empty array (typically
+                    // happens when `[]` is an argument for a generic parameter like `T[]`).
+                    // Use never[] instead, matching tsc behavior where empty arrays always
+                    // start as never[] regardless of contextual type. This prevents
+                    // inference from being polluted with unknown/any from the contextual
+                    // type parameter's constraint.
+                    if t_elem == TypeId::UNKNOWN
+                        || t_elem == TypeId::ANY
+                        || tsz_solver::type_queries::is_type_parameter(self.ctx.types, t_elem)
+                    {
+                        // Fall through to never[]/any[] below
+                    } else {
                         return factory.array(t_elem);
                     }
                 }
@@ -1148,9 +1153,7 @@ impl<'a> CheckerState<'a> {
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
-                        evaluator.is_arithmetic_operand(evaluated)
-                            || (self.is_enum_like_type(ty)
-                                && self.is_unresolved_lazy_type(evaluated))
+                        evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
                     });
                     if self.ctx.strict_null_checks()
                         && let Some(cause) = nullish_cause
@@ -1166,13 +1169,8 @@ impl<'a> CheckerState<'a> {
                     let resolved_type = self.evaluate_type_with_env(operand_type);
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
-                    // Only use is_enum_like_type as fallback when evaluation couldn't
-                    // resolve the type (stays Lazy). When resolved, is_arithmetic_operand
-                    // correctly handles Enum types via visit_enum, distinguishing
-                    // numeric enums (valid) from string enums (invalid for arithmetic).
                     let is_valid = evaluator.is_arithmetic_operand(resolved_type)
-                        || (self.is_enum_like_type(operand_type)
-                            && self.is_unresolved_lazy_type(resolved_type))
+                        || self.is_enum_like_type(operand_type)
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
@@ -1442,14 +1440,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Type-check the expression - this will emit TS2304 if name is unresolved.
-            // Preserve literal types so that `abc${0}def` evaluates to "abc0def"
-            // instead of just `string`. tsc evaluates all-literal template expressions
-            // to literal string types.
-            let prev_preserve = self.ctx.preserve_literal_types;
-            self.ctx.preserve_literal_types = true;
+            // Type-check the expression - this will emit TS2304 if name is unresolved
             let part_type = self.get_type_of_node(span.expression);
-            self.ctx.preserve_literal_types = prev_preserve;
             part_types.push(part_type);
 
             // Extract the text after this expression (middle or tail)
@@ -1479,8 +1471,7 @@ impl<'a> CheckerState<'a> {
                 &part_types,
             )
         } else {
-            // Default: template literals produce string type.
-            // If all parts are literal, produce a literal string type.
+            // Default: template literals produce string type
             expression_ops::compute_template_expression_type(self.ctx.types, &texts, &part_types)
         }
     }
@@ -1948,8 +1939,12 @@ function f2<
 
     #[test]
     fn generic_array_like_context_provides_element_type() {
-        // Exercises Application → evaluation path in get_array_element_type.
-        // Full Iterable path validated by conformance tests (for-of37/40/50).
+        // When contextual type is a generic Application like ReadonlyArray<[K, V]>,
+        // ensure the solver extracts the element type from the type arguments.
+        // This exercises the Application → evaluation path in get_array_element_type.
+        // The full Iterable<readonly [K, V]> path (used by Map constructor) is
+        // validated by conformance tests (for-of37, for-of40, for-of50) since it
+        // requires Symbol.iterator from lib definitions.
         let source = r#"
 interface ReadonlyArray<T> {
     readonly length: number;
@@ -1968,30 +1963,35 @@ const r = f([["", true]]);
 
     #[test]
     fn array_param_context_still_works() {
-        // Plain array type (readonly (readonly [K, V])[]) contextual typing should work.
-        let source = "declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];\nconst result = f([[\"\" , true]]);";
-        let errors: Vec<_> = check_source_codes(source)
-            .into_iter()
-            .filter(|&c| c != 2318)
-            .collect();
+        // Ensure the fix doesn't break the already-working array parameter path.
+        // When the parameter is a plain array type (readonly (readonly [K, V])[]),
+        // contextual typing should still work without needing the fallback.
+        let source = r#"
+declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
+const result = f([["", true]]);
+"#;
+        let errors = check_source_codes(source);
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
         assert!(
-            !errors.contains(&2345) && !errors.contains(&2769),
-            "Array param should contextually type tuples: {errors:?}"
+            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
+            "Array parameter should contextually type elements as tuples, got: {semantic_errors:?}"
         );
     }
 
     #[test]
     fn template_expr_without_context_stays_string() {
+        // Template expression assigned to `string` should still work (not break)
         let source = r#"
-function f(x: string, y: number): string { return `${x} is ${y}`; }
+function f(x: string, y: number): string {
+    return `${x} is ${y}`;
+}
 "#;
-        let errors: Vec<_> = check_source_codes(source)
-            .into_iter()
-            .filter(|&c| c != 2318)
-            .collect();
+        let errors = check_source_codes(source);
+        // Filter out TS2318 (lib not found) since test env has no lib definitions
+        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
         assert!(
-            errors.is_empty(),
-            "Template returning string should have no errors: {errors:?}"
+            semantic_errors.is_empty(),
+            "Template expression returning string should produce no semantic errors, got: {semantic_errors:?}"
         );
     }
 }

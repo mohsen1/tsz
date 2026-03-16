@@ -2,9 +2,15 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: 10823/12581 (86.0%) full suite, 663 fingerprint-only failures (2026-03-16). Fix #13 (literal display removal) was reverted by another agent — display properties are deeply integrated and required for 3800+ tests. Current code uses `with_display_properties()` which is net-positive.
+**Conformance**: 1866/2000 (93.3%) on 2k sample, 38 fingerprint-only (2026-03-16). Post solver-campaign merge.
 
-**Campaign plateau**: After 12 net fixes (fix #13 reverted), remaining failures require deep type system work, multi-file compilation, JSDoc support, or individual fingerprint investigation. No more bulk-fixable patterns available. The display property system causes ~20 fingerprint mismatches (literal types leaking to non-fresh types) but fixing it breaks far more tests.
+**Expanded campaign analysis** (2026-03-16): All remaining failures require deep work:
+- **TS2420 extras**: lib.dom.d.ts interface merging adds members to user interfaces (e.g., `FileSystem`), causing false "incorrectly implements" errors
+- **TS7053 missing**: element access TS7053 works for simple cases but fails for narrowed types in `for...in` loops
+- **TS2416 missing**: class implements checker emits TS2420 but not the accompanying TS2416 property mismatch for generic methods
+- **TS2451 extras**: namespace type-alias-only merging not implemented (binder-level)
+- **TS2537/TS2538 missing**: computed property destructuring index checks not implemented
+- No more quick wins available. All 5 campaign areas (big3, narrowing, contextual-typing, property-resolution, parser-recovery) have exhausted their low-hanging fruit.
 
 **What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties

@@ -623,6 +623,105 @@ impl<'a> Printer<'a> {
         Some(result)
     }
 
+    /// Check if an object literal expression can be safely inlined into a
+    /// parent object without needing spread wrapping.
+    fn can_inline_jsx_spread_object(&self, expr: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if lit.elements.nodes.is_empty() {
+            return false;
+        }
+        for &prop in &lit.elements.nodes {
+            let Some(prop_node) = self.arena.get(prop) else {
+                return false;
+            };
+            match prop_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    if let Some(pa) = self.arena.get_property_assignment(prop_node)
+                        && self.is_literal_proto_name(pa.name)
+                    {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    if let Some(sp) = self.arena.get_shorthand_property(prop_node)
+                        && self.is_literal_proto_name(sp.name)
+                    {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR => {}
+                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    return false;
+                }
+                _ => {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Check if a property name is the literal (non-computed) `__proto__`.
+    fn is_literal_proto_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        if name_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(name_node)
+        {
+            return ident.escaped_text == "__proto__";
+        }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            return lit.text == "__proto__";
+        }
+        false
+    }
+
+    /// Merge Spread groups with inlinable object literals into `InlinedObjectLiteral`.
+    fn merge_inlinable_spread_groups(&self, groups: Vec<AttrGroup>) -> Vec<AttrGroup> {
+        groups
+            .into_iter()
+            .map(|g| match g {
+                AttrGroup::Spread(expr) if self.can_inline_jsx_spread_object(expr) => {
+                    AttrGroup::InlinedObjectLiteral(expr)
+                }
+                other => other,
+            })
+            .collect()
+    }
+
+    /// Emit object literal properties inline into a parent object literal.
+    fn emit_jsx_inline_object_literal_props(&mut self, expr: NodeIndex, first: &mut bool) {
+        let Some(node) = self.arena.get(expr) else {
+            return;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return;
+        };
+        for &prop in &lit.elements.nodes {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.emit(prop);
+        }
+    }
+
     /// Get the name of a JSX attribute (identifier or namespaced).
     fn get_jsx_attr_name(&self, name_idx: NodeIndex) -> String {
         let Some(node) = self.arena.get(name_idx) else {
@@ -918,11 +1017,13 @@ impl<'a> Printer<'a> {
         // ES2018+: { a: "1", ...x, b: "2" } (inline spread)
         // ES2015-ES2017: Object.assign({a: "1"}, x, {b: "2"})
         let groups = group_jsx_attrs(attrs);
+        let groups = self.merge_inlinable_spread_groups(groups);
 
         if groups.len() == 1 {
             match &groups[0] {
                 AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
                 AttrGroup::Spread(expr) => self.emit(*expr),
+                AttrGroup::InlinedObjectLiteral(expr) => self.emit(*expr),
             }
         } else if !self.ctx.needs_es2018_lowering {
             // ES2018+: inline spread syntax
@@ -951,6 +1052,9 @@ impl<'a> Printer<'a> {
                         self.write("...");
                         self.emit(*expr);
                     }
+                    AttrGroup::InlinedObjectLiteral(expr) => {
+                        self.emit_jsx_inline_object_literal_props(*expr, &mut first);
+                    }
                 }
             }
             self.write(" }");
@@ -964,6 +1068,7 @@ impl<'a> Printer<'a> {
                 match group {
                     AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
                     AttrGroup::Spread(expr) => self.emit(*expr),
+                    AttrGroup::InlinedObjectLiteral(expr) => self.emit(*expr),
                 }
             }
             self.write(")");
@@ -998,12 +1103,16 @@ impl<'a> Printer<'a> {
                     self.emit_jsx_attr_value(value);
                 }
                 JsxAttrInfo::Spread { expr } => {
-                    if !first {
-                        self.write(", ");
+                    if self.can_inline_jsx_spread_object(*expr) {
+                        self.emit_jsx_inline_object_literal_props(*expr, &mut first);
+                    } else {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write("...");
+                        self.emit(*expr);
                     }
-                    first = false;
-                    self.write("...");
-                    self.emit(*expr);
                 }
             }
         }
@@ -1663,6 +1772,8 @@ struct JsxAttrsInfo {
 enum AttrGroup {
     Named(Vec<JsxAttrInfo>),
     Spread(NodeIndex),
+    /// An object literal from a spread that can be safely inlined.
+    InlinedObjectLiteral(NodeIndex),
 }
 
 /// Group consecutive named attributes together, with spreads as separators.

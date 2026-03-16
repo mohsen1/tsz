@@ -1215,6 +1215,13 @@ fn compile_inner(
         .any(|diag| diag.category == DiagnosticCategory::Error);
     let should_emit = !(resolved.no_emit || (resolved.no_emit_on_error && has_error));
 
+    // When --declaration is set, run declaration emit for diagnostics even
+    // with --noEmit, because TS2883 (non-portable inferred types) fires
+    // during declaration generation. In tsc, this check happens during the
+    // checker's "declaration emit pre-check" phase.
+    let should_run_declaration_emit_check =
+        !should_emit && resolved.emit_declarations && resolved.no_emit;
+
     let mut dirty_paths = dirty_paths;
     if let Some(forced) = forced_dirty_paths {
         match &mut dirty_paths {
@@ -1228,10 +1235,10 @@ fn compile_inner(
     }
 
     let emit_outputs_start = Instant::now();
-    let emitted_files = if !should_emit {
+    let emitted_files = if !should_emit && !should_run_declaration_emit_check {
         Vec::new()
     } else {
-        let outputs = emit_outputs(EmitOutputsContext {
+        let (outputs, emit_diags) = emit_outputs(EmitOutputsContext {
             program: &program,
             options: &resolved,
             base_dir: &base_dir,
@@ -1241,9 +1248,28 @@ fn compile_inner(
             dirty_paths: dirty_paths.as_ref(),
             type_caches: type_caches_ref,
         })?;
-        write_outputs(&outputs)?
+        diagnostics.extend(emit_diags);
+        if should_emit {
+            write_outputs(&outputs)?
+        } else {
+            // Declaration emit ran for diagnostics only (--noEmit with --declaration)
+            Vec::new()
+        }
     };
     perf_log_phase("emit_outputs", emit_outputs_start);
+
+    // Recompute has_error after emit diagnostics (e.g., TS2883) are added.
+    // The initial has_error was computed before emit for should_emit gating.
+    // Re-sort since emit diagnostics were appended after the initial sort.
+    diagnostics.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.start.cmp(&right.start))
+            .then(left.code.cmp(&right.code))
+    });
+    let has_error = diagnostics
+        .iter()
+        .any(|diag| diag.category == DiagnosticCategory::Error);
 
     // Find the most recent .d.ts file for BuildInfo tracking
     let latest_changed_dts_file = if !emitted_files.is_empty() {
@@ -2071,6 +2097,15 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.emit_decorator_metadata {
         options.printer.emit_decorator_metadata = true;
     }
+    // Pass strictNullChecks to printer for metadata union serialization.
+    // Only set to true when explicitly enabled via --strict or --strictNullChecks true.
+    // The printer default is false (unlike CheckerOptions which defaults to true).
+    if args.strict {
+        options.printer.strict_null_checks = true;
+    }
+    if let Some(val) = args.strict_null_checks {
+        options.printer.strict_null_checks = val;
+    }
     if args.no_unused_locals {
         options.checker.no_unused_locals = true;
     }
@@ -2186,6 +2221,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.verbatim_module_syntax {
         options.printer.preserve_const_enums = true;
         options.printer.no_const_enum_inlining = true;
+        options.printer.verbatim_module_syntax = true;
         options.checker.verbatim_module_syntax = true;
     }
     if let Some(jsx) = args.jsx {

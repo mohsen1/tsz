@@ -885,6 +885,29 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
+        // When a class has class-level legacy decorators and emitDecoratorMetadata is
+        // enabled, the __metadata helper is needed for constructor paramtypes even if
+        // no individual member is decorated. The member-level decorator visitor only
+        // sets helpers.metadata for decorated properties/methods, so we must also
+        // check here for the class-level decorator + constructor case.
+        if self.ctx.options.legacy_decorators
+            && self.ctx.options.emit_decorator_metadata
+            && class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+            && class.members.nodes.iter().any(|&m_idx| {
+                self.arena
+                    .get(m_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
+            })
+        {
+            self.transforms.helpers_mut().metadata = true;
+        }
+
         // Restore previous state
         self.current_class_is_derived = prev_is_derived;
         self.in_static_context = prev_in_static;

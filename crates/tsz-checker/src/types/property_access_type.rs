@@ -627,7 +627,8 @@ impl<'a> CheckerState<'a> {
 
             // For value access to merged symbols, check the exports directly
             // This is needed because the type system doesn't track which symbol a Callable came from
-            if let Some(expr_node) = self.ctx.arena.get(access.expression)
+            let base_expr = self.ctx.arena.skip_parenthesized(access.expression);
+            if let Some(expr_node) = self.ctx.arena.get(base_expr)
                 && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
             {
                 let expr_name = &expr_ident.escaped_text;
@@ -1018,7 +1019,17 @@ impl<'a> CheckerState<'a> {
                     // should not emit TS2339. The type parameters will be inferred from the
                     // object literal, creating a circular dependency that tsc handles by
                     // deferring the check.
-                    if is_this_access && !self.ctx.this_type_stack.is_empty() {
+                    if is_this_access
+                        && self.ctx.this_type_stack.last().is_some_and(|&top| {
+                            matches!(
+                                self.ctx.types.lookup(top),
+                                Some(tsz_solver::TypeData::ThisType)
+                            ) || crate::query_boundaries::state::checking::is_type_parameter_like(
+                                self.ctx.types,
+                                top,
+                            )
+                        })
+                    {
                         return TypeId::ANY;
                     }
 

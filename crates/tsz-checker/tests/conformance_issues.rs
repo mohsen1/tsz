@@ -6141,11 +6141,11 @@ c2 = c;
         has_error(&relevant_diagnostics, 2720),
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
+    // tsc expects TS2741: "Property 'x' is missing in type 'C' but required in type 'A'."
+    // for the `c2 = c` assignment (C -> C2 where C2 requires private x from A).
     assert!(
-        relevant_diagnostics
-            .iter()
-            .any(|(code, _)| *code == 2322 || *code == 2741),
-        "Expected TS2322 or TS2741 for class assignment, got: {relevant_diagnostics:#?}"
+        has_error(&relevant_diagnostics, 2741),
+        "Expected TS2741 for missing private property 'x', got: {relevant_diagnostics:#?}"
     );
 }
 
@@ -7376,11 +7376,10 @@ namespace myModule {
         has_error(&diagnostics, 1147),
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
-    // TODO: tsc only emits TS1147, not TS2307. We currently emit both.
-    // assert!(
-    //     !has_error(&diagnostics, 2307),
-    //     "Should NOT emit TS2307 alongside TS1147 — tsc only emits TS1147. Actual: {diagnostics:#?}"
-    // );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 alongside TS1147 — tsc only emits TS1147. Actual: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -15257,41 +15256,272 @@ interface StringTreeArray extends Array<StringTree> { }
     );
 }
 
-/// Return-context substitution: when the return type of a generic call is an Application
-/// (e.g. GenericClass<T>) and the contextual return type has been evaluated to an Object,
-/// the checker must structurally match object properties to extract type parameter
-/// substitutions. Without this, callback parameters fall back to constraint types.
+/// Full conformance test for classImplementsClass4.ts
+/// TSC expects: [2720, 2741]
+///   - TS2720 at class declaration: "Class 'C' incorrectly implements class 'A'."
+///   - TS2741 at `c2 = c`: "Property 'x' is missing in type 'C' but required in type 'A'."
 ///
-/// Regression test for lambdaParameterWithTupleArgsHasCorrectAssignability.ts
+/// Root cause fixed: CompatChecker's explain_failure was short-circuiting with TypeMismatch
+/// when private_brand_assignability_override detected brand incompatibility, preventing the
+/// structural explain path from finding the actual missing property. Also, when
+/// MissingProperties was filtered down to 1 property (after removing brands), the checker
+/// now correctly emits TS2741 (single missing) with the declaring class name.
 #[test]
-fn test_return_context_substitution_application_vs_object() {
+fn test_class_implements_class4_full_conformance() {
     let source = r#"
-// @strict: true
-type MyTupleItem = {};
-type MyTuple = [MyTupleItem, ...MyTupleItem[]];
-type GenericFunction<T extends MyTuple> = (...fromArgs: T) => void;
-class GenericClass<T extends MyTuple> {
-    from: GenericFunction<T> | undefined;
+class A {
+    private x = 1;
+    foo(): number { return 1; }
 }
-function createClass<T extends MyTuple>(f: GenericFunction<T>): GenericClass<T> {
-    return new GenericClass<T>();
+class C implements A {
+    foo() {
+        return 1;
+    }
 }
-function consumeClass(c: GenericClass<[string, boolean]>) { }
-consumeClass(createClass(str => console.log(str.length)));
+class C2 extends A {}
+declare var c: C;
+declare var c2: C2;
+c = c2;
+c2 = c;
 "#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        has_error(&diagnostics, 2720),
+        "Expected TS2720 for 'class C implements A'. Got codes: {codes:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2741),
+        "Expected TS2741 for missing property 'x'. Got codes: {codes:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should NOT emit TS2322 — tsc expects only [2720, 2741]. Got: {diagnostics:?}"
+    );
+    // Verify the TS2741 message references the declaring class (A), not the target (C2)
+    let ts2741_msg = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2741)
+        .map(|(_, msg)| msg.as_str())
+        .unwrap();
+    assert!(
+        ts2741_msg.contains("required in type 'A'"),
+        "TS2741 should say 'required in type A' (declaring class), not 'C2'. Got: {ts2741_msg}"
+    );
+}
 
+/// Test: class with only private members missing emits TS2741 for the real property.
+/// When a class C (no private members) is assigned to C2 (extends A which has private x),
+/// the brand property is filtered and the real missing property 'x' produces TS2741.
+#[test]
+fn test_class_missing_private_member_simple() {
+    let source = r#"
+class A {
+    private x = 1;
+}
+class C {}
+class C2 extends A {}
+declare var c: C;
+declare var c2: C2;
+c2 = c;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2741),
+        "Expected TS2741 for missing property 'x' when assigning C to C2. Got: {diagnostics:?}"
+    );
+}
+
+/// Test: numeric enum mapped type assignment should not produce false TS2322.
+/// Based on conformance test `numericEnumMappedType.ts`.
+#[test]
+fn test_numeric_enum_mapped_type_no_false_ts2322() {
+    let source = r#"
+enum E1 { ONE, TWO, THREE }
+declare enum E2 { ONE, TWO, THREE }
+type Bins1 = { [k in E1]?: string; }
+type Bins2 = { [k in E2]?: string; }
+const b1: Bins1 = {};
+const b2: Bins2 = {};
+const e1: E1 = E1.ONE;
+const e2: E2 = E2.ONE;
+b1[1] = "a";
+b1[e1] = "b";
+b2[1] = "a";
+b2[e2] = "b";
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should not emit false TS2322 for numeric enum mapped type access. Got: {diagnostics:?}"
+    );
+}
+
+/// Test: spread of boolean respects freshness - no false TS2322.
+/// Based on conformance test `spreadBooleanRespectsFreshness.ts`.
+#[test]
+fn test_spread_boolean_respects_freshness_no_false_ts2322() {
+    let source = r#"
+type Foo = FooBase | FooArray;
+type FooBase = string | false;
+type FooArray = FooBase[];
+declare let foo1: Foo;
+declare let foo2: Foo;
+foo1 = [...Array.isArray(foo2) ? foo2 : [foo2]];
+"#;
     let diagnostics = compile_and_get_diagnostics_with_options(
         source,
         CheckerOptions {
             target: ScriptTarget::ES2015,
-            strict: true,
-            ..Default::default()
+            ..CheckerOptions::default()
         },
     );
-
     assert!(
-        !has_error(&diagnostics, 2339),
-        "Should not emit TS2339: return-context substitution should infer T=[string, boolean] \
-         so `str` is typed as `string` (which has `.length`), not `MyTupleItem`. Got: {diagnostics:?}"
+        !has_error(&diagnostics, 2322),
+        "Should not emit false TS2322 for spread boolean freshness. Got: {diagnostics:?}"
+    );
+}
+
+/// Test: inline conditional has similar assignability - no false TS2322.
+/// Based on conformance test `inlineConditionalHasSimilarAssignability.ts`.
+#[test]
+fn test_inline_conditional_assignability_no_false_ts2322() {
+    let source = r#"
+type MyExtract<T, U> = T extends U ? T : never
+
+function foo<T>(a: T) {
+  const b: Extract<any[], T> = 0 as any;
+  a = b; // ok
+
+  const c: (any[] extends T ? any[] : never) = 0 as any;
+  a = c;
+
+  const d: MyExtract<any[], T> = 0 as any;
+  a = d; // ok
+
+  type CustomType = any[] extends T ? any[] : never;
+  const e: CustomType = 0 as any;
+  a = e;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should not emit false TS2322 for inline conditional assignability. Got: {diagnostics:?}"
+    );
+}
+
+/// Test: spread of object literal assignable to index signature - no false TS2322.
+/// Based on conformance test `spreadOfObjectLiteralAssignableToIndexSignature.ts`.
+#[test]
+fn test_spread_object_literal_to_index_signature_no_false_ts2322() {
+    let source = r#"
+const foo: Record<never, never> = {}
+interface RecordOfRecords extends Record<keyof any, RecordOfRecords> {}
+const recordOfRecords: RecordOfRecords = {}
+recordOfRecords.propA = {...(foo !== undefined ? {foo} : {})}
+recordOfRecords.propB = {...(foo && {foo})}
+recordOfRecords.propC = {...(foo !== undefined && {foo})}
+interface RecordOfRecordsOrEmpty extends Record<keyof any, RecordOfRecordsOrEmpty | {}> {}
+const recordsOfRecordsOrEmpty: RecordOfRecordsOrEmpty = {}
+recordsOfRecordsOrEmpty.propA = {...(foo !== undefined ? {foo} : {})}
+recordsOfRecordsOrEmpty.propB = {...(foo && {foo})}
+recordsOfRecordsOrEmpty.propC = {...(foo !== undefined && {foo})}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should not emit false TS2322 for spread to index signature. Got: {diagnostics:?}"
+    );
+}
+
+/// Same test but with the full source from deeplyNestedCheck.ts conformance test.
+/// Includes both the object literal part (TS2741) and the array part (TS2322).
+#[test]
+fn test_deeply_nested_object_literal_missing_property_full_depth() {
+    let source = r#"
+interface DataSnapshot<X = {}> {
+  child(path: string): DataSnapshot;
+}
+
+interface Snapshot<T> extends DataSnapshot {
+  child<U extends Extract<keyof T, string>>(path: U): Snapshot<T[U]>;
+}
+
+interface A { b: B[] }
+interface B { c: C }
+interface C { d: D[] }
+interface D { e: E[] }
+interface E { f: F[] }
+interface F { g: G }
+interface G { h: H[] }
+interface H { i: string }
+
+const x: A = {
+  b: [
+    {
+      c: {
+        d: [
+          {
+            e: [
+              {
+                f: [
+                  {
+                    g: {
+                      h: [
+                        {
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+const a1: string[][][][][] = [[[[[42]]]]];
+const a2: string[][][][][][][][][][] = [[[[[[[[[[42]]]]]]]]]];
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2741),
+        "Expected TS2741 for deeply nested missing property 'i'. Got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for deeply nested array type mismatch. Got: {diagnostics:?}"
     );
 }

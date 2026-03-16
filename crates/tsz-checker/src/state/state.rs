@@ -915,6 +915,7 @@ impl<'a> CheckerState<'a> {
             // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
             // checks, parameter default checks, and all other setup (~300ns savings per call).
             if !self.ctx.skip_flow_narrowing
+                && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx

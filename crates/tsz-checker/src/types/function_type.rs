@@ -1193,23 +1193,66 @@ impl<'a> CheckerState<'a> {
                 let missing_promise = !self.ctx.has_promise_constructor_in_scope();
                 if should_check_promise_constructor && missing_promise {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    let diagnostic_node = if async_node_idx.is_none() {
-                        idx
+
+                    // Find the `async` keyword position for error anchoring.
+                    // For async arrow functions (no name node), the node `pos` starts at
+                    // the first parameter, not the `async` keyword. We scan backward
+                    // in the source to locate the keyword.
+                    let async_keyword_span = if async_node_idx.is_none() {
+                        // Arrow function — scan backward from node start to find `async`
+                        self.ctx.arena.get(idx).and_then(|n| {
+                            let sf = self.ctx.arena.source_files.first()?;
+                            let text = sf.text.as_bytes();
+                            let node_pos = n.pos as usize;
+                            // Scan backward over whitespace to find end of `async`
+                            let mut end = node_pos;
+                            while end > 0 && text.get(end - 1).copied() == Some(b' ') {
+                                end -= 1;
+                            }
+                            // Check that the 5 chars before `end` are "async"
+                            if end >= 5 && &text[end - 5..end] == b"async" {
+                                Some((end as u32 - 5, 5u32))
+                            } else {
+                                None
+                            }
+                        })
                     } else {
-                        async_node_idx
+                        None
                     };
+
+                    // TS2468: Cannot find global value 'Promise'.
+                    // tsc emits this as a program-level diagnostic (no file location).
                     if !is_function_declaration {
-                        self.error_at_node_msg(
-                            diagnostic_node,
-                            diagnostic_codes::CANNOT_FIND_GLOBAL_VALUE,
+                        let message = crate::diagnostics::format_message(
+                            diagnostic_messages::CANNOT_FIND_GLOBAL_VALUE,
                             &["Promise"],
                         );
+                        self.error_program_level(
+                            message,
+                            diagnostic_codes::CANNOT_FIND_GLOBAL_VALUE,
+                        );
                     }
-                    self.error_at_node(
-                        diagnostic_node,
-                        diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                        diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                    );
+
+                    // TS2705: anchored at the `async` keyword
+                    if let Some((start, length)) = async_keyword_span {
+                        self.error_at_position(
+                            start,
+                            length,
+                            diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                            diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                        );
+                    } else {
+                        let diagnostic_node = if async_node_idx.is_none() {
+                            idx
+                        } else {
+                            async_node_idx
+                        };
+                        self.error_at_node(
+                            diagnostic_node,
+                            diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                            diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                        );
+                    }
                 }
             }
 
@@ -1370,7 +1413,14 @@ impl<'a> CheckerState<'a> {
                         has_type_annotation,
                     ) {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        let error_node = if let Some(nn) = name_node { nn } else { body };
+                        // TSC points TS7030 to: return type annotation > function name > node itself
+                        let error_node = if has_type_annotation {
+                            type_annotation
+                        } else if let Some(nn) = name_node {
+                            nn
+                        } else {
+                            idx
+                        };
                         self.error_at_node(
                             error_node,
                             diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,

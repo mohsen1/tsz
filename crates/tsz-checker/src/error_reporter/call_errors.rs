@@ -129,7 +129,18 @@ impl<'a> CheckerState<'a> {
                     .properties
                     .iter()
                     .find(|p| p.name == prop_atom && p.optional)
-                    .map(|p| p.type_id)
+                    .map(|p| {
+                        // For optional properties, include | undefined in the diagnostic
+                        // type to match tsc: "not assignable to type 'X | undefined'"
+                        if self.ctx.strict_null_checks() {
+                            self.ctx
+                                .types
+                                .factory()
+                                .union(vec![p.type_id, tsz_solver::TypeId::UNDEFINED])
+                        } else {
+                            p.type_id
+                        }
+                    })
             });
 
             let effective_type =
@@ -942,16 +953,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
-                matches!(
-                    node.kind,
-                    syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        | syntax_kind_ext::ARROW_FUNCTION
-                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                        | syntax_kind_ext::CONDITIONAL_EXPRESSION
-                )
-            }) && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
+            // Only try to elaborate sub-expression errors when the property value
+            // is NOT assignable to the target. Without this guard, elaboration can
+            // produce false-positive TS2322 errors on nested elements (e.g., array
+            // literal elements) even when the overall property type is compatible.
+            if source_prop_type != TypeId::ERROR
+                && source_prop_type != TypeId::ANY
+                && target_prop_type != TypeId::ERROR
+                && target_prop_type != TypeId::ANY
+                && !self.is_assignable_to(source_prop_type, target_prop_type)
+                && self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                    )
+                })
+                && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
             {
                 elaborated = true;
                 continue;
@@ -1811,12 +1832,25 @@ impl<'a> CheckerState<'a> {
 
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
         // Suppress cascade errors from unresolved types
         if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
+        // For property access expressions (e.g., `obj.notMethod`), narrow the error
+        // span to just the property name, matching tsc's behavior for chained calls.
+        let report_idx = if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            access.name_or_argument
+        } else {
+            idx
+        };
+
+        if let Some(loc) = self.get_source_location(report_idx) {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,

@@ -581,6 +581,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // When a symbol is merged from an import alias and a local value declaration
+            // (e.g., `import { FC } from "./types"; let FC: FC | null = null;`),
+            // the type meaning comes from the alias chain. If the alias resolves to a
+            // type (not value-only), accept the symbol in type position.
+            let alias_is_type = (flags & symbol_flags::ALIAS) != 0
+                && !self.alias_resolves_to_value_only(sym_id, None);
+            if alias_is_type && (flags & symbol_flags::VALUE) != 0 {
+                return true;
+            }
+
             let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
                 || self.symbol_is_value_only(sym_id, None))
                 && !self.symbol_is_type_only(sym_id, None);
@@ -1240,6 +1250,19 @@ impl<'a> CheckerState<'a> {
         }
 
         let node = self.ctx.arena.get(idx)?;
+
+        // Skip through parenthesized expressions: `(M).y` should resolve the
+        // same qualified symbol as `M.y`.
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                return self.resolve_qualified_symbol_inner(
+                    paren.expression,
+                    visited_aliases,
+                    depth + 1,
+                );
+            }
+            return None;
+        }
 
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(idx)?;

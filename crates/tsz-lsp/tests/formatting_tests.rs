@@ -949,3 +949,483 @@ fn test_formatting_jsx_like() {
     let formatted = DocumentFormattingProvider::format_text(source, &options);
     let _ = formatted;
 }
+
+// =========================================================================
+// Batch 3: edge cases and additional coverage
+// =========================================================================
+
+#[test]
+fn test_format_for_loop_indentation() {
+    let source = "for (let i = 0; i < 10; i++) {\nconsole.log(i);\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "for (let i = 0; i < 10; i++) {");
+    assert_eq!(lines[1], "    console.log(i);");
+    assert_eq!(lines[2], "}");
+}
+
+#[test]
+fn test_format_while_loop_indentation() {
+    let source = "while (condition) {\ndoWork();\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "while (condition) {");
+    assert_eq!(lines[1], "    doWork();");
+    assert_eq!(lines[2], "}");
+}
+
+#[test]
+fn test_format_do_while_indentation() {
+    let source = "do {\nx++;\n} while (x < 10)";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "do {");
+    assert_eq!(lines[1], "    x++;");
+}
+
+#[test]
+fn test_format_triple_nested_blocks() {
+    let source = "function a() {\nif (true) {\nfor (let i = 0; i < 1; i++) {\nlet x = i;\n}\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "function a() {");
+    assert_eq!(lines[1], "    if (true) {");
+    assert_eq!(lines[2], "        for (let i = 0; i < 1; i++) {");
+    assert_eq!(lines[3], "            let x = i;");
+    assert_eq!(lines[4], "        }");
+    assert_eq!(lines[5], "    }");
+    assert_eq!(lines[6], "}");
+}
+
+#[test]
+fn test_format_interface_indentation() {
+    let source = "interface User {\nname: string;\nage: number;\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "interface User {");
+    assert_eq!(lines[1], "    name: string;");
+    assert_eq!(lines[2], "    age: number;");
+    assert_eq!(lines[3], "}");
+}
+
+#[test]
+fn test_format_type_alias_indentation() {
+    let source = "type Result<T> = {\nvalue: T;\nerror: string;\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "type Result<T> = {");
+    assert_eq!(lines[1], "    value: T;");
+    assert_eq!(lines[2], "    error: string;");
+    assert_eq!(lines[3], "}");
+}
+
+#[test]
+fn test_format_object_literal_indentation() {
+    let source = "const obj = {\na: 1,\nb: 2,\nc: 3,\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(lines[0].starts_with("const obj = {"), "got: {}", lines[0]);
+    assert_eq!(lines[1], "    a: 1,");
+    assert_eq!(lines[2], "    b: 2,");
+    assert_eq!(lines[3], "    c: 3,");
+}
+
+#[test]
+fn test_format_tab_size_8() {
+    let source = "function foo() {\nlet x = 1;\n}";
+    let options = FormattingOptions {
+        tab_size: 8,
+        insert_spaces: true,
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[1], "        let x = 1;");
+}
+
+#[test]
+fn test_format_multiple_statements_same_line_semicolons() {
+    let source = "let a = 1; let b = 2; let c = 3;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Should not produce double semicolons
+    assert!(
+        !formatted.contains(";;"),
+        "Should not produce double semicolons, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_export_default_function() {
+    let source = "export default function handler() {\nreturn null;\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].starts_with("export default function"),
+        "got: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "    return null;");
+}
+
+#[test]
+fn test_format_const_enum() {
+    let source = "const enum Direction {\nUp,\nDown,\nLeft,\nRight,\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].starts_with("const enum Direction"),
+        "got: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "    Up,");
+}
+
+#[test]
+fn test_format_class_extends_implements() {
+    let source = "class Dog extends Animal {\nbark() {\nreturn 'woof';\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].contains("class Dog extends Animal"),
+        "got: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "    bark() {");
+    assert_eq!(lines[2], "        return 'woof';");
+}
+
+#[test]
+fn test_format_multiline_string_concatenation() {
+    let source = "const s = 'hello' +\n'world';\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("'hello'"),
+        "Should preserve string content, got: {formatted}"
+    );
+    assert!(
+        formatted.contains("'world'"),
+        "Should preserve string content, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_namespace_indentation() {
+    let source = "namespace MyApp {\nexport function init() {\nreturn true;\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "namespace MyApp {");
+    assert!(
+        lines[1].starts_with("    export function init()"),
+        "got: {}",
+        lines[1]
+    );
+    assert_eq!(lines[2], "        return true;");
+}
+
+#[test]
+fn test_format_ternary_expression() {
+    let source = "const x = condition ? 'yes' : 'no'\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("condition ? 'yes' : 'no'"),
+        "Ternary should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_only_newlines() {
+    let source = "\n\n\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Should not crash; output may be empty or just newlines
+    let _ = formatted;
+}
+
+#[test]
+fn test_format_unicode_identifiers() {
+    let source = "const cafe\u{0301} = 'coffee';\nconst \u{03B1} = 1;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Should handle unicode without panic
+    let _ = formatted;
+}
+
+#[test]
+fn test_format_computed_property() {
+    let source = "const obj = {\n[key]: value,\n[Symbol.iterator]: fn,\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+    // Computed properties should be indented
+    assert!(
+        lines[1].starts_with("    "),
+        "Computed property should be indented, got: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn test_format_try_catch_finally() {
+    let source = "try {\nfoo();\n} catch (e) {\nbar();\n} finally {\nbaz();\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "try {");
+    assert_eq!(lines[1], "    foo();");
+    assert!(
+        lines[4].contains("finally"),
+        "Should have finally block, got: {}",
+        lines[4]
+    );
+}
+
+#[test]
+fn test_compute_line_edits_identical_multiline() {
+    let original = "line1\nline2\nline3\n";
+    let formatted = "line1\nline2\nline3\n";
+    let result = DocumentFormattingProvider::compute_line_edits(original, formatted);
+    assert!(result.is_ok());
+    assert!(
+        result.unwrap().is_empty(),
+        "Identical content should produce no edits"
+    );
+}
+
+#[test]
+fn test_format_on_key_closing_brace() {
+    let source = "function foo() {\n    let x = 1;\n}";
+    let options = FormattingOptions::default();
+    let result = DocumentFormattingProvider::format_on_key(source, 2, 1, "}", &options);
+    assert!(result.is_ok());
+}
+
+// =========================================================================
+// Batch: additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_format_class_with_readonly_property() {
+    let source = "class Config {\nreadonly name: string;\nreadonly value: number;\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[0], "class Config {");
+    assert!(
+        lines[1].starts_with("    readonly name"),
+        "readonly property should be indented, got: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn test_format_abstract_class_indentation() {
+    let source =
+        "abstract class Shape {\nabstract area(): number;\ntoString() {\nreturn 'shape';\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].contains("abstract class Shape"),
+        "got: {}",
+        lines[0]
+    );
+    assert!(
+        lines[1].starts_with("    "),
+        "abstract method should be indented, got: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn test_format_multiple_blank_lines_preserved() {
+    let source = "let a = 1;\n\n\nlet b = 2;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Multiple blank lines should not crash
+    assert!(
+        formatted.contains("let a = 1;"),
+        "Should preserve first statement, got: {formatted}"
+    );
+    assert!(
+        formatted.contains("let b = 2;"),
+        "Should preserve second statement, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_optional_chaining() {
+    let source = "const x = obj?.prop?.method?.()\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("obj?.prop?.method?.()"),
+        "Optional chaining should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_nullish_coalescing() {
+    let source = "const x = value ?? defaultValue\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("value ?? defaultValue"),
+        "Nullish coalescing should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_for_of_loop_indentation() {
+    let source = "for (const item of items) {\nprocess(item);\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].starts_with("for (const item of items)"),
+        "got: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "    process(item);");
+    assert_eq!(lines[2], "}");
+}
+
+#[test]
+fn test_format_for_in_loop_indentation() {
+    let source = "for (const key in obj) {\nconsole.log(key);\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert!(
+        lines[0].starts_with("for (const key in obj)"),
+        "got: {}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "    console.log(key);");
+}
+
+#[test]
+fn test_format_labeled_statement() {
+    let source = "outer:\nfor (let i = 0; i < 10; i++) {\nbreak outer;\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Should not crash on labeled statements
+    let _ = formatted;
+}
+
+#[test]
+fn test_format_empty_function_body() {
+    let source = "function noop() {}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("function noop()"),
+        "Should preserve empty function, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_spread_operator() {
+    let source = "const merged = { ...a, ...b }\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("...a") && formatted.contains("...b"),
+        "Spread operator should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_type_assertion() {
+    let source = "const x = value as string\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("value as string"),
+        "Type assertion should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_single_line_comment_preserved() {
+    let source = "// This is a comment\nlet x = 1;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("// This is a comment"),
+        "Single-line comment should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_block_comment_preserved() {
+    let source = "/* block comment */\nlet x = 1;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("/* block comment */"),
+        "Block comment should be preserved, got: {formatted}"
+    );
+}
+
+#[test]
+fn test_format_tab_size_1() {
+    let source = "function foo() {\nlet x = 1;\n}";
+    let options = FormattingOptions {
+        tab_size: 1,
+        insert_spaces: true,
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let lines: Vec<&str> = formatted.trim_end().lines().collect();
+
+    assert_eq!(lines[1], " let x = 1;");
+}
+
+#[test]
+fn test_compute_line_edits_all_lines_changed() {
+    let original = "aaa\nbbb\nccc\n";
+    let formatted = "xxx\nyyy\nzzz\n";
+    let result = DocumentFormattingProvider::compute_line_edits(original, formatted);
+    assert!(result.is_ok());
+    let edits = result.unwrap();
+    assert!(!edits.is_empty(), "All lines changed should produce edits");
+}
+
+#[test]
+fn test_format_on_key_semicolon_basic() {
+    let source = "let x = 1;\n";
+    let options = FormattingOptions::default();
+    let result = DocumentFormattingProvider::format_on_key(source, 0, 10, ";", &options);
+    assert!(result.is_ok());
+}

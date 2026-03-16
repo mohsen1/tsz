@@ -332,6 +332,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -422,6 +423,7 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_target_es5(true);
                             ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                             ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                            ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
                             }
@@ -552,6 +554,13 @@ impl<'a> Printer<'a> {
                                 self.write_line();
                             }
                         }
+                    } else if !is_default
+                        && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        && self.variable_stmt_has_binding_pattern(node)
+                    {
+                        // Destructuring export: emit as comma expression
+                        // (e.g., `_a = expr, exports.x = _a.x, exports.rest = __rest(...)`)
+                        self.emit_cjs_destructuring_export(node);
                     } else if !is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                         // For non-default class declarations, use the deferred export
                         // mechanism so exports.X = X; is emitted right after the class
@@ -836,11 +845,41 @@ impl<'a> Printer<'a> {
                     }
                     _ => None,
                 };
-                mods.is_some_and(|m| {
+                let has_member_dec = mods.is_some_and(|m| {
                     m.nodes.iter().any(|&mod_idx| {
                         self.arena
                             .get(mod_idx)
                             .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                });
+                if has_member_dec {
+                    return true;
+                }
+                // Also check for parameter decorators on methods and constructors
+                let params = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(m_node).map(|m| &m.parameters)
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        self.arena.get_constructor(m_node).map(|c| &c.parameters)
+                    }
+                    _ => None,
+                };
+                params.is_some_and(|p| {
+                    p.nodes.iter().any(|&param_idx| {
+                        let Some(param_node) = self.arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(param) = self.arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        param.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
                     })
                 })
             });
@@ -870,6 +909,7 @@ impl<'a> Printer<'a> {
         // At ES2022+, use `static { }` blocks for decorator application.
         // At ES2015, use IIFE pattern with comma expressions.
         emitter.set_use_static_blocks(!self.ctx.needs_es2022_lowering);
+        emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
         }
@@ -954,6 +994,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1139,6 +1180,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1206,6 +1248,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_target_es5(self.ctx.target_es5);
                     ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                    ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
                     }
@@ -1220,7 +1263,13 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
-                if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                if !*is_default
+                    && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && self.variable_stmt_has_binding_pattern(node)
+                {
+                    // Destructuring export: emit as comma expression
+                    self.emit_cjs_destructuring_export(node);
+                } else if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                     // Use deferred export mechanism for class declarations so
                     // exports.X = X; appears before lowered static blocks/IIFEs.
                     if let Some(name_id) = names.first()

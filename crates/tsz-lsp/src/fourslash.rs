@@ -62,7 +62,7 @@ impl DefinitionResult {
     /// Assert that no definitions were found.
     pub fn expect_none(&self) {
         assert!(
-            self.locations.as_ref().is_none_or(|v| v.is_empty()),
+            !self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected no definition, but found {:?}",
             self.locations
         );
@@ -941,7 +941,7 @@ impl TypeDefinitionResult {
     /// Assert that no type definitions were found.
     pub fn expect_none(&self) {
         assert!(
-            self.locations.as_ref().is_none_or(|v| v.is_empty()),
+            !self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected no type definition, but found {:?}",
             self.locations
         );
@@ -1009,7 +1009,7 @@ impl ImplementationResult {
     /// Assert that no implementations were found.
     pub fn expect_none(&self) {
         assert!(
-            self.locations.as_ref().is_none_or(|v| v.is_empty()),
+            !self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected no implementations, but found {:?}",
             self.locations
         );

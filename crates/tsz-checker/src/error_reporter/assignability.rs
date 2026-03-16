@@ -18,6 +18,25 @@ fn is_builtin_wrapper_name(name: &str) -> bool {
     matches!(name, "Boolean" | "Number" | "String" | "Object")
 }
 
+/// Returns true if the formatted type name represents a TypeScript primitive type.
+/// This catches cases where a complex type (e.g., homomorphic mapped type over a
+/// primitive) evaluates/displays as a primitive, even if the solver's TypeId doesn't
+/// directly represent the primitive.
+fn is_primitive_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "string"
+            | "number"
+            | "boolean"
+            | "bigint"
+            | "symbol"
+            | "void"
+            | "undefined"
+            | "null"
+            | "never"
+    )
+}
+
 /// Returns true if the property name is a standard Object.prototype method.
 /// These are implicitly available on all interfaces/objects through the Object
 /// prototype chain. When such a property appears as "missing" in a subtype check,
@@ -38,6 +57,21 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Get the declaring type name for a property in a target type.
+    /// For inherited properties (e.g., from a base class), returns the base class name.
+    /// Falls back to formatting the target type if no parent info is available.
+    fn property_declaring_type_name(
+        &self,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let prop_info = self.property_info_for_display(target_type, property_name)?;
+        prop_info
+            .parent_id
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .map(|sym| sym.escaped_name.clone())
+    }
+
     fn property_info_for_display(
         &self,
         ty: TypeId,
@@ -347,11 +381,13 @@ impl<'a> CheckerState<'a> {
     // Type Assignability Errors
     // =========================================================================
 
+    /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
+    /// Report a type not assignable error at an exact AST node anchor.
     pub fn error_type_not_assignable_at_with_anchor(
         &mut self,
         source: TypeId,
@@ -443,12 +479,14 @@ impl<'a> CheckerState<'a> {
         self.ctx.push_diagnostic(base_diag);
     }
 
+    /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
-    /// Reports a detailed assignability failure using an already-resolved diagnostic anchor.
+    /// Internal helper that reports a detailed assignability failure using an
+    /// already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
         &mut self,
         source: TypeId,
@@ -517,23 +555,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2820: "Type '{0}' is not assignable to type '{1}'. Did you mean '{2}'?"
-        // When the source is a string literal and the target contains string literal
-        // union members, check for a close Levenshtein match and emit TS2820 instead
-        // of the generic TS2322.
-        if let Some(loc) = self.get_source_location(anchor_idx)
-            && let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                source,
-                target,
-                anchor_idx,
-                loc.start,
-                loc.length(),
-            )
-        {
-            self.ctx.push_diagnostic(diag);
-            return;
-        }
-
         // Use one solver-boundary analysis path for TS2322 metadata.
         let analysis = self.analyze_assignability_failure(source, target);
         let reason = analysis.failure_reason;
@@ -563,6 +584,20 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
                 ) {
                     return;
+                }
+                // Skip MissingProperty when the property name is a computed symbol
+                // expression (e.g. `[Symbol.nonsense]`). This means the computed key
+                // references a non-existent Symbol member — TSC doesn't infer required
+                // properties for error-type computed keys, so no assignment error
+                // should be produced. The TS2339 error on the symbol access is already
+                // emitted separately.
+                if let tsz_solver::SubtypeFailureReason::MissingProperty { property_name, .. } =
+                    &failure_reason
+                {
+                    let pn = self.ctx.types.resolve_atom_ref(*property_name);
+                    if pn.starts_with("[Symbol.") {
+                        return;
+                    }
                 }
                 let diag =
                     self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
@@ -619,18 +654,6 @@ impl<'a> CheckerState<'a> {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
-                return;
-            }
-
-            // TS2820: string literal "did you mean" suggestion
-            if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                source,
-                target,
-                anchor_idx,
-                loc.start,
-                loc.length(),
-            ) {
-                self.ctx.push_diagnostic(diag);
                 return;
             }
 
@@ -763,14 +786,24 @@ impl<'a> CheckerState<'a> {
                 // Note: `object` (TypeId::OBJECT) is explicitly non-primitive — it represents
                 // all non-primitive values and behaves like `{}` structurally, so missing
                 // properties are meaningful and should produce TS2741.
-                if *source_type != tsz_solver::TypeId::OBJECT
-                    && tsz_solver::is_primitive_type(self.ctx.types, *source_type)
-                {
-                    let src_str = self.format_type_diagnostic(*source_type);
+                //
+                // Check both the raw TypeId and the resolved display name. The display
+                // name check catches cases where a homomorphic mapped type over a
+                // primitive (e.g., `Meta<string, boolean>`) displays as the primitive
+                // itself (TSC preserves primitive identity for such types).
+                let display_src_str = if depth == 0 && *source_type != tsz_solver::TypeId::OBJECT {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(*source_type)
+                };
+                let is_source_primitive = (*source_type != tsz_solver::TypeId::OBJECT
+                    && tsz_solver::is_primitive_type(self.ctx.types, *source_type))
+                    || is_primitive_type_name(&display_src_str);
+                if is_source_primitive {
                     let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
+                        &[&display_src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -815,9 +848,29 @@ impl<'a> CheckerState<'a> {
                 // intersection type. For example: `anb: A & B = a` where `a: A`
                 // → TS2322 "Type 'A' is not assignable to type 'A & B'"
                 // not TS2741 "Property 'b' is missing in type 'A'..."
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                // Check the solver's target_type, the original outer target, and
+                // the env-evaluated outer target (resolves Lazy wrapping).
+                let target_evaluated_for_intersection = self.evaluate_type_with_env(target);
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type)
+                    || tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                    || tsz_solver::type_queries::is_intersection_type(
+                        self.ctx.types,
+                        target_evaluated_for_intersection,
+                    )
+                {
                     let src_str = self.format_type_diagnostic(*source_type);
-                    let tgt_str = self.format_type_diagnostic(*target_type);
+                    // Use the intersection form for display when available
+                    let tgt_str = if tsz_solver::type_queries::is_intersection_type(
+                        self.ctx.types,
+                        target_evaluated_for_intersection,
+                    ) {
+                        self.format_type_diagnostic(target_evaluated_for_intersection)
+                    } else if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                    {
+                        self.format_type_diagnostic(target)
+                    } else {
+                        self.format_type_diagnostic(*target_type)
+                    };
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -833,15 +886,71 @@ impl<'a> CheckerState<'a> {
 
                 // Private brand properties are internal implementation details for
                 // nominal private member checking. They should never appear in
-                // user-facing diagnostics — emit TS2322 instead of TS2741.
+                // user-facing diagnostics — emit TS2322 with private/protected
+                // member detail when available (matching the TypeMismatch handler).
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 if prop_name.starts_with("__private_brand") {
-                    let src_str = self.format_type_for_assignability_message(*source_type);
-                    let tgt_str_with_args =
-                        self.format_type_for_assignability_message(*target_type);
+                    let src_str = if depth == 0 {
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    } else {
+                        self.format_type_for_assignability_message(*source_type)
+                    };
+                    let tgt_str = if depth == 0 {
+                        self.format_assignability_type_for_message(target, source)
+                    } else {
+                        self.format_type_for_assignability_message(*target_type)
+                    };
+                    // Try to find the backing private/protected member for a detailed
+                    // message. First: source missing a private member entirely.
+                    if depth == 0
+                        && let Some((member_name, owner_name, visibility)) =
+                            self.private_or_protected_member_missing_display(source, target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &member_name,
+                            &owner_name,
+                            visibility,
+                            None,
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
+                    // Second: source HAS the property but with wrong visibility/nominal
+                    // identity. Use the brand's backing member display for the detail.
+                    if depth == 0
+                        && let Some((display_prop, owner_name, visibility)) =
+                            self.private_or_protected_brand_backing_member_display(target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &display_prop,
+                            &owner_name,
+                            visibility,
+                            self.property_info_for_display(
+                                source,
+                                self.ctx.types.intern_string(&display_prop),
+                            )
+                            .map(|prop| prop.visibility),
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str_with_args],
+                        &[&src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -918,6 +1027,49 @@ impl<'a> CheckerState<'a> {
                         message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
+                }
+
+                // When the source has an index signature, the solver may only
+                // report a single MissingProperty even though multiple target
+                // properties are truly absent. Cross-check with the helper to
+                // upgrade TS2741 → TS2739 when there are more missing properties
+                // (matching tsc which reports all missing properties at once).
+                if depth == 0 {
+                    if let Some(all_missing) =
+                        self.missing_required_properties_from_index_signature_source(source, target)
+                    {
+                        if all_missing.len() > 1 {
+                            let src_str = self
+                                .format_assignment_source_type_for_diagnostic(source, target, idx);
+                            let tgt_str =
+                                self.format_assignability_type_for_message(target, source);
+                            let prop_list: Vec<String> = all_missing
+                                .iter()
+                                .take(4)
+                                .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                                .collect();
+                            let props_joined = prop_list.join(", ");
+                            let (message, code) = if all_missing.len() > 4 {
+                                let more_count = (all_missing.len() - 4).to_string();
+                                (
+                                    format_message(
+                                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                        &[&src_str, &tgt_str, &props_joined, &more_count],
+                                    ),
+                                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                )
+                            } else {
+                                (
+                                    format_message(
+                                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                        &[&src_str, &tgt_str, &props_joined],
+                                    ),
+                                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                )
+                            };
+                            return Diagnostic::error(file_name, start, length, message, code);
+                        }
+                    }
                 }
 
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
@@ -1135,32 +1287,44 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // After filtering brands, if exactly 1 property remains, emit TS2741
-                // (single missing property) instead of TS2739 (multiple missing).
-                // This happens when a class with private members has one non-brand
-                // missing property — e.g. `c2 = c` where C implements A (private x).
+                // When filtering removed brand/prototype properties and only 1 remains,
+                // emit TS2741 (single missing property) instead of TS2739 (multiple).
+                // This matches tsc behavior: e.g., class with private member where the brand
+                // is filtered out, leaving only the real property like 'x'.
                 if filtered_names.len() == 1 {
-                    let prop_atom = filtered_names[0];
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop_atom).to_string();
-                    let widened_source = self.widen_type_for_display(*source_type);
-                    let (src_str, tgt_str_qualified) = if depth == 0 {
-                        let src = if *source_type == TypeId::OBJECT {
+                    let prop_name = self
+                        .ctx
+                        .types
+                        .resolve_atom_ref(filtered_names[0])
+                        .to_string();
+                    let src_str = if depth == 0 {
+                        if *source_type == TypeId::OBJECT {
                             "{}".to_string()
                         } else {
                             self.format_assignment_source_type_for_diagnostic(source, target, idx)
-                        };
-                        (
-                            src,
-                            self.format_assignability_type_for_message(target, source),
-                        )
+                        }
                     } else if *source_type == TypeId::OBJECT {
-                        ("{}".to_string(), self.format_type_diagnostic(*target_type))
+                        "{}".to_string()
                     } else {
-                        self.format_type_pair_diagnostic(widened_source, target)
+                        let widened_source = self.widen_type_for_display(*source_type);
+                        self.format_type_diagnostic(widened_source)
                     };
+                    // TSC uses the declaring type name for "required in type 'X'" when the
+                    // property is inherited from a base class. For example, if property 'x'
+                    // is declared in class A and inherited by C2 via extends, tsc says
+                    // "required in type 'A'", not "required in type 'C2'".
+                    let tgt_str = self
+                        .property_declaring_type_name(*target_type, filtered_names[0])
+                        .unwrap_or_else(|| {
+                            if depth == 0 {
+                                self.format_assignability_type_for_message(target, source)
+                            } else {
+                                self.format_type_diagnostic(*target_type)
+                            }
+                        });
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        &[&prop_name, &src_str, &tgt_str_qualified],
+                        &[&prop_name, &src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1705,16 +1869,6 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                // TS2820: check for string literal "did you mean" suggestion
-                if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                    *source_type,
-                    target,
-                    idx,
-                    start,
-                    length,
-                ) {
-                    return diag;
-                }
                 let (source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
                         tsz_solver::type_queries::get_enum_def_id(self.ctx.types, source).is_none();
@@ -1773,12 +1927,6 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                // TS2820: check for string literal "did you mean" suggestion
-                if let Some(diag) = self
-                    .try_string_literal_suggestion_diagnostic(source, target, idx, start, length)
-                {
-                    return diag;
-                }
                 let source_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
                 } else {
@@ -1833,7 +1981,19 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // Skip single-missing-property lookup when the target is an
+                // intersection type — TSC emits TS2322 (generic "not assignable")
+                // for intersection targets, never TS2741.
+                let target_is_intersection_for_mismatch = {
+                    let target_eval = self.evaluate_type_with_env(target);
+                    tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                        || tsz_solver::type_queries::is_intersection_type(
+                            self.ctx.types,
+                            target_eval,
+                        )
+                };
                 if depth == 0
+                    && !target_is_intersection_for_mismatch
                     && let Some(property_name) =
                         self.missing_single_required_property(source, target)
                 {
@@ -1883,6 +2043,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if depth == 0
+                    && !target_is_intersection_for_mismatch
                     && let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
                     && missing_props.len() > 1

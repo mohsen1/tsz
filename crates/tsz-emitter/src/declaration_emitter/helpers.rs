@@ -6192,6 +6192,20 @@ impl<'a> DeclarationEmitter<'a> {
                 && self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
             {
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
+                // TS2883: Check for non-portable inferred type references
+                if let Some(name_text) = self.get_identifier_text(decl_name)
+                    && let Some(name_node) = self.arena.get(decl_name)
+                    && let Some(file_path) = self.current_file_path.clone()
+                {
+                    self.check_non_portable_type_references(
+                        type_id,
+                        &name_text,
+                        &file_path,
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                    );
+                }
+
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
@@ -7611,5 +7625,275 @@ impl<'a> DeclarationEmitter<'a> {
         let modules = std::mem::take(&mut self.import_plan.required);
         self.emit_import_modules(&modules);
         self.import_plan.required = modules;
+    }
+
+    // =========================================================================
+    // TS2883: Non-portable inferred type references
+    // =========================================================================
+
+    /// Check if an inferred type references symbols from non-portable module paths
+    /// (e.g., nested `node_modules` or private package subpaths).
+    ///
+    /// If non-portable references are found, emits TS2883 diagnostics.
+    ///
+    /// - `type_id`: the inferred type to check
+    /// - `decl_name`: the declaration name (e.g., "x", "default", "special")
+    /// - `file`: the source file path for the diagnostic
+    /// - `pos`: the position of the declaration name in source
+    /// - `length`: the length of the declaration name in source
+    pub(crate) fn check_non_portable_type_references(
+        &mut self,
+        type_id: tsz_solver::types::TypeId,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) {
+        use tsz_common::diagnostics::Diagnostic;
+
+        // First, detect non-portable references (immutable borrow of self)
+        let non_portable = self.find_non_portable_type_reference(type_id);
+
+        // Then, emit the diagnostic if found (mutable borrow of self)
+        if let Some((from_path, type_name)) = non_portable {
+            self.diagnostics.push(Diagnostic::from_code(
+                2883,
+                file,
+                pos,
+                length,
+                &[decl_name, &from_path, &type_name],
+            ));
+        }
+    }
+
+    /// Scan a type for non-portable symbol references by checking all
+    /// referenced types for symbols from nested `node_modules`.
+    ///
+    /// Returns `Some((from_path, type_name))` for the first non-portable reference found.
+    fn find_non_portable_type_reference(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<(String, String)> {
+        let interner = self.type_interner?;
+        let binder = self.binder?;
+        let current_file_path = self.current_file_path.as_deref()?;
+        let cache = self.type_cache.as_ref()?;
+
+        // Collect all types referenced by this type (deeply walks into
+        // objects, tuples, unions, intersections, etc.)
+        let referenced_types = tsz_solver::visitor::collect_referenced_types(interner, type_id);
+
+        for &ref_type_id in &referenced_types {
+            // Check Lazy(DefId) types - these are named type references
+            if let Some(def_id) = tsz_solver::lazy_def_id(interner, ref_type_id)
+                && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+                && let Some(result) =
+                    self.check_symbol_portability(sym_id, binder, current_file_path)
+            {
+                return Some(result);
+            }
+
+            // Check object shapes with symbols - these are structural types
+            // that may reference foreign symbols through their shape.symbol field
+            if let Some(shape_id) = tsz_solver::object_shape_id(interner, ref_type_id) {
+                let shape = interner.object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol
+                    && let Some(result) =
+                        self.check_symbol_portability(sym_id, binder, current_file_path)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a symbol comes from a non-portable module path.
+    ///
+    /// Returns `Some((from_path, type_name))` if the symbol is non-portable, where:
+    /// - `from_path` is the problematic module path for the diagnostic message
+    /// - `type_name` is the symbol name that can't be referenced
+    fn check_symbol_portability(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+        _current_file_path: &str,
+    ) -> Option<(String, String)> {
+        use std::path::{Component, Path};
+
+        let symbol = binder.symbols.get(sym_id)?;
+        let type_name = symbol.escaped_name.clone();
+
+        // Get the source file path for this symbol
+        let source_path = self.get_symbol_source_path(sym_id, binder)?;
+
+        // Parse node_modules segments from the source path
+        let components: Vec<_> = Path::new(&source_path).components().collect();
+        let nm_positions: Vec<usize> = components
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                Component::Normal(part) if part.to_str() == Some("node_modules") => Some(i),
+                _ => None,
+            })
+            .collect();
+
+        // Case 1: Symbol is an import alias from a package in node_modules,
+        // and the import specifier is a bare package name (not relative).
+        // This means it's importing from a transitive dependency.
+        //
+        // Example: foo/index.d.ts has `import { NestedProps } from "nested"`
+        // where foo is in node_modules and nested is in foo/node_modules/nested.
+        // The "from" path is "foo/node_modules/nested".
+        if !nm_positions.is_empty()
+            && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && let Some(import_module) = &symbol.import_module
+            && !import_module.starts_with('.')
+            && !import_module.starts_with('/')
+        {
+            // The symbol is an import alias that imports from a bare module specifier.
+            // Its source file is in a node_modules package. This means it's importing
+            // from a transitive dependency.
+
+            // Get the parent package name from the source path
+            let last_nm = *nm_positions.last().unwrap();
+            let pkg_start = last_nm + 1;
+            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let parent_package: Vec<String> = components[pkg_start..pkg_start + pkg_len]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            if !parent_package.is_empty() {
+                let from_path = format!(
+                    "{}/node_modules/{}",
+                    parent_package.join("/"),
+                    import_module
+                );
+                return Some((from_path, type_name));
+            }
+        }
+
+        // Case 2: Source path has nested node_modules
+        // (the resolved original symbol lives in a deeply nested path)
+        if nm_positions.len() >= 2 {
+            let first_nm = nm_positions[0];
+            let second_nm = nm_positions[1];
+
+            let parent_parts: Vec<String> = components[first_nm + 1..second_nm]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            let nested_start = second_nm + 1;
+            let nested_len = if components.get(nested_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let nested_parts: Vec<String> = components[nested_start..nested_start + nested_len]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+
+            if !parent_parts.is_empty() && !nested_parts.is_empty() {
+                let from_path = format!(
+                    "{}/node_modules/{}",
+                    parent_parts.join("/"),
+                    nested_parts.join("/")
+                );
+                return Some((from_path, type_name));
+            }
+        }
+
+        // Case 3: Source is in node_modules and the subpath isn't in the
+        // package's exports map (private module)
+        if nm_positions.len() == 1 {
+            let nm_idx = nm_positions[0];
+            let pkg_start = nm_idx + 1;
+            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
+                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+
+            let subpath_start = pkg_start + pkg_len;
+            if subpath_start < components.len() {
+                let package_root = Path::new(&source_path)
+                    .components()
+                    .take(nm_idx + 1 + pkg_len)
+                    .collect::<std::path::PathBuf>();
+
+                let subpath_parts: Vec<String> = components[subpath_start..]
+                    .iter()
+                    .filter_map(|c| match c {
+                        Component::Normal(part) => part.to_str().map(str::to_string),
+                        _ => None,
+                    })
+                    .collect();
+
+                let relative_path = subpath_parts.join("/");
+                if let Some(runtime_path) = self.declaration_runtime_relative_path(&relative_path)
+                    && self
+                        .reverse_export_specifier_for_runtime_path(&package_root, &runtime_path)
+                        .is_none()
+                {
+                    let pkg_json_path = package_root.join("package.json");
+                    if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
+                        && let Ok(pkg_json) =
+                            serde_json::from_str::<serde_json::Value>(&pkg_content)
+                        && pkg_json.get("exports").is_some()
+                    {
+                        // Build "from" path: ./node_modules/pkg/subpath
+                        let mut path_parts: Vec<String> = components[nm_idx..]
+                            .iter()
+                            .filter_map(|c| match c {
+                                Component::Normal(part) => part.to_str().map(str::to_string),
+                                _ => None,
+                            })
+                            .collect();
+                        if let Some(last) = path_parts.last_mut() {
+                            *last = self.strip_ts_extensions(last);
+                        }
+                        if path_parts.last().is_some_and(|p| p == "index") {
+                            path_parts.pop();
+                        }
+                        let from_path = format!("./{}", path_parts.join("/"));
+                        return Some((from_path, type_name));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.
+    fn get_symbol_source_path(&self, sym_id: SymbolId, binder: &BinderState) -> Option<String> {
+        let source_arena = binder.symbol_arenas.get(&sym_id)?;
+        let arena_addr = Arc::as_ptr(source_arena) as usize;
+        self.arena_to_path.get(&arena_addr).cloned()
     }
 }

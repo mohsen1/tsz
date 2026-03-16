@@ -128,7 +128,32 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            self.check_assignable_or_report_at(
+            // ImportCallOptions is a weak type (all optional properties).
+            // When the source is a primitive/literal, emit TS2559 directly with
+            // the correct type names matching tsc's format.
+            if tsz_solver::is_primitive_type(self.ctx.types, options_type) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                // Use the literal text from the AST for string/numeric literals;
+                // for other primitives, fall back to the type formatter.
+                let source_str = self
+                    .ctx
+                    .arena
+                    .get(options_idx)
+                    .and_then(|n| self.ctx.arena.get_literal(n))
+                    .map(|lit| format!("\"{}\"", lit.text))
+                    .unwrap_or_else(|| self.format_type(options_type));
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    &[&source_str, "ImportCallOptions"],
+                );
+                self.error_at_node(
+                    options_idx,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                );
+                return;
+            }
+            self.check_assignable_or_report_at_exact_anchor(
                 options_type,
                 import_call_options_type,
                 options_idx,
@@ -147,8 +172,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check assignability — emit TS2322 if not assignable
-        self.check_assignable_or_report_at(
+        // Check assignability — emit TS2322/TS2559 if not assignable
+        self.check_assignable_or_report_at_exact_anchor(
             options_type,
             import_call_options_type,
             options_idx,
@@ -300,12 +325,19 @@ impl<'a> CheckerState<'a> {
         if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let base = module_name.trim_end_matches(dts_suffix);
-            let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                ts_ext
+            let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                format!("{base}{ts_ext}")
             } else {
-                js_ext
+                use tsz_common::common::ModuleKind;
+                match self.ctx.compiler_options.module {
+                    ModuleKind::CommonJS
+                    | ModuleKind::AMD
+                    | ModuleKind::UMD
+                    | ModuleKind::System
+                    | ModuleKind::None => base.to_string(),
+                    _ => format!("{base}{js_ext}"),
+                }
             };
-            let suggested = format!("{base}{ext}");
             let message = format_message(
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                 &[&suggested],
@@ -926,6 +958,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Skip local-export checks when the export is in a wrong context (inside block/function).
+        // The grammar error (TS1233) is the primary error; TS2661/TS2304 shouldn't also fire.
+        if self.is_in_non_module_element_context(named_exports_idx) {
+            return;
+        }
+
         let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
             return;
         };
@@ -1467,11 +1505,12 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // verbatimModuleSyntax Export Checks (TS1205, TS1284, TS1285)
+    // verbatimModuleSyntax / isolatedModules Export Checks (TS1205, TS1284, TS1285, TS1448)
     // =========================================================================
 
-    /// TS1205: Re-exporting a type when 'verbatimModuleSyntax' is enabled
+    /// TS1205: Re-exporting a type when 'verbatimModuleSyntax' or 'isolatedModules' is enabled
     /// requires using `export type`.
+    /// TS1448: Re-exporting a type-only declaration requires type-only re-export under isolatedModules.
     pub(crate) fn check_verbatim_module_syntax_named_exports(
         &mut self,
         named_exports_idx: NodeIndex,
@@ -1480,9 +1519,14 @@ impl<'a> CheckerState<'a> {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
 
-        if !self.ctx.compiler_options.verbatim_module_syntax {
+        // Determine which option is active and its name for error messages
+        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+            "verbatimModuleSyntax"
+        } else if self.ctx.compiler_options.isolated_modules {
+            "isolatedModules"
+        } else {
             return;
-        }
+        };
 
         let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
             return;
@@ -1526,17 +1570,28 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_type_only = if let Some(ref module_spec) = module_specifier_text {
+            // Check 1: Is the symbol inherently a type? → TS1205
+            // For isolatedModules: skip symbols imported via `import type` — the import
+            // already makes it syntactically clear the symbol is type-only, so re-exporting
+            // without `export type` is OK. Under verbatimModuleSyntax, this is still an error.
+            let is_inherent_type = if let Some(ref module_spec) = module_specifier_text {
                 self.is_import_specifier_type_only(module_spec, &source_name)
-                    || self.is_export_type_only_across_binders(module_spec, &source_name)
             } else {
-                self.is_local_symbol_type_only(&source_name)
+                let type_only = self.is_local_symbol_type_only(&source_name);
+                if type_only
+                    && option_name == "isolatedModules"
+                    && self.is_local_symbol_imported_as_type_only(&source_name)
+                {
+                    false
+                } else {
+                    type_only
+                }
             };
 
-            if is_type_only {
+            if is_inherent_type {
                 let message = format_message(
                     diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                    &["verbatimModuleSyntax"],
+                    &[option_name],
                 );
                 self.error_at_node(
                     source_name_idx,
@@ -1546,22 +1601,162 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Check 2: Is the symbol from a type-only declaration chain?
+            // For re-exports with `from`: check cross-binder type-only chains
+            // For local exports: check if the local symbol was imported through a type-only chain
+            let is_type_only_chain = if let Some(ref module_spec) = module_specifier_text {
+                self.is_export_type_only_across_binders(module_spec, &source_name)
+            } else {
+                self.is_local_symbol_from_type_only_chain(&source_name)
+            };
+
+            if is_type_only_chain {
+                if option_name == "verbatimModuleSyntax" {
+                    // VMS uses TS1205 for both cases
+                    let message = format_message(
+                        diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
+                        &[option_name],
+                    );
+                    self.error_at_node(
+                        source_name_idx,
+                        &message,
+                        diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
+                    );
+                } else {
+                    // isolatedModules uses TS1448 for type-only chain cases
+                    let export_name = self
+                        .get_identifier_text_from_idx(specifier.name)
+                        .unwrap_or_else(|| source_name.clone());
+                    let message = format_message(
+                        diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
+                        &[&export_name, option_name],
+                    );
+                    self.error_at_node(
+                        source_name_idx,
+                        &message,
+                        diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
+                    );
+                }
+                continue;
+            }
+
             // TS2748: Cannot access ambient const enums when VMS is enabled.
             // For re-exports like `export { E } from "pkg"` where E is an ambient const enum.
-            if let Some(ref module_spec) = module_specifier_text
-                && self.is_import_specifier_ambient_const_enum(module_spec, &source_name)
-            {
-                let msg = format_message(
-                    diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                    &["verbatimModuleSyntax"],
-                );
-                self.error_at_node(
-                    source_name_idx,
-                    &msg,
-                    diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                );
+            if option_name == "verbatimModuleSyntax" {
+                if let Some(ref module_spec) = module_specifier_text
+                    && self.is_import_specifier_ambient_const_enum(module_spec, &source_name)
+                {
+                    let msg = format_message(
+                        diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                        &["verbatimModuleSyntax"],
+                    );
+                    self.error_at_node(
+                        source_name_idx,
+                        &msg,
+                        diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    );
+                }
             }
         }
+    }
+
+    /// TS1269: Check `export import X = require("...")` when the target is type-only.
+    /// Called when the export clause of an export declaration is an ImportEqualsDeclaration.
+    pub(crate) fn check_export_import_equals_type_only(
+        &mut self,
+        export_idx: NodeIndex,
+        import_clause_idx: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+            "verbatimModuleSyntax"
+        } else if self.ctx.compiler_options.isolated_modules {
+            "isolatedModules"
+        } else {
+            return;
+        };
+
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+
+        let Some(import_node) = self.ctx.arena.get(import_clause_idx) else {
+            return;
+        };
+        let Some(import) = self.ctx.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        if import.is_type_only {
+            return;
+        }
+
+        // Get the module specifier from the require(...) call
+        let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
+        let Some(module_spec) = require_module_specifier.as_deref() else {
+            return;
+        };
+
+        // Check if the target module exports a type-only entity
+        let import_name = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|ident| ident.escaped_text.clone());
+        let target_is_type_only = self
+            .is_import_specifier_type_only(module_spec, import_name.as_deref().unwrap_or(""))
+            || self.is_module_export_equals_type_only(module_spec);
+
+        if target_is_type_only {
+            let msg = format_message(
+                diagnostic_messages::CANNOT_USE_EXPORT_IMPORT_ON_A_TYPE_OR_TYPE_ONLY_NAMESPACE_WHEN_IS_ENABLED,
+                &[option_name],
+            );
+            self.error_at_node(
+                export_idx,
+                &msg,
+                diagnostic_codes::CANNOT_USE_EXPORT_IMPORT_ON_A_TYPE_OR_TYPE_ONLY_NAMESPACE_WHEN_IS_ENABLED,
+            );
+        }
+    }
+
+    /// Check if a local symbol was imported from a module where the export is type-only
+    /// (e.g., the source module uses `export type { X }`), but the symbol itself is not
+    /// inherently a type. This is the TS1448 case for isolatedModules.
+    fn is_local_symbol_from_type_only_chain(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            // If the symbol itself is type-only (import type), this is already
+            // caught by is_local_symbol_type_only → TS1205
+            if sym.is_type_only {
+                return false;
+            }
+            // Follow through import alias chain to check if the source export is type-only
+            if (sym.flags & symbol_flags::ALIAS) != 0
+                && let Some(ref module_spec) = sym.import_module
+            {
+                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                return self.is_export_type_only_across_binders(module_spec, import_name);
+            }
+        }
+        false
+    }
+
+    /// Check if a local symbol was imported via `import type` (directly type-only import).
+    /// This is used to distinguish between symbols that are type-only because they were
+    /// explicitly imported as types vs symbols that are type-only because they ARE types.
+    fn is_local_symbol_imported_as_type_only(&self, name: &str) -> bool {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return sym.is_type_only;
+        }
+        false
     }
 
     /// Check if a local symbol is purely a type entity.

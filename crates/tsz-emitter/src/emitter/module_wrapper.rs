@@ -342,6 +342,13 @@ impl<'a> Printer<'a> {
         }
         self.write("var __moduleName = context_1 && context_1.id;");
         self.write_line();
+
+        // Hoist exported function declarations to the outer module scope,
+        // before the `return { setters, execute }` block.  TSC does the same:
+        // function declarations are syntactically hoisted, so they (and their
+        // corresponding `exports_1` calls) live outside `execute`.
+        let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
+
         self.write("return {");
         self.write_line();
         self.increase_indent();
@@ -351,7 +358,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_system_execute_body(source_node, &dep_vars);
+        self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts);
 
         self.decrease_indent();
         self.write("}");
@@ -361,6 +368,87 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("});");
+    }
+
+    /// Hoist exported function declarations out of `execute` into the outer
+    /// module-wrapper scope.  Returns the set of statement `NodeIndex`es that
+    /// were hoisted so they can be skipped inside `emit_system_execute_body`.
+    fn emit_system_hoisted_functions(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> HashSet<NodeIndex> {
+        let mut hoisted = HashSet::new();
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Case 1: `export function foo() {}` or `export default function foo() {}`
+            // These appear as EXPORT_DECLARATION with a FUNCTION_DECLARATION export_clause.
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                // Only handle local exports (no module specifier)
+                if export_decl.module_specifier.is_some() {
+                    continue;
+                }
+                let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+                if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                    continue;
+                }
+                let Some(func_decl) = self.arena.get_function(clause_node) else {
+                    continue;
+                };
+                let func_name = self.get_identifier_text_idx(func_decl.name);
+                if func_name.is_empty() {
+                    // `export default function() {}` — anonymous, needs a generated name
+                    // TSC gives it `default_1` and still hoists it.
+                    let gen_name = if export_decl.is_default_export {
+                        "default_1".to_string()
+                    } else {
+                        continue;
+                    };
+                    // Emit `function default_1() { }` at the outer scope
+                    self.write("function ");
+                    self.write(&gen_name);
+                    self.write("() { }");
+                    self.write_line();
+                    self.write("exports_1(\"default\", ");
+                    self.write(&gen_name);
+                    self.write(");");
+                    self.write_line();
+                    hoisted.insert(stmt_idx);
+                    continue;
+                }
+
+                // Emit `function foo() { <body> }` at the outer scope
+                self.emit(export_decl.export_clause);
+                self.write_line();
+
+                let export_name = if export_decl.is_default_export {
+                    "default"
+                } else {
+                    &func_name
+                };
+                self.write("exports_1(\"");
+                self.write(export_name);
+                self.write("\", ");
+                self.write(&func_name);
+                self.write(");");
+                self.write_line();
+
+                hoisted.insert(stmt_idx);
+            }
+            // Case 2: `export default function name() {}` parsed as a direct
+            // FUNCTION_DECLARATION with export modifier (rare in our parser)
+            // — for now we handle only the EXPORT_DECLARATION wrapper above.
+        }
+
+        hoisted
     }
 
     pub(super) fn emit_module_wrapper_body(
@@ -916,6 +1004,7 @@ impl<'a> Printer<'a> {
         &mut self,
         source_node: &tsz_parser::parser::node::Node,
         dep_vars: &HashMap<String, String>,
+        hoisted_func_stmts: &HashSet<NodeIndex>,
     ) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
@@ -936,6 +1025,10 @@ impl<'a> Printer<'a> {
         self.register_system_import_substitutions(source, dep_vars);
 
         for &stmt_idx in &source.statements.nodes {
+            // Skip function declarations that were already hoisted to the outer scope
+            if hoisted_func_stmts.contains(&stmt_idx) {
+                continue;
+            }
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };

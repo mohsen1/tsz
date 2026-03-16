@@ -200,6 +200,13 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) {
+        // Skip nested pattern processing for ERROR types to prevent cascading
+        // diagnostics. When a parent element resolves to ERROR (e.g., from
+        // destructuring `unknown`), nested patterns should not emit further errors.
+        if parent_type == TypeId::ERROR {
+            return;
+        }
+
         self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
 
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
@@ -732,6 +739,26 @@ impl<'a> CheckerState<'a> {
                 defer_property_not_found,
                 suppress_missing_property_for_literal_default,
             ) {
+                // Check accessibility (TS2341/TS2445) for computed literal key destructuring.
+                // e.g. `const { ["p"]: p1 } = new C();` where `p` is private.
+                if let Some((string_keys, _)) = self.get_literal_key_union_from_type(key_type) {
+                    let error_node = if element_data.property_name != NodeIndex::NONE {
+                        element_data.property_name
+                    } else if element_data.name != NodeIndex::NONE {
+                        element_data.name
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    for key in &string_keys {
+                        let key_str = self.ctx.types.resolve_atom(*key);
+                        self.check_property_accessibility(
+                            NodeIndex::NONE,
+                            &key_str,
+                            error_node,
+                            parent_type,
+                        );
+                    }
+                }
                 return property_type;
             }
         }
@@ -774,7 +801,19 @@ impl<'a> CheckerState<'a> {
                 // `function`, and structural types.
                 // ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
-                if !key_is_string && !key_is_number && key_type != TypeId::NEVER {
+                // tsc allows symbol, unique symbol, and type parameter keys
+                let key_is_symbol = key_type == TypeId::SYMBOL
+                    || tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type).is_some();
+                let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    key_type,
+                );
+                if !key_is_string
+                    && !key_is_number
+                    && !key_is_symbol
+                    && !key_is_type_param
+                    && key_type != TypeId::NEVER
+                {
                     let check_key = if key_type == TypeId::ERROR {
                         TypeId::ANY
                     } else {
@@ -881,7 +920,11 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
                 );
             }
-            return TypeId::UNKNOWN;
+            // Return ERROR to suppress cascading diagnostics in nested patterns.
+            // TSC only reports errors at the outermost destructuring level for
+            // unknown types (e.g., `{ a: { x } }` from catch clause only reports
+            // TS2339 for `a`, not for nested `x`).
+            return TypeId::ERROR;
         }
 
         if let Some(ref prop_name_str) = property_name {
@@ -1269,9 +1312,29 @@ impl<'a> CheckerState<'a> {
     /// The rest type is the parent type with all statically-named non-rest properties
     /// excluded (like `Omit<T, 'a' | 'b'>`). For union parent types, compute the rest
     /// for each member and union the results.
-    fn compute_object_rest_type(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
+    ///
+    /// For type parameters, the rest type is the type parameter itself. We cannot
+    /// express `Omit<T, K>` directly, so we preserve the type parameter's identity.
+    /// This ensures that when a generic function returns `{ ...rest, b: a }`, the
+    /// return type contains `T` and is properly instantiated at call sites.
+    pub(crate) fn compute_object_rest_type(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) -> TypeId {
         // Collect the names of all non-rest sibling properties in this binding pattern.
         let excluded = self.collect_non_rest_property_names(pattern_idx);
+
+        // For type parameters, preserve the generic identity.
+        // The rest of `T extends { a, b }` with `a` excluded is `Omit<T, "a">`,
+        // which we approximate as T itself. This preserves T in the function's
+        // inferred return type so that instantiation at call sites works correctly.
+        // Without this, rest resolves to a concrete object from the constraint,
+        // losing generic properties that only appear when T is instantiated.
+        let is_type_param = query::type_parameter_constraint(self.ctx.types, parent_type).is_some();
+        if is_type_param {
+            return parent_type;
+        }
 
         // For union types, compute rest type for each member and union them.
         if let Some(members) = query::union_members(self.ctx.types, parent_type) {

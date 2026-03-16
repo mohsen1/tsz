@@ -59,6 +59,125 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve binding element type from a variable declaration initializer.
+    ///
+    /// For `let { a, ...rest } = expr`, this resolves the type of each binding
+    /// element from the initializer expression's type. For rest elements
+    /// (`dot_dot_dot_token`), the type is the initializer type with named
+    /// sibling properties excluded. For named elements, the type is the
+    /// corresponding property type from the initializer.
+    ///
+    /// This is critical for return type inference of generic functions:
+    /// without it, destructured variables like `rest` in
+    /// `let { a, ...rest } = obj` resolve to `any` during inference,
+    /// causing the function's inferred return type to lose type parameter
+    /// references and breaking instantiation at call sites.
+    pub(crate) fn resolve_binding_element_from_variable_initializer(
+        &mut self,
+        value_decl: NodeIndex,
+        name: &str,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(value_decl)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        // Walk up: Identifier → BindingElement
+        let ext = self.ctx.arena.get_extended(value_decl)?;
+        let be_idx = ext.parent;
+        if !be_idx.is_some() {
+            return None;
+        }
+        let be_node = self.ctx.arena.get(be_idx)?;
+        if be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let be_data = self.ctx.arena.get_binding_element(be_node)?;
+
+        // Walk up: BindingElement → ObjectBindingPattern
+        let ext2 = self.ctx.arena.get_extended(be_idx)?;
+        let pat_idx = ext2.parent;
+        if !pat_idx.is_some() {
+            return None;
+        }
+        let pat_node = self.ctx.arena.get(pat_idx)?;
+        if pat_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        // Walk up: ObjectBindingPattern → VariableDeclaration
+        let ext3 = self.ctx.arena.get_extended(pat_idx)?;
+        let var_decl_idx = ext3.parent;
+        if !var_decl_idx.is_some() {
+            return None;
+        }
+        let var_decl_node = self.ctx.arena.get(var_decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(var_decl_node)?;
+
+        // Get the initializer type
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+        let init_type = self.get_type_of_node(var_decl.initializer);
+        if init_type == TypeId::ANY || init_type == TypeId::ERROR {
+            return None;
+        }
+
+        if be_data.dot_dot_dot_token {
+            // Rest element: compute the rest type (parent type minus excluded properties).
+            // For type parameters, compute_object_rest_type preserves the type parameter.
+            let rest_type = self.compute_object_rest_type(pat_idx, init_type);
+            return Some(rest_type);
+        }
+
+        // Named property element: get the property type from the initializer type.
+        let prop_name_str = if be_data.property_name.is_some() {
+            self.get_identifier_text_from_idx(be_data.property_name)
+        } else {
+            Some(name.to_string())
+        }?;
+
+        let evaluated = self.evaluate_type_for_assignability(init_type);
+        let prop_atom = self.ctx.types.intern_string(&prop_name_str);
+
+        if let Some(shape) = object_shape_for_type(self.ctx.types, evaluated)
+            && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
+        {
+            let mut t = prop.type_id;
+            if prop.optional && self.ctx.strict_null_checks() {
+                t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+            }
+            if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
+                t = tsz_solver::remove_undefined(self.ctx.types, t);
+            }
+            return Some(t);
+        }
+
+        // For type parameters, get the property from the constraint
+        if let Some(constraint) =
+            crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                evaluated,
+            )
+        {
+            let constraint = self.evaluate_type_for_assignability(constraint);
+            if let Some(shape) = object_shape_for_type(self.ctx.types, constraint)
+                && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
+            {
+                let mut t = prop.type_id;
+                if prop.optional && self.ctx.strict_null_checks() {
+                    t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                }
+                if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
+                    t = tsz_solver::remove_undefined(self.ctx.types, t);
+                }
+                return Some(t);
+            }
+        }
+
+        None
+    }
+
     /// Resolve binding element type from annotated destructured function parameter.
     pub(crate) fn resolve_binding_element_from_annotated_param(
         &mut self,

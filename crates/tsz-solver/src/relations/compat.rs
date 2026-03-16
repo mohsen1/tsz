@@ -1230,11 +1230,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Private brand incompatibility — let the structural subtype check handle
-        // it so the explain path can identify MissingProperty/MissingProperties
-        // (which the rendering layer filters into TS2741/TS2739).  Previously we
-        // short-circuited with TypeMismatch here, but that prevented the structural
-        // check from detecting which concrete properties are missing.
+        // Private brand incompatibility: remember the result but don't short-circuit.
+        // Let the structural explain path run first — it may find real missing properties
+        // (not just brands) that produce TS2741 instead of generic TS2322.
+        // Only use the brand result as a fallback if the structural path returns None.
+        let brand_fails = matches!(
+            self.private_brand_assignability_override(source, target),
+            Some(false)
+        );
 
         // Empty object target or top-like union `{}` | null | undefined
         if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target)
@@ -1249,7 +1252,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         self.configure_subtype(self.strict_function_types);
-        self.subtype.explain_failure(source, target)
+        let structural_result = self.subtype.explain_failure(source, target);
+
+        // If the structural path found a useful reason, use it.
+        // Otherwise, fall back to the brand mismatch result.
+        match (&structural_result, brand_fails) {
+            // Structural path found something — prefer it over brand mismatch
+            (Some(_), _) => structural_result,
+            // No structural result but brand fails — use TypeMismatch
+            (None, true) => Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            }),
+            // No structural result, no brand issue
+            (None, false) => None,
+        }
     }
 
     const fn configure_subtype(&mut self, strict_function_types: bool) {
@@ -1370,7 +1387,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
-            None => return false,
+            None => {
+                // No extractable object shape. Primitive and literal types (string,
+                // number, boolean, bigint, their literal variants, null, undefined,
+                // void, symbol, unique symbol) have no properties that could overlap
+                // with the weak type's optional properties, so they violate.
+                // Empty objects ({}) do NOT violate – they are assignable to weak types.
+                return crate::visitors::visitor_predicates::is_primitive_type(
+                    self.interner,
+                    source,
+                );
+            }
         };
 
         let source_shape = self

@@ -199,6 +199,7 @@ export class CliTranspiler {
       useDefineForClassFields?: boolean;
       experimentalDecorators?: boolean;
       emitDecoratorMetadata?: boolean;
+      strictNullChecks?: boolean;
       jsx?: string;
       jsxFactory?: string;
       jsxFragmentFactory?: string;
@@ -234,6 +235,7 @@ export class CliTranspiler {
       useDefineForClassFields,
       experimentalDecorators = false,
       emitDecoratorMetadata = false,
+      strictNullChecks,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
@@ -341,6 +343,7 @@ export class CliTranspiler {
       }
       if (experimentalDecorators) args.push('--experimentalDecorators');
       if (emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
+      if (strictNullChecks !== undefined) args.push('--strictNullChecks', String(strictNullChecks));
       if (jsx) args.push('--jsx', jsx);
       if (jsxFactory) args.push('--jsxFactory', jsxFactory);
       if (jsxFragmentFactory) args.push('--jsxFragmentFactory', jsxFragmentFactory);

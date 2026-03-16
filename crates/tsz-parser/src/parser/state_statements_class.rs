@@ -918,8 +918,12 @@ impl ParserState {
                 // TS1146: When decorators are followed by a non-declaration token,
                 // tsc emits "Declaration expected" rather than "Decorators are not valid here"
                 // because the decorator implies the user intended to write a declaration.
+                // Use token_full_start (including leading trivia) to match tsc's error position.
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
+                let err_pos = self.token_full_start();
+                self.parse_error_at(
+                    err_pos,
+                    0,
                     "Declaration expected.",
                     diagnostic_codes::DECLARATION_EXPECTED,
                 );

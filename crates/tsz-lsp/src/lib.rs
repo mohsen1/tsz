@@ -67,7 +67,7 @@ pub use code_actions::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry,
     ImportCandidate, ImportCandidateKind,
 };
-pub use completions::{CompletionItem, CompletionItemKind, Completions};
+pub use completions::{CompletionItem, CompletionItemData, CompletionItemKind, Completions};
 pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
 pub use editor_ranges::folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
@@ -78,12 +78,13 @@ pub use highlighting::semantic_tokens::{
 };
 pub use highlighting::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightProvider};
 pub use hover::{HoverInfo, HoverProvider};
+pub use jsdoc::jsdoc_for_node;
 pub use navigation::definition::GoToDefinition;
 pub use navigation::references::{FindReferences, ReferenceInfo, RenameLocation};
 pub use navigation::{definition, implementation, references, type_definition};
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
-    Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
+    FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
 };
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
 pub use signature_help::{
@@ -131,3 +132,6 @@ pub use rename::linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
 
 // File Rename
 pub use rename::file_rename::{FileRenameProvider, ImportLocation};
+
+// Document Colors
+pub use editor_decorations::document_color::{Color, ColorInformation, DocumentColorProvider};

@@ -88,7 +88,7 @@ pub struct EnclosingClassInfo {
 
 /// Info about a label in scope for break/continue validation.
 #[derive(Clone, Debug)]
-pub(crate) struct LabelInfo {
+pub struct LabelInfo {
     /// The label name (e.g., "outer").
     pub(crate) name: String,
     /// Whether the label is on an iteration statement (for continue validation).
@@ -155,7 +155,7 @@ pub struct TypeCache {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct EnvEvalCacheEntry {
+pub struct EnvEvalCacheEntry {
     pub(crate) result: TypeId,
     pub(crate) depth_exceeded: bool,
 }
@@ -164,7 +164,7 @@ pub(crate) struct EnvEvalCacheEntry {
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
 #[derive(Clone, Debug)]
-pub(crate) struct DestructuredBindingInfo {
+pub struct DestructuredBindingInfo {
     /// The source type of the entire destructured expression (the union)
     pub(crate) source_type: TypeId,
     /// The property name that this symbol corresponds to (for object patterns)
