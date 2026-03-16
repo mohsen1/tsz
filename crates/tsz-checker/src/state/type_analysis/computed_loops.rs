@@ -4,6 +4,34 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Check if a variable declaration is inside a for-in or for-of statement.
+    /// Used to suppress TS7031 for destructuring bindings in loop variables,
+    /// since their type comes from the iterable, not from a syntactic initializer.
+    pub(crate) fn is_for_in_or_of_variable_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(decl_list_node) = self.ctx.arena.get(decl_parent) else {
+            return false;
+        };
+        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        let Some(list_parent) = self
+            .ctx
+            .arena
+            .get_extended(decl_parent)
+            .map(|ext| ext.parent)
+        else {
+            return false;
+        };
+        let Some(for_node) = self.ctx.arena.get(list_parent) else {
+            return false;
+        };
+        for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            || for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+    }
+
     pub(crate) fn compute_for_in_of_variable_type(
         &mut self,
         decl_idx: NodeIndex,
