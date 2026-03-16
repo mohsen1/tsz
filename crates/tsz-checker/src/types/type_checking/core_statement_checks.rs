@@ -5,6 +5,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{NodeAccess, NodeView};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -428,6 +429,73 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+
+    /// TS6133: Check for unused `infer` type parameters in conditional types.
+    pub(super) fn check_unused_infer_type_params_in_conditional(
+        &mut self,
+        cond: &tsz_parser::parser::node::ConditionalTypeData,
+    ) {
+        let mut infer_params: Vec<(String, NodeIndex)> = Vec::new();
+        let mut stack: Vec<NodeIndex> = vec![cond.extends_type];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else { continue };
+            if node.kind == syntax_kind_ext::INFER_TYPE {
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+                    && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                    && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    infer_params.push((ident.escaped_text.clone(), tp_data.name));
+                }
+            }
+            for child in self.ctx.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        if infer_params.is_empty() { return; }
+        for (name, name_idx) in &infer_params {
+            let mut found = false;
+            for &branch in &[cond.true_type, cond.false_type] {
+                if self.type_node_references_name(branch, name) {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                self.error_at_node(
+                    *name_idx,
+                    &format_message(
+                        diagnostic_messages::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+                        &[name],
+                    ),
+                    diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+                );
+            }
+        }
+    }
+
+    fn type_node_references_name(&self, root: NodeIndex, name: &str) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else { continue };
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                if let Some(tr) = self.ctx.arena.get_type_ref(node)
+                    && let Some(tn) = self.ctx.arena.get(tr.type_name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(tn)
+                    && ident.escaped_text == name
+                {
+                    return true;
+                }
+            }
+            for child in self.ctx.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        false
     }
 
     /// TS2322: Check that a mapped type's constraint is assignable to `string | number | symbol`.
