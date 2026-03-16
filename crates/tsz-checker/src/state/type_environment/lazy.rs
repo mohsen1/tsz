@@ -43,9 +43,12 @@ thread_local! {
 }
 
 // Maximum global resolution fuel across all top-level calls per thread.
-// Normal code uses well under 5000 total resolutions. DOM-heavy React code
-// with module augmentations can explode to hundreds of thousands.
-const MAX_GLOBAL_RESOLUTION_FUEL: u32 = 5000;
+// This must be high enough to process large files with many expressions
+// (e.g., unionSubtypeReductionErrors.ts has 6000+ lines requiring ~15K+
+// resolution ops). DOM-heavy React code with module augmentations can
+// explode to hundreds of thousands; this limit prevents that while
+// allowing legitimate large files.
+const MAX_GLOBAL_RESOLUTION_FUEL: u32 = 50_000;
 
 /// Check if global resolution fuel is exhausted.
 pub(crate) fn global_resolution_fuel_exhausted() -> bool {
