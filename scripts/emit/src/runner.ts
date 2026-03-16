@@ -62,6 +62,7 @@ interface TestCase {
   useDefineForClassFields?: boolean;
   experimentalDecorators: boolean;
   emitDecoratorMetadata: boolean;
+  strictNullChecks?: boolean;
   jsx?: string;
   jsxFactory?: string;
   jsxFragmentFactory?: string;
@@ -145,6 +146,7 @@ function getCacheKey(
   useDefineForClassFields: string = '',
   experimentalDecorators: boolean = false,
   emitDecoratorMetadata: boolean = false,
+  strictNullChecks: string = '',
   jsx: string = '',
   jsxFactory: string = '',
   jsxFragmentFactory: string = '',
@@ -177,7 +179,7 @@ function getCacheKey(
   } catch {
     runnerSalt = 'runner-unknown';
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -544,6 +546,11 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       ? variant.experimentaldecorators === 'true'
       : directives.experimentaldecorators === true;
     const emitDecoratorMetadata = directives.emitdecoratormetadata === true;
+    const strictNullChecks = variant.strictnullchecks !== undefined
+      ? variant.strictnullchecks === 'true'
+      : typeof directives.strictnullchecks === 'boolean'
+        ? directives.strictnullchecks
+        : undefined;
     const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
     const moduleDetection =
       variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
@@ -610,6 +617,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       useDefineForClassFields,
       experimentalDecorators,
       emitDecoratorMetadata,
+      strictNullChecks,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
@@ -715,6 +723,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.useDefineForClassFields === undefined ? '' : String(testCase.useDefineForClassFields),
       testCase.experimentalDecorators,
       testCase.emitDecoratorMetadata,
+      testCase.strictNullChecks === undefined ? '' : String(testCase.strictNullChecks),
       testCase.jsx ?? '',
       testCase.jsxFactory ?? '',
       testCase.jsxFragmentFactory ?? '',
@@ -754,6 +763,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         useDefineForClassFields: testCase.useDefineForClassFields,
         experimentalDecorators: testCase.experimentalDecorators,
         emitDecoratorMetadata: testCase.emitDecoratorMetadata,
+        strictNullChecks: testCase.strictNullChecks,
         jsx: testCase.jsx,
         jsxFactory: testCase.jsxFactory,
         jsxFragmentFactory: testCase.jsxFragmentFactory,

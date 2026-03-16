@@ -352,7 +352,10 @@ impl<'a> Printer<'a> {
             // or check if all meaningful members serialize to the same type.
             k if k == syntax_kind_ext::UNION_TYPE => {
                 if let Some(composite) = self.arena.get_composite_type(type_node) {
-                    // Filter out null, undefined, void, never from union members
+                    let strict_null_checks = self.ctx.options.strict_null_checks;
+                    // Filter out null, undefined, void, never from union members.
+                    // When strictNullChecks is true, null and undefined are meaningful
+                    // types in unions and should NOT be stripped (only never is stripped).
                     let meaningful: Vec<NodeIndex> = composite
                         .types
                         .nodes
@@ -363,16 +366,21 @@ impl<'a> Printer<'a> {
                                 return false;
                             };
                             let sk = |s: SyntaxKind| s as u16;
-                            // Skip null/undefined/void/never keyword types
-                            if member.kind == sk(SyntaxKind::NullKeyword)
-                                || member.kind == sk(SyntaxKind::UndefinedKeyword)
-                                || member.kind == sk(SyntaxKind::VoidKeyword)
-                                || member.kind == sk(SyntaxKind::NeverKeyword)
+                            // Always skip never
+                            if member.kind == sk(SyntaxKind::NeverKeyword) {
+                                return false;
+                            }
+                            // Skip null/undefined/void only when strictNullChecks is false
+                            if !strict_null_checks
+                                && (member.kind == sk(SyntaxKind::NullKeyword)
+                                    || member.kind == sk(SyntaxKind::UndefinedKeyword)
+                                    || member.kind == sk(SyntaxKind::VoidKeyword))
                             {
                                 return false;
                             }
-                            // Skip literal type null
-                            if member.kind == syntax_kind_ext::LITERAL_TYPE
+                            // Skip literal type null (only when strictNullChecks is false)
+                            if !strict_null_checks
+                                && member.kind == syntax_kind_ext::LITERAL_TYPE
                                 && let Some(lit) = self.arena.get_literal_type(member)
                                 && let Some(lit_node) = self.arena.get(lit.literal)
                                 && lit_node.kind == sk(SyntaxKind::NullKeyword)
@@ -380,15 +388,16 @@ impl<'a> Printer<'a> {
                                 return false;
                             }
                             // Skip TypeReference to null/undefined/void/never
-                            // (parser emits these as TypeReference with keyword name)
                             if member.kind == syntax_kind_ext::TYPE_REFERENCE
                                 && let Some(type_ref) = self.arena.get_type_ref(member)
                             {
                                 let ref_name = self.get_identifier_text_idx(type_ref.type_name);
-                                if matches!(
-                                    ref_name.as_str(),
-                                    "null" | "undefined" | "void" | "never"
-                                ) {
+                                if ref_name == "never" {
+                                    return false;
+                                }
+                                if !strict_null_checks
+                                    && matches!(ref_name.as_str(), "null" | "undefined" | "void")
+                                {
                                     return false;
                                 }
                             }
@@ -532,11 +541,29 @@ impl<'a> Printer<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                // Skip `this` parameter — it's TypeScript-only and erased in JS emit.
+                if let Some(name_node) = self.arena.get(param.name) {
+                    let sk = |s: SyntaxKind| s as u16;
+                    if name_node.kind == sk(SyntaxKind::ThisKeyword) {
+                        continue;
+                    }
+                    if name_node.kind == sk(SyntaxKind::Identifier)
+                        && let Some(id) = self.arena.get_identifier(name_node)
+                        && id.escaped_text == "this"
+                    {
+                        continue;
+                    }
+                }
                 if !first {
                     self.write(", ");
                 }
                 first = false;
-                if param.type_annotation.is_some() {
+                if param.dot_dot_dot_token {
+                    // Rest parameter: serialize the element type if it's an array type,
+                    // otherwise emit Object (matching tsc behavior).
+                    let serialized = self.serialize_rest_param_element_type(param.type_annotation);
+                    self.write(&serialized);
+                } else if param.type_annotation.is_some() {
                     let serialized = self.serialize_type_for_metadata(param.type_annotation);
                     self.write(&serialized);
                 } else {
@@ -544,6 +571,20 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// For a rest parameter, serialize the element type of the array type annotation.
+    /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
+    /// If the type is not an array type or has no annotation, returns "Object".
+    fn serialize_rest_param_element_type(&self, type_annotation: NodeIndex) -> String {
+        if let Some(type_node) = self.arena.get(type_annotation) {
+            if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
+                if let Some(arr) = self.arena.get_array_type(type_node) {
+                    return self.serialize_type_for_metadata(arr.element_type);
+                }
+            }
+        }
+        "Object".to_string()
     }
 
     /// Emit metadata for constructor paramtypes (used with class-level decorators).
