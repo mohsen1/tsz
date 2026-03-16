@@ -1788,7 +1788,7 @@ impl<'a> CheckerState<'a> {
                     if is_const {
                         // `as const` with template expression → NOT inferrable
                         let inner = self.ctx.arena.get(assertion.expression);
-                        !inner.is_some_and(|n| n.kind == syntax_kind_ext::TEMPLATE_EXPRESSION)
+                        inner.is_none_or(|n| n.kind != syntax_kind_ext::TEMPLATE_EXPRESSION)
                     } else {
                         true
                     }
