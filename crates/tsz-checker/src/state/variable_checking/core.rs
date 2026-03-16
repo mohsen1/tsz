@@ -1006,18 +1006,54 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        // Skip when the variable is in a for-of/for-in/catch context, as the type
+        // is provided by the iterable/catch expression, not by an initializer.
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_none()
         {
-            let is_destructuring_pattern =
-                self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
-                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                });
-            if is_destructuring_pattern {
-                self.emit_implicit_any_for_var_destructuring(var_decl.name);
+            // Check if the variable declaration is in a for-of, for-in, or catch context
+            // by checking the grandparent (VarDecl -> VarDeclList -> ForOf/ForIn) or
+            // direct parent for catch clauses.
+            let in_for_or_catch = self
+                .ctx
+                .arena
+                .get_extended(decl_idx)
+                .and_then(|ext| {
+                    let parent = ext.parent;
+                    let parent_node = self.ctx.arena.get(parent)?;
+                    // Direct parent: catch clause has VariableDeclaration directly
+                    if parent_node.kind == syntax_kind_ext::CATCH_CLAUSE {
+                        return Some(true);
+                    }
+                    // VarDeclList -> ForOf/ForIn
+                    if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        let grandparent = self
+                            .ctx
+                            .arena
+                            .get_extended(parent)
+                            .and_then(|gp_ext| self.ctx.arena.get(gp_ext.parent))
+                            .map(|gp| gp.kind);
+                        if matches!(grandparent, Some(k) if k == syntax_kind_ext::FOR_OF_STATEMENT
+                            || k == syntax_kind_ext::FOR_IN_STATEMENT)
+                        {
+                            return Some(true);
+                        }
+                    }
+                    Some(false)
+                })
+                .unwrap_or(false);
+
+            if !in_for_or_catch {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if is_destructuring_pattern {
+                    self.emit_implicit_any_for_var_destructuring(var_decl.name);
+                }
             }
         }
 
