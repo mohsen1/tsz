@@ -2,9 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: 10814/12581 (86.0%) full suite, ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
+**Conformance**: 10823/12581 (86.0%) full suite, 663 fingerprint-only failures (2026-03-16). Fix #13 (literal display removal) was reverted by another agent — display properties are deeply integrated and required for 3800+ tests. Current code uses `with_display_properties()` which is net-positive.
 
-**Campaign plateau**: After 13 fixes, remaining failures require deep type system work, multi-file compilation, JSDoc support, or individual fingerprint investigation. No more bulk-fixable patterns available.
+**Campaign plateau**: After 12 net fixes (fix #13 reverted), remaining failures require deep type system work, multi-file compilation, JSDoc support, or individual fingerprint investigation. No more bulk-fixable patterns available. The display property system causes ~20 fingerprint mismatches (literal types leaking to non-fresh types) but fixing it breaks far more tests.
 
 **What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
@@ -19,7 +19,7 @@
 10. Preserve callback return-type TS2322 through arg collection filter (circularResolvedSignature)
 11. Fix `recover_property_from_implemented_interfaces` — was using `get_type_from_type_node` on ExpressionWithTypeArguments (returns ERROR → ANY via solver default), now uses `resolve_heritage_symbol` + `type_reference_symbol_type` for correct instance type resolution. Also added `TypeData::Error` handling in solver property access to return ERROR instead of ANY.
 12. Fix TS7018 false positives — was emitting "implicitly has 'any' type" for object literal properties when initializer evaluates to explicit `any` (from `any` variable). tsc only emits TS7018 when `any` comes from null/undefined widening. Fixes ~15 tests (+6 net on 3000-sample).
-13. Fix literal display properties leaking into assignability error messages — `format_type_for_assignability_message` was using `with_display_properties()` which showed pre-widened literal types (e.g., `{ two: 1; }` instead of `{ two: number; }`). Changed to regular formatter. Fixes ~13 fingerprint-only failures (+13 net on 3000-sample).
+13. ~~Fix literal display properties leaking~~ — REVERTED by another agent. Display properties are deeply integrated (removing carry-forward in `widen_freshness` breaks 3800+ tests). The system is net-positive despite ~20 fingerprint mismatches from literal type leaking.
 
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
