@@ -71,17 +71,18 @@ impl<'a> CheckerState<'a> {
 
             // TS1189/TS1190: The variable declaration of a for-in/for-of statement cannot have an initializer
             // Only check when there's a single declaration (TSC suppresses when TS1188 is reported)
+            // tsc anchors at the variable name (not the initializer expression).
             if single_declaration && var_decl.initializer.is_some() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 if is_for_in {
                     self.error_at_node(
-                        var_decl.initializer,
+                        var_decl.name,
                         diagnostic_messages::THE_VARIABLE_DECLARATION_OF_A_FOR_IN_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
                         diagnostic_codes::THE_VARIABLE_DECLARATION_OF_A_FOR_IN_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
                     );
                 } else {
                     self.error_at_node(
-                        var_decl.initializer,
+                        var_decl.name,
                         diagnostic_messages::THE_VARIABLE_DECLARATION_OF_A_FOR_OF_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
                         diagnostic_codes::THE_VARIABLE_DECLARATION_OF_A_FOR_OF_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
                     );
