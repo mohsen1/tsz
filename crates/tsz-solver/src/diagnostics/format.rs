@@ -459,6 +459,56 @@ impl<'a> TypeFormatter<'a> {
                     formatted
                 };
 
+                // TSC shorthand: ReadonlyArray<T> -> readonly T[]
+                // and Readonly<T[]> -> readonly T[]
+                if app.args.len() == 1 {
+                    let single_arg = app.args[0];
+                    if base_str == "ReadonlyArray" {
+                        // ReadonlyArray<T> -> readonly T[]
+                        let elem_formatted = self.format(single_arg);
+                        let needs_parens = matches!(
+                            self.interner.lookup(single_arg),
+                            Some(
+                                TypeData::Union(_)
+                                    | TypeData::Intersection(_)
+                                    | TypeData::Function(_)
+                                    | TypeData::Callable(_)
+                                    | TypeData::Conditional(_)
+                            )
+                        );
+                        let result = if needs_parens {
+                            format!("readonly ({elem_formatted})[]")
+                        } else {
+                            format!("readonly {elem_formatted}[]")
+                        };
+                        trace!(result = %result, "Application formatted as readonly array shorthand");
+                        return result.into();
+                    }
+                    if base_str == "Readonly" {
+                        if let Some(TypeData::Array(elem)) = self.interner.lookup(single_arg) {
+                            // Readonly<T[]> -> readonly T[]
+                            let elem_formatted = self.format(elem);
+                            let needs_parens = matches!(
+                                self.interner.lookup(elem),
+                                Some(
+                                    TypeData::Union(_)
+                                        | TypeData::Intersection(_)
+                                        | TypeData::Function(_)
+                                        | TypeData::Callable(_)
+                                        | TypeData::Conditional(_)
+                                )
+                            );
+                            let result = if needs_parens {
+                                format!("readonly ({elem_formatted})[]")
+                            } else {
+                                format!("readonly {elem_formatted}[]")
+                            };
+                            trace!(result = %result, "Application formatted as Readonly<T[]> shorthand");
+                            return result.into();
+                        }
+                    }
+                }
+
                 let args: Vec<Cow<'static, str>> =
                     app.args.iter().map(|&arg| self.format(arg)).collect();
                 let result = format!("{}<{}>", base_str, args.join(", "));
