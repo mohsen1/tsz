@@ -213,9 +213,42 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
                 );
             }
+
+            // TS1325: Check for spread elements in import arguments
+            if let Some(ref args_list) = call.arguments {
+                for &arg_idx in &args_list.nodes {
+                    if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
+                        if arg_node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT {
+                            self.error_at_node(
+                                arg_idx,
+                                crate::diagnostics::diagnostic_messages::ARGUMENT_OF_DYNAMIC_IMPORT_CANNOT_BE_SPREAD_ELEMENT,
+                                diagnostic_codes::ARGUMENT_OF_DYNAMIC_IMPORT_CANNOT_BE_SPREAD_ELEMENT,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // TS1324: Second argument only supported for certain module kinds
+            if let Some(ref args_list) = call.arguments {
+                if args_list.nodes.len() >= 2
+                    && !self
+                        .ctx
+                        .compiler_options
+                        .module
+                        .supports_dynamic_import_options()
+                {
+                    self.error_at_node(
+                        args_list.nodes[1],
+                        crate::diagnostics::diagnostic_messages::DYNAMIC_IMPORTS_ONLY_SUPPORT_A_SECOND_ARGUMENT_WHEN_THE_MODULE_OPTION_IS_SET_TO,
+                        diagnostic_codes::DYNAMIC_IMPORTS_ONLY_SUPPORT_A_SECOND_ARGUMENT_WHEN_THE_MODULE_OPTION_IS_SET_TO,
+                    );
+                }
+            }
+
             // TS7036: Check specifier type is assignable to `string`
             self.check_dynamic_import_specifier_type(call);
-            // TS2322: Check options arg against ImportCallOptions
+            // TS2322/TS2559: Check options arg against ImportCallOptions
             self.check_dynamic_import_options_type(call);
             self.check_dynamic_import_module_specifier(call);
 
