@@ -5,7 +5,7 @@
 //! arguments by walking type structures in parallel.
 
 use super::*;
-use crate::inference::infer::{InferenceContext, InferenceError};
+use crate::inference::infer::InferenceContext;
 use crate::intern::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, InferencePriority, ParamInfo, PropertyInfo,
