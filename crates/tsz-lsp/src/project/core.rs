@@ -1541,6 +1541,11 @@ impl Project {
         self.files.get(file_name)
     }
 
+    /// Iterate over all tracked file names.
+    pub fn file_names(&self) -> impl Iterator<Item = &String> {
+        self.files.keys()
+    }
+
     /// Check if an import specifier points to a specific target file path.
     ///
     /// This is a simplified check that handles basic relative path resolution.
