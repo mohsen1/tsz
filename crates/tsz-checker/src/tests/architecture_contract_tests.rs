@@ -571,11 +571,12 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
 
     let type_checking_src = {
-        let core = fs::read_to_string("src/types/type_checking/core.rs")
-            .expect("failed to read core.rs");
-        let stmts = fs::read_to_string("src/types/type_checking/core_statement_checks.rs")
-            .unwrap_or_default();
-        format!("{core}{stmts}")
+        let mut s = fs::read_to_string("src/types/type_checking/core.rs")
+            .expect("failed to read src/types/type_checking/core.rs");
+        if let Ok(stmts) = fs::read_to_string("src/types/type_checking/core_statement_checks.rs") {
+            s.push_str(&stmts);
+        }
+        s
     }
         .expect("failed to read src/types/type_checking/core.rs for architecture guard");
     assert!(
