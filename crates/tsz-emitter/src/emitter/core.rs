@@ -394,6 +394,16 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// Temp variable names for CJS/AMD exported destructuring patterns.
+    /// These are emitted as `var _a, _b;` BEFORE the `__esModule` marker,
+    /// matching tsc's placement (between "use strict" and Object.defineProperty).
+    pub(crate) cjs_destructuring_export_temps: Vec<String>,
+
+    /// Byte offset where CJS destructuring export temps should be inserted.
+    pub(crate) cjs_destr_hoist_byte_offset: usize,
+    /// Line number where CJS destructuring export temps should be inserted.
+    pub(crate) cjs_destr_hoist_line: u32,
+
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
 
@@ -608,6 +618,9 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            cjs_destructuring_export_temps: Vec::new(),
+            cjs_destr_hoist_byte_offset: 0,
+            cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),

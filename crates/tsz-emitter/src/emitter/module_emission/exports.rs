@@ -283,18 +283,9 @@ impl<'a> Printer<'a> {
                                 }
                             }
                         } else {
-                            // Complex case (destructuring): emit declaration then exports
-                            let export_names = self.collect_variable_names_from_node(clause_node);
-                            self.emit_variable_statement(clause_node);
-                            self.write_line();
-                            for name in &export_names {
-                                self.write("exports.");
-                                self.write(name);
-                                self.write(" = ");
-                                self.write(name);
-                                self.write(";");
-                                self.write_line();
-                            }
+                            // Complex case (destructuring): transform into comma
+                            // expression that directly assigns to exports, matching tsc.
+                            self.emit_cjs_destructuring_export(clause_node);
                         }
                     } else {
                         self.emit_variable_statement(clause_node);
@@ -707,6 +698,269 @@ impl<'a> Printer<'a> {
                         self.emit(export.export_clause);
                         self.write_semicolon();
                     }
+                }
+            }
+        }
+    }
+
+    /// Emit an exported variable statement with destructuring binding patterns
+    /// as a CJS/AMD comma expression that directly assigns to `exports.*`.
+    ///
+    /// For `export const { x, ...rest } = expr;` with esnext target:
+    /// ```js
+    /// _a = expr, exports.x = _a.x, exports.rest = __rest(_a, ["x"]);
+    /// ```
+    ///
+    /// For `export const { x, ...rest } = expr;` with es5 target:
+    /// ```js
+    /// exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
+    /// ```
+    ///
+    /// For empty patterns like `export const {} = {};` with esnext target:
+    /// ```js
+    /// _a = {};
+    /// ```
+    ///
+    /// For empty patterns with es5 target:
+    /// ```js
+    /// exports._b = _a = {};
+    /// ```
+    /// Check if a `VARIABLE_STATEMENT` has any destructuring binding patterns.
+    pub(in crate::emitter) fn variable_stmt_has_binding_pattern(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if let Some(name_node) = self.arena.get(decl.name) {
+                    if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub(in crate::emitter) fn emit_cjs_destructuring_export(
+        &mut self,
+        clause_node: &tsz_parser::parser::node::Node,
+    ) {
+        let Some(var_stmt) = self.arena.get_variable(clause_node) else {
+            return;
+        };
+
+        // Walk through declaration lists to find the variable declaration
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+
+                let Some(name_node) = self.arena.get(decl.name) else {
+                    continue;
+                };
+
+                let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+
+                if !is_binding_pattern {
+                    // Simple identifier — shouldn't reach here, but handle gracefully
+                    let name = self.get_identifier_text_idx(decl.name);
+                    if !name.is_empty() {
+                        self.write("exports.");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.emit(decl.initializer);
+                        self.write(";");
+                    }
+                    continue;
+                }
+
+                // Get binding pattern elements
+                let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
+                    continue;
+                };
+
+                // Collect non-rest elements and rest element
+                let mut non_rest_elems: Vec<(String, String)> = Vec::new(); // (export_name, prop_name)
+                let mut rest_elem: Option<String> = None;
+                let mut excluded_props: Vec<String> = Vec::new();
+
+                for &elem_idx in &pattern.elements.nodes {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+
+                    if elem.dot_dot_dot_token {
+                        // Rest element
+                        let rest_name = self.get_identifier_text(elem.name);
+                        rest_elem = Some(rest_name);
+                        continue;
+                    }
+
+                    // Get the variable (export) name
+                    let var_name = self.get_identifier_text(elem.name);
+
+                    // Get the property name to access on the source object
+                    let prop_name = if elem.property_name.is_some() {
+                        let pn = self.get_identifier_text_idx(elem.property_name);
+                        if pn.is_empty() { var_name.clone() } else { pn }
+                    } else {
+                        var_name.clone()
+                    };
+
+                    excluded_props.push(prop_name.clone());
+                    non_rest_elems.push((var_name, prop_name));
+                }
+
+                let is_empty = non_rest_elems.is_empty() && rest_elem.is_none();
+
+                // Generate a hoisted temp var for the RHS.
+                // CJS destructuring temps are placed BEFORE __esModule marker.
+                let temp_name = self.make_unique_name_cjs_destructuring();
+
+                if is_empty {
+                    // Empty binding pattern
+                    if self.ctx.target_es5 {
+                        // es5: exports._b = _a = expr;
+                        // _b is only used as export property name, no local var needed.
+                        let export_temp = self.make_unique_name();
+                        self.write("exports.");
+                        self.write(&export_temp);
+                        self.write(" = ");
+                        self.write(&temp_name);
+                        self.write(" = ");
+                        self.emit(decl.initializer);
+                        self.write(";");
+                    } else {
+                        // esnext: _a = expr;
+                        self.write(&temp_name);
+                        self.write(" = ");
+                        self.emit(decl.initializer);
+                        self.write(";");
+                    }
+                } else if self.ctx.target_es5 {
+                    // es5 non-empty: exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
+                    let mut first = true;
+                    for (export_name, prop_name) in &non_rest_elems {
+                        if !first {
+                            self.write(", ");
+                        }
+                        self.write("exports.");
+                        self.write(export_name);
+                        self.write(" = (");
+                        if first {
+                            self.write(&temp_name);
+                            self.write(" = ");
+                            self.emit(decl.initializer);
+                            self.write(", ");
+                            self.write(&temp_name);
+                        } else {
+                            self.write(&temp_name);
+                        }
+                        self.write(").");
+                        self.write(prop_name);
+                        first = false;
+                    }
+                    if let Some(rest_name) = &rest_elem {
+                        if !first {
+                            self.write(", ");
+                        }
+                        self.write("exports.");
+                        self.write(rest_name);
+                        self.write(" = ");
+                        self.write_helper("__rest");
+                        self.write("(");
+                        if first {
+                            // Only rest, no non-rest elements — assign temp first
+                            self.write(&temp_name);
+                            self.write(" = ");
+                            self.emit(decl.initializer);
+                            self.write(", ");
+                            self.write(&temp_name);
+                        } else {
+                            self.write(&temp_name);
+                        }
+                        self.write(", [");
+                        for (i, prop) in excluded_props.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.write("\"");
+                            self.write(prop);
+                            self.write("\"");
+                        }
+                        self.write("])");
+                    }
+                    self.write(";");
+                } else {
+                    // esnext non-empty: _a = expr, exports.x = _a.x, exports.rest = __rest(_a, ["x"]);
+                    self.write(&temp_name);
+                    self.write(" = ");
+                    self.emit(decl.initializer);
+
+                    for (export_name, prop_name) in &non_rest_elems {
+                        self.write(", ");
+                        self.write("exports.");
+                        self.write(export_name);
+                        self.write(" = ");
+                        self.write(&temp_name);
+                        self.write(".");
+                        self.write(prop_name);
+                    }
+
+                    if let Some(rest_name) = &rest_elem {
+                        self.write(", ");
+                        self.write("exports.");
+                        self.write(rest_name);
+                        self.write(" = ");
+                        self.write_helper("__rest");
+                        self.write("(");
+                        self.write(&temp_name);
+                        self.write(", [");
+                        for (i, prop) in excluded_props.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.write("\"");
+                            self.write(prop);
+                            self.write("\"");
+                        }
+                        self.write("])");
+                    }
+
+                    self.write(";");
                 }
             }
         }

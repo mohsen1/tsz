@@ -604,6 +604,14 @@ impl<'a> Printer<'a> {
         name
     }
 
+    /// Like `make_unique_name` but records the temp for CJS destructuring export hoisting.
+    /// These temps are emitted as `var _a;` BEFORE the `__esModule` marker.
+    pub(super) fn make_unique_name_cjs_destructuring(&mut self) -> String {
+        let name = self.make_unique_name();
+        self.cjs_destructuring_export_temps.push(name.clone());
+        name
+    }
+
     /// Like `make_unique_name` but also records the temp for hoisting before references.
     /// Used for assignment target values in logical-assignment lowering.
     pub(super) fn make_unique_name_hoisted_value(&mut self) -> String {
