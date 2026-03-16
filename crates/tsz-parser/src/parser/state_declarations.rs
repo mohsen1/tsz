@@ -1172,6 +1172,17 @@ impl ParserState {
                 continue;
             }
 
+            // Handle @ inside enum body - not a valid enum member start.
+            // Emit TS1132 and break out so the outer statement parser handles the
+            // decorator-like syntax (producing TS1146 + TS1128 matching tsc).
+            if self.is_token(SyntaxKind::AtToken) {
+                self.parse_error_at_current_token(
+                    "Enum member expected.",
+                    diagnostic_codes::ENUM_MEMBER_EXPECTED,
+                );
+                break;
+            }
+
             // Enum member names can be identifiers, string literals, or computed property names.
             // Numeric literals are parsed as names for error recovery (TS2452 reported by checker).
             // Computed property names ([x]) are not valid in enums but we recover gracefully.
