@@ -2564,7 +2564,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let idx_priority = crate::types::InferencePriority::MappedType;
 
         for (i, prop) in source_props.iter().enumerate() {
-            let prop_type = self.optional_property_type(prop);
+            // For optional properties, strip `undefined` from the type before contributing
+            // to index signature inference. When inferring T from `{ a: string, b?: number }`
+            // against `{ [x: string]: T }`, tsc infers T = string | number (not
+            // string | number | undefined). The optionality of a property does not contribute
+            // `undefined` to the inferred index signature value type.
+            let prop_type = if prop.optional {
+                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+            } else {
+                prop.type_id
+            };
             let property_index = i as u32;
 
             if let Some(number_idx) = number_index

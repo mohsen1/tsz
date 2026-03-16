@@ -533,10 +533,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     //
                     // The inverse (writable source property vs readonly target index)
                     // is checked elsewhere via index signature compatibility.
-                    let prop_type = self.bind_property_receiver_this(
-                        source_receiver,
-                        self.optional_property_type(prop),
-                    );
+                    //
+                    // Strip `undefined` from optional property types when checking against
+                    // index signatures. In tsc, `{ a: string, b?: number }` is assignable to
+                    // `{ [s: string]: string | number }` because `b?` contributes `number`,
+                    // not `number | undefined`.
+                    let raw_prop_type = if prop.optional {
+                        crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                    } else {
+                        prop.type_id
+                    };
+                    let prop_type =
+                        self.bind_property_receiver_this(source_receiver, raw_prop_type);
                     let target_value =
                         self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
                     if !self.check_subtype(prop_type, target_value).is_true() {
@@ -632,10 +640,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                     // Note: tsc does NOT reject readonly properties against writable
                     // number index targets during assignability checks.
-                    let prop_type = self.bind_property_receiver_this(
-                        source_receiver,
-                        self.optional_property_type(prop),
-                    );
+                    // Strip undefined from optional property types (same as string index).
+                    let raw_prop_type = if prop.optional {
+                        crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                    } else {
+                        prop.type_id
+                    };
+                    let prop_type =
+                        self.bind_property_receiver_this(source_receiver, raw_prop_type);
                     let target_value =
                         self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
                     if !self
@@ -952,8 +964,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            let prop_type = self
-                .bind_property_receiver_this(source_receiver, self.optional_property_type(prop));
+            // Strip `undefined` from optional property types when checking against
+            // index signatures. In tsc, optional properties are compatible with index
+            // signatures that don't include `undefined`.
+            let raw_prop_type = if prop.optional {
+                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+            } else {
+                prop.type_id
+            };
+            let prop_type = self.bind_property_receiver_this(source_receiver, raw_prop_type);
             let allow_bivariant = prop.is_method;
 
             if let Some(number_idx) = number_index {

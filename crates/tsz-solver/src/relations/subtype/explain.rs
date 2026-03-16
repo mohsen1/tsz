@@ -734,7 +734,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 None => {
                     for prop in &source_shape.properties {
-                        let prop_type = self.optional_property_type(prop);
+                        // Strip `undefined` from optional property types when checking
+                        // against index signatures, matching tsc behavior.
+                        let prop_type = if prop.optional {
+                            crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                        } else {
+                            prop.type_id
+                        };
                         if !self
                             .check_subtype(prop_type, t_string_idx.value_type)
                             .is_true()
@@ -965,7 +971,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         for prop in source {
-            let prop_type = self.optional_property_type(prop);
+            // Strip `undefined` from optional property types when checking against
+            // index signatures, matching tsc behavior.
+            let prop_type = if prop.optional {
+                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+            } else {
+                prop.type_id
+            };
             let allow_bivariant = prop.is_method;
 
             if let Some(number_idx) = number_index {

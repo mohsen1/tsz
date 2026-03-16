@@ -2466,7 +2466,10 @@ fn test_optional_property_rejects_string_index_signature() {
         number_index: None,
     });
 
-    assert!(!checker.is_assignable(source, target));
+    // In tsc, optional properties are compatible with index signatures that don't
+    // include `undefined`. The optionality of a property does not contribute `undefined`
+    // to the index signature check: `{ x?: number }` IS assignable to `{ [s: string]: number }`.
+    assert!(checker.is_assignable(source, target));
 }
 
 #[test]

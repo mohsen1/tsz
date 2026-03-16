@@ -295,8 +295,22 @@ impl<'a> InferenceContext<'a> {
                 // `{ [x: string]: string | number }` for inference purposes.
                 // Only applies to anonymous object types (no symbol = not a named class/interface).
                 if source_shape.symbol.is_none() {
-                    let prop_types: Vec<TypeId> =
-                        source_shape.properties.iter().map(|p| p.type_id).collect();
+                    // For optional properties, strip the `undefined` that comes from
+                    // optionality before contributing to the implicit index signature.
+                    // This matches tsc behavior where `{ a: string, b?: number }` infers
+                    // T as `string | number` (not `string | number | undefined`) when
+                    // matched against `{ [x: string]: T }`.
+                    let prop_types: Vec<TypeId> = source_shape
+                        .properties
+                        .iter()
+                        .map(|p| {
+                            if p.optional {
+                                crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
+                            } else {
+                                p.type_id
+                            }
+                        })
+                        .collect();
                     let implicit_index_type = if prop_types.len() == 1 {
                         prop_types[0]
                     } else {
