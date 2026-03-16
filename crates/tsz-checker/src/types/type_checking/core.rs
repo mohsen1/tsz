@@ -1434,11 +1434,25 @@ impl<'a> CheckerState<'a> {
                 }
             } else if self.find_enclosing_static_block(stmt_idx).is_some() {
                 // TS18038: 'for await' loops cannot be used inside a class static block
-                self.error_at_node(
-                    stmt_idx,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                );
+                // TSC anchors this error at the `await` keyword, not the `for` keyword.
+                // The `await` keyword follows `for ` (4 chars) in `for await (...)`.
+                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                    let await_pos = stmt_node.pos + 4; // skip "for "
+                    let await_len = 5u32; // "await"
+                    self.error(
+                        await_pos,
+                        await_len,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
+                            .to_string(),
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                }
             } else {
                 // TS1103: 'for await' loops are only allowed within async functions
                 self.error_at_node(

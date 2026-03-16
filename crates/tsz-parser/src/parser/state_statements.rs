@@ -1874,6 +1874,11 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
+        // Clear STATIC_BLOCK before parsing parameters — function parameters create a
+        // new scope where 'await' is a valid identifier (unless the function is async).
+        // The function name was already parsed above in the static block context.
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+
         // Parse parameters
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -1886,11 +1891,6 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
-
-        // Parse body - may be missing for overload signatures (just a semicolon)
-        // Clear STATIC_BLOCK for body — function bodies create a new function boundary
-        // where 'await' is a valid identifier (unless the function is async).
-        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
         // Push a new label scope for the function body
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -1974,6 +1974,10 @@ impl ParserState {
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
+
+        // Clear STATIC_BLOCK before parsing parameters — function parameters create a
+        // new scope where 'await' is a valid identifier (unless the function is async).
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();

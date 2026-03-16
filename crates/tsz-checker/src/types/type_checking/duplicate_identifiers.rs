@@ -429,13 +429,24 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if access != ref_access {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
-                            );
+                            // TSC anchors TS2385 at the start of the overload declaration
+                            // (including modifiers), not at the declaration name.
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                let start = self
+                                    .ctx
+                                    .arena
+                                    .get_declaration_modifiers(decl_node)
+                                    .and_then(|mods| mods.nodes.first().copied())
+                                    .and_then(|first_mod| self.ctx.arena.get(first_mod))
+                                    .map_or(decl_node.pos, |mod_node| mod_node.pos);
+                                let length = decl_node.end.saturating_sub(start);
+                                self.error(
+                                    start,
+                                    length,
+                                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED.to_string(),
+                                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                                );
+                            }
                         }
                     }
                 }
