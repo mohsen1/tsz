@@ -197,8 +197,6 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        let stripped_nullable = has_undefined || has_null;
-
         // If any primary type is `any`, return `any` immediately.
         // `any` absorbs all other types including nullable.
         if primary_types.contains(&TypeId::ANY) {
@@ -260,38 +258,27 @@ impl<'a> InferenceContext<'a> {
             return self.add_nullable_to_result(common_class, has_undefined, has_null);
         }
 
-        // Step 5: tsc's fallback — pick the single common supertype.
-        // tsc uses reduceLeft which picks the first non-superseded candidate, relying
-        // on candidates being in source order. Since our property matching may use
-        // different ordering (by Atom interning order), we use a frequency-based
-        // tiebreaker: prefer the candidate that appears most often in the ORIGINAL
-        // (pre-deduplicated) set, as tsc's source-order heuristic effectively picks
-        // the type that more arguments agree on.
-        let count_in_original =
-            |ty: TypeId| -> usize { types.iter().filter(|&&t| t == ty).count() };
-        let mut best = primary_types[0];
-        let mut best_count = count_in_original(best);
+        // Step 5: tsc's reduceLeft fallback.
+        // tsc: `reduceLeft(types, (s, t) => isSubtypeOf(t, s) ? s : isSubtypeOf(s, t) ? t : getUnionType([s, t]))`
+        // When neither type is a subtype of the other, tsc creates a UNION.
+        // This is critical for inference: `equal(v as B, v as undefined | D)` should
+        // infer T = B | undefined | D, not just B.
+        let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
-            if self.is_subtype(best, candidate) {
-                best = candidate;
-                best_count = count_in_original(candidate);
+            if self.is_subtype(candidate, result) {
+                // candidate is a subtype of result → keep result (it's broader)
+            } else if self.is_subtype(result, candidate) {
+                // result is a subtype of candidate → candidate is broader
+                result = candidate;
             } else {
-                let candidate_count = count_in_original(candidate);
-                if candidate_count > best_count {
-                    best = candidate;
-                    best_count = candidate_count;
-                }
+                // Neither is a subtype → create union (matches tsc)
+                result = self.interner.union(vec![result, candidate]);
             }
         }
 
-        // If nullable types were stripped and stripping made a difference in the
-        // tournament result, add them back. This matches tsc's getNullableType call
-        // after getSingleCommonSupertype.
-        if stripped_nullable {
-            self.add_nullable_to_result(best, has_undefined, has_null)
-        } else {
-            best
-        }
+        // If nullable types were stripped, add them back. This matches tsc's
+        // getNullableType call after getSingleCommonSupertype.
+        self.add_nullable_to_result(result, has_undefined, has_null)
     }
 
     /// Add nullable types (undefined/null) back to a type result.
