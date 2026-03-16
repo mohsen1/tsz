@@ -165,7 +165,11 @@ fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) ->
 ///
 /// # Returns
 /// * `TypeId::STRING` - Template literals produce strings by default
-pub fn compute_template_expression_type(parts: &[TypeId]) -> TypeId {
+pub fn compute_template_expression_type(
+    db: &dyn TypeDatabase,
+    texts: &[String],
+    parts: &[TypeId],
+) -> TypeId {
     // Check for error propagation
     for &part in parts {
         if part == TypeId::ERROR {
@@ -173,6 +177,42 @@ pub fn compute_template_expression_type(parts: &[TypeId]) -> TypeId {
         }
         if part == TypeId::NEVER {
             return TypeId::NEVER;
+        }
+    }
+
+    // If all interpolated parts are literal types, produce a literal string type.
+    // E.g., `abc${0}def` → "abc0def" when 0 has literal type 0.
+    if !parts.is_empty() && texts.len() == parts.len() + 1 {
+        let mut all_literal = true;
+        let mut result = String::new();
+        result.push_str(&texts[0]);
+
+        for (i, &part) in parts.iter().enumerate() {
+            if let Some(lit_atom) = crate::type_queries::get_string_literal_value(db, part) {
+                result.push_str(&db.resolve_atom(lit_atom));
+            } else if let Some(num) = crate::type_queries::get_number_literal_value(db, part) {
+                if num.fract() == 0.0 && num.abs() < 1e15 {
+                    result.push_str(&format!("{}", num as i64));
+                } else {
+                    result.push_str(&format!("{}", num));
+                }
+            } else if part == TypeId::BOOLEAN_TRUE {
+                result.push_str("true");
+            } else if part == TypeId::BOOLEAN_FALSE {
+                result.push_str("false");
+            } else if part == TypeId::NULL {
+                result.push_str("null");
+            } else if part == TypeId::UNDEFINED {
+                result.push_str("undefined");
+            } else {
+                all_literal = false;
+                break;
+            }
+            result.push_str(&texts[i + 1]);
+        }
+
+        if all_literal {
+            return db.literal_string(&result);
         }
     }
 

@@ -1442,8 +1442,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Type-check the expression - this will emit TS2304 if name is unresolved
+            // Type-check the expression - this will emit TS2304 if name is unresolved.
+            // Preserve literal types so that `abc${0}def` evaluates to "abc0def"
+            // instead of just `string`. tsc evaluates all-literal template expressions
+            // to literal string types.
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
             let part_type = self.get_type_of_node(span.expression);
+            self.ctx.preserve_literal_types = prev_preserve;
             part_types.push(part_type);
 
             // Extract the text after this expression (middle or tail)
@@ -1473,8 +1479,9 @@ impl<'a> CheckerState<'a> {
                 &part_types,
             )
         } else {
-            // Default: template literals produce string type
-            expression_ops::compute_template_expression_type(&part_types)
+            // Default: template literals produce string type.
+            // If all parts are literal, produce a literal string type.
+            expression_ops::compute_template_expression_type(self.ctx.types, &texts, &part_types)
         }
     }
 
