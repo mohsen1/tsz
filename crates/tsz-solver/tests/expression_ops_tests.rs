@@ -182,7 +182,8 @@ fn test_conditional_fresh_object_literals_get_complementary_optional_properties(
 fn test_template_always_string() {
     let interner = TypeInterner::new();
     // `foo${bar}` -> string
-    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
+    let result =
+        compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, TypeId::STRING);
 }
 
@@ -307,7 +308,8 @@ fn test_bct_enum_members_widen_to_parent_enum() {
 fn test_template_expression_default_is_string() {
     let interner = TypeInterner::new();
     // Template expressions without context produce string type
-    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
+    let result =
+        compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, TypeId::STRING);
 }
 
