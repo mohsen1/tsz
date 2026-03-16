@@ -62,7 +62,7 @@ impl<'a> Printer<'a> {
         if export.module_specifier.is_some() {
             let module_spec = if let Some(spec_node) = self.arena.get(export.module_specifier) {
                 if let Some(lit) = self.arena.get_literal(spec_node) {
-                    self.maybe_rewrite_module_spec(&lit.text)
+                    self.rewrite_module_spec(&lit.text)
                 } else {
                     return;
                 }
