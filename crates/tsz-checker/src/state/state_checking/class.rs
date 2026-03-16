@@ -835,7 +835,11 @@ impl<'a> CheckerState<'a> {
                 .get(prop.name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             let name = if is_computed {
-                format_key_name(&key)
+                // For computed properties, prefer raw node text to preserve the full
+                // expression (e.g., `[x = 0]` instead of just `[x]`).
+                self.node_text(prop.name)
+                    .map(|raw| raw.trim_end_matches(':').trim().to_string())
+                    .unwrap_or_else(|| format_key_name(&key))
             } else {
                 self.get_property_name(prop.name)
                     .unwrap_or_else(|| format_key_name(&key))
