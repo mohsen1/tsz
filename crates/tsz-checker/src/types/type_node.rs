@@ -1340,6 +1340,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // the binder's export tables. Simple identifiers are already handled by
         // the node_types cache above, but qualified names need member resolution.
         if let Some(sym_id) = self.resolve_type_query_symbol(type_query.expr_name) {
+            // TS2693: typeof requires a value binding. If the resolved symbol is
+            // type-only (e.g., an interface or type alias without a value component),
+            // emit an error instead of creating a TypeQuery.
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                let flags = symbol.flags;
+                let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
+                let is_type_only = (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
+                if is_type_only {
+                    let escaped_name = symbol.escaped_name.clone();
+                    self.emit_type_query_type_only_error(
+                        &escaped_name,
+                        type_query.expr_name,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
             let factory = self.ctx.types.factory();
             return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
         }
@@ -1398,6 +1414,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .binder
                 .resolve_identifier(self.ctx.arena, type_query.expr_name)
             {
+                // TS2693: typeof requires a value binding (same check as above).
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    let flags = symbol.flags;
+                    let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
+                    let is_type_only =
+                        (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
+                    if is_type_only {
+                        self.emit_type_query_type_only_error(name, type_query.expr_name);
+                        return TypeId::ERROR;
+                    }
+                }
                 let factory = self.ctx.types.factory();
                 return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
             }
@@ -1444,6 +1471,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         );
 
         lowering.lower_type(idx)
+    }
+
+    /// Emit TS2693 for a type-only symbol used in a typeof type query.
+    fn emit_type_query_type_only_error(&mut self, name: &str, expr_name: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let msg = format_message(
+            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            &[name],
+        );
+        if let Some(expr_node) = self.ctx.arena.get(expr_name) {
+            self.ctx.error(
+                expr_node.pos,
+                expr_node.end - expr_node.pos,
+                msg,
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
+        }
     }
 
     /// Resolve the symbol for a type query expression name.
