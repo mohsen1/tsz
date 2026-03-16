@@ -228,6 +228,47 @@ impl<'a> CheckerState<'a> {
                 let member_type = self.get_type_of_symbol(member_sym_id);
                 return self.apply_flow_narrowing(idx, member_type);
             }
+
+            // TS2729 for namespace member access in static property initializers:
+            // `namespace Ns { export let A = 0 }` compiles to `var` (hoisted),
+            // but the IIFE that populates members runs at declaration position.
+            // Accessing `Ns.A` before the namespace body executes is a forward
+            // reference and tsc emits TS2729 at the property name site.
+            if is_identifier_base
+                && let Some(base_sym_id) = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, access.expression)
+                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
+                && base_symbol.flags & symbol_flags::VALUE_MODULE != 0
+                && self.is_in_static_property_initializer_ast_context(access.expression)
+                && self
+                    .find_enclosing_computed_property(access.expression)
+                    .is_none()
+            {
+                // Check if the namespace declaration is after the usage
+                let decl_idx = if base_symbol.value_declaration.is_some() {
+                    base_symbol.value_declaration
+                } else if let Some(&first_decl) = base_symbol.declarations.first() {
+                    first_decl
+                } else {
+                    NodeIndex::NONE
+                };
+                if decl_idx.is_some()
+                    && let Some(usage_node) = self.ctx.arena.get(access.expression)
+                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && usage_node.pos < decl_node.pos
+                {
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format!(
+                            "Property '{}' is used before its initialization.",
+                            name_ident.escaped_text
+                        ),
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                    );
+                }
+            }
         }
 
         // Get the type of the object.
