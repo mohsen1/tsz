@@ -375,6 +375,14 @@ struct CompilerOptions {
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_lib: Option<bool>,
+
+    /// Add 'undefined' to a type when accessed using an index.
+    #[serde(
+        default,
+        alias = "noUncheckedIndexedAccess",
+        deserialize_with = "deserialize_bool_option"
+    )]
+    no_unchecked_indexed_access: Option<bool>,
 }
 
 /// Deserialize a boolean option that can be a boolean, string, or comma-separated string.
@@ -601,7 +609,7 @@ impl CompilerOptions {
             no_implicit_this: self.get_no_implicit_this(),
             use_unknown_in_catch_variables: strict_null_checks,
             isolated_modules: false,
-            no_unchecked_indexed_access: false,
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access.unwrap_or(false),
             strict_bind_call_apply: false,
             exact_optional_property_types: self.exact_optional_property_types.unwrap_or(false),
             no_lib: self.no_lib.unwrap_or(false),

@@ -89,7 +89,7 @@ impl<'a> QueryCache<'a> {
             subtype_cache_misses: AtomicU64::new(0),
             assignability_cache_hits: AtomicU64::new(0),
             assignability_cache_misses: AtomicU64::new(0),
-            no_unchecked_indexed_access: AtomicBool::new(false),
+            no_unchecked_indexed_access: AtomicBool::new(interner.no_unchecked_indexed_access()),
         }
     }
 
