@@ -1005,9 +1005,9 @@ impl<'a> CheckerState<'a> {
                 if self.is_circular_class_new(new_expr.expression)
                     && let Some(fixed) =
                         self.class_instance_type_for_circular_new(new_expr.expression)
-                    {
-                        return fixed;
-                    }
+                {
+                    return fixed;
+                }
                 return_type
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {

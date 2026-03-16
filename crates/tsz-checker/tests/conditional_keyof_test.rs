@@ -61,7 +61,8 @@ fn nested_conditional_expression_union_assignable_to_keyof_constraint_has_no_ts2
     );
 }
 
-#[test]fn string_literal_argument_assignable_to_keyof_this_has_no_ts2345() {
+#[test]
+fn string_literal_argument_assignable_to_keyof_this_has_no_ts2345() {
     let source = r#"
         class C {
             x: number = 0;
