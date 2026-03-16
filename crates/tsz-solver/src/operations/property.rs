@@ -198,6 +198,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.no_unchecked_indexed_access = enabled;
     }
 
+    /// Skip `this` binding during property resolution. When set, raw `ThisType`
+    /// is preserved in the result so the caller can substitute it with the
+    /// correct nominal receiver type.
+    pub fn set_skip_this_binding(&self, skip: bool) {
+        self.skip_this_binding.set(skip);
+    }
+
     /// Helper to access the underlying `TypeDatabase`
     pub(crate) fn interner(&self) -> &dyn TypeDatabase {
         self.db.as_type_database()
@@ -579,6 +586,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                 }
 
+                // Restore `this` binding state after per-member resolution.
                 self.skip_this_binding.set(prev_skip);
 
                 if results.is_empty() {
@@ -638,6 +646,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 } else {
                     self.interner().intersection(results)
                 };
+
+                // Do NOT bind `this` here. When a method like `self(): this`
+                // is on an intersection member, `this` must resolve to the
+                // receiver's nominal type (e.g., Thing5, not just {a,b,c}).
+                // The checker has the correct nominal receiver and will
+                // substitute `this` via its own fallback path.
 
                 if any_from_index && self.no_unchecked_indexed_access {
                     type_id = self.add_undefined_if_unchecked(type_id);
