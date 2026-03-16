@@ -517,8 +517,17 @@ impl<'a> CheckerState<'a> {
                             // resolve to object types with statically known members and
                             // are valid base types. This matches tsc's `isValidBaseType`
                             // which checks `isGenericMappedType`.
-                            let evaluated = self.ctx.types.evaluate_type(instantiated_type);
-                            if class_query::is_generic_mapped_type(self.ctx.types, evaluated) {
+                            //
+                            // Skip evaluate_type: when heritage type args match the
+                            // alias's own params (e.g., `interface I<K, V> extends
+                            // Alias<K, V>`), the interner deduplicates them to the
+                            // same TypeId, making substitution identity. evaluate_type
+                            // would then flatten the mapped type into an Object, losing
+                            // the structure is_generic_mapped_type needs.
+                            if class_query::is_generic_mapped_type(
+                                self.ctx.types,
+                                instantiated_type,
+                            ) {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                                 self.error_at_node(
                                     expr_idx,
