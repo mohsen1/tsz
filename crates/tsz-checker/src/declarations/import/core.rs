@@ -1414,7 +1414,7 @@ impl<'a> CheckerState<'a> {
         // Special case: function + class default exports emit TS2323 + TS2813 + TS2814 instead.
         if export_default_indices.len() > 1 {
             // Classify each default export
-            let mut has_interface = false;
+            let mut _has_interface = false;
             let mut has_class = false;
             let mut has_function = false;
             let mut value_count = 0;
@@ -1431,7 +1431,7 @@ impl<'a> CheckerState<'a> {
 
                 match wrapped_kind {
                     Some(k) if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                        has_interface = true;
+                        _has_interface = true;
                     }
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         has_function = true;

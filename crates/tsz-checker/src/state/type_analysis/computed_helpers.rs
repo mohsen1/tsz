@@ -1439,8 +1439,11 @@ impl<'a> CheckerState<'a> {
             self.get_class_decl_for_display_type(object_type),
             self.get_class_decl_for_display_type(declaring_type),
         ) {
-            (Some((object_class, _)), Some((declaring_class, _))) => {
-                object_class == declaring_class
+            (Some((object_class, object_is_static)), Some((declaring_class, _))) => {
+                // Instance types (is_static=false) must NOT access static privates,
+                // even if they're from the same class. Only the constructor/static side
+                // can access static private members.
+                object_is_static && object_class == declaring_class
             }
             // When we can't resolve the class declaration for the object type
             // (e.g. property typed as `typeof A` or function returning the class),
@@ -1463,9 +1466,7 @@ impl<'a> CheckerState<'a> {
                 // Last resort: check if the object type has the private property
                 // in its shape. Private names are lexically scoped and unique per
                 // class, so if the object type has `#field`, it must be from the
-                // same class declaration. This handles cases where `typeof A` gets
-                // a fresh TypeId (e.g. from property inference) that isn't
-                // assignable due to private member nominality.
+                // same class declaration.
                 self.ctx
                     .types
                     .property_access_type(object_type, private_name)
@@ -1801,14 +1802,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve Lazy class references to their constructor types for STATIC private members.
-        //
-        // Resolve Lazy class references to constructor types for static private members.
         // Only for static members; instance members correctly resolve via Lazy.
         let member_is_static = self.ctx.binder.get_symbol(symbols[0]).is_some_and(|sym| {
             sym.declarations
                 .iter()
                 .any(|&decl_idx| self.class_member_is_static(decl_idx))
         });
+        let object_type_for_check_pre_resolution = object_type_for_check;
         let object_type_for_check = if member_is_static
             && let Some(def_id) =
                 tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, object_type_for_check)
@@ -1833,7 +1833,30 @@ impl<'a> CheckerState<'a> {
         // For private member access, use nominal typing based on private brand.
         // If both types have the same private brand, they're from the same class
         // declaration and the access should be allowed.
-        let types_compatible = if member_is_static {
+        //
+        // For static private members, detect when the Lazy resolution above falsely
+        // promoted an instance type to a constructor type. This happens when the
+        // pre-resolution type was a Lazy class reference (instance side) that got
+        // resolved to the constructor type. In that case, the access should fail.
+        let lazy_promoted_instance = member_is_static
+            && object_type_for_check != object_type_for_check_pre_resolution
+            && tsz_solver::type_queries::get_lazy_def_id(
+                self.ctx.types,
+                object_type_for_check_pre_resolution,
+            )
+            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0);
+        let types_compatible = if member_is_static && lazy_promoted_instance {
+            // The object type was a Lazy instance ref that got promoted to constructor.
+            // Check if the expression actually refers to the class (e.g., `A.#field`),
+            // which is the only case where this promotion is valid.
+            let expression_is_class_ref = self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0);
+            expression_is_class_ref
+        } else if member_is_static {
             self.static_private_member_access_compatible(
                 object_type_for_check,
                 declaring_type,

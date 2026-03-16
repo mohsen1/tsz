@@ -61,7 +61,7 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::contains_never_type(self.ctx.types, expected)
     }
 
-    fn argument_supports_literal_elaboration(&self, arg_idx: NodeIndex) -> bool {
+    pub(crate) fn argument_supports_literal_elaboration(&self, arg_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(arg_idx) else {
             return false;
         };

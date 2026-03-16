@@ -39,8 +39,13 @@ impl ParserState {
     }
 
     /// Parse a type (handles keywords, type references, unions, intersections, conditionals).
+    ///
+    /// Identifier-based type predicates (`x is T`) are NOT allowed here — they are
+    /// only valid in return type position. However, `this is T` predicates ARE parsed
+    /// here (matching tsc's `parseThisTypeOrThisTypePredicate` in `parseType`).
+    /// Use `parse_return_type()` for return types where both forms are valid.
     pub(crate) fn parse_type(&mut self) -> NodeIndex {
-        self.parse_type_with_predicates(true)
+        self.parse_type_with_predicates(false)
     }
 
     /// Parse a type in a context that explicitly disallows type predicates, such as
@@ -55,6 +60,7 @@ impl ParserState {
         }
 
         if self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword) {
+            let is_this = self.is_token(SyntaxKind::ThisKeyword);
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
 
@@ -66,7 +72,9 @@ impl ParserState {
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
-            if allow_type_predicates && is_predicate {
+            // `this is T` is always parsed as a type predicate (tsc: parseThisTypeOrThisTypePredicate).
+            // `x is T` is only parsed as a type predicate in return type position.
+            if is_predicate && (allow_type_predicates || is_this) {
                 let name = self.parse_type_predicate_parameter_name();
                 let start_pos = if let Some(node) = self.arena.get(name) {
                     node.pos

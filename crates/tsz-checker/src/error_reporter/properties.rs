@@ -278,6 +278,21 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // TS2812: If the type name matches a known DOM global and the type is
+            // structurally empty, suggest including the 'dom' lib option.
+            if suggestion.is_none() && self.should_suggest_dom_lib_for_type(type_id) {
+                let type_display = self.property_receiver_display_for_node(type_id, idx);
+                let message = format!(
+                    "Property '{prop_name}' does not exist on type '{type_display}'. Try changing the 'lib' compiler option to include 'dom'."
+                );
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_TRY_CHANGING_THE_LIB_COMPILER_OPTION_TO_INCLUDE,
+                );
+                return;
+            }
+
             let type_display = self.property_receiver_display_for_node(type_id, idx);
             let (code, message) = if let Some(ref suggestion) = suggestion {
                 (
@@ -841,5 +856,128 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    /// Check if a type should get TS2812 (suggest 'dom' lib) instead of TS2339.
+    /// Returns true if ALL named components of the type match known DOM global names
+    /// AND each component is structurally empty (no user-defined members).
+    fn should_suggest_dom_lib_for_type(&self, type_id: TypeId) -> bool {
+        // Check intersection members individually
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, type_id)
+        {
+            if members.is_empty() {
+                return false;
+            }
+            return members.iter().all(|&m| self.is_empty_dom_named_type(m));
+        }
+
+        self.is_empty_dom_named_type(type_id)
+    }
+
+    /// Check if a single type has a known DOM type name and is structurally empty.
+    fn is_empty_dom_named_type(&self, type_id: TypeId) -> bool {
+        use crate::error_reporter::is_known_dom_global;
+
+        // Get the type's display name to check against known DOM types.
+        let name = self.dom_type_name(type_id);
+        let name = match name {
+            Some(ref n) if is_known_dom_global(n) => n.clone(),
+            _ => return false,
+        };
+
+        // Check if the type is structurally empty (no user-defined properties).
+        // Interfaces may be lazy or materialized - check both paths.
+        if tsz_solver::is_empty_object_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        // For lazy types (DefId-backed interfaces), check if the interface
+        // declaration has zero members in the AST.
+        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            .or_else(|| {
+                self.ctx
+                    .resolve_type_to_symbol_id(type_id)
+                    .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied())
+            })
+        {
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                let def_name = self.ctx.types.resolve_atom(def.name);
+                if def_name == name {
+                    // Check if the body type is an empty object
+                    if let Some(body) = def.body {
+                        if tsz_solver::is_empty_object_type(self.ctx.types, body) {
+                            return true;
+                        }
+                    }
+                    // Check via symbol: if interface has no AST members
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                        return self.interface_has_no_members(sym_id);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Try to get the display name for a type, checking symbol and def store.
+    fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
+        // Try Lazy(DefId) types directly
+        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id) {
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                let name = self.ctx.types.resolve_atom(def.name);
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        // Try object shape symbol
+        if let Some(shape_id) =
+            tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+        {
+            let shape = self.ctx.types.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
+                    return Some(symbol.escaped_name.clone());
+                }
+            }
+        }
+        // Try definition store by type body
+        if let Some(def_id) = self
+            .ctx
+            .definition_store
+            .find_def_for_type(type_id)
+            .or_else(|| self.ctx.definition_store.find_type_alias_by_body(type_id))
+        {
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                let name = self.ctx.types.resolve_atom(def.name);
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if an interface symbol's declarations have zero members.
+    fn interface_has_no_members(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                if let Some(iface) = self.ctx.arena.get_interface(node) {
+                    if !iface.members.nodes.is_empty() {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
