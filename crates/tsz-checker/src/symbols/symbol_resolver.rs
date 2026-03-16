@@ -1241,6 +1241,19 @@ impl<'a> CheckerState<'a> {
 
         let node = self.ctx.arena.get(idx)?;
 
+        // Skip through parenthesized expressions: `(M).y` should resolve the
+        // same qualified symbol as `M.y`.
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                return self.resolve_qualified_symbol_inner(
+                    paren.expression,
+                    visited_aliases,
+                    depth + 1,
+                );
+            }
+            return None;
+        }
+
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(idx)?;
             // Preserve alias symbols when alias resolution has no concrete target

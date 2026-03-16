@@ -627,7 +627,8 @@ impl<'a> CheckerState<'a> {
 
             // For value access to merged symbols, check the exports directly
             // This is needed because the type system doesn't track which symbol a Callable came from
-            if let Some(expr_node) = self.ctx.arena.get(access.expression)
+            let base_expr = self.ctx.arena.skip_parenthesized(access.expression);
+            if let Some(expr_node) = self.ctx.arena.get(base_expr)
                 && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
             {
                 let expr_name = &expr_ident.escaped_text;
