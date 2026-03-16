@@ -1819,7 +1819,9 @@ impl<'a> CheckerState<'a> {
             // Evaluation would fail (or unknown with non-number/string type).
             // Emit TS18033 if the type is not assignable to number.
             if !self.is_assignable_to(init_type, TypeId::NUMBER) {
-                let source_str = self.format_type(init_type);
+                // tsc displays widened types in TS18033: 'string' not '"bar"'
+                let widened = tsz_solver::widen_literal_type(self.ctx.types, init_type);
+                let source_str = self.format_type(widened);
                 let target_str = self.format_type(TypeId::NUMBER);
                 self.error_at_node_msg(
                     init_idx,
