@@ -397,9 +397,24 @@ impl<'a> InferenceContext<'a> {
         let all_from_index_signatures = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_index_signature);
-        let resolved = if priority_implies_combination || all_from_index_signatures {
+        // When candidates include nullish types (undefined/null) and no candidates
+        // are from object properties, use union semantics. This matches tsc's
+        // getCommonSupertype behavior for nullable inference patterns like
+        // equal<T>(a: T, b: T) called as equal(B, undefined | D) → T = B | undefined | D.
+        let has_nullish_candidates = candidate_types
+            .iter()
+            .any(|&ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL || ty == TypeId::VOID);
+        let no_object_property_candidates = !filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_object_property);
+        let nullable_union_inference =
+            has_nullish_candidates && no_object_property_candidates;
+        let resolved = if priority_implies_combination
+            || all_from_index_signatures
+            || nullable_union_inference
+        {
             // Union: used for return type inference, low-priority contexts,
-            // and index signature inference
+            // index signature inference, and nullable parameter inference
             self.best_common_type(&candidate_types)
         } else {
             // Common supertype: used for NakedTypeVariable and other direct inference.
