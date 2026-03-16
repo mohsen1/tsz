@@ -460,7 +460,8 @@ impl<'a> Printer<'a> {
         // - we need to add it (source doesn't have it), or
         // - the source has it but needs repositioning (CJS: before helpers/exports)
         // But NOT when suppress_use_strict is set (wrapper already emitted it).
-        if should_emit_use_strict || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
+        if should_emit_use_strict
+            || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
         {
             self.write("\"use strict\";");
             self.write_line();
