@@ -1024,8 +1024,13 @@ impl ParserState {
             );
             let recovered = self.try_recover_binary_rhs();
             if recovered.is_none() {
-                self.resync_to_next_expression_boundary();
-                return left;
+                // Create a missing expression placeholder instead of returning
+                // `left`. Returning `left` would duplicate the left operand in
+                // the parent binary expression (e.g., `1 > > 2` would become
+                // `1 > 1 > 2` instead of `1 >  > 2`). A missing expression
+                // keeps the AST structurally correct and the emitter will
+                // output nothing for it.
+                return self.create_missing_expression();
             }
             return recovered;
         }
