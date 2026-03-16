@@ -128,6 +128,20 @@ impl<'a> CheckerState<'a> {
             // For global augmentations, we must use resolve_lib_type_by_name to get
             // the proper merge of lib.d.ts + user augmentation
             if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                // Register TypeId → DefId so the TypeFormatter can display the
+                // interface name (e.g., "Boolean") instead of its structural
+                // expansion in TS2322 diagnostics. User-augmented global interfaces
+                // have a different shape from the original lib type, so the
+                // formatter's structural fallback (find_def_by_shape) can't find them.
+                if type_id != TypeId::ERROR && type_id != TypeId::ANY && type_id != TypeId::UNKNOWN
+                {
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(type_id, def_id);
+                    }
+                }
                 return Some(type_id);
             }
         }
