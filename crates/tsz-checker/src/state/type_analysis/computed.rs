@@ -1278,6 +1278,16 @@ impl<'a> CheckerState<'a> {
                     (alias_type, params)
                 };
 
+                // When a same-file type alias contains `typeof expr` inside a
+                // narrowed scope (e.g. inside `if (typeof c === 'string')`),
+                // the lowering path creates TypeQuery(SymbolRef) which resolves
+                // to the declared type, not the flow-narrowed type. Resolve
+                // such TypeQuery references using flow narrowing now.
+                if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    alias_type =
+                        self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
+                }
+
                 // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
 
@@ -2315,5 +2325,120 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    /// Resolve TypeQuery references in a type alias body using flow narrowing.
+    ///
+    /// When a same-file type alias is lowered via `lower_cross_arena_type_alias_declaration`,
+    /// `typeof expr` creates `TypeQuery(SymbolRef)` which resolves to the declared type
+    /// of the referenced symbol. If the type alias is inside a narrowed scope (e.g.
+    /// `if (typeof c === 'string') { type C = { [key: string]: typeof c }; }`),
+    /// the declared type is wrong — it should be the narrowed type.
+    ///
+    /// This method checks if the lowered type contains TypeQuery references and, if
+    /// any resolve to a flow-narrowed type different from the declared type, rebuilds
+    /// the type with the narrowed values substituted in.
+    pub(crate) fn resolve_type_queries_with_flow(
+        &mut self,
+        alias_type: TypeId,
+        type_node: NodeIndex,
+    ) -> TypeId {
+        // Quick check: does the lowered type contain any TypeQuery references?
+        if tsz_solver::collect_type_queries(self.ctx.types, alias_type).is_empty() {
+            return alias_type;
+        }
+
+        // Collect TYPE_QUERY nodes from the AST by scanning the type node tree.
+        // We use typed accessors since NodeArena doesn't have generic child iteration.
+        let mut type_query_nodes = Vec::new();
+        self.collect_type_query_nodes(type_node, &mut type_query_nodes);
+
+        if type_query_nodes.is_empty() {
+            return alias_type;
+        }
+
+        // Resolve each TYPE_QUERY with flow narrowing and cache in node_types
+        let mut any_changed = false;
+        for tq_idx in &type_query_nodes {
+            let narrowed = self.get_type_from_type_query(*tq_idx);
+            let existing = self.ctx.node_types.get(&tq_idx.0).copied();
+            if existing != Some(narrowed) {
+                self.ctx.node_types.insert(tq_idx.0, narrowed);
+                any_changed = true;
+            }
+        }
+
+        if !any_changed {
+            return alias_type;
+        }
+
+        // Clear the cached type for the root type node and recompute
+        // using the now-cached flow-narrowed TYPE_QUERY results.
+        self.ctx.node_types.remove(&type_node.0);
+        self.get_type_from_type_node(type_node)
+    }
+
+    /// Recursively collect TYPE_QUERY node indices from a type node subtree.
+    fn collect_type_query_nodes(&self, idx: NodeIndex, out: &mut Vec<NodeIndex>) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            out.push(idx);
+            return; // Don't recurse into TYPE_QUERY children
+        }
+
+        // Handle type literal: scan members
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            if let Some(data) = self.ctx.arena.get_type_literal(node) {
+                for &member_idx in &data.members.nodes {
+                    self.collect_type_query_nodes(member_idx, out);
+                }
+            }
+            return;
+        }
+
+        // Handle index signature: scan type annotation
+        if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+            if let Some(data) = self.ctx.arena.get_index_signature(node) {
+                if data.type_annotation.is_some() {
+                    self.collect_type_query_nodes(data.type_annotation, out);
+                }
+            }
+            return;
+        }
+
+        // Handle property signature/declaration: scan type annotation
+        if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+        {
+            if let Some(data) = self.ctx.arena.get_property_decl(node) {
+                if data.type_annotation.is_some() {
+                    self.collect_type_query_nodes(data.type_annotation, out);
+                }
+            }
+            return;
+        }
+
+        // Handle union/intersection types: scan constituent types
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            if let Some(data) = self.ctx.arena.get_composite_type(node) {
+                for &member_idx in &data.types.nodes {
+                    self.collect_type_query_nodes(member_idx, out);
+                }
+            }
+            return;
+        }
+
+        // Handle array type: scan element type
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            if let Some(data) = self.ctx.arena.get_array_type(node) {
+                self.collect_type_query_nodes(data.element_type, out);
+            }
+            return;
+        }
     }
 }
