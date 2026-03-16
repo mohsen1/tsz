@@ -619,16 +619,16 @@ impl<'a> CheckerState<'a> {
         // `get_type_of_node` may return the interface type (type meaning) instead of
         // the static property type (value meaning).  We resolve the base symbol's VALUE
         // member directly to avoid this ambiguity.
-        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(val_type) = self.resolve_property_access_value_type(value_decl) {
-                return Some(val_type);
-            }
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(val_type) = self.resolve_property_access_value_type(value_decl)
+        {
+            return Some(val_type);
         }
 
         Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
     }
 
-    /// Resolve the VALUE meaning of a PropertyAccessExpression.
+    /// Resolve the VALUE meaning of a `PropertyAccessExpression`.
     ///
     /// For `C.B` where `C` is a class merged with a namespace and `B` is both a
     /// static property and a namespace-exported interface, the expression evaluator

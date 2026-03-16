@@ -395,10 +395,10 @@ impl<'a> CheckerState<'a> {
         // For cross-file symbols, use delegation to compute the type in the
         // correct arena context.  Calling type_reference_symbol_type directly
         // would use the current file's arena, causing NodeIndex collisions.
-        if file_idx.is_some() {
-            if let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id) {
-                return Some(delegate_type);
-            }
+        if file_idx.is_some()
+            && let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id)
+        {
+            return Some(delegate_type);
         }
 
         Some(self.type_reference_symbol_type(member_sym_id))
@@ -408,7 +408,7 @@ impl<'a> CheckerState<'a> {
     /// infrastructure.
     ///
     /// This is used as a fallback when `resolve_alias_symbol` (which relies on the
-    /// binder's module_exports) fails for cross-file imports. Uses the checker's
+    /// binder's `module_exports`) fails for cross-file imports. Uses the checker's
     /// `resolve_import_alias_and_register` which resolves relative module specifiers
     /// from the declaring file's perspective.
     fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
