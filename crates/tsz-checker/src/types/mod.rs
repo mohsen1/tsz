@@ -8,6 +8,7 @@ pub(crate) mod function_type_signature_display;
 pub mod interface_type;
 pub mod literal_type;
 pub mod object_type;
+mod property_access_augmentation;
 pub(crate) mod property_access_helpers;
 pub(crate) mod property_access_type;
 pub(crate) mod queries;
