@@ -1088,6 +1088,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     SubtypeDirection::SourceSubsumedByOther => {
                         checker.is_subtype_of(members[i], members[j])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
+                            // Don't remove a member with an index signature when the
+                            // subsuming member lacks one. The index signature carries
+                            // semantic information that affects assignability checks
+                            // against targets with index signatures.
+                            // E.g., `Dict<string> | {}` must not simplify to `{}`
+                            // because Dict<string> has `[index: string]: string` which
+                            // can fail assignability to `Record<string, number>`.
+                            && !Self::has_index_signature_not_in(self.interner, members[i], members[j])
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
                         // For intersections: member[j] <: member[i] means member[i] is
@@ -1132,6 +1140,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true; // Candidate has properties but subsuming doesn't
         };
         candidate.iter().any(|name| !subsuming.contains(name))
+    }
+
+    /// Check if `candidate` has an index signature that `subsuming` lacks.
+    ///
+    /// In a union, removing a member with an index signature when the subsuming
+    /// member doesn't have one changes assignability behavior. TypeScript checks
+    /// each union member individually against a target, so a member with
+    /// `[index: string]: T` can fail assignability to `{[index: string]: U}`
+    /// even though the plain `{}` supertype passes. Preserving the index-signature
+    /// member ensures tsz matches tsc's per-member union assignability semantics.
+    fn has_index_signature_not_in(
+        db: &dyn crate::caches::db::TypeDatabase,
+        candidate: TypeId,
+        subsuming: TypeId,
+    ) -> bool {
+        let candidate_has_idx = matches!(db.lookup(candidate), Some(TypeData::ObjectWithIndex(_)));
+        let subsuming_has_idx = matches!(db.lookup(subsuming), Some(TypeData::ObjectWithIndex(_)));
+        candidate_has_idx && !subsuming_has_idx
     }
 
     /// Collect property name atoms from an object type into the provided set.
