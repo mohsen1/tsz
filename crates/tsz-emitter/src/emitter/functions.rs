@@ -689,12 +689,17 @@ impl<'a> Printer<'a> {
             {
                 // Skip parameters with no name (parser error recovery artifacts).
                 // e.g., `function f(a,¬)` should emit `function f(a)`.
-                if param.name.is_none() {
+                // But preserve rest parameters (`...`) even with missing names,
+                // matching tsc behavior: `function sum(...) { }`.
+                if param.name.is_none() && !param.dot_dot_dot_token {
                     continue;
                 }
                 // Skip parameters where the name is an empty/missing identifier
                 // (parser error recovery for invalid characters like ¬).
-                if let Some(name_node) = self.arena.get(param.name)
+                // But preserve rest parameters with empty names - tsc emits
+                // the `...` even when the parameter name is missing.
+                if !param.dot_dot_dot_token
+                    && let Some(name_node) = self.arena.get(param.name)
                     && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && ident.escaped_text.is_empty()
