@@ -492,7 +492,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.explain_tuple_failure(&s_elems, &t_elems);
         }
 
-        if let Some(members) = union_list_id(self.interner, target) {
+        if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
