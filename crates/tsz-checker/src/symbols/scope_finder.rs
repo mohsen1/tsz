@@ -90,8 +90,20 @@ impl<'a> CheckerState<'a> {
     /// a standalone function with an explicit `this` parameter should use its pushed
     /// `this` type from the stack, not fall through to the TS2683 path.
     pub(crate) fn is_this_in_nested_function_inside_class(&self, idx: NodeIndex) -> bool {
-        // Without an enclosing class, there's nothing to be "nested inside"
-        if self.ctx.enclosing_class.is_none() {
+        // When enclosing_class is set (during check_class_member), use it directly.
+        // When it's not set but we're inside class type building (prescan pushed
+        // this_type_stack), detect the class by walking the AST.
+        let has_class_context = if self.ctx.enclosing_class.is_some() {
+            true
+        } else if !self.ctx.this_type_stack.is_empty() {
+            // Check if there's a class declaration ancestor — indicates we're
+            // building the class instance type and the this_type_stack entry
+            // comes from the prescan.
+            self.is_inside_class_body(idx)
+        } else {
+            false
+        };
+        if !has_class_context {
             return false;
         }
         use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION};
@@ -106,6 +118,32 @@ impl<'a> CheckerState<'a> {
         // If the nearest non-arrow function is a regular function (not a class member),
         // then `this` has a new binding and the class `this` doesn't apply.
         fn_node.kind == FUNCTION_EXPRESSION || fn_node.kind == FUNCTION_DECLARATION
+    }
+
+    /// Check if an AST node is inside a class body by walking parents.
+    fn is_inside_class_body(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                if node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION {
+                    return true;
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
     }
 
     /// Check if `this` is inside a static class member by walking the AST.
