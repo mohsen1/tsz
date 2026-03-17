@@ -1085,14 +1085,23 @@ impl<'a> ContextualTypeContext<'a> {
                 }
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
-                // IF the template doesn't reference the mapped type's bound parameter.
+                // IF the template doesn't reference the mapped type's bound parameter or
+                // its iteration variable (TypeParameter with the same name).
+                // Without this check, templates like `({ key }: { key: key }) => void`
+                // would be returned uninstantiated, causing false TS2345 errors when the
+                // iteration variable `key` should be substituted with a concrete literal.
+                let mapped_param_name = mapped.type_param.name;
                 if mapped.template != TypeId::ANY
                     && mapped.template != TypeId::ERROR
                     && mapped.template != TypeId::NEVER
                     && !crate::visitor::contains_type_matching(
                         self.interner,
                         mapped.template,
-                        |key| matches!(key, TypeData::BoundParameter(_)),
+                        |key| match key {
+                            TypeData::BoundParameter(_) => true,
+                            TypeData::TypeParameter(info) => info.name == mapped_param_name,
+                            _ => false,
+                        },
                     )
                 {
                     return Some(mapped.template);
