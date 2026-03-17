@@ -703,12 +703,20 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
+    ///
+    /// When a same-file type alias goes through the lowering path, `typeof expr`
+    /// becomes `TypeQuery(SymbolRef)` — a symbolic reference that resolves to the
+    /// declared type, not the flow-narrowed type.  This fixup re-resolves each
+    /// `typeof` expression using `get_type_of_node` (which applies control-flow
+    /// narrowing) and patches the node-type cache so the subsequent
+    /// `get_type_from_type_node` re-evaluation picks up the narrowed type.
     pub(super) fn resolve_type_queries_with_flow(
         &mut self,
         alias_type: TypeId,
         type_node: NodeIndex,
     ) -> TypeId {
-        if tsz_solver::collect_type_queries(self.ctx.types, alias_type).is_empty() {
+        let type_queries = tsz_solver::collect_type_queries(self.ctx.types, alias_type);
+        if type_queries.is_empty() {
             return alias_type;
         }
 
@@ -721,11 +729,34 @@ impl<'a> CheckerState<'a> {
 
         let mut any_changed = false;
         for tq_idx in &type_query_nodes {
-            let narrowed = self.get_type_from_type_query(*tq_idx);
-            let existing = self.ctx.node_types.get(&tq_idx.0).copied();
-            if existing != Some(narrowed) {
-                self.ctx.node_types.insert(tq_idx.0, narrowed);
-                any_changed = true;
+            // Extract the expr_name from the TYPE_QUERY node so we can resolve
+            // it through the value-space path with flow narrowing.
+            let expr_name = {
+                let Some(node) = self.ctx.arena.get(*tq_idx) else {
+                    continue;
+                };
+                let Some(tq_data) = self.ctx.arena.get_type_query(node) else {
+                    continue;
+                };
+                tq_data.expr_name
+            };
+
+            // Resolve the expression with flow narrowing enabled.  This calls
+            // `get_type_of_node` which checks flow nodes and applies typeof
+            // guards, giving us e.g. `string` instead of `string | number`.
+            let prev_skip = self.ctx.skip_flow_narrowing;
+            self.ctx.skip_flow_narrowing = false;
+            let narrowed = self.get_type_of_node(expr_name);
+            self.ctx.skip_flow_narrowing = prev_skip;
+
+            // Only update if we got a concrete type (not ERROR) that differs
+            // from what was previously cached for this TYPE_QUERY node.
+            if narrowed != TypeId::ERROR {
+                let existing = self.ctx.node_types.get(&tq_idx.0).copied();
+                if existing != Some(narrowed) {
+                    self.ctx.node_types.insert(tq_idx.0, narrowed);
+                    any_changed = true;
+                }
             }
         }
 
@@ -733,6 +764,8 @@ impl<'a> CheckerState<'a> {
             return alias_type;
         }
 
+        // Clear the cached type for the parent type node so it gets
+        // re-evaluated with the updated TYPE_QUERY node types.
         self.ctx.node_types.remove(&type_node.0);
         self.get_type_from_type_node(type_node)
     }
