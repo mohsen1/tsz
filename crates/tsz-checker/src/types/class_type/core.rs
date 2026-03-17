@@ -229,9 +229,17 @@ impl<'a> CheckerState<'a> {
                 if self.has_static_modifier(&prop.modifiers) {
                     continue;
                 }
-                let Some(declared_type) =
+                let declared_type = if let Some(dt) =
                     self.effective_class_property_declared_type(member_idx, prop)
-                else {
+                {
+                    dt
+                } else if prop.initializer.is_some() {
+                    // Unannotated properties with initializers should still appear in
+                    // the pre-scan type so that `this.prop` in other property initializers
+                    // doesn't produce a false TS2339. Use `any` as a provisional type;
+                    // the real type will be inferred during Phase 1.
+                    TypeId::ANY
+                } else {
                     continue;
                 };
                 let Some(name) = self.get_property_name_resolved(prop.name) else {
