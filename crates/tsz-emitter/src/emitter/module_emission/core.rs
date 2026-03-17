@@ -440,10 +440,43 @@ impl<'a> Printer<'a> {
                     self.write(";");
                 }
             } else {
-                self.write("export default ");
-                self.emit(export.export_clause);
-                if !clause_is_func_or_class {
-                    self.write_semicolon();
+                // When a default-exported class has ES (non-legacy) decorators,
+                // tsc emits decorators BEFORE `export default`:
+                //   @dec
+                //   export default class C { }
+                let default_class_has_es_decorators = !self.ctx.options.legacy_decorators
+                    && clause_is_func_or_class
+                    && if let Some(cn) = self.arena.get(export.export_clause) {
+                        cn.kind == syntax_kind_ext::CLASS_DECLARATION
+                            && if let Some(class) = self.arena.get_class(cn) {
+                                !self.collect_class_decorators(&class.modifiers).is_empty()
+                            } else {
+                                false
+                            }
+                    } else {
+                        false
+                    };
+
+                if default_class_has_es_decorators {
+                    if let Some(cn) = self.arena.get(export.export_clause) {
+                        if let Some(class) = self.arena.get_class(cn) {
+                            let decorators = self.collect_class_decorators(&class.modifiers);
+                            for dec_idx in &decorators {
+                                self.emit(*dec_idx);
+                                self.write_line();
+                            }
+                        }
+                    }
+                    self.write("export default ");
+                    if let Some(cn) = self.arena.get(export.export_clause) {
+                        self.emit_class_es6_with_options(cn, export.export_clause, true, None);
+                    }
+                } else {
+                    self.write("export default ");
+                    self.emit(export.export_clause);
+                    if !clause_is_func_or_class {
+                        self.write_semicolon();
+                    }
                 }
             }
             return;
@@ -585,10 +618,41 @@ impl<'a> Printer<'a> {
         // checking if the name is already in `declared_namespace_names`, which
         // means a prior declaration already emitted the `var`/`export` prefix.
         let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
-        if !is_merged_subsequent {
-            self.write("export ");
+
+        // When a class has ES (non-legacy) decorators and is exported, tsc emits
+        // decorators BEFORE the `export` keyword:
+        //   @dec
+        //   export class C { }
+        // We need to emit decorators first, then `export`, then the class body
+        // with modifiers suppressed (since decorators were already emitted).
+        let class_has_es_decorators = !self.ctx.options.legacy_decorators
+            && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && if let Some(class) = self.arena.get_class(clause_node) {
+                !self.collect_class_decorators(&class.modifiers).is_empty()
+            } else {
+                false
+            };
+
+        if class_has_es_decorators {
+            // Emit decorators before `export`
+            if let Some(class) = self.arena.get_class(clause_node) {
+                let decorators = self.collect_class_decorators(&class.modifiers);
+                for dec_idx in &decorators {
+                    self.emit(*dec_idx);
+                    self.write_line();
+                }
+            }
+            if !is_merged_subsequent {
+                self.write("export ");
+            }
+            // Emit the class with modifiers suppressed (decorators already emitted)
+            self.emit_class_es6_with_options(clause_node, export.export_clause, true, None);
+        } else {
+            if !is_merged_subsequent {
+                self.write("export ");
+            }
+            self.emit(export.export_clause);
         }
-        self.emit(export.export_clause);
 
         if export.module_specifier.is_some() {
             self.write(" from ");
