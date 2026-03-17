@@ -815,6 +815,13 @@ impl<'a> CheckerState<'a> {
                     let mut interface_type_params = None;
                     let mut has_private_members = false;
 
+                    // Track whether any merged interface declaration extends a class
+                    // with private members that the implementing class CAN access vs
+                    // ones it CANNOT access. When both exist, the conflict is already
+                    // reported as TS2320 on the interface itself, so we suppress TS2420.
+                    let mut any_inaccessible_privates = false;
+                    let mut any_accessible_privates = false;
+
                     for &decl_idx in &symbol.declarations {
                         if let Some(node) = self.ctx.arena.get(decl_idx) {
                             if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
@@ -838,18 +845,32 @@ impl<'a> CheckerState<'a> {
                                     class_idx,
                                     class_data,
                                 ) {
-                                    self.error_at_node(
-                                            class_error_idx,
-                                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
-                                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                        );
-                                    // continue manually handled below if we break
+                                    any_inaccessible_privates = true;
+                                } else if self
+                                    .interface_extends_class_with_accessible_private_members(
+                                        interface_decl,
+                                        class_data,
+                                    )
+                                {
+                                    any_accessible_privates = true;
                                 }
                                 if interface_type_params.is_none() {
                                     interface_type_params = interface_decl.type_parameters.clone();
                                 }
                             }
                         }
+                    }
+
+                    // Only emit TS2420 for inaccessible private base members if
+                    // there are no accessible ones from other merged declarations.
+                    // When both exist, the interface itself has TS2320 (conflicting
+                    // base types) which already covers the error.
+                    if any_inaccessible_privates && !any_accessible_privates {
+                        self.error_at_node(
+                            class_error_idx,
+                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
                     }
 
                     if has_private_members {
