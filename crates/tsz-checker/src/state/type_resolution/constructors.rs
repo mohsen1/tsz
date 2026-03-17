@@ -1003,11 +1003,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a type argument references an `infer` variable declared in a rest
-    /// position (`...infer X`) within a conditional type's extends clause. In TSC,
-    /// such infer variables get an implicit array constraint (they always infer
-    /// array/tuple types), so we should skip TS2344 constraint checking for them.
-    pub(crate) fn is_infer_in_rest_position_of_conditional(&self, arg_idx: NodeIndex) -> bool {
+    /// Check if a type argument references an `infer` variable declared in a
+    /// position with an implicit constraint within a conditional type's extends
+    /// clause. In TSC, such infer variables get implicit constraints from their
+    /// structural position:
+    /// - Rest position (`...infer X`): implicit array constraint
+    /// - Template literal position (`` `${infer X}` ``): implicit `string` constraint
+    /// We should skip TS2344 constraint checking for these.
+    pub(crate) fn is_infer_with_implicit_constraint_in_conditional(&self, arg_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         // Get the name of the type argument (e.g., "Tail" from `ExpandSmallerTuples<Tail>`)
@@ -1040,7 +1043,7 @@ impl<'a> CheckerState<'a> {
                         && arg_node.end <= true_node.end
                     {
                         // Search the extends clause for `...infer <name>`
-                        if self.extends_clause_has_rest_infer_named(cond.extends_type, name) {
+                        if self.extends_clause_has_constrained_infer_named(cond.extends_type, name) {
                             return true;
                         }
                     }
@@ -1059,10 +1062,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Recursively search a type node for `...infer <name>` patterns.
-    /// Returns true if a `REST_TYPE` wrapping an `INFER_TYPE` with a matching
-    /// type parameter name is found.
-    fn extends_clause_has_rest_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
+    /// Recursively search a type node for `infer <name>` patterns in positions
+    /// with implicit constraints:
+    /// - `...infer <name>` (rest position → implicit array constraint)
+    /// - `` `...${infer <name>}...` `` (template literal → implicit `string` constraint)
+    /// Returns true if a matching infer with an implicit constraint is found.
+    fn extends_clause_has_constrained_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1076,21 +1081,36 @@ impl<'a> CheckerState<'a> {
             && inner_node.kind == syntax_kind_ext::INFER_TYPE
             && let Some(infer_data) = self.ctx.arena.get_infer_type(inner_node)
         {
-            // Get the type parameter name from the infer type
-            if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
-                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-                && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                && ident.escaped_text == name
-            {
+            if self.infer_type_param_has_name(infer_data, name) {
                 return true;
+            }
+        }
+
+        // Check if this is a TEMPLATE_LITERAL_TYPE containing `infer <name>` in a span.
+        // Template literal type spans constrain infer variables to `string`.
+        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+            && let Some(tlt) = self.ctx.arena.get_template_literal_type(node)
+        {
+            for &span_idx in &tlt.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node)
+                {
+                    // The expression/type in the span is at span_data.expression
+                    if let Some(type_node) = self.ctx.arena.get(span_data.expression)
+                        && type_node.kind == syntax_kind_ext::INFER_TYPE
+                        && let Some(infer_data) = self.ctx.arena.get_infer_type(type_node)
+                        && self.infer_type_param_has_name(infer_data, name)
+                    {
+                        return true;
+                    }
+                }
             }
         }
 
         // Recurse into tuple type elements
         if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
             for &elem_idx in &tuple.elements.nodes {
-                if self.extends_clause_has_rest_infer_named(elem_idx, name) {
+                if self.extends_clause_has_constrained_infer_named(elem_idx, name) {
                     return true;
                 }
             }
@@ -1098,7 +1118,7 @@ impl<'a> CheckerState<'a> {
 
         // Recurse into named tuple members
         if let Some(named_member) = self.ctx.arena.get_named_tuple_member(node)
-            && self.extends_clause_has_rest_infer_named(named_member.type_node, name)
+            && self.extends_clause_has_constrained_infer_named(named_member.type_node, name)
         {
             return true;
         }
@@ -1107,12 +1127,29 @@ impl<'a> CheckerState<'a> {
         if (node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             || node.kind == syntax_kind_ext::OPTIONAL_TYPE)
             && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
-            && self.extends_clause_has_rest_infer_named(wrapped.type_node, name)
+            && self.extends_clause_has_constrained_infer_named(wrapped.type_node, name)
         {
             return true;
         }
 
         false
+    }
+
+    /// Check if an infer type's type parameter has the given name.
+    fn infer_type_param_has_name(
+        &self,
+        infer_data: &tsz_parser::parser::node::InferTypeData,
+        name: &str,
+    ) -> bool {
+        if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+            && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+            && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            ident.escaped_text == name
+        } else {
+            false
+        }
     }
 
     /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
