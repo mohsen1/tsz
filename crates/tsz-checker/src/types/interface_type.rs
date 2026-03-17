@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
         // Use a dedicated counter with a tight limit (10) because each heritage
         // merge cycle is expensive (it resolves full interface types).
         let heritage_depth = self.ctx.heritage_merge_depth.get();
-        if heritage_depth >= 3 {
+        if heritage_depth >= 5 {
             return derived_type;
         }
         // Bail out early if type resolution fuel is exhausted.
