@@ -15723,3 +15723,118 @@ class C extends I {}
         "Should emit TS2304 for unresolved 'I' in extends clause.\nActual errors: {diagnostics:#?}"
     );
 }
+
+/// Test: exportAssignmentOfExportNamespaceWithDefault
+///
+/// Module "b" has `export function a(): void` merged with `export namespace a { ... default }`.
+/// Module "a" does `import { a } from "b"; export = a;`.
+/// With esModuleInterop, `import a from "a"; a()` should produce NO errors.
+///
+/// Root cause: `resolve_export_from_table` was falling through to a namespace-merge
+/// fallback that searched all symbols by name across the binder, picking up the
+/// function+namespace `a` from module "b" instead of returning the `export=` value.
+#[test]
+fn test_export_assignment_of_export_namespace_with_default_no_ts2349() {
+    let ambient_source = r#"
+declare module "b" {
+    export function a(): void;
+    export namespace a {
+        var _a: typeof a;
+        export { _a as default };
+    }
+    export default a;
+}
+
+declare module "a" {
+    import { a } from "b";
+    export = a;
+}
+"#;
+    let consumer_source = r#"
+import a from "a";
+a();
+"#;
+
+    // Parse and bind the ambient modules file
+    let mut parser_a = ParserState::new("external.d.ts".to_string(), ambient_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    // Parse and bind the consumer file
+    let mut parser_b = ParserState::new("main.ts".to_string(), consumer_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    // Copy module exports from ambient to consumer binder
+    for module_name in &["a", "b"] {
+        if let Some(exports) = binder_a.module_exports.get(*module_name) {
+            binder_b
+                .module_exports
+                .insert(module_name.to_string(), exports.clone());
+        }
+    }
+
+    let mut cross_file_targets = FxHashMap::default();
+    for module_name in &["a", "b"] {
+        if let Some(exports) = binder_a.module_exports.get(*module_name) {
+            for (_, &sym_id) in exports.iter() {
+                cross_file_targets.insert(sym_id, 0usize);
+            }
+        }
+    }
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        es_module_interop: true,
+        no_lib: true,
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        "main.ts".to_string(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker
+            .ctx
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .insert(*sym_id, *file_idx);
+    }
+
+    checker.check_source_file(root_b);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let has_ts2349 = has_error(&diagnostics, 2349);
+    assert!(
+        !has_ts2349,
+        "Should NOT emit TS2349 for export= function+namespace. \
+         With esModuleInterop, `import a from 'a'; a()` should be valid. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
