@@ -1128,8 +1128,11 @@ impl<'a> CheckerState<'a> {
                                 || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
                         } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                             // For object literal args, keep implicit-any diagnostics
-                            // (TS7006/TS7019) regardless of which overload matches.
-                            // Only drop provisional TS2322/TS2345.
+                            // (TS7006/TS7019) from inside the literal regardless of
+                            // which overload matches. Only drop provisional TS2322/TS2345.
+                            // This is needed when a property maps to `never` in a
+                            // negated-type-like constraint: the closure for that property
+                            // has no contextual type and must emit TS7006.
                             !is_object_literal_diag
                                 || (is_provisional_implicit_any && !is_provisional_assignability)
                         } else {
@@ -1453,6 +1456,14 @@ impl<'a> CheckerState<'a> {
         let initial_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
 
         // Save implicit-any-checked-closures state before the first pass.
+        // During the first-pass argument collection, closures may get marked as
+        // "already checked" even though their diagnostics (including TS7006) are
+        // later dropped. When the instantiated retry re-collects arguments, those
+        // closures would be skipped due to `closure_already_checked = true`,
+        // causing TS7006 to be silently suppressed. We restore this set before
+        // the retry so closures get a fresh TS7006 check with the correct
+        // (instantiated) contextual type - which may be `never` for extra keys
+        // in a negated-type-like constraint mapped type.
         let implicit_any_checked_closures_checkpoint =
             self.ctx.implicit_any_checked_closures.clone();
 
@@ -1556,6 +1567,10 @@ impl<'a> CheckerState<'a> {
                         self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
                         self.ctx.node_types = Default::default();
                         // Restore closure implicit-any tracking to pre-first-pass state.
+                        // The first-pass collection may have marked closures as "already
+                        // checked" even though their TS7006 diagnostics were dropped (for
+                        // object-literal args). Without this restore, the instantiated
+                        // retry silently suppresses TS7006 for those closures.
                         self.ctx.implicit_any_checked_closures =
                             implicit_any_checked_closures_checkpoint.clone();
                         refresh_all_args(self);
@@ -1634,8 +1649,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
-                    // For multi-overload: constraint violation means this overload doesn't
-                    // match, try the next. For single-signature: treat as match.
+                    // Constraint violation from callback return - overload matched
+                    // but with constraint error. If there are more overloads to try,
+                    // continue to the next one (e.g., Object.freeze overload 0 is
+                    // `T extends Function` which is violated for object args — we
+                    // must try overload 1 `T extends {[idx:string]:U}`).
                     if signatures.len() > 1 {
                         continue;
                     }
@@ -1659,6 +1677,11 @@ impl<'a> CheckerState<'a> {
         let mut exact_expected_counts = std::collections::BTreeSet::new();
         let mut min_expected = usize::MAX;
         let mut max_expected = 0usize;
+        // When an overload returns TypeParameterConstraintViolation and there are
+        // more overloads to try, we store it as a fallback and continue. If no
+        // later overload succeeds, we use this fallback (e.g., for single-overload
+        // constraint violations that must still resolve to a return type).
+        let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1886,6 +1909,15 @@ impl<'a> CheckerState<'a> {
                     ));
                 }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    // If more overloads remain, store this as a fallback and try next.
+                    // This handles cases like Object.freeze where overload 0
+                    // (T extends Function) is violated for object args but overload 1
+                    // (T extends {[idx:string]:U}) should be tried next.
+                    if signatures.len() > 1 && constraint_violation_fallback.is_none() {
+                        constraint_violation_fallback = Some((return_type, sig_arg_types.clone()));
+                        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+                        continue;
+                    }
                     let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
                         args,
                         first_pass_diagnostics_checkpoint,
@@ -1921,6 +1953,21 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+        }
+
+        // If we encountered a TypeParameterConstraintViolation while trying overloads
+        // but no later overload succeeded cleanly, use the constraint-violation result
+        // as a successful resolution (the return type is still valid; only the
+        // constraint check itself failed, which is reported separately).
+        if let Some((fallback_return_type, fallback_arg_types)) = constraint_violation_fallback {
+            self.ctx
+                .diagnostics
+                .truncate(first_pass_diagnostics_checkpoint);
+            self.ctx.node_types = original_node_types;
+            return Some(OverloadResolution {
+                arg_types: fallback_arg_types,
+                result: CallResult::Success(fallback_return_type),
+            });
         }
 
         // No overload matched: drop speculative diagnostics from overload argument

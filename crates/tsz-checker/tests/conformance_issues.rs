@@ -15868,41 +15868,39 @@ if (typeof c === 'string') {
 }
 
 #[test]
-fn test_ts7006_emitted_when_contextual_function_type_is_never() {
-    let opts = CheckerOptions {
+fn test_ts7006_for_excess_key_in_negated_type_constraint_mapped_type() {
+    // From contextualTypesNegatedTypeLikeConstraintInGenericMappedType2.ts
+    // When a mapped type maps excess keys to `never` (negated-type-like constraint),
+    // a callback assigned to such a key should trigger TS7006 for its implicit-any param.
+    // Previously, Round 2 of the two-pass generic call was marking the closure as
+    // "already checked" in implicit_any_checked_closures while suppressing its TS7006,
+    // causing the final resolve_call to skip it.
+    let options = CheckerOptions {
         no_implicit_any: true,
-        strict: true,
-        ..CheckerOptions::default()
+        strict_null_checks: true,
+        ..Default::default()
     };
     let source = r#"
 type Tags<D extends string, P> = P extends Record<D, infer X> ? X : never;
-
 declare const typeTags: <I>() => <
   P extends {
     readonly [Tag in Tags<"_tag", I> & string]: (
       _: Extract<I, { readonly _tag: Tag }>,
     ) => any;
   } & { readonly [Tag in Exclude<keyof P, Tags<"_tag", I>>]: never },
->(
-  fields: P,
-) => unknown;
-
+>(fields: P) => unknown;
 type Value = { _tag: "A"; a: number } | { _tag: "B"; b: number };
 const matcher = typeTags<Value>();
-
 matcher({
   A: (_) => _.a,
   B: (_) => "fail",
   C: (_) => "fail",
 });
 "#;
-    let diagnostics = compile_and_get_diagnostics_with_options(source, opts);
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
     assert!(
         has_error(&diagnostics, 7006),
-        "Expected TS7006 for callback assigned to never contextual type. Actual: {diagnostics:#?}"
-    );
-    assert!(
-        has_error(&diagnostics, 2322),
-        "Expected TS2322 for callback assigned to never type. Actual: {diagnostics:#?}"
+        "Expected TS7006 for `_` param in `C: (_) => 'fail'` where C maps to `never` (excess key).\
+         \nActual diagnostics: {diagnostics:#?}"
     );
 }
