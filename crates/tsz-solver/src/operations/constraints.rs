@@ -649,6 +649,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems, priority);
             }
             // Array/Tuple → Object/ObjectWithIndex: constrain elements against index signatures
+            // and iterable element types (when target is the structural form of Iterable<T>).
             (
                 Some(TypeData::Array(s_elem)),
                 Some(TypeData::Object(t_shape_id) | TypeData::ObjectWithIndex(t_shape_id)),
@@ -660,6 +661,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     t_shape_id,
                     priority,
                 );
+                // When the target Object is the structural form of an iterable interface
+                // (e.g., Iterable<__infer_0> lowered to Object), also constrain the array
+                // element type against the iterator element type. This enables inference
+                // for `declare function f<T>(items: Iterable<T>, cb: (x: T) => void): void`
+                // when called with an array argument.
+                if let Some(iter_elem) = self.extract_iterable_element_type_from_object(target) {
+                    self.constrain_types(ctx, var_map, s_elem, iter_elem, priority);
+                }
             }
             (
                 Some(TypeData::Tuple(s_elems)),
@@ -3032,5 +3041,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => false,
         }
+    }
+
+    /// Extract the iterable element type from an Object that has `[Symbol.iterator]`.
+    ///
+    /// Follows the chain: Object -> `[Symbol.iterator]` property -> function/callable
+    /// return type -> first Application type argument. For types like the structural
+    /// form of `Set<Employee>`, this extracts `Employee` from the iterator return type
+    /// `IterableIterator<Employee>` or `SetIterator<Employee>`.
+    ///
+    /// Returns `None` if the source is not an iterable Object with a recognizable pattern.
+    fn extract_iterable_element_type_from_object(&self, source: TypeId) -> Option<TypeId> {
+        let shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+            _ => return None,
+        };
+        let shape = self.interner.object_shape(shape_id);
+
+        // Find the [Symbol.iterator] property
+        let iterator_prop = shape.properties.iter().find(|p| {
+            let name = self.interner.resolve_atom(p.name);
+            name == "__@iterator" || name == "[Symbol.iterator]"
+        })?;
+
+        // Collect return types from all call signatures of [Symbol.iterator].
+        // For merged interfaces (e.g., Set gets MapIterator, SetIterator, IteratorObject
+        // overloads), we try each signature to find one with an Application return type.
+        let return_types: Vec<TypeId> = match self.interner.lookup(iterator_prop.type_id) {
+            Some(TypeData::Function(func_id)) => {
+                let func = self.interner.function_shape(func_id);
+                vec![func.return_type]
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let callable = self.interner.callable_shape(callable_id);
+                callable
+                    .call_signatures
+                    .iter()
+                    .map(|sig| sig.return_type)
+                    .collect()
+            }
+            _ => return None,
+        };
+
+        // Find the first return type that is an Application and extract its first arg.
+        for return_type in return_types {
+            if let Some(TypeData::Application(app_id)) = self.interner.lookup(return_type) {
+                let app = self.interner.type_application(app_id);
+                if let Some(&first_arg) = app.args.first() {
+                    return Some(first_arg);
+                }
+            }
+        }
+        None
     }
 }
