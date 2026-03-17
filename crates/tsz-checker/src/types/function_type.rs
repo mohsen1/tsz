@@ -810,7 +810,24 @@ impl<'a> CheckerState<'a> {
                     optional,
                     rest,
                 });
-                param_types.push(Some(type_id));
+                // For body-scope type caching: optional parameters with `?` token
+                // need `| undefined` under strictNullChecks.  The signature keeps
+                // the base type with `optional: true`, but inside the body the
+                // parameter's declared type is `T | undefined`.  Parameters with
+                // only a default value (no `?`) do NOT get `| undefined` because
+                // the default guarantees a value at runtime.
+                let cached_type = if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && type_id != TypeId::ERROR
+                    && !tsz_solver::type_contains_undefined(self.ctx.types, type_id)
+                {
+                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
+                param_types.push(Some(cached_type));
                 destructuring_context_param_types.push(Some(binding_context_type));
                 contextual_index += 1;
             }
