@@ -1706,6 +1706,25 @@ impl<'a> CheckerState<'a> {
                         self.format_type_diagnostic(target),
                     )
                 };
+                // TS2820: when the source is a string literal and a union member is
+                // close in spelling, emit "did you mean X?" instead of plain TS2322.
+                let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
+                if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
+                    source,
+                    evaluated_target_for_suggestion,
+                ) {
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                        &[&source_str, &target_str, &suggestion],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        msg,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                    );
+                }
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
