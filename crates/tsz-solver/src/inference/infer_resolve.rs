@@ -365,17 +365,6 @@ impl<'a> InferenceContext<'a> {
         declared_constraint: Option<TypeId>,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
-        eprintln!(
-            "[RESOLVE DEBUG] resolve_from_candidates: {} candidates, {} filtered",
-            candidates.len(),
-            filtered.len()
-        );
-        for c in &filtered {
-            eprintln!(
-                "[RESOLVE DEBUG]   candidate: {:?}, priority: {:?}, from_obj_prop: {}",
-                c.type_id, c.priority, c.from_object_property
-            );
-        }
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -399,7 +388,10 @@ impl<'a> InferenceContext<'a> {
         // e.g., `<T>(value: T): Box<T>` is contextually typed as `Box<boolean>`.
         let preserve_literals = is_const
             || self.constraint_implies_literals(upper_bounds)
-            || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c));
+            || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c))
+            || declared_constraint.is_some_and(|c| {
+                self.constraint_contains_type_param_with_primitive_constraint(c, 0)
+            });
         // Match tsc's inference resolution order.
         //
         // tsc's getCovariantInference checks `priority & PriorityImpliesCombination`:
@@ -658,6 +650,70 @@ impl<'a> InferenceContext<'a> {
                 .any(|&m| self.declared_constraint_is_primitive(m));
         }
         false
+    }
+
+    /// Check whether a declared constraint contains a TypeParameter whose own
+    /// declared constraint is a primitive type (string/number/boolean/bigint/symbol).
+    ///
+    /// This handles `Object.freeze` overload 1:
+    ///   `freeze<T extends { [idx: string]: U | null | undefined | object }, U extends string | bigint | number | boolean | symbol>(o: T): Readonly<T>`
+    /// T's declared constraint is an index-signature object, not itself primitive,
+    /// but *contains* U which IS primitive-constrained. When this holds, literal
+    /// string values in the object's properties must not be widened during inference.
+    fn constraint_contains_type_param_with_primitive_constraint(
+        &self,
+        type_id: TypeId,
+        depth: u32,
+    ) -> bool {
+        if depth > 4 {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) => info
+                .constraint
+                .is_some_and(|c| self.declared_constraint_is_primitive(c)),
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id).to_vec();
+                members.iter().any(|&m| {
+                    self.constraint_contains_type_param_with_primitive_constraint(m, depth + 1)
+                })
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id).to_vec();
+                members.iter().any(|&m| {
+                    self.constraint_contains_type_param_with_primitive_constraint(m, depth + 1)
+                })
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id).clone();
+                if shape.properties.iter().any(|prop| {
+                    self.constraint_contains_type_param_with_primitive_constraint(
+                        prop.type_id,
+                        depth + 1,
+                    )
+                }) {
+                    return true;
+                }
+                if let Some(idx) = shape.string_index.as_ref() {
+                    if self.constraint_contains_type_param_with_primitive_constraint(
+                        idx.value_type,
+                        depth + 1,
+                    ) {
+                        return true;
+                    }
+                }
+                if let Some(idx) = shape.number_index.as_ref() {
+                    if self.constraint_contains_type_param_with_primitive_constraint(
+                        idx.value_type,
+                        depth + 1,
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     fn type_implies_literals(&self, type_id: TypeId) -> bool {
