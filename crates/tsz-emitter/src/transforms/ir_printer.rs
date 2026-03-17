@@ -365,9 +365,8 @@ impl<'a> IRPrinter<'a> {
                     && !num_text.contains('e')
                     && !num_text.contains('E')
             }
-            // Parenthesized expressions never need double-dot because the
-            // closing paren already disambiguates: `(1).foo` is valid JS.
-            IRNode::Parenthesized(_) => false,
+            // Other expressions (including parenthesized) never need double-dot
+            // because the closing paren already disambiguates: `(1).foo` is valid JS.
             _ => false,
         }
     }

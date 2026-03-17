@@ -1233,10 +1233,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // are all subtypes of string. When the object has a string index signature,
         // these index types should resolve to the string index signature's value type,
         // just like TypeId::STRING does.
-        if let Some(string_index) = shape.string_index.as_ref() {
-            if self.is_string_like_index(index_type) {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
+        if let Some(string_index) = shape.string_index.as_ref()
+            && self.is_string_like_index(index_type)
+        {
+            return self.add_undefined_if_unchecked(string_index.value_type);
         }
 
         TypeId::UNDEFINED
@@ -1325,10 +1325,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // String-like index types (template literals, string intrinsics, branded strings)
         // should use the string index signature when available.
-        if let Some(string_index) = shape.string_index.as_ref() {
-            if self.is_string_like_index(index_type) {
-                return self.add_undefined_if_unchecked(string_index.value_type);
-            }
+        if let Some(string_index) = shape.string_index.as_ref()
+            && self.is_string_like_index(index_type)
+        {
+            return self.add_undefined_if_unchecked(string_index.value_type);
         }
 
         TypeId::UNDEFINED
@@ -1336,15 +1336,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Check if an index type is a subtype of string for index signature resolution.
     ///
-    /// Template literal types (`\`foo${string}\``), string intrinsic types
-    /// (Lowercase<T>, Uppercase<T>, etc.), and intersections that contain string
-    /// or a string literal are all subtypes of string. When used as an index
-    /// on an object with a string index signature, they should resolve to the
-    /// string index signature's value type.
+    /// Template literal types, string intrinsic types (Lowercase, Uppercase, etc.),
+    /// and intersections that contain string or a string literal are all subtypes
+    /// of string. When used as an index on an object with a string index signature,
+    /// they should resolve to the string index signature's value type.
     fn is_string_like_index(&self, index_type: TypeId) -> bool {
         match self.interner().lookup(index_type) {
-            Some(TypeData::TemplateLiteral(_)) => true,
-            Some(TypeData::StringIntrinsic { .. }) => true,
+            Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
             Some(TypeData::Intersection(list_id)) => {
                 // An intersection is string-like if any member is string or a string literal
                 let members = self.interner().type_list(list_id);

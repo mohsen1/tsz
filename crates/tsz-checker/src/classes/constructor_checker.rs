@@ -322,14 +322,13 @@ impl<'a> CheckerState<'a> {
                     // interface name (e.g., "String", "Date") instead of structural
                     // expansion in diagnostics. The resolve step produces a new TypeId
                     // that loses the Lazy(DefId) wrapper.
-                    if resolved != instance_type {
-                        if let Some(def_id) =
+                    if resolved != instance_type
+                        && let Some(def_id) =
                             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, instance_type)
-                        {
-                            self.ctx
-                                .definition_store
-                                .register_type_to_def(resolved, def_id);
-                        }
+                    {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(resolved, def_id);
                     }
                     return Some(resolved);
                 }
@@ -341,14 +340,13 @@ impl<'a> CheckerState<'a> {
                             current,
                         )?;
                     let resolved = self.resolve_type_for_property_access(return_type);
-                    if resolved != return_type {
-                        if let Some(def_id) =
+                    if resolved != return_type
+                        && let Some(def_id) =
                             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, return_type)
-                        {
-                            self.ctx
-                                .definition_store
-                                .register_type_to_def(resolved, def_id);
-                        }
+                    {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(resolved, def_id);
                     }
                     return Some(resolved);
                 }

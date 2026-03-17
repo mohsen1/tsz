@@ -817,7 +817,7 @@ impl<'a> CheckerState<'a> {
     /// `base_constraint_of_type` returns UNKNOWN for type params that ARE
     /// constrained but whose constraints weren't resolved in the type system
     /// (e.g., function type parameters that live in the checker's dynamic
-    /// type_parameter_scope rather than the binder's symbol table).
+    /// `type_parameter_scope` rather than the binder's symbol table).
     pub(crate) fn type_arg_has_explicit_constraint_in_ast(&self, arg_idx: NodeIndex) -> bool {
         // Get the type argument's name to look up in the type_parameter_scope.
         // Function type params (e.g., `<T extends Foo>(x: Bar<T>)`) are stored
@@ -1035,12 +1035,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node) {
                     // Check if arg_idx is in the true branch of this conditional
                     // (use position-based containment)
-                    if let Some(true_node) = self.ctx.arena.get(cond.true_type) {
-                        if arg_node.pos >= true_node.pos && arg_node.end <= true_node.end {
-                            // Search the extends clause for `...infer <name>`
-                            if self.extends_clause_has_rest_infer_named(cond.extends_type, name) {
-                                return true;
-                            }
+                    if let Some(true_node) = self.ctx.arena.get(cond.true_type)
+                        && arg_node.pos >= true_node.pos
+                        && arg_node.end <= true_node.end
+                    {
+                        // Search the extends clause for `...infer <name>`
+                        if self.extends_clause_has_rest_infer_named(cond.extends_type, name) {
+                            return true;
                         }
                     }
                 }
@@ -1059,7 +1060,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Recursively search a type node for `...infer <name>` patterns.
-    /// Returns true if a REST_TYPE wrapping an INFER_TYPE with a matching
+    /// Returns true if a `REST_TYPE` wrapping an `INFER_TYPE` with a matching
     /// type parameter name is found.
     fn extends_clause_has_rest_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
@@ -1069,28 +1070,20 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if this is a REST_TYPE wrapping an INFER_TYPE
-        if node.kind == syntax_kind_ext::REST_TYPE {
-            if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                if let Some(inner_node) = self.ctx.arena.get(wrapped.type_node) {
-                    if inner_node.kind == syntax_kind_ext::INFER_TYPE {
-                        if let Some(infer_data) = self.ctx.arena.get_infer_type(inner_node) {
-                            // Get the type parameter name from the infer type
-                            if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter) {
-                                if let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) {
-                                    if let Some(name_node) = self.ctx.arena.get(tp_data.name) {
-                                        if let Some(ident) =
-                                            self.ctx.arena.get_identifier(name_node)
-                                        {
-                                            if ident.escaped_text == name {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        if node.kind == syntax_kind_ext::REST_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            && let Some(inner_node) = self.ctx.arena.get(wrapped.type_node)
+            && inner_node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_data) = self.ctx.arena.get_infer_type(inner_node)
+        {
+            // Get the type parameter name from the infer type
+            if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == name
+            {
+                return true;
             }
         }
 
@@ -1104,21 +1097,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Recurse into named tuple members
-        if let Some(named_member) = self.ctx.arena.get_named_tuple_member(node) {
-            if self.extends_clause_has_rest_infer_named(named_member.type_node, name) {
-                return true;
-            }
+        if let Some(named_member) = self.ctx.arena.get_named_tuple_member(node)
+            && self.extends_clause_has_rest_infer_named(named_member.type_node, name)
+        {
+            return true;
         }
 
         // Recurse into wrapped types (parenthesized, optional)
-        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            || node.kind == syntax_kind_ext::OPTIONAL_TYPE
+        if (node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            || node.kind == syntax_kind_ext::OPTIONAL_TYPE)
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            && self.extends_clause_has_rest_infer_named(wrapped.type_node, name)
         {
-            if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                if self.extends_clause_has_rest_infer_named(wrapped.type_node, name) {
-                    return true;
-                }
-            }
+            return true;
         }
 
         false
