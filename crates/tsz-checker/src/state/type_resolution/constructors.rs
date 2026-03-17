@@ -778,6 +778,165 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside a mapped type body.
+    /// Used to detect mapped type iteration variables (e.g., `K` in `[K in keyof T]`)
+    /// whose implicit constraints aren't tracked in base constraint resolution.
+    pub(crate) fn is_inside_mapped_type(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        for _ in 0..20 {
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |e| e.parent);
+            if parent.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::MAPPED_TYPE {
+                    return true;
+                }
+                // Stop at declaration-level nodes
+                if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                {
+                    return false;
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
+    /// Check if a type argument AST node references a type parameter that has an
+    /// explicit `extends` constraint in its declaration. This detects cases where
+    /// `base_constraint_of_type` returns UNKNOWN for type params that ARE
+    /// constrained but whose constraints weren't resolved in the type system
+    /// (e.g., function type parameters that live in the checker's dynamic
+    /// type_parameter_scope rather than the binder's symbol table).
+    pub(crate) fn type_arg_has_explicit_constraint_in_ast(&self, arg_idx: NodeIndex) -> bool {
+        // Get the type argument's name to look up in the type_parameter_scope.
+        // Function type params (e.g., `<T extends Foo>(x: Bar<T>)`) are stored
+        // in the checker's dynamic scope, not the binder's symbol table.
+        let arg_name = self.type_arg_identifier_name(arg_idx);
+        if let Some(ref name) = arg_name {
+            // Check the checker's type_parameter_scope. If the type parameter
+            // exists there and has a constraint in the solver's TypeData, it's
+            // constrained (even if base_constraint_of_type returns UNKNOWN due
+            // to a different TypeId being checked).
+            if let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(name) {
+                let db = self.ctx.types.as_type_database();
+                let base = tsz_solver::type_queries::get_base_constraint_of_type(db, scope_type_id);
+                if base != scope_type_id && base != TypeId::UNKNOWN {
+                    return true;
+                }
+            }
+        }
+
+        // Also check binder symbols for interface/class type params
+        let sym_id = if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
+            let target = if arg_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx
+                    .arena
+                    .get_type_ref(arg_node)
+                    .map_or(arg_idx, |tr| tr.type_name)
+            } else {
+                arg_idx
+            };
+            self.resolve_type_symbol_for_lowering(target)
+                .map(tsz_binder::SymbolId)
+        } else {
+            None
+        };
+
+        if let Some(sym_id) = sym_id
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER != 0
+        {
+            for &decl_idx in &symbol.declarations {
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && decl_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_PARAMETER
+                    && let Some(tp_data) = self.ctx.arena.get_type_parameter(decl_node)
+                    && tp_data.constraint.is_some()
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Walk up the AST to find enclosing function/constructor types whose
+        // type parameter list declares this name with a constraint. This
+        // handles function type params not in the binder's symbol table.
+        if let Some(ref name) = arg_name {
+            let mut current = arg_idx;
+            for _ in 0..30 {
+                let parent = self
+                    .ctx
+                    .arena
+                    .get_extended(current)
+                    .map_or(NodeIndex::NONE, |e| e.parent);
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(pn) = self.ctx.arena.get(parent) {
+                    let tp_list = if pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
+                    {
+                        self.ctx
+                            .arena
+                            .get_function_type(pn)
+                            .and_then(|ft| ft.type_parameters.as_ref())
+                    } else {
+                        None
+                    };
+                    if let Some(tp_list) = tp_list {
+                        for &tp_idx in &tp_list.nodes {
+                            if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                                && let Some(nm) = self.ctx.arena.get(tp_data.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(nm)
+                                && ident.escaped_text == *name
+                                && tp_data.constraint.is_some()
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    // Stop at declaration boundaries
+                    if pn.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                    {
+                        break;
+                    }
+                }
+                current = parent;
+            }
+        }
+
+        false
+    }
+
+    /// Extract the identifier name from a type argument AST node.
+    fn type_arg_identifier_name(&self, arg_idx: NodeIndex) -> Option<String> {
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
+            let tr = self.ctx.arena.get_type_ref(arg_node)?;
+            let name_node = self.ctx.arena.get(tr.type_name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            Some(ident.escaped_text.clone())
+        } else if arg_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(arg_node)?;
+            Some(ident.escaped_text.clone())
+        } else {
+            None
+        }
+    }
+
     /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
     ///
     /// When a class expression extends a generic type parameter but adds no new instance properties
