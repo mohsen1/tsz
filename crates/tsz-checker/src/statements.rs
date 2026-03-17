@@ -836,12 +836,14 @@ impl StatementChecker {
                 state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
-                state.check_grammar_module_element_context(stmt_idx);
-                state.check_import_declaration(stmt_idx);
+                if !state.check_grammar_module_element_context(stmt_idx) {
+                    state.check_import_declaration(stmt_idx);
+                }
             }
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                state.check_grammar_module_element_context(stmt_idx);
-                state.check_import_equals_declaration(stmt_idx);
+                if !state.check_grammar_module_element_context(stmt_idx) {
+                    state.check_import_equals_declaration(stmt_idx);
+                }
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 // Note: TS1234/TS1235 are checked inside check_module_declaration
