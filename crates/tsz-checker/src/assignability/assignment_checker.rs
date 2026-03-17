@@ -85,6 +85,93 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2322: Check assignability of the rest element in an object destructuring
+    /// assignment. For `({ b, ...rest } = source)`, computes the rest type
+    /// (source minus named properties) and checks it against the rest target's
+    /// declared type.
+    fn check_object_destructuring_rest_assignability(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+    ) {
+        if source_type == TypeId::ANY || source_type == TypeId::ERROR {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+
+        if pattern_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+
+        let Some(obj) = self.ctx.arena.get_literal_expr(pattern_node) else {
+            return;
+        };
+
+        // Find the spread/rest element and collect non-rest property names
+        let mut named_properties: Vec<String> = Vec::new();
+        let mut spread_target: Option<NodeIndex> = None;
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                // Get the spread expression (the rest target)
+                spread_target = self
+                    .ctx
+                    .arena
+                    .get_spread(elem_node)
+                    .map(|spread| spread.expression)
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_unary_expr_ex(elem_node)
+                            .map(|unary| unary.expression)
+                    });
+            } else if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                if let Some(name) = self.get_property_name_resolved(prop.name) {
+                    named_properties.push(name);
+                }
+            } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                if let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    named_properties.push(ident.escaped_text.clone());
+                }
+            }
+        }
+
+        let Some(spread_expr) = spread_target else {
+            return;
+        };
+
+        // Only check valid rest targets (identifiers, property accesses)
+        if !self.is_valid_rest_assignment_target(spread_expr) {
+            return;
+        }
+
+        // Get the declared type of the rest target variable
+        let rest_target_type = self.get_type_of_assignment_target(spread_expr);
+        if rest_target_type == TypeId::ANY || rest_target_type == TypeId::ERROR {
+            return;
+        }
+
+        // Compute the rest type: source minus named properties
+        let rest_type = self.omit_properties_from_type(source_type, &named_properties);
+
+        // Check assignability
+        self.ensure_relation_input_ready(rest_type);
+        self.ensure_relation_input_ready(rest_target_type);
+
+        let _ = self.check_assignable_or_report(rest_type, rest_target_type, spread_expr);
+    }
+
     /// TS2341/TS2445: Check private/protected accessibility for properties
     /// accessed in destructuring assignment patterns.
     ///
@@ -1018,6 +1105,11 @@ impl<'a> CheckerState<'a> {
             if is_destructuring {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
                 self.check_destructuring_property_accessibility(left_idx, right_type);
+                // TS2322: Check rest element assignability in object destructuring
+                // assignments. For `({ b, ...rest } = source)`, the rest type
+                // (source minus named properties) must be assignable to `rest`'s
+                // declared type.
+                self.check_object_destructuring_rest_assignability(left_idx, right_type);
             }
 
             if check_assignability {

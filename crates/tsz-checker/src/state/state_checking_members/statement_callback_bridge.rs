@@ -174,6 +174,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&func.type_parameters, func_idx);
 
+        // TS7008: Check type parameter constraints for implicit any members
+        // e.g., `function f<T extends { x, y }>(t: T)` — members x, y need type annotations
+        if let Some(ref type_params) = func.type_parameters {
+            for &param_idx in &type_params.nodes {
+                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
+                    && param.constraint.is_some()
+                {
+                    self.check_type_for_parameter_properties(param.constraint);
+                }
+            }
+        }
+
         // TS1212/TS1213/TS1214: Reserved word used as type parameter name in strict mode
         if !self.ctx.is_ambient_declaration(func_idx) {
             self.check_strict_mode_reserved_type_parameter_names(
