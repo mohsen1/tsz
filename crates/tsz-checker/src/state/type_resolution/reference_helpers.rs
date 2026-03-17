@@ -129,7 +129,25 @@ impl<'a> CheckerState<'a> {
                         if has_defaults {
                             let default_args: Vec<TypeId> = type_params
                                 .iter()
-                                .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                                .map(|p| {
+                                    match p.default {
+                                        Some(default) => {
+                                            // Circular default detection: if the default
+                                            // is the type parameter itself (e.g.,
+                                            // `type T<X extends C = X>`), fall back to
+                                            // `any`. This matches tsc behavior.
+                                            if let Some(tsz_solver::TypeData::TypeParameter(info)) =
+                                                self.ctx.types.lookup(default)
+                                            {
+                                                if info.name == p.name {
+                                                    return TypeId::ANY;
+                                                }
+                                            }
+                                            default
+                                        }
+                                        None => TypeId::UNKNOWN,
+                                    }
+                                })
                                 .collect();
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
                             // Resolve the type alias body so its type params and body
