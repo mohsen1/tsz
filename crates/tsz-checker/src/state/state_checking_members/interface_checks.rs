@@ -1084,16 +1084,52 @@ impl<'a> CheckerState<'a> {
         // Getter/setter pairs are allowed on their own, so conflicts with fields/methods
         // are reported only on declarations that appear after the opposing kind first
         // established the member name.
+        //
+        // tsc behaviour depends on whether the name is a computed property name
+        // (e.g. `[Symbol.toPrimitive]`, `[sym]`) or a simple identifier (`m`, `x`):
+        // - Simple identifiers: tsc flags ALL conflicting declarations (both property/method
+        //   and accessor).
+        // - Computed names: tsc flags only the LATER declarations — the first declaration
+        //   that established the name is not flagged.
         for (key, accessor_indices) in &accessor_plain_names {
             if let Some(member_info) = seen_names.get(key) {
-                // tsc reports TS2300 on both the property/method and the accessor(s)
-                // when they share the same name, regardless of declaration order.
-                for &idx in &member_info.indices {
-                    self.report_duplicate_class_member_ts2300(idx);
-                }
+                // Strip "static:" prefix to check the bare name.
+                let bare_key = key.strip_prefix("static:").unwrap_or(key);
+                let is_computed = bare_key.starts_with('[');
 
-                for &idx in accessor_indices {
-                    self.report_duplicate_class_member_ts2300(idx);
+                if is_computed {
+                    // Computed names: only report on later declarations.
+                    let first_member_pos = member_info
+                        .indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|n| n.pos)
+                        .unwrap_or(u32::MAX);
+                    let first_accessor_pos = accessor_indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|n| n.pos)
+                        .unwrap_or(u32::MAX);
+
+                    if first_member_pos < first_accessor_pos {
+                        // Method/property came first — only flag accessors
+                        for &idx in accessor_indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
+                    } else {
+                        // Accessor came first — only flag methods/properties
+                        for &idx in &member_info.indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
+                    }
+                } else {
+                    // Simple identifiers: tsc flags all conflicting declarations.
+                    for &idx in &member_info.indices {
+                        self.report_duplicate_class_member_ts2300(idx);
+                    }
+                    for &idx in accessor_indices {
+                        self.report_duplicate_class_member_ts2300(idx);
+                    }
                 }
             }
         }
