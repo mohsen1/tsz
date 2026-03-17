@@ -13,6 +13,10 @@ use tsz_solver::def::DefId;
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
+        eprintln!(
+            "[get_type_from_type_reference] idx={}, file={}",
+            idx.0, self.ctx.file_name
+        );
         // Fuel check: prevent infinite loops in circular type references
         if !self.ctx.consume_fuel() {
             return TypeId::ERROR;
@@ -181,6 +185,14 @@ impl<'a> CheckerState<'a> {
             // No type arguments provided - check if this generic type requires them
             // Also, use type_reference_symbol_type to preserve nominal identity for enum members
             let qn_sym_res = self.resolve_qualified_symbol_in_type_position(type_name_idx);
+            eprintln!(
+                "[type_ref_qn_dispatch] qn_sym_res={:?}, type_name_idx={}",
+                matches!(
+                    &qn_sym_res,
+                    crate::symbol_resolver::TypeSymbolResolution::Type(_)
+                ),
+                type_name_idx.0
+            );
             if let TypeSymbolResolution::Type(sym_id) = qn_sym_res {
                 self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                 let required_count = self.count_required_type_params(sym_id);
@@ -214,6 +226,11 @@ impl<'a> CheckerState<'a> {
                 // This ensures enum members return TypeData::Enum instead of primitives
                 let mut result = self.type_reference_symbol_type(sym_id);
                 let pre_augmentation_result = result;
+
+                eprintln!(
+                    "[type_ref_qn] sym_id={}, result={:?}, type_name_idx={}",
+                    sym_id.0, result, type_name_idx.0
+                );
 
                 // For `import * as x from "m"; type T = x.A`, apply module augmentations
                 // to the referenced member type (A) using the module specifier from `x`.
