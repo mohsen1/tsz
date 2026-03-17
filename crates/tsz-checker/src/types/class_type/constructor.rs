@@ -426,6 +426,7 @@ impl<'a> CheckerState<'a> {
                         // Without this, `(arg) => {}` initializers would see the whole
                         // interface as contextual type instead of the specific member type.
                         let prev_ctx = self.ctx.contextual_type;
+                        let mut has_contextual_member = false;
                         if let Some(ctx_type) = self.ctx.contextual_type {
                             let resolved = self.evaluate_type_for_assignability(ctx_type);
                             let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
@@ -436,6 +437,7 @@ impl<'a> CheckerState<'a> {
                                 && member_type != TypeId::ANY
                                 && !self.type_contains_error(member_type)
                             {
+                                has_contextual_member = true;
                                 self.ctx.contextual_type = Some(member_type);
                                 self.clear_type_cache_recursive(prop.initializer);
                             }
@@ -470,6 +472,11 @@ impl<'a> CheckerState<'a> {
                         }
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
+                        // Clear cached type: check_property_declaration may have
+                        // already typed this initializer without preserve_literal_types,
+                        // caching a widened type (e.g., "a" → string). We need the
+                        // literal type for the constructor type's static properties.
+                        self.clear_type_cache_recursive(prop.initializer);
                         let init_type = self.get_type_of_node(prop.initializer);
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
@@ -499,7 +506,12 @@ impl<'a> CheckerState<'a> {
                             class_info.in_static_property_initializer = false;
                         }
 
-                        if readonly {
+                        // Only widen literal types for mutable properties when
+                        // there is no contextual type constraining the property.
+                        // When the class expression is contextually typed by an
+                        // interface with a literal property type (e.g., `x: "a"`),
+                        // tsc preserves the literal type rather than widening.
+                        if readonly || has_contextual_member {
                             init_type
                         } else {
                             self.widen_literal_type(init_type)
