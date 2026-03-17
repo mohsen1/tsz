@@ -1491,7 +1491,14 @@ impl ParserState {
                 // when the recovery eats into what tsc treats as a separate statement.
                 // Example: `var b = new C0 32, '';` - tsc emits only TS1005 at `32`.
                 self.error_comma_expected();
-                self.next_token();
+                // Only consume the unexpected token if it cannot start a new
+                // statement.  Tokens like `delete`, `typeof`, `void`, `~` etc.
+                // can begin an expression statement and must be preserved so the
+                // subsequent statement-parsing loop can emit them.
+                // Example: `var a = q~;` → tsc emits `var a = q;\n~;`
+                if !self.is_statement_start() {
+                    self.next_token();
+                }
                 break;
             }
 
