@@ -569,7 +569,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         let result = self.is_assignable_impl(source, target, self.strict_function_types);
-
         self.cache.insert(key, result);
         result
     }
@@ -897,8 +896,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Check mapped-to-mapped structural comparison before full subtype check.
-        // When both source and target are deferred mapped types over the same constraint
-        // (e.g., Readonly<T> vs Partial<T>), compare template types directly.
         if let (Some(TypeData::Mapped(s_mapped_id)), Some(TypeData::Mapped(t_mapped_id))) =
             (self.interner.lookup(source), self.interner.lookup(target))
         {
@@ -908,14 +905,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // Object interface: any non-nullable source is assignable to Object,
-        // provided it doesn't have conflicting property types. The Object
-        // interface from lib.d.ts has methods like toString, valueOf, etc.
-        // that all objects inherit from Object.prototype, so missing them
-        // is fine. But if the source explicitly declares a conflicting type
-        // (e.g., `toString: number`), it should fail.
-        // Also check union members: e.g., `Object | string` should accept any
-        // non-nullable, non-conflicting value.
+        // Object interface check
         if !source.is_nullable() {
             let object_target = if self.is_global_object_interface_target(target) {
                 Some(target)
@@ -935,8 +925,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // Function interface: any callable source is assignable to Function.
-        // Same pre-evaluation identity loss as Object.
+        // Function interface
         if self.is_function_target_member(target)
             && crate::type_queries::is_callable_type(self.interner, source)
         {
