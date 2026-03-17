@@ -2066,6 +2066,21 @@ impl<'a> CheckerState<'a> {
         // so flow narrowing can use the correct (inferred) predicate type.
         if let Some(predicate) = instantiated_predicate {
             self.ctx.call_type_predicates.insert(idx.0, predicate);
+        } else {
+            // For non-generic calls with type predicates (e.g., `isString(x): x is string`),
+            // extract the predicate from the callee's signature and store it in
+            // call_type_predicates. This ensures flow narrowing can find the predicate
+            // even when node_types is temporarily emptied during overload resolution
+            // of a containing call expression (e.g., `console.log(thing.toUpperCase())`
+            // triggers overload resolution which empties node_types before checking args).
+            if let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
+                self.ctx.types,
+                callee_type_for_call,
+            ) {
+                self.ctx
+                    .call_type_predicates
+                    .insert(idx.0, (extracted.predicate, extracted.params));
+            }
         }
 
         // Post-inference excess property checking for generic calls.
