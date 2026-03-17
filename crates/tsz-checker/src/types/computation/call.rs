@@ -689,6 +689,9 @@ impl<'a> CheckerState<'a> {
         let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
         // Track whether we pushed a ThisType marker to this_type_stack during call processing.
         let mut pushed_this_type_from_shape = false;
+        // Extracted ThisType<T> from shape params (via alias expansion if needed).
+        // Saved so it can be re-pushed around retry arg typing calls.
+        let mut shape_this_type: Option<TypeId> = None;
         // Track whether Round 2 successfully used a non-empty return context substitution.
         // When true, the post-inference retry should be suppressed because Round 2 already
         // correctly resolved the callback parameter types using the return context.
@@ -773,6 +776,55 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg| self.round1_should_skip_outer_contextual_type(arg))
                     .collect();
                 let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
+
+                // Extract ThisType<T> from shape params via alias expansion.
+                // Store for re-use across retry arg typing calls.
+                if shape_this_type.is_none() {
+                    for param in &shape.params {
+                        use tsz_solver::ContextualTypeContext;
+                        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                            self.ctx.types,
+                            param.type_id,
+                            self.ctx.compiler_options.no_implicit_any,
+                        );
+                        if let Some(tt) = ctx_helper.get_this_type_from_marker() {
+                            shape_this_type = Some(tt);
+                            break;
+                        }
+                        // Look through type alias Applications
+                        if let Some(tsz_solver::TypeData::Application(app_id)) =
+                            self.ctx.types.lookup(param.type_id)
+                        {
+                            let app = self.ctx.types.type_application(app_id);
+                            if let Some(tsz_solver::TypeData::Lazy(def_id)) =
+                                self.ctx.types.lookup(app.base)
+                            {
+                                use tsz_solver::TypeResolver;
+                                let env = self.ctx.type_env.borrow();
+                                if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
+                                    let type_params =
+                                        env.get_lazy_type_params(def_id).unwrap_or_default();
+                                    let expanded = tsz_solver::instantiate_generic(
+                                        self.ctx.types,
+                                        body,
+                                        &type_params,
+                                        &app.args,
+                                    );
+                                    let expanded_ctx =
+                                        ContextualTypeContext::with_expected_and_options(
+                                            self.ctx.types,
+                                            expanded,
+                                            self.ctx.compiler_options.no_implicit_any,
+                                        );
+                                    if let Some(tt) = expanded_ctx.get_this_type_from_marker() {
+                                        shape_this_type = Some(tt);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if needs_two_pass {
                     // === Round 1: Collect non-contextual argument types ===
@@ -2016,6 +2068,13 @@ impl<'a> CheckerState<'a> {
                         })
                 })
                 .collect();
+            // Re-push ThisType for the retry so object literal methods see the right `this`.
+            let retry_pushed_this = if let Some(tt) = shape_this_type {
+                self.ctx.this_type_stack.push(tt);
+                true
+            } else {
+                false
+            };
             arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
@@ -2028,6 +2087,9 @@ impl<'a> CheckerState<'a> {
                 check_excess_properties,
                 None,
             );
+            if retry_pushed_this {
+                self.ctx.this_type_stack.pop();
+            }
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(args, &arg_types);
@@ -2118,6 +2180,15 @@ impl<'a> CheckerState<'a> {
                     TypeId::UNKNOWN,
                 ))
             });
+            // Re-push ThisType for the recheck so object literal methods see the right `this`.
+            // Use instantiated params (not raw shape) so type params are substituted.
+            let recheck_this_type = self.extract_this_type_from_params(instantiated_params);
+            let recheck_pushed_this = if let Some(tt) = recheck_this_type.or(shape_this_type) {
+                self.ctx.this_type_stack.push(tt);
+                true
+            } else {
+                false
+            };
             let result = if sanitized_generic_inference || needs_real_type_recheck {
                 self.recheck_generic_call_arguments_with_real_types(
                     result,
@@ -2128,6 +2199,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 result
             };
+            if recheck_pushed_this {
+                self.ctx.this_type_stack.pop();
+            }
             let recovered_mismatch = matches!(
                 &result,
                 CallResult::ArgumentTypeMismatch {
@@ -2407,6 +2481,49 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = Some(original_ctx);
         }
         self.handle_call_result(result, call_context)
+    }
+
+    /// Extract ThisType<T> from parameter types, looking through type alias Applications.
+    fn extract_this_type_from_params(&self, params: &[tsz_solver::ParamInfo]) -> Option<TypeId> {
+        for param in params {
+            use tsz_solver::ContextualTypeContext;
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                param.type_id,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            if let Some(tt) = ctx_helper.get_this_type_from_marker() {
+                return Some(tt);
+            }
+            // Look through type alias Applications
+            if let Some(tsz_solver::TypeData::Application(app_id)) =
+                self.ctx.types.lookup(param.type_id)
+            {
+                let app = self.ctx.types.type_application(app_id);
+                if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.ctx.types.lookup(app.base) {
+                    use tsz_solver::TypeResolver;
+                    let env = self.ctx.type_env.borrow();
+                    if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
+                        let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
+                        let expanded = tsz_solver::instantiate_generic(
+                            self.ctx.types,
+                            body,
+                            &type_params,
+                            &app.args,
+                        );
+                        let expanded_ctx = ContextualTypeContext::with_expected_and_options(
+                            self.ctx.types,
+                            expanded,
+                            self.ctx.compiler_options.no_implicit_any,
+                        );
+                        if let Some(tt) = expanded_ctx.get_this_type_from_marker() {
+                            return Some(tt);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
