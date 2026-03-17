@@ -1100,7 +1100,10 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                     };
 
-                    if !missing_members.is_empty() {
+                    // tsc suppresses TS2420 (missing members) when there are
+                    // incompatible members (TS2416). Only report missing members
+                    // when no type mismatches were found.
+                    if !missing_members.is_empty() && incompatible_members.is_empty() {
                         let missing_message = if missing_members.len() == 1 {
                             format!(
                                 "Property '{}' is missing in type '{}' but required in type '{}'.",
@@ -1137,12 +1140,8 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
-                    // tsc emits both TS2420 (missing members) and TS2416 (incompatible
-                    // member types) when both conditions hold. This is important when
-                    // the interface is merged with lib declarations (e.g., FileSystem
-                    // from lib.dom.d.ts) — the merged interface may have members the
-                    // class doesn't implement, but the class's own members may also
-                    // have incompatible types.
+                    // tsc suppresses TS2420 when TS2416 is present, but always
+                    // emits TS2416 for incompatible member types.
                     {
                         for (class_member_idx, member_name, expected, actual) in
                             incompatible_members
