@@ -864,6 +864,57 @@ impl<'a> Printer<'a> {
         elements.len()
     }
 
+    /// Count elements in an object destructuring pattern for temp-variable optimization.
+    fn count_object_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
+        elements.len()
+    }
+
+    /// Unwrap a chain of empty destructuring assignments to find the effective RHS.
+    /// For example, `{} = [] = {} = a` reduces to just `a` since all patterns are empty.
+    fn unwrap_empty_destructuring_chain(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return idx;
+        }
+        let Some(bin) = self.arena.get_binary_expr(node) else {
+            return idx;
+        };
+        if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+            return idx;
+        }
+        let Some(left_node) = self.arena.get(bin.left) else {
+            return idx;
+        };
+        // Check if the LHS is an empty destructuring pattern
+        let is_empty = match left_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
+                .arena
+                .get_literal_expr(left_node)
+                .is_some_and(|lit| lit.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .arena
+                .get_literal_expr(left_node)
+                .is_some_and(|lit| lit.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => self
+                .arena
+                .get_binding_pattern(left_node)
+                .is_some_and(|p| p.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => self
+                .arena
+                .get_binding_pattern(left_node)
+                .is_some_and(|p| p.elements.nodes.is_empty()),
+            _ => false,
+        };
+        if is_empty {
+            // Recursively unwrap in case of chained empty patterns
+            self.unwrap_empty_destructuring_chain(bin.right)
+        } else {
+            idx
+        }
+    }
+
     /// Lower an assignment destructuring pattern to ES5.
     /// Called from `emit_binary_expression` when left side is array/object literal.
     pub(in crate::emitter) fn emit_assignment_destructuring_es5(
@@ -871,59 +922,9 @@ impl<'a> Printer<'a> {
         left_node: &Node,
         right_idx: NodeIndex,
     ) {
-        // Determine if right side is a simple identifier (can be accessed directly)
-        let is_simple = self
-            .arena
-            .get(right_idx)
-            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
-
-        // Count elements to determine if we need a temp for complex sources.
-        // TypeScript creates a temp for non-identifier sources when there are 2+ elements
-        // (including holes). With exactly 1 element (no holes), it inlines the source.
-        let element_count = if is_simple {
-            0 // doesn't matter for identifiers
-        } else {
-            match left_node.kind {
-                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                    if let Some(lit) = self.arena.get_literal_expr(left_node) {
-                        self.count_array_destructuring_elements(&lit.elements.nodes)
-                    } else {
-                        2 // fallback: assume needs temp
-                    }
-                }
-                k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
-                    if let Some(pattern) = self.arena.get_binding_pattern(left_node) {
-                        self.count_array_destructuring_elements(&pattern.elements.nodes)
-                    } else {
-                        2
-                    }
-                }
-                k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => 2,
-                _ => 2, // object patterns always need temp for now
-            }
-        };
-
-        // For complex sources (function calls, array literals), we only need a temp
-        // if the pattern requires multiple accesses. Single-access patterns can
-        // inline the source expression directly.
-        let needs_temp = !is_simple && element_count > 1;
-
-        let source_name = if is_simple {
-            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, right_idx)
-        } else if needs_temp {
-            let temp = self.make_unique_name_hoisted_assignment();
-            self.write(&temp);
-            self.write(" = ");
-            self.emit(right_idx);
-            temp
-        } else {
-            // Single access: use empty string as source_name marker,
-            // and we'll inline the right_idx expression at the access point
-            String::new()
-        };
-
         // For empty patterns ({} = a, [] = a), just emit the right-hand side
-        // so it's evaluated for side effects.
+        // so it's evaluated for side effects. This must be checked BEFORE creating
+        // any temp variables, since the temp creation emits to the output buffer.
         let is_empty_pattern = match left_node.kind {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
                 .arena
@@ -947,6 +948,67 @@ impl<'a> Printer<'a> {
             self.emit(right_idx);
             return;
         }
+
+        // Determine if right side is a simple identifier (can be accessed directly).
+        // Also check if the RHS is a destructuring assignment with an empty pattern,
+        // which reduces to just the inner RHS (e.g., `{} = a` evaluates to `a`).
+        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
+        let is_simple = self
+            .arena
+            .get(effective_right_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+
+        // Count elements to determine if we need a temp for complex sources.
+        // TypeScript creates a temp for non-identifier sources when there are 2+ elements
+        // (including holes). With exactly 1 element (no holes), it inlines the source.
+        let element_count = if is_simple {
+            0 // doesn't matter for identifiers
+        } else {
+            match left_node.kind {
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                    if let Some(lit) = self.arena.get_literal_expr(left_node) {
+                        self.count_array_destructuring_elements(&lit.elements.nodes)
+                    } else {
+                        2 // fallback: assume needs temp
+                    }
+                }
+                k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                    if let Some(pattern) = self.arena.get_binding_pattern(left_node) {
+                        self.count_array_destructuring_elements(&pattern.elements.nodes)
+                    } else {
+                        2
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    if let Some(lit) = self.arena.get_literal_expr(left_node) {
+                        self.count_object_destructuring_elements(&lit.elements.nodes)
+                    } else {
+                        2
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => 2,
+                _ => 2, // fallback: assume needs temp
+            }
+        };
+
+        // For complex sources (function calls, array literals), we only need a temp
+        // if the pattern requires multiple accesses. Single-access patterns can
+        // inline the source expression directly.
+        let needs_temp = !is_simple && element_count > 1;
+
+        let source_name = if is_simple {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, effective_right_idx)
+        } else if needs_temp {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            temp
+        } else {
+            // Single access: use empty string as source_name marker,
+            // and we'll inline the right_idx expression at the access point
+            String::new()
+        };
 
         let use_inline_source = !is_simple && !needs_temp;
         let mut first = !needs_temp;
