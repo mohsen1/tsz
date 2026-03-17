@@ -770,19 +770,6 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // For CLASS symbols, the type_env may already contain the constructor type
-        // (inserted by get_type_of_symbol). This method is called from
-        // ensure_application_symbols_resolved with type_reference_symbol_type() result
-        // which is the INSTANCE type for classes. Don't overwrite the constructor type
-        // because TypeQuery (typeof) resolution needs it.
-        if symbol_already_registered && def_already_registered {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                if symbol.flags & symbol_flags::CLASS != 0 {
-                    return true;
-                }
-            }
-        }
-
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
@@ -956,12 +943,11 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                // Use get_type_of_symbol (value-space type) for TypeQuery resolution,
-                // NOT type_reference_symbol_type (type-position type). TypeQuery is
-                // `typeof X` which must resolve to the constructor type for classes,
-                // not the instance type. type_reference_symbol_type returns the instance
-                // type for classes, which would overwrite the correct constructor type
-                // previously inserted by ensure_refs_resolved.
+                // TypeQuery is a value-space query (typeof X), so resolve using
+                // get_type_of_symbol which returns the VALUE type (constructor for
+                // classes). type_reference_symbol_type returns the INSTANCE type for
+                // classes, which would incorrectly overwrite the constructor type in
+                // type_env and cause false positives when comparing typeof-class types.
                 let resolved = self.get_type_of_symbol(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
