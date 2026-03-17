@@ -128,6 +128,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::KeyOf(s_inner)), Some(TypeData::KeyOf(t_inner))) => {
                 self.constrain_types(ctx, var_map, t_inner, s_inner, priority);
             }
+            // Reverse keyof inference: when target is `keyof T` and T is a placeholder,
+            // create Record<source, unknown> and add as contra-candidate for T.
+            // Using contra-candidates ensures intersection during resolution:
+            // "a" and "b" give { a: unknown } & { b: unknown } = { a: unknown, b: unknown },
+            // so keyof T = "a" | "b". This matches tsc's keyofInferenceIntersectsResults behavior.
+            (_, Some(TypeData::KeyOf(t_inner))) if var_map.contains_key(&t_inner) => {
+                if let Some(record_type) = self.create_record_from_keys(source) {
+                    if let Some(&var) = var_map.get(&t_inner) {
+                        // Route through contra-candidates so multiple Record types are
+                        // intersected (not unioned) during resolution.
+                        let old_contra = ctx.in_contra_mode;
+                        ctx.in_contra_mode = true;
+                        ctx.add_candidate(var, record_type, priority);
+                        ctx.in_contra_mode = old_contra;
+                    }
+                }
+            }
             (
                 Some(TypeData::TemplateLiteral(s_spans)),
                 Some(TypeData::TemplateLiteral(t_spans)),
@@ -1467,6 +1484,60 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Create an object type from key type(s) for reverse keyof inference.
+    ///
+    /// Maps each literal key to `unknown`:
+    /// - String literal `"a"` => `{ a: unknown }`
+    /// - Union `"a" | "b"` => `{ a: unknown, b: unknown }`
+    /// - Non-literal types => None (can't reverse-infer)
+    fn create_record_from_keys(&self, key_type: TypeId) -> Option<TypeId> {
+        use crate::types::LiteralValue;
+        match self.interner.lookup(key_type) {
+            Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                let prop = PropertyInfo::new(atom, TypeId::UNKNOWN);
+                Some(self.interner.object(vec![prop]))
+            }
+            Some(TypeData::Literal(LiteralValue::Number(n))) => {
+                let name_str = if n.0.fract() == 0.0 && n.0.abs() < 1e15 {
+                    format!("{}", n.0 as i64)
+                } else {
+                    format!("{}", n.0)
+                };
+                let name_atom = self.interner.intern_string(&name_str);
+                let prop = PropertyInfo::new(name_atom, TypeId::UNKNOWN);
+                Some(self.interner.object(vec![prop]))
+            }
+            Some(TypeData::Union(members)) => {
+                let member_list = self.interner.type_list(members);
+                let members_vec: Vec<TypeId> = member_list.to_vec();
+                let mut props = Vec::new();
+                for &member in &members_vec {
+                    match self.interner.lookup(member) {
+                        Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                            props.push(PropertyInfo::new(atom, TypeId::UNKNOWN));
+                        }
+                        Some(TypeData::Literal(LiteralValue::Number(n))) => {
+                            let name_str = if n.0.fract() == 0.0 && n.0.abs() < 1e15 {
+                                format!("{}", n.0 as i64)
+                            } else {
+                                format!("{}", n.0)
+                            };
+                            let name_atom = self.interner.intern_string(&name_str);
+                            props.push(PropertyInfo::new(name_atom, TypeId::UNKNOWN));
+                        }
+                        _ => return None,
+                    }
+                }
+                if props.is_empty() {
+                    None
+                } else {
+                    Some(self.interner.object(props))
+                }
+            }
+            _ => None,
         }
     }
 
