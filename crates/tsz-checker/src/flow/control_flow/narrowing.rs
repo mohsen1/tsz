@@ -277,10 +277,12 @@ impl<'a> FlowAnalyzer<'a> {
                 })
             }
             PredicateSignatureKind::Union(members) => {
-                // For unions, collect predicates from members that have them.
-                // TSC allows narrowing when some members have type predicates and
-                // others don't — e.g., Entry.isInit(): this is Entry + Group.isInit(): false.
-                // If multiple members have predicates, they must match.
+                // For unions, all members must either:
+                //   (a) be a type predicate (contributing to the common narrowing), or
+                //   (b) be a non-predicate callable that returns exclusively `false` or `never`.
+                // TSC allows narrowing when members like `() => false` are in the union alongside
+                // predicates, but a member returning general `boolean` makes the guard unsound.
+                // If multiple predicate members exist, their predicates must match.
                 let mut common_sig: Option<PredicateSignature> = None;
 
                 for member in members {
@@ -292,8 +294,14 @@ impl<'a> FlowAnalyzer<'a> {
                         } else {
                             common_sig = Some(sig);
                         }
+                    } else {
+                        // Non-predicate member: only allowed if it returns exclusively `false`
+                        // or `never`. A member returning `boolean` (or any truthy type) would
+                        // make the overall union guard unsound.
+                        if !callable_returns_only_false_or_never(self.interner, member) {
+                            return None;
+                        }
                     }
-                    // Members without predicates are skipped — they don't block narrowing
                 }
                 common_sig
             }
@@ -1402,5 +1410,34 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((path, is_optional, lit));
         }
         None
+    }
+}
+
+/// Returns true if the callable type's return type is exclusively `false` or `never`.
+///
+/// Used to validate non-predicate members in a union of callables: TSC permits a union
+/// to act as a type guard only when non-predicate members can never return a truthy value.
+fn callable_returns_only_false_or_never(
+    interner: &dyn tsz_solver::QueryDatabase,
+    callable_type: TypeId,
+) -> bool {
+    match tsz_solver::type_queries::get_return_type(interner, callable_type) {
+        Some(rt) => is_only_false_or_never(interner, rt),
+        None => false,
+    }
+}
+
+/// Returns true if the type is exclusively composed of `false` literals and/or `never`.
+fn is_only_false_or_never(interner: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    match interner.lookup(type_id) {
+        Some(tsz_solver::TypeData::Literal(tsz_solver::LiteralValue::Boolean(false))) => true,
+        Some(tsz_solver::TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            members.iter().all(|&m| is_only_false_or_never(interner, m))
+        }
+        _ => false,
     }
 }

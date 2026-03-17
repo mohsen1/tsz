@@ -2142,13 +2142,26 @@ impl<'a> CheckerState<'a> {
             // even when node_types is temporarily emptied during overload resolution
             // of a containing call expression (e.g., `console.log(thing.toUpperCase())`
             // triggers overload resolution which empties node_types before checking args).
-            if let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
-                self.ctx.types,
-                callee_type_for_call,
+            let is_sound_union = if matches!(
+                self.ctx.types.lookup(callee_type_for_call),
+                Some(tsz_solver::TypeData::Union(_))
             ) {
-                self.ctx
-                    .call_type_predicates
-                    .insert(idx.0, (extracted.predicate, extracted.params));
+                tsz_solver::type_queries::flow::is_valid_union_predicate(
+                    self.ctx.types,
+                    callee_type_for_call,
+                )
+            } else {
+                true
+            };
+            if is_sound_union {
+                if let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
+                    self.ctx.types,
+                    callee_type_for_call,
+                ) {
+                    self.ctx
+                        .call_type_predicates
+                        .insert(idx.0, (extracted.predicate, extracted.params));
+                }
             }
         }
 

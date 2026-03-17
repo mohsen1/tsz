@@ -126,7 +126,9 @@ impl<'a> CheckerState<'a> {
         // Pre-scan: collect ALL method names from the object literal so that
         // the synthetic `this` type includes placeholders for all methods,
         // enabling mutually-recursive methods to resolve `this.otherMethod`.
-        let obj_all_method_names: rustc_hash::FxHashSet<Atom> = obj
+        // Maps method name atom → element node index so we can extract annotated
+        // parameter/return types when building placeholders for not-yet-processed methods.
+        let obj_all_method_names: rustc_hash::FxHashMap<Atom, NodeIndex> = obj
             .elements
             .nodes
             .iter()
@@ -134,7 +136,7 @@ impl<'a> CheckerState<'a> {
                 let elem_node = self.ctx.arena.get(elem_idx)?;
                 let method = self.ctx.arena.get_method_decl(elem_node)?;
                 let name = self.get_property_name(method.name)?;
-                Some(self.ctx.types.intern_string(&name))
+                Some((self.ctx.types.intern_string(&name), elem_idx))
             })
             .collect();
 
@@ -213,27 +215,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         jsdoc_declared_type
                     };
-                    let is_fn = self.ctx.arena.get(prop.initializer).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::ARROW_FUNCTION
-                            || n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    });
-                    let suppress_ctx = is_fn
-                        && jsdoc_declared_type.is_none()
-                        && initializer_context_type.is_none()
-                        && self
-                            .ctx
-                            .contextual_type
-                            .is_some_and(|t| self.contextual_type_has_primitive_union_member(t));
-                    let property_context_type = if suppress_ctx {
-                        None
-                    } else if property_context_type.is_none()
+                    let property_context_type = if property_context_type.is_none()
                         && let Some(ctx_type) = self.ctx.contextual_type
                         && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                         && matches!(
                             init_node.kind,
                             syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        )
-                    {
+                        ) {
                         self.contextual_object_literal_property_type(ctx_type, "*")
                             .or_else(|| {
                                 self.fallback_contextual_callable_property_type(ctx_type, 6)
@@ -248,31 +236,10 @@ impl<'a> CheckerState<'a> {
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
-                    // When `function_initializer_context_type` suppressed the contextual type
-                    // for a function initializer (returned None), we must also suppress the
-                    // `property_context_type` fallback when the outer union has a primitive
-                    // member that has this specific property through its wrapper interface.
-                    // Example: `string | FullRule` where `String.prototype.normalize` exists —
-                    // the conflicting overload lists prevent contextual parameter typing (TS7006).
-                    // For properties absent from the primitive wrapper (like `validate` on
-                    // `string | FullRule`), there is no conflict and the fallback still applies.
-                    let property_context_type_for_fn = if initializer_context_type.is_none()
-                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                        && matches!(
-                            init_node.kind,
-                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        )
-                        && let Some(ctx_type) = self.ctx.contextual_type
-                        && self.primitive_union_member_has_property(ctx_type, &name)
-                    {
-                        None
-                    } else {
-                        property_context_type
-                    };
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type
                             .or(initializer_context_type)
-                            .or(property_context_type_for_fn),
+                            .or(property_context_type),
                     );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
@@ -895,7 +862,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             let current_method_name_atom = self.ctx.types.intern_string(&name);
-                            for &method_name_atom in &obj_all_method_names {
+                            for (&method_name_atom, &other_elem_idx) in &obj_all_method_names {
                                 if !this_props.iter().any(|p| p.name == method_name_atom) {
                                     let placeholder_method_type = if method_name_atom
                                         == current_method_name_atom
@@ -962,17 +929,110 @@ impl<'a> CheckerState<'a> {
                                         self.pop_type_parameters(tp_updates);
                                         placeholder
                                     } else {
+                                        // Build a placeholder using the other method's
+                                        // annotated parameter and return types. This allows
+                                        // `this.otherMethod(arg)` calls in method bodies to
+                                        // be type-checked against the real signature even
+                                        // before the other method has been fully processed.
+                                        // Without this, the placeholder would use `any` for
+                                        // all parameters, silencing TS2345 errors like
+                                        // passing `this` where a specific type is expected.
+                                        let (other_params, other_return_type) = self
+                                            .ctx
+                                            .arena
+                                            .get(other_elem_idx)
+                                            .and_then(|n| self.ctx.arena.get_method_decl(n))
+                                            .map(|other_method| {
+                                                let params: Vec<tsz_solver::ParamInfo> =
+                                                    other_method
+                                                        .parameters
+                                                        .nodes
+                                                        .iter()
+                                                        .filter_map(|&param_idx| {
+                                                            let param = self
+                                                                .ctx
+                                                                .arena
+                                                                .get(param_idx)
+                                                                .and_then(|pn| {
+                                                                    self.ctx.arena.get_parameter(pn)
+                                                                })?;
+                                                            // Skip explicit `this` parameter
+                                                            if let Some(name_node) =
+                                                                self.ctx.arena.get(param.name)
+                                                            {
+                                                                if let Some(ident) = self
+                                                                    .ctx
+                                                                    .arena
+                                                                    .get_identifier(name_node)
+                                                                {
+                                                                    if ident.escaped_text == "this"
+                                                                    {
+                                                                        return None;
+                                                                    }
+                                                                }
+                                                            }
+                                                            Some(tsz_solver::ParamInfo {
+                                                                name: self
+                                                                    .ctx
+                                                                    .arena
+                                                                    .get(param.name)
+                                                                    .and_then(|name_node| {
+                                                                        self.ctx
+                                                                            .arena
+                                                                            .get_identifier(
+                                                                                name_node,
+                                                                            )
+                                                                    })
+                                                                    .map(|ident| {
+                                                                        self.ctx
+                                                                            .types
+                                                                            .intern_string(
+                                                                                &ident.escaped_text,
+                                                                            )
+                                                                    }),
+                                                                type_id: if param
+                                                                    .type_annotation
+                                                                    .is_some()
+                                                                {
+                                                                    self.get_type_from_type_node(
+                                                                        param.type_annotation,
+                                                                    )
+                                                                } else {
+                                                                    TypeId::ANY
+                                                                },
+                                                                optional: param.question_token
+                                                                    || param.initializer.is_some(),
+                                                                rest: param.dot_dot_dot_token,
+                                                            })
+                                                        })
+                                                        .collect();
+                                                let return_type =
+                                                    if other_method.type_annotation.is_some() {
+                                                        self.get_type_from_type_node(
+                                                            other_method.type_annotation,
+                                                        )
+                                                    } else {
+                                                        TypeId::ANY
+                                                    };
+                                                (params, return_type)
+                                            })
+                                            .unwrap_or_else(|| {
+                                                (
+                                                    vec![tsz_solver::ParamInfo {
+                                                        name: None,
+                                                        type_id: TypeId::ANY,
+                                                        optional: false,
+                                                        rest: true,
+                                                    }],
+                                                    TypeId::ANY,
+                                                )
+                                            });
                                         self.ctx.types.factory().callable(CallableShape {
                                             call_signatures: vec![CallSignature {
                                                 type_params: Vec::new(),
-                                                params: vec![tsz_solver::ParamInfo {
-                                                    name: None,
-                                                    type_id: TypeId::ANY,
-                                                    optional: false,
-                                                    rest: true,
-                                                }],
+                                                params: other_params,
                                                 this_type: None,
-                                                return_type: TypeId::ANY,
+                                                return_type: other_return_type,
                                                 type_predicate: None,
                                                 is_method: true,
                                             }],
