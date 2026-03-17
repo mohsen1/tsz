@@ -1010,7 +1010,10 @@ impl<'a> CheckerState<'a> {
     /// - Rest position (`...infer X`): implicit array constraint
     /// - Template literal position (`` `${infer X}` ``): implicit `string` constraint
     /// We should skip TS2344 constraint checking for these.
-    pub(crate) fn is_infer_with_implicit_constraint_in_conditional(&self, arg_idx: NodeIndex) -> bool {
+    pub(crate) fn is_infer_with_implicit_constraint_in_conditional(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         // Get the name of the type argument (e.g., "Tail" from `ExpandSmallerTuples<Tail>`)
@@ -1043,7 +1046,8 @@ impl<'a> CheckerState<'a> {
                         && arg_node.end <= true_node.end
                     {
                         // Search the extends clause for `...infer <name>`
-                        if self.extends_clause_has_constrained_infer_named(cond.extends_type, name) {
+                        if self.extends_clause_has_constrained_infer_named(cond.extends_type, name)
+                        {
                             return true;
                         }
                     }
