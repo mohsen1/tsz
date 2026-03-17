@@ -1233,7 +1233,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let prefix_count = target_params_unpacked.len().saturating_sub(1);
                 let prefix_params: &[ParamInfo] = &target_params_unpacked[..prefix_count];
 
+                let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
                 for member_type_id in &union_members {
+                    // When the union member is a readonly tuple and the source has
+                    // individual (non-rest) parameters (forming a mutable tuple),
+                    // the readonly tuple cannot be assigned to the mutable param tuple
+                    // under contravariance.  Skip this member — it cannot match.
+                    // This mirrors tsc's behavior where `readonly [A, B]` is not
+                    // assignable to `[A, B]`.
+                    if !source_has_rest
+                        && matches!(
+                            self.interner.lookup(*member_type_id),
+                            Some(TypeData::ReadonlyType(_))
+                        )
+                    {
+                        continue;
+                    }
+
                     // Try unpacking this union member as a tuple
                     let member_param = ParamInfo {
                         type_id: *member_type_id,
