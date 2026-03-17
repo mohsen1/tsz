@@ -17,6 +17,11 @@ impl<'a> CheckerState<'a> {
         decl_arena: &NodeArena,
         type_alias: &TypeAliasData,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        // Prime lib type params for type references without explicit type args
+        // in the alias body. Without this, generic lib types like Uint8Array
+        // (which has a default type parameter) produce bare Lazy(DefId) instead
+        // of Application(Lazy(DefId), [defaults]), causing false TS2345/TS2322.
+        self.prime_cross_arena_type_reference_params(decl_arena, type_alias.type_node);
         let binder = &self.ctx.binder;
         let lib_binders = self.get_lib_binders();
         let decl_binder = self
@@ -128,6 +133,8 @@ impl<'a> CheckerState<'a> {
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let bindings = self.get_type_param_bindings();
+        let lazy_type_params_resolver =
+            |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
         let lowering = TypeLowering::with_hybrid_resolver(
             decl_arena,
             self.ctx.types,
@@ -137,6 +144,7 @@ impl<'a> CheckerState<'a> {
         )
         .with_type_param_bindings(bindings)
         .with_computed_name_resolver(&computed_name_resolver)
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
 
         lowering.lower_type_alias_declaration(type_alias)
@@ -438,5 +446,42 @@ impl<'a> CheckerState<'a> {
         }
 
         (!prefixes.is_empty()).then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
+    }
+
+    /// Walk the type alias body in a cross-arena and prime lib type params
+    /// for any TYPE_REFERENCE nodes that lack explicit type arguments.
+    /// This ensures that generic lib types with all-default type params
+    /// (e.g., `Uint8Array<TArrayBuffer = ArrayBuffer>`) get their defaults
+    /// applied during lowering.
+    fn prime_cross_arena_type_reference_params(&mut self, decl_arena: &NodeArena, root: NodeIndex) {
+        let mut stack = vec![root];
+        let mut names_to_prime = Vec::new();
+
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = decl_arena.get(node_idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = decl_arena.get_type_ref(node)
+            {
+                let has_type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty());
+                if !has_type_args
+                    && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                    && let Some(ident) = decl_arena.get_identifier(name_node)
+                {
+                    names_to_prime.push(ident.escaped_text.clone());
+                }
+            }
+
+            stack.extend(decl_arena.get_children(node_idx));
+        }
+
+        for name in names_to_prime {
+            self.prime_lib_type_params(&name);
+        }
     }
 }
