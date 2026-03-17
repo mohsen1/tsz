@@ -603,8 +603,8 @@ pub(super) fn collect_diagnostics(
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
 
-        // Check all files in parallel — each file gets its own CheckerState.
-        // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
+        // Check all files in parallel — each file gets its own CheckerState and QueryCache.
+        // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
             use rayon::iter::{
@@ -620,7 +620,6 @@ pub(super) fn collect_diagnostics(
                             file_idx,
                             binder,
                             program,
-                            query_cache: &query_cache,
                             compiler_options: &compiler_options,
                             lib_contexts: &lib_ctx_for_parallel,
                             all_arenas: &all_arenas,
@@ -653,7 +652,6 @@ pub(super) fn collect_diagnostics(
                             file_idx,
                             binder,
                             program,
-                            query_cache: &query_cache,
                             compiler_options: &compiler_options,
                             lib_contexts: &lib_ctx_for_parallel,
                             all_arenas: &all_arenas,
@@ -688,7 +686,6 @@ pub(super) fn collect_diagnostics(
                     file_idx,
                     binder,
                     program,
-                    query_cache: &query_cache,
                     compiler_options: &compiler_options,
                     lib_contexts: &lib_ctx_for_parallel,
                     all_arenas: &all_arenas,
@@ -1077,7 +1074,6 @@ pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
     program: &'a MergedProgram,
-    query_cache: &'a QueryCache<'a>,
     compiler_options: &'a tsz_common::CheckerOptions,
     lib_contexts: &'a [LibContext],
     all_arenas: &'a Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
@@ -1106,8 +1102,9 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// Check a single file for the parallel checking path.
 ///
 /// This is extracted from the work queue loop so it can be called from rayon's `par_iter`.
-/// Each invocation creates its own `CheckerState` (with its own mutable context),
-/// while sharing thread-safe structures (`TypeInterner` via `DashMap`, `QueryCache` via `RwLock`).
+/// Each invocation creates its own `CheckerState` (with its own mutable context)
+/// and its own `QueryCache` (using `RefCell`/`Cell` for zero-overhead single-threaded caching).
+/// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
 ) -> (Vec<Diagnostic>, Option<TypeCache>) {
@@ -1115,7 +1112,6 @@ pub(super) fn check_file_for_parallel<'a>(
         file_idx,
         binder,
         program,
-        query_cache,
         compiler_options,
         lib_contexts,
         all_arenas,
@@ -1141,6 +1137,9 @@ pub(super) fn check_file_for_parallel<'a>(
         return (Vec::new(), None);
     }
 
+    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
+    let query_cache = QueryCache::new(&program.type_interner);
+
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
     // Build resolved_modules from the pre-computed resolved module maps
@@ -1156,7 +1155,7 @@ pub(super) fn check_file_for_parallel<'a>(
     let mut checker = CheckerState::with_options(
         &file.arena,
         &binder,
-        query_cache,
+        &query_cache,
         file.file_name.clone(),
         compiler_options,
     );

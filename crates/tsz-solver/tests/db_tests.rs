@@ -5,45 +5,27 @@ use crate::{
 
 impl<'a> QueryCache<'a> {
     fn eval_cache_len(&self) -> usize {
-        match self.eval_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.eval_cache.borrow().len()
     }
 
     fn subtype_cache_len(&self) -> usize {
-        match self.subtype_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.subtype_cache.borrow().len()
     }
 
     fn assignability_cache_len(&self) -> usize {
-        match self.assignability_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.assignability_cache.borrow().len()
     }
 
     fn property_cache_len(&self) -> usize {
-        match self.property_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.property_cache.borrow().len()
     }
 
     fn element_access_cache_len(&self) -> usize {
-        match self.element_access_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.element_access_cache.borrow().len()
     }
 
     fn object_spread_properties_cache_len(&self) -> usize {
-        match self.object_spread_properties_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
+        self.object_spread_properties_cache.borrow().len()
     }
 }
 
