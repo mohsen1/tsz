@@ -881,6 +881,10 @@ bitflags::bitflags! {
         /// union keys like `"a" | "b"`, template literals like `` `prefix-${string}` ``).
         /// tsc treats such types as implicitly string-indexable for TS7053 purposes.
         const HAS_LATE_BOUND_MEMBERS = 1 << 1;
+        /// This object represents a const enum namespace.
+        /// Const enums have no runtime object, so Object.prototype members
+        /// (constructor, hasOwnProperty, etc.) must not be accessible.
+        const CONST_ENUM = 1 << 2;
     }
 }
 

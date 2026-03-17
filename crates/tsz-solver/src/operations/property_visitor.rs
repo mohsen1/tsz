@@ -4,7 +4,9 @@
 //! type kind, plus impl helper methods for complex cases (objects, unions, etc.).
 
 use super::property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TupleListId, TypeId, TypeListId};
+use crate::types::{
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeId, TypeListId,
+};
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
 
@@ -376,8 +378,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Check apparent members (toString, etc.)
-        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-            return Some(result);
+        // Const enums have no runtime object, so they must not inherit
+        // Object.prototype members (constructor, hasOwnProperty, etc.).
+        if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
+            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                return Some(result);
+            }
         }
 
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
@@ -447,8 +453,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Check apparent members (toString, etc.)
-        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-            return Some(result);
+        // Const enums have no runtime object, so they must not inherit
+        // Object.prototype members (constructor, hasOwnProperty, etc.).
+        if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
+            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                return Some(result);
+            }
         }
 
         // Check numeric index signature FIRST if property name looks numeric.
