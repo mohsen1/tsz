@@ -9843,23 +9843,16 @@ fn test_index_access_array_string_index() {
     let interner = TypeInterner::new();
 
     let string_array = interner.array(TypeId::STRING);
-    let includes_key = interner.literal_string("includes");
-    let includes_type = evaluate_index_access(&interner, string_array, includes_key);
 
+    // tsc: Array<T>[string] returns T (the element type) because the
+    // numeric index signature (returning T) is available under string
+    // indexing.  String keys subsume numeric keys.
     let result = evaluate_index_access(&interner, string_array, TypeId::STRING);
-    let key = interner
-        .lookup(result)
-        .expect("expected union for array[string]");
-
-    match key {
-        TypeData::Union(members) => {
-            let members = interner.type_list(members);
-            assert!(members.contains(&TypeId::NUMBER));
-            assert!(members.contains(&includes_type));
-            assert!(!members.contains(&TypeId::STRING));
-        }
-        other => panic!("Expected union, got {other:?}"),
-    }
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "string[][string] should be string (element type)"
+    );
 }
 
 #[test]
@@ -9870,17 +9863,25 @@ fn test_index_access_array_string_index_with_no_unchecked_indexed_access() {
     let mut evaluator = TypeEvaluator::new(&interner);
     evaluator.set_no_unchecked_indexed_access(true);
 
+    // tsc: Array<T>[string] returns T | undefined with noUncheckedIndexedAccess.
     let result = evaluator.evaluate_index_access(string_array, TypeId::STRING);
     let key = interner
         .lookup(result)
-        .expect("expected union for array[string]");
+        .expect("expected union for array[string] with noUncheckedIndexedAccess");
 
     match key {
         TypeData::Union(members) => {
             let members = interner.type_list(members);
-            assert!(members.contains(&TypeId::UNDEFINED));
+            assert!(
+                members.contains(&TypeId::STRING),
+                "should contain STRING (element type)"
+            );
+            assert!(
+                members.contains(&TypeId::UNDEFINED),
+                "should contain UNDEFINED (noUncheckedIndexedAccess)"
+            );
         }
-        other => panic!("Expected union, got {other:?}"),
+        other => panic!("Expected union (string | undefined), got {other:?}"),
     }
 }
 
