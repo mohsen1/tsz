@@ -461,10 +461,25 @@ impl<'a> CheckerState<'a> {
         // preserve generic/type-parameter arguments so the conditional evaluator
         // can still use their original constraints during infer matching.
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
+        // When the body is a conditional with Application-extends-infer (e.g.,
+        // `U extends Synthetic<T, infer V> ? V : never`), Application-typed args
+        // must be preserved so `try_application_infer_match` can match at the
+        // Application level. Without this, empty interfaces like `Synthetic<number, number>`
+        // get evaluated to `{}` and lose the structure needed for matching.
+        let body_has_conditional_app_infer =
+            self.body_is_conditional_with_application_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
                 if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                    arg
+                } else if body_has_conditional_app_infer
+                    && matches!(
+                        self.ctx.types.lookup(arg),
+                        Some(tsz_solver::TypeData::Application(_))
+                    )
+                {
+                    // Preserve Application args for conditional Application-infer matching
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
@@ -601,6 +616,22 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
+    }
+
+    /// Check if a type body is a Conditional type whose `extends_type` is an Application
+    /// containing infer patterns. When true, Application-typed arguments must be preserved
+    /// (not eagerly evaluated) so the conditional evaluator's `try_application_infer_match`
+    /// can match at the Application level (e.g., `Synthetic<number, number>` vs
+    /// `Synthetic<number, infer V>`). Without this, empty interfaces get evaluated to `{}`
+    /// and lose the structural information needed for Application-level matching.
+    fn body_is_conditional_with_application_infer(&self, body_type: TypeId) -> bool {
+        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
+            return false;
+        };
+        matches!(
+            self.ctx.types.lookup(cond.extends_type),
+            Some(tsz_solver::TypeData::Application(_))
+        ) && tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.
