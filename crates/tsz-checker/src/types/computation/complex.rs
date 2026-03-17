@@ -1443,6 +1443,16 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
         let Some(ident) = self.ctx.arena.get_identifier_at(expr_idx) else {
+            // For property access expressions (e.g., `new B.a.C()`), resolve the
+            // qualified name to check if the target is a class. Forward-referenced
+            // classes accessed through namespace import aliases may transiently lack
+            // construct signatures; this suppresses the false TS2351.
+            if let Some(sym_id) = self.resolve_qualified_symbol(expr_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & symbol_flags::CLASS) != 0
+            {
+                return true;
+            }
             return false;
         };
         let name = &ident.escaped_text;

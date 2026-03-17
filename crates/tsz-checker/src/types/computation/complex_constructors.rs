@@ -588,7 +588,8 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .resolve_identifier(self.ctx.arena, expr_idx)
-            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+            .or_else(|| self.resolve_qualified_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
