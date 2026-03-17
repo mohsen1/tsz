@@ -464,7 +464,10 @@ impl<'a> CheckerState<'a> {
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                if body_has_conditional_infer
+                    && (self.contains_type_parameters_cached(arg)
+                        || query::application_info(self.ctx.types, arg).is_some())
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
