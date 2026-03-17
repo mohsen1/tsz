@@ -685,9 +685,17 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                         }
-                        // Try to get the type of the expression to check if it's a constructor
-                        let expr_type = self.get_type_of_node(expr_idx);
-                        self.is_constructor_type(expr_type)
+                        // If the identifier has no symbol resolution at all, it is truly
+                        // unresolved — don't fall through to `is_constructor_type` which
+                        // would return true for the `any` fallback type and suppress TS2304.
+                        let has_symbol = self.resolve_identifier_symbol(expr_idx).is_some();
+                        if !has_symbol {
+                            false
+                        } else {
+                            // Try to get the type of the expression to check if it's a constructor
+                            let expr_type = self.get_type_of_node(expr_idx);
+                            self.is_constructor_type(expr_type)
+                        }
                     } else {
                         false
                     };
