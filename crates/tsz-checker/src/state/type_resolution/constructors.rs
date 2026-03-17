@@ -921,9 +921,62 @@ impl<'a> CheckerState<'a> {
                     }
                     // Stop at declaration boundaries
                     if pn.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
-                        || pn.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
                         || pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
                     {
+                        break;
+                    }
+                    if pn.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+                        // For merged interfaces, check if any OTHER declaration of the same
+                        // interface has a constraint on the type parameter at the same position.
+                        // e.g., `interface B<T extends number> { ... }` merged with
+                        // `interface B<T> { ... }` — `T` is effectively constrained.
+                        if let Some(iface) = self.ctx.arena.get_interface(pn)
+                            && let Some(ref tp_list) = iface.type_parameters
+                        {
+                            // Find the position index of this type parameter in the current declaration
+                            if let Some(tp_pos) = tp_list.nodes.iter().position(|&tp_idx| {
+                                self.ctx
+                                    .arena
+                                    .get(tp_idx)
+                                    .and_then(|tp_node| self.ctx.arena.get_type_parameter(tp_node))
+                                    .and_then(|tp_data| self.ctx.arena.get(tp_data.name))
+                                    .and_then(|nm| self.ctx.arena.get_identifier(nm))
+                                    .is_some_and(|ident| &ident.escaped_text == name)
+                            }) {
+                                // Look up the interface symbol and check other declarations
+                                let iface_name_idx = iface.name;
+                                if let Some(iface_sym_id) =
+                                    self.ctx.binder.get_node_symbol(iface_name_idx).or_else(|| {
+                                        self.ctx
+                                            .arena
+                                            .get(iface_name_idx)
+                                            .and_then(|n| self.ctx.arena.get_identifier(n))
+                                            .and_then(|ident| {
+                                                self.ctx.binder.file_locals.get(&ident.escaped_text)
+                                            })
+                                    })
+                                    && let Some(iface_symbol) =
+                                        self.ctx.binder.get_symbol(iface_sym_id)
+                                {
+                                    for &decl_idx in &iface_symbol.declarations {
+                                        if decl_idx == parent {
+                                            continue; // Skip current declaration
+                                        }
+                                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                            && decl_node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                                            && let Some(other_iface) = self.ctx.arena.get_interface(decl_node)
+                                            && let Some(ref other_tp_list) = other_iface.type_parameters
+                                            && let Some(&other_tp_idx) = other_tp_list.nodes.get(tp_pos)
+                                            && let Some(other_tp_node) = self.ctx.arena.get(other_tp_idx)
+                                            && let Some(other_tp_data) = self.ctx.arena.get_type_parameter(other_tp_node)
+                                            && other_tp_data.constraint.is_some()
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         break;
                     }
                 }
