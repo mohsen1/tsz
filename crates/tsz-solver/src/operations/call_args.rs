@@ -1016,13 +1016,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .any(|&member| self.is_contextually_sensitive(member))
             }
 
-            // Object types: check if any property is callable (has methods)
+            // Object types: only fresh object literals can be contextually sensitive.
+            // Non-fresh objects (class instances, evaluated generic types like Set<T>)
+            // are never contextually sensitive — their types are already determined.
+            // This matches tsc's isContextSensitive which checks the AST expression,
+            // not the type: variable references are never contextually sensitive.
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.is_contextually_sensitive(prop.type_id))
+                    .flags
+                    .contains(crate::types::ObjectFlags::FRESH_LITERAL)
+                    && shape
+                        .properties
+                        .iter()
+                        .any(|prop| self.is_contextually_sensitive(prop.type_id))
             }
 
             // Array types: check element type
