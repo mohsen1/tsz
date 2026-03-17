@@ -1010,6 +1010,10 @@ pub(super) fn filtered_parse_diagnostics(
             && !is_parser_grammar_code(d.code)
             // Also exclude TS1359 for 'await' — those are grammar checks in tsc
             && !(d.code == 1359 && d.message.contains("'await'"))
+            // Exclude TS1212/1213 — in tsc these are checker grammar checks
+            // (grammarErrorOnNode), not parser errors. They should not trigger
+            // suppression of other grammar checks like TS1359.
+            && !matches!(d.code, 1212 | 1213)
     });
     parse_diagnostics
         .iter()
