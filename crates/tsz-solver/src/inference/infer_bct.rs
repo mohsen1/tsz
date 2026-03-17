@@ -719,9 +719,10 @@ impl<'a> InferenceContext<'a> {
             );
         }
 
-        // Lazy (class/interface) types: check if source extends target
-        // by walking the class hierarchy. Without this, BCT inference cannot
-        // determine that Derived <: Base and fails to find a common supertype.
+        // Lazy (class/interface) types: check if source extends target by walking
+        // the class hierarchy. Without this, BCT inference cannot determine that
+        // Derived <: Base and fails to find a common supertype, leading to false
+        // positive union results or tournament failures.
         if matches!(source_key.as_ref(), Some(TypeData::Lazy(_)))
             && matches!(target_key.as_ref(), Some(TypeData::Lazy(_)))
         {
