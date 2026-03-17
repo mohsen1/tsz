@@ -645,7 +645,6 @@ interface Stack<T> extends Indexed<T> {
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_type_alias_in_narrowed_branch_preserves_flow_sensitive_typeof() {
     let source = r#"
 declare let c: string | number;
@@ -12255,7 +12254,6 @@ function f(a: number | string) {
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_type_query_in_type_alias_index_signature_stays_flow_sensitive() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -12284,7 +12282,6 @@ function f(a: number | string) {
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_returned_arrow_type_query_preserves_branch_narrowing() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
