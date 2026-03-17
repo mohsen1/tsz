@@ -1009,11 +1009,7 @@ pub(super) fn filtered_parse_diagnostics(
         !(matches!(d.code, 1009 | 1185 | 1214 | 1262)
             || is_parser_grammar_code(d.code)
             // Also exclude TS1359 for 'await' — those are grammar checks in tsc
-            || (d.code == 1359 && d.message.contains("'await'"))
-            // Exclude TS1212/1213 — in tsc these are checker grammar checks
-            // (grammarErrorOnNode), not parser errors. They should not trigger
-            // suppression of other grammar checks like TS1359.
-            || matches!(d.code, 1212 | 1213))
+            || (d.code == 1359 && d.message.contains("'await'")))
     });
     parse_diagnostics
         .iter()
@@ -1498,7 +1494,6 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         //
         // Note: TS1047 (A rest parameter cannot be optional) is excluded for the
         // same reason — the parameter is syntactically valid and should be type-checked.
-        | 1034 // 'super' must be followed by an argument list or member access
         | 1036 // Statements are not allowed in ambient contexts
         | 1109 // Expression expected
         | 1110 // Type expected

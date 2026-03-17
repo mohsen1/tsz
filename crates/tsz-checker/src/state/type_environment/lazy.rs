@@ -935,7 +935,21 @@ impl<'a> CheckerState<'a> {
 
             for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = SymbolId(symbol_ref.0);
-                if self.ctx.binder.get_symbol(sym_id).is_none() {
+                let symbol = self.ctx.binder.get_symbol(sym_id);
+                if symbol.is_none() {
+                    continue;
+                }
+
+                // TypeQuery represents `typeof X` — a value-space query.
+                // If the symbol is already registered in the environment (e.g.,
+                // as a class constructor type from get_type_of_symbol), skip
+                // re-resolution. type_reference_symbol_type returns the TYPE-space
+                // result (instance type for classes), which would incorrectly
+                // overwrite the VALUE-space result (constructor type) needed by
+                // typeof expressions.
+                if let Ok(env) = self.ctx.type_env.try_borrow()
+                    && env.contains(tsz_solver::SymbolRef(sym_id.0))
+                {
                     continue;
                 }
 
@@ -943,12 +957,18 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                // TypeQuery is a value-space query (typeof X), so resolve using
-                // get_type_of_symbol which returns the VALUE type (constructor for
-                // classes). type_reference_symbol_type returns the INSTANCE type for
-                // classes, which would incorrectly overwrite the constructor type in
-                // type_env and cause false positives when comparing typeof-class types.
-                let resolved = self.get_type_of_symbol(sym_id);
+                // TypeQuery (`typeof X`) resolves to the VALUE type (constructor
+                // for classes), not the type-reference type (instance for classes).
+                // Using `get_type_of_symbol` returns the constructor/value type,
+                // while `type_reference_symbol_type` returns the instance type for
+                // classes — which would incorrectly overwrite the constructor type
+                // already in the TypeEnvironment.
+                let is_class = symbol.is_some_and(|s| s.flags & symbol_flags::CLASS != 0);
+                let resolved = if is_class {
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.type_reference_symbol_type(sym_id)
+                };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
