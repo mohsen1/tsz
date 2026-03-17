@@ -283,6 +283,60 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+
+    /// Find a string literal spelling suggestion for TS2820.
+    /// Returns the suggested literal string if the source is a string literal
+    /// close to one of the target's string literal members.
+    pub(super) fn find_string_literal_spelling_suggestion(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        use tsz_solver::type_queries;
+        // Source must be a string literal
+        let source_str = match tsz_solver::literal_value(self.ctx.types, source) {
+            Some(tsz_solver::LiteralValue::String(atom)) => {
+                self.ctx.types.resolve_atom(atom)
+            }
+            _ => return None,
+        };
+
+        // Collect target string literal members
+        let target_literals: Vec<String> = if let Some(members) =
+            type_queries::get_union_members(self.ctx.types, target)
+        {
+            members.iter().filter_map(|&m| {
+                match tsz_solver::literal_value(self.ctx.types, m) {
+                    Some(tsz_solver::LiteralValue::String(atom)) => {
+                        Some(self.ctx.types.resolve_atom(atom))
+                    }
+                    _ => None,
+                }
+            }).collect()
+        } else if let Some(tsz_solver::LiteralValue::String(atom)) =
+            tsz_solver::literal_value(self.ctx.types, target)
+        {
+            vec![self.ctx.types.resolve_atom(atom)]
+        } else {
+            vec![]
+        };
+
+        // Find the closest match using Levenshtein distance
+        let mut best: Option<(usize, String)> = None;
+        for candidate in &target_literals {
+            if candidate == &source_str { return None; } // exact match, no suggestion
+            let dist = levenshtein_distance(&source_str, candidate);
+            // tsc uses distance <= source.len() / 3 + 1 as the threshold
+            let threshold = source_str.len() / 3 + 1;
+            if dist <= threshold {
+                if best.is_none() || dist < best.as_ref().unwrap().0 {
+                    best = Some((dist, candidate.clone()));
+                }
+            }
+        }
+        best.map(|(_, s)| s)
+    }
+
     pub(super) fn first_nonpublic_constructor_param_property(
         &mut self,
         ty: TypeId,
@@ -624,4 +678,22 @@ impl<'a> CheckerState<'a> {
         }
         idx
     }
+}
+
+/// Simple Levenshtein distance for string literal spelling suggestions.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let m = a.len();
+    let n = b.len();
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 0..=m { dp[i][0] = i; }
+    for j in 0..=n { dp[0][j] = j; }
+    for (i, ca) in a.chars().enumerate() {
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            dp[i + 1][j + 1] = (dp[i][j + 1] + 1)
+                .min(dp[i + 1][j] + 1)
+                .min(dp[i][j] + cost);
+        }
+    }
+    dp[m][n]
 }
