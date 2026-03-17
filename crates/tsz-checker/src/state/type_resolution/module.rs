@@ -133,14 +133,15 @@ impl<'a> CheckerState<'a> {
                 // expansion in TS2322 diagnostics. User-augmented global interfaces
                 // have a different shape from the original lib type, so the
                 // formatter's structural fallback (find_def_by_shape) can't find them.
-                if type_id != TypeId::ERROR && type_id != TypeId::ANY && type_id != TypeId::UNKNOWN
+                if type_id != TypeId::ERROR
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && let Some(sym_id) = self.ctx.binder.file_locals.get(name)
                 {
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
-                        self.ctx
-                            .definition_store
-                            .register_type_to_def(type_id, def_id);
-                    }
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(type_id, def_id);
                 }
                 return Some(type_id);
             }

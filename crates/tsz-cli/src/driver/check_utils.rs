@@ -1006,10 +1006,10 @@ pub(super) fn filtered_parse_diagnostics(
     // out TS1359-for-await when ANY other non-grammar parse diagnostic is present.
     let has_non_await1359_parse_error = parse_diagnostics.iter().any(|d| {
         // Exclude the special codes and grammar codes from the trigger check
-        !matches!(d.code, 1009 | 1185 | 1214 | 1262)
-            && !is_parser_grammar_code(d.code)
+        !(matches!(d.code, 1009 | 1185 | 1214 | 1262)
+            || is_parser_grammar_code(d.code)
             // Also exclude TS1359 for 'await' — those are grammar checks in tsc
-            && !(d.code == 1359 && d.message.contains("'await'"))
+            || (d.code == 1359 && d.message.contains("'await'")))
     });
     parse_diagnostics
         .iter()

@@ -655,7 +655,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Enable strictNullChecks behavior. When set, optional parameters in
     /// function types include `| undefined` in their type.
-    pub fn with_strict_null_checks(mut self, enabled: bool) -> Self {
+    pub const fn with_strict_null_checks(mut self, enabled: bool) -> Self {
         self.strict_null_checks = enabled;
         self
     }

@@ -290,10 +290,9 @@ impl<'a> CheckerState<'a> {
         // This mirrors tsc's getAwaitedType which structurally inspects thenables.
         if let query::PromiseTypeKind::Object(_) =
             query::classify_promise_type(self.ctx.types, return_type)
+            && let Some(awaited) = self.extract_awaited_type_from_thenable(return_type)
         {
-            if let Some(awaited) = self.extract_awaited_type_from_thenable(return_type) {
-                return Some(awaited);
-            }
+            return Some(awaited);
         }
 
         // If we can't extract the type argument from a Promise-like type,
@@ -312,7 +311,7 @@ impl<'a> CheckerState<'a> {
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
     fn extract_awaited_type_from_thenable(&self, type_id: TypeId) -> Option<TypeId> {
         use tsz_solver::operations::property::PropertyAccessEvaluator;
-        use tsz_solver::type_queries::data::{get_call_signatures, get_function_shape};
+        use tsz_solver::type_queries::data::get_call_signatures;
 
         let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
         let then_type = evaluator
@@ -787,7 +786,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type alias ultimately resolves to the global Promise type.
     ///
     /// For `type MyPromise<T> = Promise<T>`, this returns true because the alias
-    /// body is a TypeReference whose name is "Promise". Handles chains of aliases
+    /// body is a `TypeReference` whose name is "Promise". Handles chains of aliases
     /// (e.g., `type A<T> = B<T>; type B<T> = Promise<T>`).
     fn type_alias_resolves_to_promise(
         &self,
@@ -832,15 +831,13 @@ impl<'a> CheckerState<'a> {
                     .node_symbols
                     .get(&type_ref.type_name.0)
                     .copied()
+                    && body_sym_id != sym_id
                 {
-                    if body_sym_id != sym_id {
-                        // Avoid infinite loops
-                        if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id) {
-                            if body_symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-                                return self
-                                    .type_alias_resolves_to_promise(body_sym_id, body_symbol);
-                            }
-                        }
+                    // Avoid infinite loops
+                    if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
+                        && body_symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                    {
+                        return self.type_alias_resolves_to_promise(body_sym_id, body_symbol);
                     }
                 }
             }

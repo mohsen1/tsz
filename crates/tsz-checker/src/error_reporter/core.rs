@@ -1439,7 +1439,7 @@ impl<'a> CheckerState<'a> {
                 // that the raw annotation text doesn't have. The annotation text
                 // reflects the source code literally and misses the semantic
                 // `| undefined` injection.
-                && !(formatted.contains("| undefined") && !display.contains("| undefined"))
+                && (!formatted.contains("| undefined") || display.contains("| undefined"))
             {
                 if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_type).is_some()
                 {
