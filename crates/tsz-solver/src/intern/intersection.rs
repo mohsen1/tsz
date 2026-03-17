@@ -190,6 +190,24 @@ impl TypeInterner {
         if self.intersection_has_object_intrinsic_with_primitive(&flat) {
             return TypeId::NEVER;
         }
+        // Check if a TypeParameter with a non-nullable constraint is intersected with
+        // null/undefined/void. For example, `T & undefined` where `T extends string`
+        // is `never` because `string` and `undefined` are disjoint.
+        // This handles the common pattern from type predicate narrowing where
+        // property types like `(T | undefined) & T` distribute to `T | (T & undefined)`,
+        // and the `T & undefined` branch must reduce to `never`.
+        if self.intersection_has_type_param_disjoint_with_nullish(&flat) {
+            return TypeId::NEVER;
+        }
+
+        // Merge same-named type parameters before distribution.
+        // When Application evaluation produces unconstrained copies of type parameters
+        // (e.g., `DatafulFoo<T>` produces `T` without constraint from the interface,
+        // while the class has `T extends string`), the intersection may contain both.
+        // Replace unconstrained type parameters with their constrained counterparts
+        // (same name) so distribution can properly simplify (e.g., `undefined & T` → never).
+        // Also check inside union members for constrained type parameters.
+        self.merge_same_name_type_params(&mut flat);
 
         // Distributivity: A & (B | C) → (A & B) | (A & C)
         // Only distribute when there are non-union members to intersect with each

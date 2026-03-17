@@ -1353,7 +1353,6 @@ impl<'a> CheckerState<'a> {
         is_definitely_nullish: bool,
     ) {
         use crate::diagnostics::diagnostic_codes;
-
         // Check if the expression is a literal null/undefined keyword (not a variable)
         // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
         // TS18050 is emitted even without strictNullChecks, so check first

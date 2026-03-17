@@ -243,6 +243,158 @@ impl TypeInterner {
         false
     }
 
+    /// Check if a TypeParameter with a non-nullable constraint is intersected with
+    /// null, undefined, or void.
+    ///
+    /// For example, `T & undefined` where `T extends string` is `never` because
+    /// `string` is disjoint from `undefined`. This follows tsc's behavior where
+    /// type parameters are treated as their constraint for disjointness purposes.
+    ///
+    /// We only handle constraints that are known non-nullable types: primitives
+    /// (string, number, boolean, bigint, symbol), the `object` intrinsic, and
+    /// structural object types. For union constraints (e.g., `T extends string | null`),
+    /// we conservatively skip the check since the constraint may include nullable types.
+    pub(crate) fn intersection_has_type_param_disjoint_with_nullish(
+        &self,
+        members: &[TypeId],
+    ) -> bool {
+        let mut has_nullish = false;
+        let mut has_non_nullable_type_param = false;
+
+        for &member in members {
+            if member.is_nullable() {
+                has_nullish = true;
+            } else if let Some(TypeData::TypeParameter(ref info)) = self.lookup(member) {
+                if let Some(constraint) = info.constraint {
+                    if self.is_clearly_non_nullable_constraint(constraint) {
+                        has_non_nullable_type_param = true;
+                    }
+                }
+            }
+
+            if has_nullish && has_non_nullable_type_param {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Merge same-named type parameters in an intersection, preferring constrained ones.
+    ///
+    /// When type predicate narrowing produces an intersection like
+    /// `(T_constrained | undefined) & T_unconstrained` (where T_constrained has
+    /// `T extends string` from a class and T_unconstrained is plain `T` from an interface),
+    /// distribution would produce `(undefined & T_uncon) | (T_con & T_uncon)`.
+    /// Since T_uncon has no constraint, `undefined & T_uncon` doesn't reduce to `never`,
+    /// causing a false TS2532.
+    ///
+    /// This method replaces unconstrained type parameters with their constrained
+    /// counterparts (same name) found among direct members or inside union sub-members.
+    /// After replacement, `(T_con | undefined) & T_con` distributes to
+    /// `(undefined & T_con) | (T_con & T_con)` → `never | T_con` → `T_con`.
+    pub(crate) fn merge_same_name_type_params(&self, flat: &mut TypeListBuffer) {
+        // First pass: collect constrained type parameter names → TypeId
+        // from both direct members and union sub-members.
+        let mut constrained: SmallVec<[(Atom, TypeId); 4]> = SmallVec::new();
+
+        for &member in flat.iter() {
+            match self.lookup(member) {
+                Some(TypeData::TypeParameter(ref info)) => {
+                    if info.constraint.is_some() {
+                        if !constrained.iter().any(|(n, _)| *n == info.name) {
+                            constrained.push((info.name, member));
+                        }
+                    }
+                }
+                Some(TypeData::Union(list_id)) => {
+                    let union_members = self.type_list(list_id);
+                    for &um in union_members.iter() {
+                        if let Some(TypeData::TypeParameter(ref um_info)) = self.lookup(um) {
+                            if um_info.constraint.is_some() {
+                                if !constrained.iter().any(|(n, _)| *n == um_info.name) {
+                                    constrained.push((um_info.name, um));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if constrained.is_empty() {
+            return;
+        }
+
+        // Second pass: replace unconstrained type params with constrained ones (same name).
+        let mut changed = false;
+        for slot in flat.iter_mut() {
+            if let Some(TypeData::TypeParameter(ref info)) = self.lookup(*slot) {
+                if info.constraint.is_none() {
+                    if let Some((_, replacement)) =
+                        constrained.iter().find(|(n, _)| *n == info.name)
+                    {
+                        if *slot != *replacement {
+                            *slot = *replacement;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Dedup after replacement (may have introduced duplicates).
+        if changed {
+            flat.dedup();
+        }
+    }
+
+    /// Check if a type is clearly non-nullable (cannot include null/undefined).
+    ///
+    /// Returns true for:
+    /// - Primitive types: string, number, boolean, bigint, symbol
+    /// - The `object` intrinsic
+    /// - Structural object types, arrays, tuples, functions, callables
+    /// - Literal types (string/number/boolean/bigint literals)
+    ///
+    /// Returns false for:
+    /// - null, undefined, void, any, unknown, never
+    /// - Union types (might contain nullable members)
+    /// - Type parameters (constraint may be nullable)
+    /// - Lazy/Application/Mapped (unresolved, can't determine)
+    fn is_clearly_non_nullable_constraint(&self, id: TypeId) -> bool {
+        match id {
+            TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BOOLEAN
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::OBJECT => true,
+            TypeId::NULL
+            | TypeId::UNDEFINED
+            | TypeId::VOID
+            | TypeId::ANY
+            | TypeId::UNKNOWN
+            | TypeId::NEVER
+            | TypeId::ERROR => false,
+            _ => matches!(
+                self.lookup(id),
+                Some(
+                    TypeData::Literal(_)
+                        | TypeData::Object(_)
+                        | TypeData::ObjectWithIndex(_)
+                        | TypeData::Array(_)
+                        | TypeData::Tuple(_)
+                        | TypeData::Function(_)
+                        | TypeData::Callable(_)
+                        | TypeData::TemplateLiteral(_)
+                        | TypeData::UniqueSymbol(_)
+                )
+            ),
+        }
+    }
+
     /// Check if an intersection contains disjoint primitive types (e.g., string & number = never).
     ///
     /// In TypeScript, certain primitive types are disjoint and their intersection is never:
