@@ -13298,7 +13298,6 @@ namespace Editor {
 }
 
 #[test]
-#[ignore = "conditional type eager resolution regressed after solver merge"]
 fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
