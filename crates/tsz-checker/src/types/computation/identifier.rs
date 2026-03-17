@@ -828,7 +828,49 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let declared_type = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
+            // `declare const Readonly: unique symbol`) shares a name with a global
+            // type alias (e.g., `type Readonly<T> = ...` from lib.d.ts), the binder
+            // merges them into one symbol. `get_type_of_symbol` may return the lib's
+            // type alias rather than the user's value type. In value/expression
+            // context, resolve the VALUE declaration directly.
+            let declared_type = if is_type_alias
+                && has_value
+                && (flags & symbol_flags::INTERFACE) == 0
+                && (flags & symbol_flags::CLASS) == 0
+            {
+                // Try to find and resolve the value declaration from the symbol's
+                // declarations in the current (user) arena.
+                let mut value_type_found = TypeId::UNKNOWN;
+                for &decl_idx in &symbol_declarations {
+                    if decl_idx.is_none() {
+                        continue;
+                    }
+                    if let Some(node) = self.ctx.arena.get(decl_idx) {
+                        use tsz_parser::parser::syntax_kind_ext;
+                        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                            || node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                            || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        {
+                            // Use type_of_value_declaration directly since we verified
+                            // the node is in the current arena. Going through
+                            // type_of_value_declaration_for_symbol would look up
+                            // symbol_arenas, which may point to the lib arena for
+                            // merged symbols, causing a cross-arena collision.
+                            let vt = self.type_of_value_declaration(decl_idx);
+                            if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+                                value_type_found = vt;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if value_type_found != TypeId::UNKNOWN {
+                    value_type_found
+                } else {
+                    self.get_type_of_symbol(sym_id)
+                }
+            } else if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 && (symbol.flags & symbol_flags::ENUM) != 0
                 && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
             {
