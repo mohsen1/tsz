@@ -922,7 +922,7 @@ impl<'a> CheckerState<'a> {
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
                     let (
                         interface_properties,
-                        interface_has_index_signature,
+                        _interface_has_index_signature,
                         interface_display_name,
                     ) = self.implemented_interface_members(
                         &interface_name,
@@ -1088,30 +1088,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // Check if interface has index signature but class doesn't
-                    if interface_has_index_signature {
-                        let class_has_index_signature =
-                            class_data.members.nodes.iter().any(|&member_idx| {
-                                if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                                    member_node.kind
-                                        == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE
-                                } else {
-                                    false
-                                }
-                            });
-
-                        if !class_has_index_signature && missing_members.is_empty() {
-                            self.error_at_node(
-                                class_error_idx,
-                                &format!(
-                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
-                                ),
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                            );
-                            self.pop_type_parameters(interface_type_param_updates);
-                            continue;
-                        }
-                    }
+                    // Note: index signature compatibility is handled by
+                    // check_index_signature_compatibility (TS2411), not here.
+                    // tsc does not emit TS2420 solely for missing index signatures
+                    // in implements clause checking.
 
                     // Report error for missing members
                     let diagnostic_code = if is_class {

@@ -637,11 +637,69 @@ impl<'a> CheckerState<'a> {
                     if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
-                        // If the base constraint is `unknown`, the type parameter has no
-                        // usable constraint (e.g., unconstrained params or call-signature
-                        // type params whose constraints aren't populated). Skip — tsc
-                        // defers these to instantiation time.
                         if base == TypeId::UNKNOWN {
+                            // Base constraint is UNKNOWN. This can mean either:
+                            // (a) The type param is truly unconstrained (no `extends`)
+                            // (b) The constraint wasn't resolved (cross-arena,
+                            //     function type params, mapped type keys, etc.)
+                            //
+                            // For case (a), tsc reports TS2344 when the required
+                            // constraint is non-trivial. For case (b), we must
+                            // skip to avoid false positives.
+                            //
+                            // Detect case (b) by checking if the type arg's AST
+                            // source has an explicit constraint or is inside a
+                            // mapped type body (implicit constraint).
+                            let has_hidden_constraint =
+                                type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                    self.is_inside_mapped_type(arg_idx)
+                                        || self.type_arg_has_explicit_constraint_in_ast(arg_idx)
+                                });
+                            if has_hidden_constraint {
+                                continue;
+                            }
+
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            let mut subst =
+                                crate::query_boundaries::common::TypeSubstitution::new();
+                            for (j, p) in type_params.iter().enumerate() {
+                                if let Some(&arg) = type_args.get(j) {
+                                    subst.insert(p.name, arg);
+                                }
+                            }
+                            let inst_constraint = if subst.is_empty() {
+                                constraint_resolved
+                            } else {
+                                crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    constraint_resolved,
+                                    &subst,
+                                )
+                            };
+                            // Skip trivial constraints (unknown/any) and bare type
+                            // parameter constraints (deferred to instantiation).
+                            let is_checkable = inst_constraint != TypeId::UNKNOWN
+                                && inst_constraint != TypeId::ANY
+                                && !query::is_bare_type_parameter(
+                                    self.ctx.types.as_type_database(),
+                                    inst_constraint,
+                                );
+                            if is_checkable
+                                && !self.is_assignable_to(base, inst_constraint)
+                                && !self.satisfies_array_like_constraint(base, inst_constraint)
+                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            {
+                                if !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                    arg_idx,
+                                    inst_constraint,
+                                ) {
+                                    self.error_type_constraint_not_satisfied(
+                                        type_arg,
+                                        inst_constraint,
+                                        arg_idx,
+                                    );
+                                }
+                            }
                             continue;
                         }
                         // If the base constraint is a union, skip. Union-constrained type
