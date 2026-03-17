@@ -334,7 +334,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_members_list = self.interner.type_list(t_members);
 
                 // Collect fixed target members (those without placeholders) once per
-                // target union for this inference pass.
+                // target union for this inference pass. We expand union/alias types
+                // to their constituent primitive/concrete TypeIds so that matching
+                // works even when the target contains type aliases like `Primitive`.
                 let fixed_targets = if let Some(cached) = self
                     .constraint_fixed_union_members
                     .borrow()
@@ -344,12 +346,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     cached
                 } else {
                     let mut member_visited = FxHashSet::default();
-                    let mut computed = FxHashSet::default();
+                    // First pass: collect raw fixed member TypeIds
+                    let mut raw_fixed: Vec<TypeId> = Vec::new();
                     for &member in t_members_list.iter() {
                         member_visited.clear();
                         if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
-                            computed.insert(member);
+                            raw_fixed.push(member);
                         }
+                    }
+                    // Second pass: evaluate lazy types and expand unions to get
+                    // all constituent concrete TypeIds. This resolves type aliases
+                    // like `Primitive = number | string | boolean | Date` to their
+                    // individual members.
+                    let mut computed = FxHashSet::default();
+                    for member in raw_fixed {
+                        // Include the original TypeId (e.g., Lazy(DefId) reference)
+                        // so that source members using the same lazy reference match.
+                        computed.insert(member);
+                        let evaluated = self.checker.evaluate_type(member);
+                        self.collect_expanded_type_ids(evaluated, &mut computed);
                     }
                     self.constraint_fixed_union_members
                         .borrow_mut()
@@ -358,8 +373,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
 
                 for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member
-                    if !fixed_targets.contains(&member) {
+                    // Skip source members that match a fixed target member.
+                    // This implements tsc's inferFromMatchedTypes with
+                    // isTypeOrBaseIdenticalTo: direct identity, literal-to-base
+                    // (e.g., `true` matches `boolean`), and union membership
+                    // (e.g., `number` matches `number | string | boolean | Date`).
+                    if !self.is_source_matched_by_fixed_targets(member, &fixed_targets) {
                         self.constrain_types(ctx, var_map, member, target, priority);
                     }
                 }
@@ -2066,6 +2085,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For any other template shape (conditional types, etc.),
         // we can't safely reverse.
         None
+    }
+
+    /// Recursively collect all concrete TypeIds from a type, expanding unions.
+    /// This produces the "leaf" TypeIds that a union resolves to, enabling
+    /// matching against source union members even when the target contains
+    /// type aliases like `type Primitive = number | string | boolean | Date`.
+    fn collect_expanded_type_ids(&self, ty: TypeId, result: &mut FxHashSet<TypeId>) {
+        result.insert(ty);
+        if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
+            let member_list = self.interner.type_list(members);
+            for &m in member_list.iter() {
+                self.collect_expanded_type_ids(m, result);
+            }
+        }
+    }
+
+    /// Check if a source type matches any fixed (non-parameterized) target member.
+    ///
+    /// Mirrors tsc's `isTypeOrBaseIdenticalTo` used in `inferFromMatchedTypes`:
+    /// - Direct TypeId identity
+    /// - Literal types match their widened base (e.g., `true` matches `boolean`,
+    ///   `13` matches `number`, `"foo"` matches `string`)
+    fn is_source_matched_by_fixed_targets(
+        &self,
+        source: TypeId,
+        fixed_targets: &FxHashSet<TypeId>,
+    ) -> bool {
+        // Direct identity: source TypeId is in the expanded fixed set
+        if fixed_targets.contains(&source) {
+            return true;
+        }
+
+        // Literal-to-base: check if the source is a literal whose base primitive
+        // type is in the fixed set. This matches tsc's isTypeOrBaseIdenticalTo
+        // which maps string literals → string, number literals → number, etc.
+        if let Some(TypeData::Literal(lit)) = self.interner.lookup(source) {
+            let base = lit.primitive_type_id();
+            if fixed_targets.contains(&base) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if two types share the same outer structure for constraint matching.
