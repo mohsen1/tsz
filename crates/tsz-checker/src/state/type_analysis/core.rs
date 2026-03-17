@@ -1742,4 +1742,16 @@ impl<'a> CheckerState<'a> {
 
         result
     }
+
+    /// Resolve a `typeof X` type query with flow-sensitive narrowing.
+    ///
+    /// Delegates to [`get_type_from_type_query_flow_sensitive`] which resolves
+    /// the expression type via `get_type_of_node` with control-flow narrowing
+    /// enabled. Falls back to symbol-based resolution for edge cases.
+    pub(crate) fn get_type_from_type_query(
+        &mut self,
+        idx: tsz_parser::parser::NodeIndex,
+    ) -> tsz_solver::TypeId {
+        self.get_type_from_type_query_flow_sensitive(idx)
+    }
 }
