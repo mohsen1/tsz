@@ -771,9 +771,14 @@ impl<'a> CheckerState<'a> {
                 // the lowering path creates TypeQuery(SymbolRef) which resolves
                 // to the declared type, not the flow-narrowed type. Resolve
                 // such TypeQuery references using flow narrowing now.
+                // Push the alias's own type parameters into scope first so that
+                // re-resolution of the body (e.g. `typeof Err<U>`) can resolve
+                // type parameter references like `U` via lookup_type_parameter.
                 if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    let (_tp, tp_updates) = self.push_type_parameters(&type_alias.type_parameters);
                     alias_type =
                         self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
+                    self.pop_type_parameters(tp_updates);
                 }
 
                 // Pop enclosing type parameters that were pushed for local type aliases.
