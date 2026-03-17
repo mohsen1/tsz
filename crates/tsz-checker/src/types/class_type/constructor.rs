@@ -444,32 +444,39 @@ impl<'a> CheckerState<'a> {
                         }
                         let prev_sym_cached = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let partial_ctor = self.build_partial_static_constructor_type(
+                            current_sym,
+                            &properties,
+                            &methods,
+                            &accessors,
+                            &static_string_index,
+                            &static_number_index,
+                            Some(PropertyInfo {
+                                name: name_atom,
+                                type_id: TypeId::ANY,
+                                write_type: TypeId::ANY,
+                                optional: prop.question_token,
+                                readonly,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility,
+                                parent_id: current_sym,
+                                declaration_order: 0,
+                            }),
+                            &inherited_static_props,
+                            &all_static_member_names,
+                            &rough_construct_signatures,
+                        );
                         if let Some(sym_id) = current_sym {
-                            let partial_ctor = self.build_partial_static_constructor_type(
-                                current_sym,
-                                &properties,
-                                &methods,
-                                &accessors,
-                                &static_string_index,
-                                &static_number_index,
-                                Some(PropertyInfo {
-                                    name: name_atom,
-                                    type_id: TypeId::ANY,
-                                    write_type: TypeId::ANY,
-                                    optional: prop.question_token,
-                                    readonly,
-                                    is_method: false,
-                                    is_class_prototype: false,
-                                    visibility,
-                                    parent_id: current_sym,
-                                    declaration_order: 0,
-                                }),
-                                &inherited_static_props,
-                                &all_static_member_names,
-                                &rough_construct_signatures,
-                            );
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                         }
+                        // Push partial constructor type onto this_type_stack so that
+                        // `this` in static property initializers resolves to the
+                        // constructor type (typeof ClassName) rather than `any` or
+                        // `object`. This is needed when enclosing_class is not yet
+                        // set (e.g., during symbol type resolution via
+                        // compute_class_symbol_type).
+                        self.ctx.this_type_stack.push(partial_ctor);
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
                         // Clear cached type: check_property_declaration may have
@@ -478,6 +485,7 @@ impl<'a> CheckerState<'a> {
                         // literal type for the constructor type's static properties.
                         self.clear_type_cache_recursive(prop.initializer);
                         let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.this_type_stack.pop();
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
                             && self.has_accessor_modifier(&prop.modifiers)
