@@ -266,12 +266,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// This handles cases like `class A<T, U extends T>` where `A<{a: string}, {b: string}>`
     /// should error because `{b: string}` doesn't extend `{a: string}`.
+    /// Validate type arguments on a type reference.
+    ///
+    /// Returns `true` when the type argument count is wrong (TS2314/TS2707 emitted).
+    /// Callers can use this to return `TypeId::ERROR` and suppress cascading
+    /// diagnostics (matching tsc's `errorType` propagation for bad type arg counts).
     pub(crate) fn validate_type_reference_type_arguments(
         &mut self,
         sym_id: tsz_binder::SymbolId,
         type_args_list: &tsz_parser::parser::NodeList,
         type_ref_idx: NodeIndex,
-    ) {
+    ) -> bool {
         use tsz_binder::symbol_flags;
 
         let mut sym_id = sym_id;
@@ -327,7 +332,7 @@ impl<'a> CheckerState<'a> {
             for &arg_idx in &type_args_list.nodes {
                 self.get_type_of_node(arg_idx);
             }
-            return;
+            return false;
         }
 
         let got = type_args_list.nodes.len();
@@ -370,7 +375,7 @@ impl<'a> CheckerState<'a> {
                     &[&display_name, &count_str],
                 );
             }
-            return;
+            return true;
         }
 
         if self.type_args_reference_resolving_alias(type_args_list) {
@@ -390,6 +395,8 @@ impl<'a> CheckerState<'a> {
 
         // Validate type arguments against their constraints
         self.validate_type_args_against_params(&type_params, type_args_list);
+
+        false
     }
 
     fn type_args_reference_resolving_alias(
