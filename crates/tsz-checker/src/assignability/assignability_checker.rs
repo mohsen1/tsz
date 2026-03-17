@@ -630,15 +630,6 @@ impl<'a> CheckerState<'a> {
             for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
                 let _ = self.get_type_of_symbol(sym_id);
-                // Populate type_env with the VALUE type (constructor for classes) so that
-                // TypeEvaluator::visit_type_query can resolve via TypeEnvironment::resolve_ref.
-                // Without this, resolve_ref returns None and the fallback resolve_lazy returns
-                // the INSTANCE type for classes, causing false TS2345 on `typeof ClassName` args.
-                if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id)
-                    && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-                {
-                    env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
-                }
             }
 
             for def_id in collect_lazy_def_ids(self.ctx.types, current) {
@@ -673,25 +664,22 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        let kind = classify_for_assignability_eval(self.ctx.types, type_id);
-        let mut evaluated = match kind {
-            AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
-            AssignabilityEvalKind::NeedsEnvEval => {
-                // For TypeQuery (typeof), resolve the value type directly from
-                // get_type_of_symbol. The TypeEnvironment's types map may contain
-                // the instance type for class symbols (stored by type-position
-                // resolution paths like resolve_lazy_def_for_type_env), but
-                // TypeQuery needs the value-position type (constructor for classes).
-                if let Some(symbol_ref) = tsz_solver::visitor::type_query_symbol(
-                    self.ctx.types.as_type_database(),
-                    type_id,
-                ) {
-                    let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-                    self.get_type_of_symbol(sym_id)
-                } else {
-                    self.evaluate_type_with_env(type_id)
-                }
+        // TypeQuery (typeof X) must resolve to the VALUE-space type (constructor
+        // for classes). The TypeEnvironment's resolve_ref may return the instance
+        // type for class symbols, so handle TypeQuery explicitly here using the
+        // checker's symbol_types cache which always has the constructor type.
+        if let Some(sym_ref) =
+            tsz_solver::type_queries::get_type_query_symbol_ref(self.ctx.types, type_id)
+        {
+            let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            if let Some(&ctor_type) = self.ctx.symbol_types.get(&sym_id) {
+                return self.evaluate_type_for_assignability(ctor_type);
             }
+        }
+
+        let mut evaluated = match classify_for_assignability_eval(self.ctx.types, type_id) {
+            AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
+            AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
             AssignabilityEvalKind::Resolved => type_id,
         };
 
