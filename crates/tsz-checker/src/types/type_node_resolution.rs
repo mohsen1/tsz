@@ -790,13 +790,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // These were pre-computed by `precompute_type_query_flow_types` during
             // `check_type_alias_declaration` and stored in `node_types`.
             let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
-                let result = self
-                    .ctx
+                self.ctx
                     .node_types
                     .get(&expr_name_idx.0)
                     .copied()
-                    .filter(|&t| t != TypeId::ERROR);
-                result
+                    .filter(|&t| t != TypeId::ERROR)
             };
             let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                 decl_arena,

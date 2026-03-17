@@ -380,10 +380,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check apparent members (toString, etc.)
         // Const enums have no runtime object, so they must not inherit
         // Object.prototype members (constructor, hasOwnProperty, etc.).
-        if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
-            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                return Some(result);
-            }
+        if !shape.flags.contains(ObjectFlags::CONST_ENUM)
+            && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
+        {
+            return Some(result);
         }
 
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
@@ -455,10 +455,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check apparent members (toString, etc.)
         // Const enums have no runtime object, so they must not inherit
         // Object.prototype members (constructor, hasOwnProperty, etc.).
-        if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
-            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                return Some(result);
-            }
+        if !shape.flags.contains(ObjectFlags::CONST_ENUM)
+            && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
+        {
+            return Some(result);
         }
 
         // Check numeric index signature FIRST if property name looks numeric.

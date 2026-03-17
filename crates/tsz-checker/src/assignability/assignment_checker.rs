@@ -138,12 +138,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name_resolved(prop.name) {
                     named_properties.push(name);
                 }
-            } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
-                if let Some(name_node) = self.ctx.arena.get(shorthand.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    named_properties.push(ident.escaped_text.clone());
-                }
+            } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                && let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                named_properties.push(ident.escaped_text.clone());
             }
         }
 

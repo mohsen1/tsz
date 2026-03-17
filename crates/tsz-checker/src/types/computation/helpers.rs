@@ -196,8 +196,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let result = applicable_shapes.len() > 1;
-        result
+        applicable_shapes.len() > 1
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {

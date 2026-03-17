@@ -765,10 +765,10 @@ impl<'a> TypeLowering<'a> {
             // Check for a pre-resolved type from the checker (e.g., flow-narrowed typeof).
             // This allows `typeof c` inside a type alias body to pick up the narrowed
             // type of `c` when control flow has narrowed it at the declaration site.
-            if let Some(override_fn) = &self.type_query_override {
-                if let Some(resolved) = override_fn(data.expr_name) {
-                    return resolved;
-                }
+            if let Some(override_fn) = &self.type_query_override
+                && let Some(resolved) = override_fn(data.expr_name)
+            {
+                return resolved;
             }
             // Create a symbol reference from the expression name
             if let Some(symbol_id) = self.resolve_value_symbol(data.expr_name) {

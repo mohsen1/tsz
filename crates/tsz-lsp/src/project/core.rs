@@ -1226,10 +1226,10 @@ impl Project {
         if !tsconfig_path.exists() {
             // Try jsconfig.json as fallback
             let jsconfig_path = Path::new(root).join("jsconfig.json");
-            if jsconfig_path.exists() {
-                if let Some(settings) = parse_tsconfig_file(&jsconfig_path) {
-                    self.apply_tsconfig_settings(root, settings);
-                }
+            if jsconfig_path.exists()
+                && let Some(settings) = parse_tsconfig_file(&jsconfig_path)
+            {
+                self.apply_tsconfig_settings(root, settings);
             }
             return;
         }
@@ -1240,6 +1240,7 @@ impl Project {
     }
 
     /// Apply parsed tsconfig settings to the project.
+    #[cfg(not(target_arch = "wasm32"))]
     fn apply_tsconfig_settings(&mut self, root: &str, settings: TsConfigSettings) {
         // Apply strict mode
         if let Some(strict) = settings.strict {
@@ -1879,6 +1880,7 @@ impl Default for Project {
 }
 
 /// Check whether a file path has a TypeScript/JavaScript extension.
+#[cfg(not(target_arch = "wasm32"))]
 fn is_ts_js_file(path: &str) -> bool {
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     extensions.iter().any(|ext| path.ends_with(ext))

@@ -680,10 +680,10 @@ impl TypeResolver for TypeEnvironment {
         // The SymbolRef entry may contain the instance type (inserted by
         // type_reference_symbol_type via insert_type_env_symbol), but the DefId
         // entry always has the constructor type (inserted by get_type_of_symbol).
-        if let Some(&def_id) = self.symbol_to_def.get(&symbol.0) {
-            if let Some(ty) = self.get_def(DefId(def_id.0)) {
-                return Some(ty);
-            }
+        if let Some(&def_id) = self.symbol_to_def.get(&symbol.0)
+            && let Some(ty) = self.get_def(DefId(def_id.0))
+        {
+            return Some(ty);
         }
         // Fallback to SymbolRef lookup for non-class symbols
         self.get(symbol)

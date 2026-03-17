@@ -415,10 +415,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return PropertyAccessResult::simple(self.optional_property_type(prop));
                 }
                 // Const enums must not inherit Object.prototype members.
-                if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
-                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                        return result;
-                    }
+                if !shape.flags.contains(ObjectFlags::CONST_ENUM)
+                    && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
+                {
+                    return result;
                 }
 
                 // Check for index signatures using IndexSignatureResolver
@@ -466,10 +466,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
 
                 // Const enums must not inherit Object.prototype members.
-                if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
-                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                        return result;
-                    }
+                if !shape.flags.contains(ObjectFlags::CONST_ENUM)
+                    && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
+                {
+                    return result;
                 }
 
                 // Check string index signature (skip for symbol-keyed properties)

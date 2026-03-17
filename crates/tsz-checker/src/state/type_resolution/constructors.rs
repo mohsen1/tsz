@@ -1009,6 +1009,7 @@ impl<'a> CheckerState<'a> {
     /// structural position:
     /// - Rest position (`...infer X`): implicit array constraint
     /// - Template literal position (`` `${infer X}` ``): implicit `string` constraint
+    ///
     /// We should skip TS2344 constraint checking for these.
     pub(crate) fn is_infer_with_implicit_constraint_in_conditional(
         &self,
@@ -1070,6 +1071,7 @@ impl<'a> CheckerState<'a> {
     /// with implicit constraints:
     /// - `...infer <name>` (rest position → implicit array constraint)
     /// - `` `...${infer <name>}...` `` (template literal → implicit `string` constraint)
+    ///
     /// Returns true if a matching infer with an implicit constraint is found.
     fn extends_clause_has_constrained_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
@@ -1084,10 +1086,9 @@ impl<'a> CheckerState<'a> {
             && let Some(inner_node) = self.ctx.arena.get(wrapped.type_node)
             && inner_node.kind == syntax_kind_ext::INFER_TYPE
             && let Some(infer_data) = self.ctx.arena.get_infer_type(inner_node)
+            && self.infer_type_param_has_name(infer_data, name)
         {
-            if self.infer_type_param_has_name(infer_data, name) {
-                return true;
-            }
+            return true;
         }
 
         // Check if this is a TEMPLATE_LITERAL_TYPE containing `infer <name>` in a span.

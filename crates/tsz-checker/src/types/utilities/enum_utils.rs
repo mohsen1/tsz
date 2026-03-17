@@ -462,9 +462,9 @@ impl<'a> CheckerState<'a> {
                 let access = self.ctx.arena.get_access_expr(node)?;
                 // Get the string key from the element access argument
                 let arg_node = self.ctx.arena.get(access.name_or_argument)?;
-                let member_name = if arg_node.kind == SyntaxKind::StringLiteral as u16 {
-                    self.ctx.arena.get_literal(arg_node)?.text.clone()
-                } else if arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                let member_name = if arg_node.kind == SyntaxKind::StringLiteral as u16
+                    || arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                {
                     self.ctx.arena.get_literal(arg_node)?.text.clone()
                 } else {
                     return None;
@@ -1723,7 +1723,7 @@ pub(crate) fn evaluate_const_enum_initializer(
                 return resolve_enum_member_value(arena, member_name, enum_data, depth);
             }
             // Try resolving as a reference to a different enum (e.g., OtherEnum.Member)
-            resolve_cross_enum_property_access(arena, enum_data, &prop, depth)
+            resolve_cross_enum_property_access(arena, enum_data, prop, depth)
         }
         k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
             let elem = arena.get_access_expr(node)?;
@@ -1737,7 +1737,7 @@ pub(crate) fn evaluate_const_enum_initializer(
                 }
             }
             // Try resolving as a reference to a different enum (e.g., OtherEnum["Member"])
-            resolve_cross_enum_element_access(arena, enum_data, &elem, depth)
+            resolve_cross_enum_element_access(arena, enum_data, elem, depth)
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
             let unary = arena.get_unary_expr(node)?;
