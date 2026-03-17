@@ -756,25 +756,38 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let (mut alias_type, params) = if has_cross_arena_metadata {
-                    self.lower_cross_arena_type_alias_declaration(
+                    let result = self.lower_cross_arena_type_alias_declaration(
                         sym_id, decl_idx, decl_arena, type_alias,
-                    )
+                    );
+                    // When a same-file type alias has cross-arena metadata but the
+                    // declaration is in the current arena, resolve TypeQuery references
+                    // with flow narrowing. Push type parameters into scope first so
+                    // that type args in typeof expressions (e.g. `typeof Foo<U>`)
+                    // can resolve them instead of emitting false TS2304.
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        let (mut at, params) = result;
+                        let (_, tp_updates) =
+                            self.push_type_parameters(&type_alias.type_parameters);
+                        at = self.resolve_type_queries_with_flow(at, type_alias.type_node);
+                        self.pop_type_parameters(tp_updates);
+                        (at, params)
+                    } else {
+                        result
+                    }
                 } else {
                     let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                    let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    // Resolve TypeQuery references with flow narrowing while type
+                    // parameters are still in scope. This prevents false TS2304
+                    // errors for type params used as type arguments in typeof
+                    // expressions (e.g. `type Alias<U> = typeof Foo<U>`).
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        alias_type =
+                            self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
+                    }
                     self.pop_type_parameters(updates);
                     (alias_type, params)
                 };
-
-                // When a same-file type alias contains `typeof expr` inside a
-                // narrowed scope (e.g. inside `if (typeof c === 'string')`),
-                // the lowering path creates TypeQuery(SymbolRef) which resolves
-                // to the declared type, not the flow-narrowed type. Resolve
-                // such TypeQuery references using flow narrowing now.
-                if std::ptr::eq(decl_arena, self.ctx.arena) {
-                    alias_type =
-                        self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
-                }
 
                 // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
