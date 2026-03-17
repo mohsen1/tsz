@@ -145,8 +145,8 @@ impl<'a> CheckerState<'a> {
             // When the let/const lives in that function-body Block, the Block's
             // AST container_node should be a direct child of a function-like node.
             // Check if this Block scope is a function body by examining the AST.
-            let is_function_body_block = self
-                .ctx
+
+            self.ctx
                 .binder
                 .scopes
                 .get(found_scope_id.0 as usize)
@@ -172,8 +172,7 @@ impl<'a> CheckerState<'a> {
                             || k == syntax_kind_ext::SET_ACCESSOR
                             || k == syntax_kind_ext::ARROW_FUNCTION
                     )
-                });
-            is_function_body_block
+                })
         } else {
             false
         };
@@ -258,10 +257,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle property access to enum in namespace: `var x = M.Color`
-        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(enum_obj) = self.resolve_property_access_enum_object(init_idx) {
-                return enum_obj;
-            }
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(enum_obj) = self.resolve_property_access_enum_object(init_idx)
+        {
+            return enum_obj;
         }
 
         fallback_type
@@ -311,10 +310,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle qualified name: `typeof M.Color`
-        if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if let Some(enum_obj) = self.resolve_qualified_name_enum_object(expr_idx) {
-                return enum_obj;
-            }
+        if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(enum_obj) = self.resolve_qualified_name_enum_object(expr_idx)
+        {
+            return enum_obj;
         }
 
         fallback_type

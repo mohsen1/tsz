@@ -478,14 +478,12 @@ mod tests {
         let codes = crate::test_utils::check_source_codes("function f(...x, y) { }");
         assert!(
             codes.contains(&7019),
-            "Should have TS7019 for rest param even with parse errors, got {:?}",
-            codes
+            "Should have TS7019 for rest param even with parse errors, got {codes:?}"
         );
         // TS7006 should also be emitted for the regular parameter `y`
         assert!(
             codes.contains(&7006),
-            "Should have TS7006 for regular param y, got {:?}",
-            codes
+            "Should have TS7006 for regular param y, got {codes:?}"
         );
     }
 
@@ -515,8 +513,7 @@ mod tests {
         let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&7019),
-            "Should have TS7019 for rest param with has_syntax_parse_errors, got {:?}",
-            codes
+            "Should have TS7019 for rest param with has_syntax_parse_errors, got {codes:?}"
         );
     }
 
@@ -527,8 +524,7 @@ mod tests {
         let codes = crate::test_utils::check_source_codes("(...arg?) => 102;");
         assert!(
             codes.contains(&7019),
-            "Should have TS7019 for rest param even with parse errors, got {:?}",
-            codes
+            "Should have TS7019 for rest param even with parse errors, got {codes:?}"
         );
     }
 }

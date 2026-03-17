@@ -1238,16 +1238,23 @@ impl<'a> CheckerState<'a> {
                             // walk up to the enclosing function/module scope. `var` hoists
                             // to the function scope, so `var w` inside a catch block is at
                             // the same effective scope as `function w()` at the top level.
-                            // Only walk up from Block scopes; if the declaration is already
-                            // at Function/Module/SourceFile level, keep it as-is to preserve
-                            // correct TS2451 for `let x; var x;` at the same level.
+                            // Also walk up from Module scopes (namespace blocks): merged
+                            // namespace declarations share the same parent scope, so
+                            // `namespace C { export var x }` and `namespace C { export
+                            // function x() {} }` should resolve to the same effective scope
+                            // and get TS2300, not TS2451.
                             if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                                 && let Some(sid) = scope
                             {
-                                let scope_kind =
-                                    self.ctx.binder.scopes.get(sid.0 as usize).map(|s| s.kind);
-                                let is_block = scope_kind == Some(tsz_binder::ContainerKind::Block);
-                                if is_block {
+                                let should_walk_up =
+                                    self.ctx.binder.scopes.get(sid.0 as usize).is_some_and(|s| {
+                                        matches!(
+                                            s.kind,
+                                            tsz_binder::ContainerKind::Block
+                                                | tsz_binder::ContainerKind::Module
+                                        )
+                                    });
+                                if should_walk_up {
                                     let mut cur = sid;
                                     for _ in 0..20 {
                                         if let Some(s) = self.ctx.binder.scopes.get(cur.0 as usize)
@@ -1255,7 +1262,6 @@ impl<'a> CheckerState<'a> {
                                             if matches!(
                                                 s.kind,
                                                 tsz_binder::ContainerKind::Function
-                                                    | tsz_binder::ContainerKind::Module
                                                     | tsz_binder::ContainerKind::SourceFile
                                             ) {
                                                 return Some(cur);
@@ -1268,20 +1274,6 @@ impl<'a> CheckerState<'a> {
                                             break;
                                         }
                                     }
-                                }
-                                // For non-block-scoped declarations (var, function)
-                                // in Module scopes (namespace blocks), walk up to
-                                // the parent scope. tsc merges namespace blocks into
-                                // one container, so declarations in different blocks
-                                // of the same namespace should be treated as same-scope
-                                // for TS2300 vs TS2451 determination.
-                                let is_module =
-                                    scope_kind == Some(tsz_binder::ContainerKind::Module);
-                                if is_module
-                                    && let Some(s) = self.ctx.binder.scopes.get(sid.0 as usize)
-                                    && s.parent != sid
-                                {
-                                    return Some(s.parent);
                                 }
                             }
                             scope

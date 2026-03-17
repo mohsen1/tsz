@@ -1043,14 +1043,13 @@ impl<'a> AstToIr<'a> {
                 continue;
             };
             // Handle VARIABLE_DECLARATION_LIST intermediate nodes
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                && let Some(list_data) = self.arena.get_variable(decl_node)
+                && self.has_initializer_needing_es5_object_lowering(&list_data.declarations.nodes)
+            {
+                return true;
+            }
             if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                if let Some(list_data) = self.arena.get_variable(decl_node) {
-                    if self
-                        .has_initializer_needing_es5_object_lowering(&list_data.declarations.nodes)
-                    {
-                        return true;
-                    }
-                }
                 continue;
             }
             let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {

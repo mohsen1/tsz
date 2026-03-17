@@ -1277,35 +1277,36 @@ impl<'a> Printer<'a> {
         };
 
         // Handle `export default class {}` — emit `default_1 = class {}; exports_1("default", default_1);`
-        if export_decl.is_default_export && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-            if let Some(class_decl) = self.arena.get_class(clause_node) {
-                let class_name = self.get_identifier_text_idx(class_decl.name);
-                let gen_name = if class_name.is_empty() {
-                    "default_1".to_string()
-                } else {
-                    class_name.clone()
-                };
-                self.write(&gen_name);
-                self.write(" = ");
-                // Emit class as anonymous class expression
-                self.anonymous_default_export_name = None;
-                self.defer_class_static_blocks = true;
-                self.deferred_class_static_blocks.clear();
-                self.emit_class_es6(clause_node, export_decl.export_clause);
-                self.defer_class_static_blocks = false;
-                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
-                if !self.output_ends_with_semicolon() {
-                    self.write(";");
-                }
-                self.write_line();
-                self.write("exports_1(\"default\", ");
-                self.write(&gen_name);
-                self.write(");");
-                if !deferred.is_empty() {
-                    self.emit_static_block_iifes(deferred);
-                }
-                return true;
+        if export_decl.is_default_export
+            && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_decl) = self.arena.get_class(clause_node)
+        {
+            let class_name = self.get_identifier_text_idx(class_decl.name);
+            let gen_name = if class_name.is_empty() {
+                "default_1".to_string()
+            } else {
+                class_name
+            };
+            self.write(&gen_name);
+            self.write(" = ");
+            // Emit class as anonymous class expression
+            self.anonymous_default_export_name = None;
+            self.defer_class_static_blocks = true;
+            self.deferred_class_static_blocks.clear();
+            self.emit_class_es6(clause_node, export_decl.export_clause);
+            self.defer_class_static_blocks = false;
+            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+            if !self.output_ends_with_semicolon() {
+                self.write(";");
             }
+            self.write_line();
+            self.write("exports_1(\"default\", ");
+            self.write(&gen_name);
+            self.write(");");
+            if !deferred.is_empty() {
+                self.emit_static_block_iifes(deferred);
+            }
+            return true;
         }
 
         if export_decl.is_default_export {

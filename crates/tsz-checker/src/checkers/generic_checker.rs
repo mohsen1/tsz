@@ -689,17 +689,16 @@ impl<'a> CheckerState<'a> {
                                 && !self.is_assignable_to(base, inst_constraint)
                                 && !self.satisfies_array_like_constraint(base, inst_constraint)
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                            {
-                                if !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                     arg_idx,
                                     inst_constraint,
-                                ) {
-                                    self.error_type_constraint_not_satisfied(
-                                        type_arg,
-                                        inst_constraint,
-                                        arg_idx,
-                                    );
-                                }
+                                )
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    inst_constraint,
+                                    arg_idx,
+                                );
                             }
                             continue;
                         }

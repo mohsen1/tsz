@@ -1004,9 +1004,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             // TypeQuery, Application, Lazy, Conditional — try to evaluate to a
             // concrete type. If evaluation succeeds, check the result recursively.
             // If it remains unresolved (generic context), conservatively accept to
-            // avoid false TS2464 positives. tsc uses full assignability which resolves
-            // these through getBaseConstraintOfType; our pattern-matching approach needs
-            // to be conservative with unresolvable generics.
+            // avoid false TS2464 positives.
             Some(
                 TypeData::TypeQuery(_)
                 | TypeData::Application(_)

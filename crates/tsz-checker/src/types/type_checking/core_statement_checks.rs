@@ -5,7 +5,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{NodeAccess, NodeView};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -442,15 +442,14 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::INFER_TYPE {
-                if let Some(infer_data) = self.ctx.arena.get_infer_type(node)
-                    && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
-                    && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    infer_params.push((ident.escaped_text.clone(), tp_data.name));
-                }
+            if node.kind == syntax_kind_ext::INFER_TYPE
+                && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+                && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                infer_params.push((ident.escaped_text.clone(), tp_data.name));
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
@@ -487,14 +486,13 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                if let Some(tr) = self.ctx.arena.get_type_ref(node)
-                    && let Some(tn) = self.ctx.arena.get(tr.type_name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(tn)
-                    && ident.escaped_text == name
-                {
-                    return true;
-                }
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(tr) = self.ctx.arena.get_type_ref(node)
+                && let Some(tn) = self.ctx.arena.get(tr.type_name)
+                && let Some(ident) = self.ctx.arena.get_identifier(tn)
+                && ident.escaped_text == name
+            {
+                return true;
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
