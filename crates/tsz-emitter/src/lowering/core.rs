@@ -310,6 +310,7 @@ impl<'a> LoweringPass<'a> {
                         named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
                     });
             if !empty_named_import_preserves_side_effects
+                && !self.ctx.options.verbatim_module_syntax
                 && !self.import_has_value_usage_after_node(node, clause)
             {
                 if import_decl.import_clause.is_some() {
@@ -528,6 +529,47 @@ impl<'a> LoweringPass<'a> {
             let helpers = self.transforms.helpers_mut();
             helpers.import_star = true;
             helpers.create_binding = true;
+        }
+
+        // Detect CommonJS helpers: export { default } from "mod" or export { default as X } from "mod"
+        // In CJS with esModuleInterop, re-exporting `default` needs __importDefault.
+        if self.is_commonjs()
+            && self.ctx.options.es_module_interop
+            && export_decl.module_specifier.is_some()
+            && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+            && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+        {
+            let has_default_specifier = named_exports.elements.nodes.iter().any(|&spec_idx| {
+                self.arena.get(spec_idx).is_some_and(|spec_node| {
+                    self.arena.get_specifier(spec_node).is_some_and(|spec| {
+                        if spec.is_type_only {
+                            return false;
+                        }
+                        // For export specifiers, check property_name first (original name),
+                        // then fall back to name (when there's no rename, name IS the original)
+                        let check_idx = if spec.property_name.is_some()
+                            && self.arena.get(spec.property_name).is_some()
+                        {
+                            spec.property_name
+                        } else {
+                            spec.name
+                        };
+                        self.arena.get(check_idx).is_some_and(|check_node| {
+                            if check_node.kind == SyntaxKind::DefaultKeyword as u16 {
+                                return true;
+                            }
+                            self.arena
+                                .get_identifier(check_node)
+                                .is_some_and(|id| id.escaped_text == "default")
+                        })
+                    })
+                })
+            });
+            if has_default_specifier {
+                let helpers = self.transforms.helpers_mut();
+                helpers.import_default = true;
+            }
         }
 
         if export_decl.export_clause.is_none() {

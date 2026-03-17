@@ -161,10 +161,19 @@ impl<'a> Printer<'a> {
                         };
 
                         // Object.defineProperty(exports, "name", { enumerable: true, get: function () { return mod.name; } });
+                        // When esModuleInterop is enabled and the imported name is "default",
+                        // wrap with __importDefault: return __importDefault(mod).default;
                         self.write("Object.defineProperty(exports, \"");
                         self.write(&export_name);
                         self.write("\", { enumerable: true, get: function () { return ");
-                        self.write_module_property_access(&module_var, &import_name);
+                        if self.ctx.options.es_module_interop && import_name == "default" {
+                            self.write_helper("__importDefault");
+                            self.write("(");
+                            self.write(&module_var);
+                            self.write(").default");
+                        } else {
+                            self.write_module_property_access(&module_var, &import_name);
+                        }
                         self.write("; } });");
                         self.write_line();
                     }
