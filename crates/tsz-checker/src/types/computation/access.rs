@@ -792,6 +792,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle `symbol` (primitive) index on types with late-bound (computed) members.
+        // When a class declares `[expr]()` where `expr` has type `symbol`, the member
+        // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
+        // the computed member's type; we conservatively return `any` to avoid false
+        // positives like TS2722 ("Cannot invoke possibly undefined").
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && tsz_solver::visitor::has_late_bound_members(self.ctx.types, object_type_for_access)
+        {
+            result_type = Some(TypeId::ANY);
+            use_index_signature_check = false;
+        }
+
         let used_generic_element_resolution = result_type.is_none();
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
