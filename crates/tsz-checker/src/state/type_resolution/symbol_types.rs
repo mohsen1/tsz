@@ -1111,6 +1111,8 @@ impl<'a> CheckerState<'a> {
                                 })
                         };
 
+                        let lazy_type_params_resolver =
+                            |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
                         let lowering = TypeLowering::with_hybrid_resolver(
                             lib_arena,
                             self.ctx.types,
@@ -1119,6 +1121,7 @@ impl<'a> CheckerState<'a> {
                             &value_resolver,
                         )
                         .with_type_param_bindings(type_param_bindings)
+                        .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                         .with_name_def_id_resolver(&name_resolver);
                         let (alias_type, params) =
                             lowering.lower_type_alias_declaration(type_alias);

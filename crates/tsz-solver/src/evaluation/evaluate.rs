@@ -1262,6 +1262,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 resolved
             };
+
+            // When a bare Lazy(DefId) is used without an Application wrapper,
+            // but the underlying type has type parameters that all have defaults
+            // (e.g., `Uint8Array<T extends ArrayBufferLike = ArrayBuffer>`),
+            // we must instantiate the resolved body with those defaults.
+            // Otherwise the body retains unsubstituted type parameters.
+            let resolved = if let Some(type_params) = self.resolver.get_lazy_type_params(def_id) {
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<_> = type_params
+                        .iter()
+                        .map(|p| p.default.unwrap_or(TypeId::ERROR))
+                        .collect();
+                    instantiate_generic(self.interner, resolved, &type_params, &default_args)
+                } else {
+                    resolved
+                }
+            } else {
+                resolved
+            };
+
             // Re-evaluate the resolved type in case it needs further evaluation
             self.evaluate(resolved)
         } else {
