@@ -427,6 +427,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // `type MyPromise<T> = Promise<T>` by resolving through the alias.
                 let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
                     false
+                } else if self.is_promise_type_through_alias(return_type) {
+                    // Type alias resolves to Promise (e.g., `type MyPromise<T> = Promise<T>`
+                    // merged with `declare var MyPromise: typeof Promise`).
+                    false
                 } else if self.is_non_promise_application_type(return_type) {
                     true
                 } else {
