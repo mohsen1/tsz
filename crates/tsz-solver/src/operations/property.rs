@@ -582,7 +582,36 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         PropertyAccessResult::IsUnknown => {
                             saw_unknown = true;
                         }
-                        PropertyAccessResult::PropertyNotFound { .. } => {}
+                        PropertyAccessResult::PropertyNotFound { .. } => {
+                            // When a union member of an intersection doesn't have the
+                            // property on ALL its constituents, the union as a whole
+                            // returns PropertyNotFound. But other intersection members
+                            // may guarantee the property exists (e.g. a mapped type
+                            // `{ length: unknown }`). In that case, we should still
+                            // collect property types from union members that DO have
+                            // the property, so they participate in the intersection.
+                            // This matches tsc behavior for patterns like:
+                            //   (ArrayLike<any> | Iterable<any>) & { length: unknown }
+                            if let Some(TypeData::Union(list_id)) = self.interner().lookup(member) {
+                                let union_members = self.interner().type_list(list_id);
+                                for &union_member in union_members.iter() {
+                                    if let PropertyAccessResult::Success {
+                                        type_id,
+                                        from_index_signature,
+                                        ..
+                                    } = self.resolve_property_access_inner(
+                                        union_member,
+                                        prop_name,
+                                        Some(prop_atom),
+                                    ) {
+                                        results.push(type_id);
+                                        if from_index_signature {
+                                            any_from_index = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
