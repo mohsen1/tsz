@@ -1185,7 +1185,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Build properties by instantiating template for each key
         let mut properties = Vec::new();
         for key_name in keys {
-            let key_literal = self.interner.literal_string_atom(key_name);
+            // Convert atom to the correct TypeId for substitution.
+            // `__unique_<id>` atoms must become UniqueSymbol types so that the template
+            // `(p: K) => void` instantiates to `(p: typeof A) => void` rather than
+            // `(p: "__unique_<id>") => void` for symbol-keyed mapped types.
+            let key_name_str = self.interner.resolve_atom(key_name);
+            let key_literal =
+                if let Some(sym_str) = key_name_str.strip_prefix("__unique_")
+                    && let Ok(id) = sym_str.parse::<u32>()
+                {
+                    self.interner.unique_symbol(SymbolRef(id))
+                } else {
+                    self.interner.literal_string_atom(key_name)
+                };
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
@@ -1235,13 +1247,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         Some(self.interner.object(properties))
     }
 
-    /// Try to evaluate a mapped type constraint to get concrete string keys.
+    /// Try to evaluate a mapped type constraint to get concrete string/symbol keys.
     /// Returns None if the constraint can't be resolved to concrete keys.
     pub(crate) fn try_evaluate_mapped_constraint(
-        &self,
+        &mut self,
         constraint: TypeId,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
         use crate::LiteralValue;
+
+        // Evaluate the constraint using the resolver-aware evaluator to handle types
+        // like `T['type']` that evaluate to concrete unions `typeof A | typeof B`.
+        let evaluated = self.evaluate_type(constraint);
+        if evaluated != constraint {
+            return self.try_evaluate_mapped_constraint(evaluated);
+        }
 
         if let Some(operand) = keyof_inner_type(self.interner, constraint) {
             // Try to resolve the operand to get concrete keys
@@ -1252,12 +1271,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(vec![name]);
         }
 
+        // Single unique symbol constraint (e.g., `[K in typeof A]: ...`)
+        if let Some(TypeData::UniqueSymbol(sym)) = self.interner.lookup(constraint) {
+            let atom = self
+                .interner
+                .intern_string(&format!("__unique_{}", sym.0));
+            return Some(vec![atom]);
+        }
+
         if let Some(list_id) = union_list_id(self.interner, constraint) {
             let members = self.interner.type_list(list_id);
             let mut keys = Vec::new();
             for &member in members.iter() {
                 if let Some(LiteralValue::String(name)) = literal_value(self.interner, member) {
                     keys.push(name);
+                } else if let Some(TypeData::UniqueSymbol(sym)) = self.interner.lookup(member) {
+                    // Symbol-keyed constraints: `typeof A | typeof B` use `"__unique_<id>"` atoms.
+                    let atom = self
+                        .interner
+                        .intern_string(&format!("__unique_{}", sym.0));
+                    keys.push(atom);
                 }
             }
             return if keys.is_empty() { None } else { Some(keys) };
