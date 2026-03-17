@@ -299,10 +299,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym)
                     && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
                     && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                    && let Some(enum_obj) = self.enum_object_type(binder_sym)
                 {
-                    if let Some(enum_obj) = self.enum_object_type(binder_sym) {
-                        return enum_obj;
-                    }
+                    return enum_obj;
                 }
             }
             type_id = resolved;

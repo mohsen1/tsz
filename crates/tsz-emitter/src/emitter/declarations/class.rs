@@ -1720,10 +1720,10 @@ impl<'a> Printer<'a> {
                 .collect();
 
             // Store class alias for static privates: emit `_a = ClassName;` after class body
-            if let Some(ref alias) = private_class_alias {
-                if !class_name.is_empty() {
-                    self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
-                }
+            if let Some(ref alias) = private_class_alias
+                && !class_name.is_empty()
+            {
+                self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
             }
         }
 
@@ -2936,14 +2936,14 @@ impl<'a> Printer<'a> {
 
         // Emit class alias for static private members: `_a = ClassName;`
         // tsc emits this before WeakMap inits and static field value inits.
-        if let Some((ref alias, ref cls_name)) = private_class_alias_pair {
-            if has_weakmap_inits || !static_private_inits.is_empty() {
-                self.write_line();
-                self.write(alias);
-                self.write(" = ");
-                self.write(cls_name);
-                self.write(";");
-            }
+        if let Some((ref alias, ref cls_name)) = private_class_alias_pair
+            && (has_weakmap_inits || !static_private_inits.is_empty())
+        {
+            self.write_line();
+            self.write(alias);
+            self.write(" = ");
+            self.write(cls_name);
+            self.write(";");
         }
 
         if has_weakmap_inits {

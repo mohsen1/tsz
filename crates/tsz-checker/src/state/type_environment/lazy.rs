@@ -947,10 +947,10 @@ impl<'a> CheckerState<'a> {
                 // result (instance type for classes), which would incorrectly
                 // overwrite the VALUE-space result (constructor type) needed by
                 // typeof expressions.
-                if let Ok(env) = self.ctx.type_env.try_borrow() {
-                    if env.contains(tsz_solver::SymbolRef(sym_id.0)) {
-                        continue;
-                    }
+                if let Ok(env) = self.ctx.type_env.try_borrow()
+                    && env.contains(tsz_solver::SymbolRef(sym_id.0))
+                {
+                    continue;
                 }
 
                 // Consume fuel for type query resolution

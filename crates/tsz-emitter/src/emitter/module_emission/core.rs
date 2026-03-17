@@ -458,13 +458,13 @@ impl<'a> Printer<'a> {
                     };
 
                 if default_class_has_es_decorators {
-                    if let Some(cn) = self.arena.get(export.export_clause) {
-                        if let Some(class) = self.arena.get_class(cn) {
-                            let decorators = self.collect_class_decorators(&class.modifiers);
-                            for dec_idx in &decorators {
-                                self.emit(*dec_idx);
-                                self.write_line();
-                            }
+                    if let Some(cn) = self.arena.get(export.export_clause)
+                        && let Some(class) = self.arena.get_class(cn)
+                    {
+                        let decorators = self.collect_class_decorators(&class.modifiers);
+                        for dec_idx in &decorators {
+                            self.emit(*dec_idx);
+                            self.write_line();
                         }
                     }
                     self.write("export default ");

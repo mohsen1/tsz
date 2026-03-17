@@ -236,14 +236,14 @@ impl<'a> Printer<'a> {
         // and suppresses the normal post-comment space so the paren sits
         // right against the closing `*/`:
         //   `.../** @type {T} */(x)` → `... /** @type {T} */(x)`
-        if let Some(expr_node) = self.arena.get(spread.expression) {
-            if self.has_pending_comment_before(expr_node.pos) {
-                self.write(" ");
-                self.emit_comments_before_pos(expr_node.pos);
-                // Suppress the automatic space after block comment — the
-                // spread already inserted its own separator space above.
-                self.pending_block_comment_space = false;
-            }
+        if let Some(expr_node) = self.arena.get(spread.expression)
+            && self.has_pending_comment_before(expr_node.pos)
+        {
+            self.write(" ");
+            self.emit_comments_before_pos(expr_node.pos);
+            // Suppress the automatic space after block comment — the
+            // spread already inserted its own separator space above.
+            self.pending_block_comment_space = false;
         }
         self.emit_expression(spread.expression);
     }

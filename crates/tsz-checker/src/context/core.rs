@@ -429,17 +429,17 @@ impl<'a> CheckerContext<'a> {
         module_specifier: &str,
         import_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some(exports) = self.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = exports.get(import_name) {
-                return Some(sym_id);
-            }
+        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+            && let Some(sym_id) = exports.get(import_name)
+        {
+            return Some(sym_id);
         }
         if let Some(all_binders) = self.all_binders.as_ref() {
             for binder in all_binders.iter() {
-                if let Some(exports) = binder.module_exports.get(module_specifier) {
-                    if let Some(sym_id) = exports.get(import_name) {
-                        return Some(sym_id);
-                    }
+                if let Some(exports) = binder.module_exports.get(module_specifier)
+                    && let Some(sym_id) = exports.get(import_name)
+                {
+                    return Some(sym_id);
                 }
             }
         }
@@ -454,17 +454,17 @@ impl<'a> CheckerContext<'a> {
         module_specifier: &str,
         import_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
-        if let Some(exports) = self.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = exports.get(import_name) {
-                return Some((sym_id, self.current_file_idx));
-            }
+        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+            && let Some(sym_id) = exports.get(import_name)
+        {
+            return Some((sym_id, self.current_file_idx));
         }
         if let Some(all_binders) = self.all_binders.as_ref() {
             for (idx, binder) in all_binders.iter().enumerate() {
-                if let Some(exports) = binder.module_exports.get(module_specifier) {
-                    if let Some(sym_id) = exports.get(import_name) {
-                        return Some((sym_id, idx));
-                    }
+                if let Some(exports) = binder.module_exports.get(module_specifier)
+                    && let Some(sym_id) = exports.get(import_name)
+                {
+                    return Some((sym_id, idx));
                 }
             }
         }

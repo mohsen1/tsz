@@ -240,10 +240,10 @@ impl<'a> CheckerState<'a> {
                     {
                         let mut ns = cur;
                         for _ in 0..8 {
-                            if let Some(nn) = self.ctx.arena.get(ns) {
-                                if nn.kind == syntax_kind_ext::MODULE_DECLARATION {
-                                    return;
-                                }
+                            if let Some(nn) = self.ctx.arena.get(ns)
+                                && nn.kind == syntax_kind_ext::MODULE_DECLARATION
+                            {
+                                return;
                             }
                             match self.ctx.arena.get_extended(ns) {
                                 Some(e) if e.parent.is_some() => ns = e.parent,
