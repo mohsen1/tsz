@@ -1789,10 +1789,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             k if k == syntax_kind_ext::IMPORT_DECLARATION
                 || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
             {
-                (
-                    diagnostic_messages::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
-                    diagnostic_codes::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
-                )
+                // In JS files, use TS1473 "...top level of a module" (no namespaces in JS).
+                // In TS files, use TS1232 "...top level of a namespace or module".
+                if self.is_js_file() {
+                    (
+                        diagnostic_messages::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                        diagnostic_codes::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                        diagnostic_codes::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                    )
+                }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
