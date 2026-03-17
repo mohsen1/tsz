@@ -117,19 +117,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            let referenced_type_params: FxHashSet<_> =
-                crate::visitor::collect_all_types(self.interner, s_effective)
-                    .into_iter()
-                    .filter_map(|ty| type_param_info(self.interner, ty))
-                    .map(|info| info.name)
-                    .filter(|name| tracked_type_params.contains(name))
-                    .collect();
-
-            for type_param_name in referenced_type_params {
-                contextual_candidates
-                    .entry(type_param_name)
-                    .or_default()
-                    .push(t_effective);
+            // Only consider type parameters that appear *naked* (directly as the
+            // parameter type itself). When a type parameter is nested inside a
+            // complex type like `Foo<K>` or `(ev: WindowEventMap[K]) => void`,
+            // the target parameter type at that position is NOT a candidate for
+            // K — it is the type for the whole parameter. Comparing these
+            // unrelated target types causes false conflicts (e.g., `"message"`
+            // vs `Action1<...>` when K appears in both `type: K` and
+            // `listener: (ev: WindowEventMap[K]) => any`).
+            if let Some(info) = type_param_info(self.interner, s_effective) {
+                if tracked_type_params.contains(&info.name) {
+                    contextual_candidates
+                        .entry(info.name)
+                        .or_default()
+                        .push(t_effective);
+                }
             }
         }
 
