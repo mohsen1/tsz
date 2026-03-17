@@ -1339,6 +1339,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Fall through to one-sided expansion
         }
 
+        // Application(base=DefId(X), args) <: Lazy(DefId(X)):
+        // When source is an instantiation of a generic type and target is a bare
+        // reference to the same type (unresolved Lazy), this is an instantiation
+        // being compared to its base. In TypeScript, a bare generic reference like
+        // `Uint8Array` is implicitly instantiated with default type args (e.g.,
+        // `Uint8Array<ArrayBuffer>`). When the resolver can't yet resolve the
+        // target definition (lazy initialization), both resolve_lazy and
+        // get_lazy_type_params return None. Since the Application shares the same
+        // base DefId as the target Lazy, it's an instantiation of the same type,
+        // and is assignable to its unresolved base.
+        if let Some(s_app_id) = application_id(self.interner, source)
+            && let Some(target_def_id) = lazy_def_id(self.interner, target)
+        {
+            let s_app = self.interner.type_application(s_app_id);
+            if let Some(base_def_id) = lazy_def_id(self.interner, s_app.base)
+                && base_def_id == target_def_id
+            {
+                // Try arity normalization: create a zero-arg Application for the
+                // target and let check_application_to_application_subtype fill in
+                // default type parameters for a precise comparison.
+                let t_type_id = self.interner.application(s_app.base, vec![]);
+                if let Some(t_app_id) = application_id(self.interner, t_type_id) {
+                    let result = self.check_application_to_application_subtype(s_app_id, t_app_id);
+                    if result.is_true() {
+                        return result;
+                    }
+                }
+
+                // When the resolver can't resolve the definition yet (lazy init),
+                // the Application is an instantiation of the exact same type as the
+                // unresolved Lazy target. Return True to avoid false positives.
+                if self
+                    .resolver
+                    .resolve_lazy(target_def_id, self.interner)
+                    .is_none()
+                {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         if let Some(app_id) = application_id(self.interner, source) {
             return self.check_application_expansion_target(source, target, app_id);
         }
