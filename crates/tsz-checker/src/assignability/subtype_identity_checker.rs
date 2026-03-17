@@ -214,6 +214,21 @@ impl<'a> CheckerState<'a> {
                 // No progress — return as-is
                 return type_id;
             }
+            // When a TypeQuery for an enum symbol resolves to the nominal
+            // Enum(DefId, _) type, convert it to the structural enum constructor
+            // object. This ensures `typeof M.Color` (TypeQuery -> Enum) produces
+            // the same structural type as `m.Color` (property access -> Object).
+            if tsz_solver::is_enum_type(self.ctx.types, resolved) {
+                let binder_sym = tsz_binder::SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym)
+                    && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                {
+                    if let Some(enum_obj) = self.enum_object_type(binder_sym) {
+                        return enum_obj;
+                    }
+                }
+            }
             type_id = resolved;
         }
         // Exceeded iteration limit — treat as `any` to avoid false positives
@@ -307,18 +322,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // NOTE: try_enum_object_redeclaration_check was removed. The TS2403
-        // raw_declared_type now uses initializer_ts2403_type to store enum object
-        // types for bare enum initializers (`var x = E`). The old fallback would
-        // normalize enum types to their object shape, defeating the TS2403 check
-        // by making `typeof E` vs `E` appear compatible.
-
-        // The solver's are_types_identical_for_redeclaration already handles
-        // bidirectional subtype checking with proper normalization (intersection
-        // distribution, typeof evaluation, generic application results) and
-        // TopLevelOnly any-propagation mode. A separate checker-side fallback
-        // is not needed and was incorrectly using AnyPropagationMode::All,
-        // which let nested `any` silently match non-`any` types.
         false
     }
 }
