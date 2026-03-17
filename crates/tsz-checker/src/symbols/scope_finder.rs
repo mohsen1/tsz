@@ -130,10 +130,10 @@ impl<'a> CheckerState<'a> {
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
             }
-            if let Some(node) = self.ctx.arena.get(current) {
-                if node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION {
-                    return true;
-                }
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION)
+            {
+                return true;
             }
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
