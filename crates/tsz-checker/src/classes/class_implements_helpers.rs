@@ -240,6 +240,102 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if an interface declaration extends a class with private/protected members
+    /// that the implementing class CAN access (because the class extends that base class).
+    /// This is used to detect TS2320 conflicts: when one merged interface declaration
+    /// extends a class the implementing class extends (accessible) and another extends
+    /// a class it doesn't extend (inaccessible), the conflict is a TS2320 issue on the
+    /// interface, not a TS2420 issue on the implementing class.
+    pub(crate) fn interface_extends_class_with_accessible_private_members(
+        &mut self,
+        interface_decl: &tsz_parser::parser::node::InterfaceData,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        // Collect the base classes that the implementing class extends
+        let mut class_extends_symbols = std::collections::HashSet::new();
+        if let Some(ref class_heritage) = class_data.heritage_clauses {
+            for &clause_idx in &class_heritage.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    let expr_idx = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+                    if let Some(base_name) = self.heritage_name_text(expr_idx)
+                        && let Some(sym_id) = self.ctx.binder.file_locals.get(&base_name)
+                    {
+                        class_extends_symbols.insert(sym_id);
+                    }
+                }
+            }
+        }
+
+        let Some(ref heritage_clauses) = interface_decl.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+                if let Some(base_name) = self.heritage_name_text(expr_idx)
+                    && let Some(sym_id) = self.ctx.binder.file_locals.get(&base_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && class_extends_symbols.contains(&sym_id)
+                {
+                    // The implementing class extends this base class.
+                    // Check if the base class has private/protected members.
+                    for &decl_idx in &symbol.declarations {
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                            continue;
+                        }
+                        let Some(base_class_data) = self.ctx.arena.get_class(decl_node) else {
+                            continue;
+                        };
+                        if self.class_has_private_or_protected_members(base_class_data) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn class_has_private_or_protected_members(
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
