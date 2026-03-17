@@ -403,6 +403,7 @@ impl ParserState {
     /// These are: implements, interface, let, package, private, protected, public, static, yield.
     /// In strict mode contexts these cannot be used as identifiers.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) const fn is_future_reserved_word(&self) -> bool {
         self.current_token as u16 >= SyntaxKind::FIRST_FUTURE_RESERVED_WORD as u16
             && self.current_token as u16 <= SyntaxKind::LAST_FUTURE_RESERVED_WORD as u16
@@ -411,6 +412,7 @@ impl ParserState {
     /// Check if we're in a strict mode context (class body or module).
     /// TypeScript class bodies and modules are always in strict mode.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) const fn in_strict_mode_context(&self) -> bool {
         self.in_class_body() || self.seen_module_indicator
     }
