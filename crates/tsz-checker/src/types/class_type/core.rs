@@ -263,6 +263,42 @@ impl<'a> CheckerState<'a> {
                 });
             }
 
+            // Also prescan methods so that property initializers with arrow functions
+            // like `handler = () => this.method()` can resolve `this.method`.
+            // Methods use `any` as their provisional type; full signatures are built
+            // in Phase 2 after properties are known.
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                    continue;
+                }
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                if self.has_static_modifier(&method.modifiers) {
+                    continue;
+                }
+                let Some(name) = self.get_property_name_resolved(method.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+                let visibility = self.get_member_visibility(&method.modifiers, method.name);
+                prescan_props.push(PropertyInfo {
+                    name: name_atom,
+                    type_id: TypeId::ANY,
+                    write_type: TypeId::ANY,
+                    optional: false,
+                    readonly: false,
+                    is_method: true,
+                    is_class_prototype: false,
+                    visibility,
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                });
+            }
+
             // Also prescan constructor parameter properties (e.g. `constructor(private field: string)`)
             // so that property initializers like `handler = () => { this.field }` can resolve them.
             for &member_idx in &class.members.nodes {
