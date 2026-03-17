@@ -318,8 +318,13 @@ impl<'a> CheckerState<'a> {
                 vec![]
             };
 
-        // Find the closest match using Levenshtein distance
+        // Find the closest match using Levenshtein distance.
+        // Only return a suggestion when there is a UNIQUE closest candidate;
+        // if two or more candidates tie for the best distance we emit nothing,
+        // matching tsc behaviour (avoids spurious suggestions for very short
+        // strings where many members fall within the threshold).
         let mut best: Option<(usize, String)> = None;
+        let mut best_is_ambiguous = false;
         for candidate in &target_literals {
             if candidate == &source_str {
                 return None;
@@ -328,12 +333,27 @@ impl<'a> CheckerState<'a> {
             // tsc uses distance <= source.len() / 3 + 1 as the threshold
             let threshold = source_str.len() / 3 + 1;
             if dist <= threshold {
-                if best.is_none() || dist < best.as_ref().unwrap().0 {
-                    best = Some((dist, candidate.clone()));
+                match &best {
+                    None => {
+                        best = Some((dist, candidate.clone()));
+                        best_is_ambiguous = false;
+                    }
+                    Some((best_dist, _)) if dist < *best_dist => {
+                        best = Some((dist, candidate.clone()));
+                        best_is_ambiguous = false;
+                    }
+                    Some((best_dist, _)) if dist == *best_dist => {
+                        best_is_ambiguous = true;
+                    }
+                    _ => {}
                 }
             }
         }
-        best.map(|(_, s)| s)
+        if best_is_ambiguous {
+            None
+        } else {
+            best.map(|(_, s)| s)
+        }
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
