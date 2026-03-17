@@ -664,25 +664,12 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        // TypeQuery (typeof X) must resolve to the VALUE-space type (constructor
-        // for classes). The TypeEnvironment's resolve_ref may return the instance
-        // type for class symbols, so handle TypeQuery explicitly here using the
-        // checker's symbol_types cache which always has the constructor type.
-        if let Some(sym_ref) =
-            tsz_solver::type_queries::get_type_query_symbol_ref(self.ctx.types, type_id)
-        {
-            let sym_id = tsz_binder::SymbolId(sym_ref.0);
-            if let Some(&ctor_type) = self.ctx.symbol_types.get(&sym_id) {
-                return self.evaluate_type_for_assignability(ctor_type);
-            }
-        }
-
-        let mut evaluated = match classify_for_assignability_eval(self.ctx.types, type_id) {
+        let kind = classify_for_assignability_eval(self.ctx.types, type_id);
+        let mut evaluated = match kind {
             AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
             AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
             AssignabilityEvalKind::Resolved => type_id,
         };
-
         // Distribution pass: normalize compound types so mixed representations do not
         // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
         if let Some(distributed) = map_compound_members(self.ctx.types, evaluated, |member| {
