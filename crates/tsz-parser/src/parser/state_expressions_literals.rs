@@ -672,7 +672,9 @@ impl ParserState {
             // appear if the `/` was actually part of a `</tag>` construct).
             let regex_body = self.scanner.get_token_text_ref();
             let is_jsx_artifact = regex_body.find('>').is_some_and(|gt_pos| {
-                regex_body.find(';').map_or(true, |semi_pos| gt_pos < semi_pos)
+                regex_body
+                    .find(';')
+                    .map_or(true, |semi_pos| gt_pos < semi_pos)
             });
             if !is_jsx_artifact {
                 use tsz_common::diagnostics::diagnostic_codes;
