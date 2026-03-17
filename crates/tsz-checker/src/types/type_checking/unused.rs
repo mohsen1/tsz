@@ -223,7 +223,18 @@ impl<'a> CheckerState<'a> {
 
             let is_param_decl = self.is_parameter_declaration(decl_idx);
             let referenced = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+            // For parameter properties (constructor(private x: string)),
+            // the property symbol may be "referenced" because the parameter
+            // name is used in the body. But TS6138 checks if this.x is read.
+            let is_parameter_property = (flags & symbol_flags::PROPERTY) != 0
+                && self
+                    .ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER);
+
             if referenced
+                && !is_parameter_property
                 && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
                 && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
             {
