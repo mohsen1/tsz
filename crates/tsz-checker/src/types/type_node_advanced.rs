@@ -324,6 +324,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        // `default` is a reserved keyword and cannot be used as an identifier in
+        // expression position. `typeof default` must always report TS2304 even when
+        // the file has an `export default` declaration, because the default-export
+        // binding is not a locally-visible value name. This check must come BEFORE
+        // the node_types cache lookup, which may have a cached type for the `default`
+        // identifier node from a prior expression-space visit.
+        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && self
+                .ctx
+                .arena
+                .get_identifier(expr_node)
+                .is_some_and(|id| id.escaped_text == "default")
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &["default"]);
+            self.ctx.error(
+                expr_node.pos,
+                expr_node.end - expr_node.pos,
+                msg,
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+            return TypeId::ERROR;
+        }
+
         // Prefer the already-computed value-space type at this query site when available.
         // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
