@@ -703,6 +703,14 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
+    ///
+    /// When a type alias contains `typeof expr` inside a narrowed scope (e.g.
+    /// inside `if (typeof c === 'string')`), the initial lowering creates
+    /// `TypeQuery(SymbolRef)` which resolves to the declared type, not the
+    /// flow-narrowed type. This method re-resolves such references by:
+    /// 1. Finding TYPE_QUERY nodes in the AST
+    /// 2. Resolving each query's expression with flow narrowing applied
+    /// 3. Re-lowering the type node with the narrowed types cached
     pub(super) fn resolve_type_queries_with_flow(
         &mut self,
         alias_type: TypeId,
@@ -721,7 +729,11 @@ impl<'a> CheckerState<'a> {
 
         let mut any_changed = false;
         for tq_idx in &type_query_nodes {
-            let narrowed = self.get_type_from_type_query(*tq_idx);
+            // Resolve the type query's expression with flow narrowing.
+            // The standard get_type_from_type_query delegates to TypeNodeChecker
+            // which doesn't apply flow narrowing. Instead, resolve the expression
+            // identifier directly using get_type_of_node which applies flow analysis.
+            let narrowed = self.resolve_type_query_with_flow(*tq_idx);
             let existing = self.ctx.node_types.get(&tq_idx.0).copied();
             if existing != Some(narrowed) {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);
@@ -735,6 +747,45 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.node_types.remove(&type_node.0);
         self.get_type_from_type_node(type_node)
+    }
+
+    /// Resolve a single TYPE_QUERY node with flow narrowing applied.
+    ///
+    /// For simple identifiers (e.g. `typeof c`), resolves the identifier's type
+    /// using `get_type_of_node` which applies control-flow narrowing. For other
+    /// forms, falls back to the standard `get_type_from_type_query`.
+    fn resolve_type_query_with_flow(&mut self, tq_idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(tq_idx) else {
+            return self.get_type_from_type_query(tq_idx);
+        };
+        let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+            return self.get_type_from_type_query(tq_idx);
+        };
+
+        let expr_name = type_query.expr_name;
+        let Some(expr_node) = self.ctx.arena.get(expr_name) else {
+            return self.get_type_from_type_query(tq_idx);
+        };
+
+        // Only apply flow-aware resolution for simple identifiers
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self.get_type_from_type_query(tq_idx);
+        }
+
+        // Resolve the identifier's type with flow narrowing enabled.
+        // get_type_of_node applies control-flow narrowing automatically.
+        let prev_skip = self.ctx.skip_flow_narrowing;
+        self.ctx.skip_flow_narrowing = false;
+        let expr_type = self.get_type_of_node(expr_name);
+        self.ctx.skip_flow_narrowing = prev_skip;
+
+        // If we got a useful type (not ANY/ERROR), use it.
+        // Otherwise fall back to the standard non-flow path.
+        if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
+            expr_type
+        } else {
+            self.get_type_from_type_query(tq_idx)
+        }
     }
 
     /// Recursively collect `TYPE_QUERY` node indices from a type node subtree.
