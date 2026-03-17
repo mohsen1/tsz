@@ -1164,7 +1164,38 @@ impl<'a> CheckerState<'a> {
                 self.ctx.this_type_stack.push(this_type);
                 true
             } else {
-                false
+                // The expected type may be a type alias Application
+                // (e.g. `ConstructorOptions<Data>` wrapping `Props<Data> & ThisType<Instance<Data>>`).
+                // Expand the alias body and retry ThisType extraction.
+                let mut found = false;
+                if let Some(tsz_solver::TypeData::Application(app_id)) = self.ctx.types.lookup(et) {
+                    let app = self.ctx.types.type_application(app_id);
+                    if let Some(tsz_solver::TypeData::Lazy(def_id)) =
+                        self.ctx.types.lookup(app.base)
+                    {
+                        use tsz_solver::TypeResolver;
+                        let env = self.ctx.type_env.borrow();
+                        if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
+                            let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
+                            let expanded = tsz_solver::instantiate_generic(
+                                self.ctx.types,
+                                body,
+                                &type_params,
+                                &app.args,
+                            );
+                            let expanded_ctx = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                expanded,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
+                            if let Some(this_type) = expanded_ctx.get_this_type_from_marker() {
+                                self.ctx.this_type_stack.push(this_type);
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                found
             }
         } else {
             false
