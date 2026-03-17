@@ -100,6 +100,42 @@ fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a type has late-bound (computed) members.
+///
+/// Returns true when the type is an object with `HAS_LATE_BOUND_MEMBERS` flag,
+/// indicating it has computed property members (e.g., `[symbol]()`) that are
+/// not directly representable as named properties in the type system.
+/// Also checks through Lazy/Application wrappers via evaluation.
+pub fn has_late_bound_members(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    has_late_bound_members_impl(types, type_id)
+}
+
+fn has_late_bound_members_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match types.lookup(type_id) {
+        Some(TypeData::ObjectWithIndex(shape_id)) | Some(TypeData::Object(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            shape
+                .flags
+                .contains(crate::types::ObjectFlags::HAS_LATE_BOUND_MEMBERS)
+        }
+        Some(TypeData::Intersection(members_id)) => {
+            let members = types.type_list(members_id);
+            members
+                .iter()
+                .any(|&m| has_late_bound_members_impl(types, m))
+        }
+        _ => {
+            // Try evaluating (resolve Lazy/Application) and check the result
+            let evaluated = crate::evaluation::evaluate::evaluate_type(types, type_id);
+            if evaluated != type_id {
+                has_late_bound_members_impl(types, evaluated)
+            } else {
+                false
+            }
+        }
+    }
+}
+
 /// Check if a type is an empty object type (no properties, no index signatures).
 pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
