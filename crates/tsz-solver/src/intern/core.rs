@@ -132,6 +132,7 @@ where
         })
     }
 
+    #[inline]
     fn intern(&self, items_slice: &[T]) -> u32 {
         if items_slice.is_empty() {
             return 0;
@@ -159,6 +160,7 @@ where
         }
     }
 
+    #[inline]
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
         // For id 0, return from the initialized inner (which has the pre-allocated
         // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
@@ -175,6 +177,7 @@ where
             .map(|e| std::sync::Arc::clone(e.value()))
     }
 
+    #[inline]
     fn empty(&self) -> Arc<[T]> {
         // Reuse the pre-allocated empty Arc from the inner cache (id 0)
         // instead of creating Arc::from(Vec::new()) on every call.
@@ -225,6 +228,7 @@ where
         })
     }
 
+    #[inline]
     fn intern(&self, value: T) -> u32 {
         let inner = self.get_inner();
         let value_arc = Arc::new(value);
@@ -248,6 +252,7 @@ where
         }
     }
 
+    #[inline]
     fn get(&self, id: u32) -> Option<Arc<T>> {
         self.inner
             .get()?
@@ -482,6 +487,7 @@ impl TypeInterner {
 
     /// Intern a string into an Atom.
     /// This is used when constructing types with property names or string literals.
+    #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
         self.string_interner.intern(s)
     }
@@ -504,12 +510,14 @@ impl TypeInterner {
             .unwrap_or_else(|| self.type_lists.empty())
     }
 
+    #[inline]
     pub fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
         self.tuple_lists
             .get(id.0)
             .unwrap_or_else(|| self.tuple_lists.empty())
     }
 
+    #[inline]
     pub fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
         self.template_lists
             .get(id.0)
@@ -585,6 +593,7 @@ impl TypeInterner {
         }
     }
 
+    #[inline]
     pub fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
         self.function_shapes.get(id.0).unwrap_or_else(|| {
             Arc::new(FunctionShape {
@@ -599,6 +608,7 @@ impl TypeInterner {
         })
     }
 
+    #[inline]
     pub fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
         self.callable_shapes.get(id.0).unwrap_or_else(|| {
             Arc::new(CallableShape {
@@ -610,6 +620,7 @@ impl TypeInterner {
         })
     }
 
+    #[inline]
     pub fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
         self.conditional_types.get(id.0).unwrap_or_else(|| {
             Arc::new(ConditionalType {
@@ -622,6 +633,7 @@ impl TypeInterner {
         })
     }
 
+    #[inline]
     pub fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
         self.mapped_types.get(id.0).unwrap_or_else(|| {
             Arc::new(MappedType {
@@ -640,6 +652,7 @@ impl TypeInterner {
         })
     }
 
+    #[inline]
     pub fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
         self.applications.get(id.0).unwrap_or_else(|| {
             Arc::new(TypeApplication {
@@ -654,6 +667,7 @@ impl TypeInterner {
     /// Otherwise, creates a new `TypeId` and stores the key.
     ///
     /// This uses a lock-free pattern with `DashMap` for concurrent access.
+    #[inline]
     pub fn intern(&self, key: TypeData) -> TypeId {
         if let Some(id) = self.get_intrinsic_id(&key) {
             return id;
