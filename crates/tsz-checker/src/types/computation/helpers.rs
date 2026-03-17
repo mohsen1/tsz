@@ -1124,6 +1124,34 @@ impl<'a> CheckerState<'a> {
         // However, if the target is invalid (e.g. `getValue<number> = ...` parsed as BinaryExpression),
         // we should NOT skip narrowing because we want to treat it as an expression read
         // to catch errors like TS2454 (used before assigned).
+
+        // Expando function pattern: when assigning to a property of a function
+        // declaration (e.g., `foo.toString = () => {}`), tsc treats ALL property
+        // assignments as creating/overriding properties on the function's expando
+        // type, WITHOUT checking assignability against existing Function prototype
+        // properties. Return `any` to match this behavior.
+        // Note: class declarations are NOT included here — class static property
+        // assignments DO check assignability in tsc.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            if let Some(obj_sym) =
+                self.resolve_identifier_symbol_without_tracking(access.expression)
+                && let Some(symbol) = self.ctx.binder.get_symbol(obj_sym)
+                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+            {
+                // Still evaluate the node so side effects (diagnostics on the object) fire,
+                // but return `any` for the LHS type so assignability is not checked.
+                let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
+                self.ctx.skip_flow_narrowing = true;
+                let _ = self.get_type_of_node(idx);
+                self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+                return TypeId::ANY;
+            }
+        }
+
         let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
         if self.is_valid_assignment_target(idx) {
             self.ctx.skip_flow_narrowing = true;
