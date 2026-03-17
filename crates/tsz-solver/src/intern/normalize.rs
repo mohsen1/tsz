@@ -264,12 +264,11 @@ impl TypeInterner {
         for &member in members {
             if member.is_nullable() {
                 has_nullish = true;
-            } else if let Some(TypeData::TypeParameter(ref info)) = self.lookup(member) {
-                if let Some(constraint) = info.constraint {
-                    if self.is_clearly_non_nullable_constraint(constraint) {
-                        has_non_nullable_type_param = true;
-                    }
-                }
+            } else if let Some(TypeData::TypeParameter(ref info)) = self.lookup(member)
+                && let Some(constraint) = info.constraint
+                && self.is_clearly_non_nullable_constraint(constraint)
+            {
+                has_non_nullable_type_param = true;
             }
 
             if has_nullish && has_non_nullable_type_param {
@@ -301,21 +300,20 @@ impl TypeInterner {
         for &member in flat.iter() {
             match self.lookup(member) {
                 Some(TypeData::TypeParameter(ref info)) => {
-                    if info.constraint.is_some() {
-                        if !constrained.iter().any(|(n, _)| *n == info.name) {
-                            constrained.push((info.name, member));
-                        }
+                    if info.constraint.is_some()
+                        && !constrained.iter().any(|(n, _)| *n == info.name)
+                    {
+                        constrained.push((info.name, member));
                     }
                 }
                 Some(TypeData::Union(list_id)) => {
                     let union_members = self.type_list(list_id);
                     for &um in union_members.iter() {
-                        if let Some(TypeData::TypeParameter(ref um_info)) = self.lookup(um) {
-                            if um_info.constraint.is_some() {
-                                if !constrained.iter().any(|(n, _)| *n == um_info.name) {
-                                    constrained.push((um_info.name, um));
-                                }
-                            }
+                        if let Some(TypeData::TypeParameter(ref um_info)) = self.lookup(um)
+                            && um_info.constraint.is_some()
+                            && !constrained.iter().any(|(n, _)| *n == um_info.name)
+                        {
+                            constrained.push((um_info.name, um));
                         }
                     }
                 }
@@ -330,17 +328,13 @@ impl TypeInterner {
         // Second pass: replace unconstrained type params with constrained ones (same name).
         let mut changed = false;
         for slot in flat.iter_mut() {
-            if let Some(TypeData::TypeParameter(ref info)) = self.lookup(*slot) {
-                if info.constraint.is_none() {
-                    if let Some((_, replacement)) =
-                        constrained.iter().find(|(n, _)| *n == info.name)
-                    {
-                        if *slot != *replacement {
-                            *slot = *replacement;
-                            changed = true;
-                        }
-                    }
-                }
+            if let Some(TypeData::TypeParameter(ref info)) = self.lookup(*slot)
+                && info.constraint.is_none()
+                && let Some((_, replacement)) = constrained.iter().find(|(n, _)| *n == info.name)
+                && *slot != *replacement
+            {
+                *slot = *replacement;
+                changed = true;
             }
         }
 

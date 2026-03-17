@@ -857,21 +857,19 @@ impl<'a> InferenceContext<'a> {
     fn resolve_and_flatten_union_members(&self, members: &[TypeId]) -> Vec<TypeId> {
         let mut result = Vec::with_capacity(members.len());
         for &member in members {
-            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(member) {
-                if let Some(resolved) = self.resolve_lazy_for_inference(def_id, member) {
-                    if resolved != member {
-                        if let Some(TypeData::Union(inner_members)) = self.interner.lookup(resolved)
-                        {
-                            // Flatten: the lazy resolved to a union, add its members
-                            let inner = self.interner.type_list(inner_members);
-                            result.extend(inner.iter().copied());
-                            continue;
-                        }
-                        // Resolved to a non-union type, use the resolved form
-                        result.push(resolved);
-                        continue;
-                    }
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(member)
+                && let Some(resolved) = self.resolve_lazy_for_inference(def_id, member)
+                && resolved != member
+            {
+                if let Some(TypeData::Union(inner_members)) = self.interner.lookup(resolved) {
+                    // Flatten: the lazy resolved to a union, add its members
+                    let inner = self.interner.type_list(inner_members);
+                    result.extend(inner.iter().copied());
+                    continue;
                 }
+                // Resolved to a non-union type, use the resolved form
+                result.push(resolved);
+                continue;
             }
             result.push(member);
         }

@@ -293,20 +293,20 @@ impl LspServer {
         }
 
         // Check if this request was already cancelled
-        if self.is_cancelled(&id) {
-            if let Some(id_val) = id {
-                let id_str = match &id_val {
-                    Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.clone(),
-                    _ => String::new(),
-                };
-                self.cancelled_requests.remove(&id_str);
-                return Some(self.error_response(
-                    Some(id_val),
-                    -32800,
-                    "Request cancelled".to_string(),
-                ));
-            }
+        if self.is_cancelled(&id)
+            && let Some(id_val) = id
+        {
+            let id_str = match &id_val {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => String::new(),
+            };
+            self.cancelled_requests.remove(&id_str);
+            return Some(self.error_response(
+                Some(id_val),
+                -32800,
+                "Request cancelled".to_string(),
+            ));
         }
 
         match method {
@@ -1148,11 +1148,11 @@ impl LspServer {
         for file_entry in &files {
             if let Some(uri) = file_entry.get("uri").and_then(|u| u.as_str()) {
                 let file_name = Self::uri_to_file_name(uri);
-                if Self::is_ts_file(&file_name) {
-                    if let Ok(content) = std::fs::read_to_string(&file_name) {
-                        self.project.set_file(file_name, content);
-                        self.publish_diagnostics(uri);
-                    }
+                if Self::is_ts_file(&file_name)
+                    && let Ok(content) = std::fs::read_to_string(&file_name)
+                {
+                    self.project.set_file(file_name, content);
+                    self.publish_diagnostics(uri);
                 }
             }
         }

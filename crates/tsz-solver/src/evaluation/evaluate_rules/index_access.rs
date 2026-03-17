@@ -668,26 +668,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 struct ArrayKeyVisitor<'a> {
     db: &'a dyn TypeDatabase,
     element_type: TypeId,
-    array_member_types_cache: Option<Vec<TypeId>>,
 }
 
 impl<'a> ArrayKeyVisitor<'a> {
     fn new(db: &'a dyn TypeDatabase, element_type: TypeId) -> Self {
-        Self {
-            db,
-            element_type,
-            array_member_types_cache: None,
-        }
+        Self { db, element_type }
     }
 
     /// Driver method that handles the fallback logic
     fn evaluate(&mut self, index_type: TypeId) -> TypeId {
         let result = self.visit_type(self.db, index_type);
         result.unwrap_or(self.element_type)
-    }
-
-    fn get_array_member_types(&mut self) -> Vec<TypeId> {
-        get_or_init_array_member_types(&mut self.array_member_types_cache, self.db)
     }
 }
 

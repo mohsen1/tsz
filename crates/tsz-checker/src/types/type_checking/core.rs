@@ -1783,11 +1783,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if let Some(args) = &type_ref.type_arguments {
-                        for &arg in &args.nodes {
-                            self.precompute_type_query_flow_types(arg);
-                        }
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    for &arg in &args.nodes {
+                        self.precompute_type_query_flow_types(arg);
                     }
                 }
             }

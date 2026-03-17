@@ -1131,23 +1131,21 @@ impl<'a> CheckerState<'a> {
                 let app = db.type_application(app_id);
                 (lazy_def_id(db, app.base), app.args.clone())
             });
-            if let Some((Some(type_arg_base_def), ref type_arg_args)) = type_arg_app_info {
-                if type_arg_base_def == constraint_base_def {
-                    // Same base type (e.g., both are AA<...>).
-                    // Check if any inner type argument extends the constraint base,
-                    // which would create the circular recursion pattern.
-                    for &inner_arg in type_arg_args.iter() {
-                        let inner_def = lazy_def_id(db, inner_arg);
-                        if let Some(inner_def) = inner_def {
-                            let inner_sym = self.ctx.def_to_symbol_id(inner_def);
-                            let constraint_sym = self.ctx.def_to_symbol_id(constraint_base_def);
-                            if let (Some(inner_sym_id), Some(constraint_sym_id)) =
-                                (inner_sym, constraint_sym)
-                            {
-                                if self.interface_extends_symbol(inner_sym_id, constraint_sym_id) {
-                                    return true;
-                                }
-                            }
+            if let Some((Some(type_arg_base_def), ref type_arg_args)) = type_arg_app_info
+                && type_arg_base_def == constraint_base_def
+            {
+                // Same base type (e.g., both are AA<...>).
+                // Check if any inner type argument extends the constraint base,
+                // which would create the circular recursion pattern.
+                for &inner_arg in type_arg_args.iter() {
+                    if let Some(inner_def) = lazy_def_id(db, inner_arg) {
+                        let inner_sym = self.ctx.def_to_symbol_id(inner_def);
+                        let constraint_sym = self.ctx.def_to_symbol_id(constraint_base_def);
+                        if let (Some(inner_sym_id), Some(constraint_sym_id)) =
+                            (inner_sym, constraint_sym)
+                            && self.interface_extends_symbol(inner_sym_id, constraint_sym_id)
+                        {
+                            return true;
                         }
                     }
                 }

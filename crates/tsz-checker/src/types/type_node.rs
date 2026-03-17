@@ -1013,16 +1013,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if self.predicate_type_contains_unevaluable_application(predicate_type) {
             return;
         }
-        if !self.ctx.types.is_assignable_to(predicate_type, param_type) {
-            if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
-                self.ctx.error(
-                    type_node.pos,
-                    type_node.end - type_node.pos,
-                    "A type predicate's type must be assignable to its parameter's type."
-                        .to_string(),
-                    2677,
-                );
-            }
+        if !self.ctx.types.is_assignable_to(predicate_type, param_type)
+            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
+        {
+            self.ctx.error(
+                type_node.pos,
+                type_node.end - type_node.pos,
+                "A type predicate's type must be assignable to its parameter's type.".to_string(),
+                2677,
+            );
         }
     }
 
@@ -1030,27 +1029,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// where the resolver doesn't know about the base type's definition). In such cases,
     /// the Application stays opaque and assignability checks may give incorrect results.
     fn predicate_type_contains_unevaluable_application(&self, type_id: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeData::Application(_)) => {
-                // If evaluate_type returns the same TypeId, the Application couldn't be resolved
-                let evaluated = self.ctx.types.evaluate_type(type_id);
-                evaluated == type_id
-            }
-            Some(TypeData::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members
-                    .iter()
-                    .any(|&m| self.predicate_type_contains_unevaluable_application(m))
-            }
-            Some(TypeData::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members
-                    .iter()
-                    .any(|&m| self.predicate_type_contains_unevaluable_application(m))
-            }
-            _ => false,
+        if tsz_solver::type_queries::get_application_info(self.ctx.types, type_id).is_some() {
+            // If evaluate_type returns the same TypeId, the Application couldn't be resolved
+            let evaluated = self.ctx.types.evaluate_type(type_id);
+            return evaluated == type_id;
         }
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&m| self.predicate_type_contains_unevaluable_application(m));
+        }
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&m| self.predicate_type_contains_unevaluable_application(m));
+        }
+        false
     }
 
     fn find_type_predicate_in_type(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
