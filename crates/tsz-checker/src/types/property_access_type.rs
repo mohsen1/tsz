@@ -1109,35 +1109,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // TS2576: super.member where `member` exists on the base class static side.
-                    // Use .is_some() instead of == Some(true) because TS2576 should fire for
-                    // ANY static member (methods, properties, accessors), not just methods.
-                    if self.is_super_expression(access.expression)
-                        && let Some(ref class_info) = self.ctx.enclosing_class
-                        && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-                        && self
-                            .is_method_member_in_class_hierarchy(base_idx, property_name, true)
-                            .is_some()
-                    {
-                        use crate::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
-
-                        let base_name = self.get_class_name_from_decl(base_idx);
-                        let static_member_name = format!("{base_name}.{property_name}");
-                        let object_type_str = self.format_type(display_object_type);
-                        let message = format_message(
-                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
-                            &[property_name, &object_type_str, &static_member_name],
-                        );
-                        // Report at the property name node, not the full expression (matches tsc behavior)
-                        self.error_at_node(
-                            access.name_or_argument,
-                            &message,
-                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
-                        );
-                        return TypeId::ERROR;
-                    }
+                    // TSC does not emit TS2576 for `super.member` access. When accessing a
+                    // property through `super`, TypeScript suppresses "did you mean to access
+                    // the static member?" errors entirely. The TS2576 check only applies to
+                    // regular instance access (e.g., `instance.y` where `y` is static), not
+                    // super access. See: superAccess2.ts — `super.y()` in instance method and
+                    // `super.x()` in static method produce no TS2576 errors in tsc.
 
                     // TS2576: instance.member where `member` exists on the class static side.
                     // Use .is_some() — TS2576 fires for any static member (property or method).
@@ -1172,7 +1149,15 @@ impl<'a> CheckerState<'a> {
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere.
                     // Also suppress when accessibility check already emitted TS2341/TS2445
                     // (property exists but is private/protected — not truly "not found").
-                    if !property_name.starts_with('#') && !accessibility_error_emitted {
+                    // TSC also suppresses property-not-found errors for `super.member` access:
+                    // when a property is not found on the super type, TypeScript does not report
+                    // TS2339. For example, `super.x()` in a static method (where `x` is an
+                    // instance method) and `super.y()` in an instance method (where `y` is a
+                    // static method) produce no TS2339 errors in tsc (see superAccess2.ts).
+                    if !property_name.starts_with('#')
+                        && !accessibility_error_emitted
+                        && !self.is_super_expression(access.expression)
+                    {
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.
