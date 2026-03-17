@@ -641,6 +641,21 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     }
+                    if is_bare_type_param && base_constraint_type.is_none() {
+                        // Bare `Infer` type parameter — base_constraint_of_type returns
+                        // the type unchanged for Infer types, so base_constraint_type is
+                        // None. Check if the infer variable has an implicit constraint
+                        // from its structural position (e.g., template literal → string,
+                        // rest element → array). If so, skip TS2344 — tsc defers these
+                        // checks to conditional type evaluation.
+                        let has_implicit_constraint =
+                            type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                self.is_infer_with_implicit_constraint_in_conditional(arg_idx)
+                            });
+                        if has_implicit_constraint {
+                            continue;
+                        }
+                    }
                     if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
