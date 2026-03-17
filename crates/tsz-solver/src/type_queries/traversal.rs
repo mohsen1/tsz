@@ -261,7 +261,14 @@ where
         let result = match db.lookup(type_id) {
             Some(TypeData::Recursive(_)) => in_cond_branch,
             Some(TypeData::Lazy(def_id)) => host.resolve_lazy(def_id, db).is_some_and(|resolved| {
-                resolved != type_id && visit(db, host, resolved, active, finished, in_cond_branch)
+                // Reset in_cond_branch when crossing a Lazy(DefId) boundary.
+                // Lazy types represent named type definitions (interfaces, classes,
+                // type aliases) that the declaration emitter can reference by name
+                // without inlining. When a cycle passes through a named reference,
+                // the emitter can break the cycle by emitting the name instead of
+                // expanding. Only truly inline cycles through conditional branches
+                // (detected via Recursive nodes) are non-serializable.
+                resolved != type_id && visit(db, host, resolved, active, finished, false)
             }),
             Some(TypeData::Application(app_id)) => {
                 let evaluated = host.evaluate_application_for_serialization(type_id);
