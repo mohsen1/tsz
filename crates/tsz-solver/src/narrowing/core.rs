@@ -636,7 +636,12 @@ impl<'a> NarrowingContext<'a> {
                     if let Some(narrowed) = self.narrow_type_param(member, target_type) {
                         return Some(narrowed);
                     }
-                    if self.is_assignable_to(member, target_type) {
+                    // Resolve Application/Lazy types before assignability check.
+                    // Without this, generic instantiations like ArrayLike<any>
+                    // remain opaque Application types and structural assignability
+                    // to object targets (e.g. { length: unknown }) fails.
+                    let resolved_member = self.resolve_type(member);
+                    if self.is_assignable_to(resolved_member, target_type) {
                         return Some(member);
                     }
                     // Reverse subtype check: target <: member.
@@ -1360,7 +1365,64 @@ impl<'a> NarrowingContext<'a> {
         if resolved_source == resolved_target {
             return true;
         }
-        crate::relations::subtype::is_subtype_of_with_db(self.db, resolved_source, resolved_target)
+        if crate::relations::subtype::is_subtype_of_with_db(
+            self.db,
+            resolved_source,
+            resolved_target,
+        ) {
+            return true;
+        }
+
+        // Structural fallback: when the SubtypeChecker can't determine the
+        // relationship (e.g., due to evaluation/caching limitations), do a
+        // direct property-level check. This handles cases like
+        // `ArrayLike<any>` (ObjectWithIndex) being assignable to
+        // `{ length: unknown }` (Object) during type predicate narrowing.
+        self.is_structurally_assignable_to_object(resolved_source, resolved_target)
+    }
+
+    /// Direct structural check: does `source` have all properties required
+    /// by `target` (when target is a plain Object type)?
+    fn is_structurally_assignable_to_object(&self, source: TypeId, target: TypeId) -> bool {
+        use crate::visitor::{object_shape_id, object_with_index_shape_id};
+
+        // Target must be a plain Object type (not ObjectWithIndex)
+        let t_shape_id = match object_shape_id(self.db.as_type_database(), target) {
+            Some(id) => id,
+            None => return false,
+        };
+        let t_shape = self.db.object_shape(t_shape_id);
+        if t_shape.properties.is_empty() {
+            return false; // Empty object, skip
+        }
+
+        // Source can be Object or ObjectWithIndex
+        let s_shape_id = object_shape_id(self.db.as_type_database(), source)
+            .or_else(|| object_with_index_shape_id(self.db.as_type_database(), source));
+        let s_shape_id = match s_shape_id {
+            Some(id) => id,
+            None => return false,
+        };
+        let s_shape = self.db.object_shape(s_shape_id);
+
+        // Check that every target property exists on the source with
+        // compatible type and optionality.
+        for t_prop in &t_shape.properties {
+            let found = s_shape.properties.iter().any(|sp| {
+                sp.name == t_prop.name
+                    // Optional source can't satisfy required target
+                    && (!sp.optional || t_prop.optional)
+                    && crate::relations::subtype::is_subtype_of_with_db(
+                        self.db,
+                        sp.type_id,
+                        t_prop.type_id,
+                    )
+            });
+            if !found {
+                return false;
+            }
+        }
+        true
     }
 
     /// Applies a type guard to narrow a type.
