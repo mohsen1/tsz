@@ -12248,14 +12248,16 @@ function f(a: number | string) {
         .iter()
         .filter(|(code, _)| *code == 2345)
         .collect();
+    // tsc narrows `typeof a` in type positions inside control flow blocks.
+    // Inside `if (typeof a === "number")`, `typeof a` resolves to `number`,
+    // so `fn("")` should error because `string` is not assignable to `number`.
     assert!(
-        ts2345.is_empty(),
-        "Type-literal call signature parameters should resolve `typeof` from the declared type, not the narrowed branch type.\nGot: {ts2345:?}"
+        !ts2345.is_empty(),
+        "Type-literal call signature parameters should resolve `typeof` from the narrowed branch type.\nGot: {diagnostics:?}"
     );
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_type_query_in_type_alias_index_signature_stays_flow_sensitive() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -12284,7 +12286,6 @@ function f(a: number | string) {
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_returned_arrow_type_query_preserves_branch_narrowing() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
