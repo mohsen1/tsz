@@ -1548,7 +1548,8 @@ pub(crate) fn evaluate_const_enum_initializer(
                 let member_name = arena.get_identifier_text(prop.name_or_argument)?;
                 return resolve_enum_member_value(arena, member_name, enum_data, depth);
             }
-            None
+            // Try resolving as a reference to a different enum (e.g., OtherEnum.Member)
+            resolve_cross_enum_property_access(arena, enum_data, &prop, depth)
         }
         k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
             let elem = arena.get_access_expr(node)?;
@@ -1561,7 +1562,8 @@ pub(crate) fn evaluate_const_enum_initializer(
                     return resolve_enum_member_value(arena, &lit.text, enum_data, depth);
                 }
             }
-            None
+            // Try resolving as a reference to a different enum (e.g., OtherEnum["Member"])
+            resolve_cross_enum_element_access(arena, enum_data, &elem, depth)
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
             let unary = arena.get_unary_expr(node)?;
@@ -1649,6 +1651,129 @@ fn expression_ends_with_identifier(
             .is_some_and(|name| name == expected),
         _ => false,
     }
+}
+
+/// Resolve a cross-enum property access like `OtherEnum.Member` in a const enum initializer.
+///
+/// When a const enum member initializer references a member of a different enum
+/// (e.g., `const enum A { X = B.Y }`), we need to find enum `B` in the AST and
+/// evaluate `Y` in that enum's context.
+fn resolve_cross_enum_property_access(
+    arena: &tsz_parser::parser::NodeArena,
+    current_enum_data: &tsz_parser::parser::node::EnumData,
+    prop: &tsz_parser::parser::node::AccessExprData,
+    depth: u32,
+) -> Option<f64> {
+    // The expression should be an identifier (the other enum's name)
+    let expr_node = arena.get(prop.expression)?;
+    if expr_node.kind != SyntaxKind::Identifier as u16 {
+        return None;
+    }
+    let other_enum_name = arena.get_identifier_text(prop.expression)?;
+    let member_name = arena.get_identifier_text(prop.name_or_argument)?;
+
+    resolve_external_enum_member(
+        arena,
+        current_enum_data,
+        other_enum_name,
+        member_name,
+        depth,
+    )
+}
+
+/// Resolve a cross-enum element access like `OtherEnum["Member"]` in a const enum initializer.
+fn resolve_cross_enum_element_access(
+    arena: &tsz_parser::parser::NodeArena,
+    current_enum_data: &tsz_parser::parser::node::EnumData,
+    elem: &tsz_parser::parser::node::AccessExprData,
+    depth: u32,
+) -> Option<f64> {
+    let expr_node = arena.get(elem.expression)?;
+    if expr_node.kind != SyntaxKind::Identifier as u16 {
+        return None;
+    }
+    let other_enum_name = arena.get_identifier_text(elem.expression)?;
+
+    let arg_node = arena.get(elem.name_or_argument)?;
+    if arg_node.kind != SyntaxKind::StringLiteral as u16
+        && arg_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+    {
+        return None;
+    }
+    let lit = arena.get_literal(arg_node)?;
+    let member_name = &lit.text;
+
+    resolve_external_enum_member(
+        arena,
+        current_enum_data,
+        other_enum_name,
+        member_name,
+        depth,
+    )
+}
+
+/// Find an enum declaration by name in the same file and evaluate one of its members.
+fn resolve_external_enum_member(
+    arena: &tsz_parser::parser::NodeArena,
+    current_enum_data: &tsz_parser::parser::node::EnumData,
+    target_enum_name: &str,
+    member_name: &str,
+    depth: u32,
+) -> Option<f64> {
+    let current_enum_decl_idx = arena.get_extended(current_enum_data.name)?.parent;
+    let namespace_path = enum_namespace_path(arena, current_enum_decl_idx);
+    let source_file_idx = source_file_ancestor(arena, current_enum_decl_idx)?;
+
+    // Search the AST for an enum with the target name
+    let mut stack = vec![source_file_idx];
+    while let Some(node_idx) = stack.pop() {
+        if let Some(candidate_enum) = arena.get_enum_at(node_idx)
+            && arena.get_identifier_text(candidate_enum.name) == Some(target_enum_name)
+            && enum_namespace_path(arena, node_idx) == namespace_path
+        {
+            // Found the target enum — look up the member
+            if let Some(member_idx) = enum_member_index(arena, candidate_enum, member_name) {
+                let m_idx = candidate_enum.members.nodes[member_idx];
+                let m_node = arena.get(m_idx)?;
+                let m_data = arena.get_enum_member(m_node)?;
+
+                if m_data.initializer.is_some() {
+                    return evaluate_const_enum_initializer(
+                        arena,
+                        m_data.initializer,
+                        candidate_enum,
+                        Some(target_enum_name),
+                        depth + 1,
+                    );
+                }
+
+                // Auto-incremented: find base and add offset
+                let mut offset = 1u32;
+                for i in (0..member_idx).rev() {
+                    let prev_idx = candidate_enum.members.nodes[i];
+                    let prev_node = arena.get(prev_idx)?;
+                    let prev_data = arena.get_enum_member(prev_node)?;
+                    if prev_data.initializer.is_some() {
+                        let base = evaluate_const_enum_initializer(
+                            arena,
+                            prev_data.initializer,
+                            candidate_enum,
+                            Some(target_enum_name),
+                            depth + 1,
+                        )?;
+                        return Some(base + offset as f64);
+                    }
+                    offset += 1;
+                }
+                return Some(member_idx as f64);
+            }
+        }
+        for child_idx in arena.get_children(node_idx) {
+            stack.push(child_idx);
+        }
+    }
+
+    None
 }
 
 /// Resolve a member name to its computed value within an enum.
