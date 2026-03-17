@@ -146,10 +146,13 @@ pub(crate) fn emit_outputs(
             } else if is_cts_or_cjs {
                 // .cts/.cjs files always emit as CJS regardless of --module setting.
                 // This handles cases like module=esnext with .cts files.
+                let is_cjs_only = file_name_lower.ends_with(".cjs");
                 if !printer_options.module.is_commonjs() {
-                    // module=preserve doesn't add "use strict" even for .cts files
-                    // because it preserves module syntax without transformation.
-                    if matches!(printer_options.module, ModuleKind::Preserve) {
+                    // For .cjs (JavaScript) files under ESM/preserve module settings,
+                    // tsc emits them as plain CJS passthrough without adding "use strict".
+                    // .cts (TypeScript) files still get "use strict" since they are
+                    // compiled output, not passthrough.
+                    if matches!(printer_options.module, ModuleKind::Preserve) || is_cjs_only {
                         printer_options.suppress_use_strict = true;
                     }
                     printer_options.module = ModuleKind::CommonJS;
