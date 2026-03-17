@@ -159,15 +159,6 @@ impl<'a> InferenceContext<'a> {
                 self.infer_tuples(source_elems, target_elems, priority)?;
             }
 
-            // Tuple-to-Array: infer each tuple element against the array element type.
-            // Handles cases like `[1, "a", true]` being passed to `Array<T>`.
-            (Some(TypeData::Tuple(source_elems)), Some(TypeData::Array(target_elem))) => {
-                let elems = self.interner.tuple_list(source_elems);
-                for elem in elems.iter() {
-                    self.infer_from_types(elem.type_id, target_elem, priority)?;
-                }
-            }
-
             // Union types: try to infer against each member
             (Some(TypeData::Union(source_members)), Some(TypeData::Union(target_members))) => {
                 self.infer_unions(source_members, target_members, priority)?;
@@ -181,47 +172,12 @@ impl<'a> InferenceContext<'a> {
                 self.infer_intersections(source_members, target_members, priority)?;
             }
 
-            // Target is a union but source is not a union: partition target into
-            // parameterized (contains inference vars) and fixed members.
-            // If the source matches a fixed member (by type identity or literal-to-base
-            // widening), skip inference against parameterized members — the source is
-            // already "explained" by the fixed part of the union.
-            // This matches tsc's inferFromMatchingTypes + isTypeOrBaseIdenticalTo.
-            // Example: source `13` (literal), target `T | number | string | boolean | Date`:
-            //   `13` widens to `number` which is in the fixed set, so don't infer T = 13.
-            (_, Some(TypeData::Union(target_members))) => {
-                let target_list = self.interner.type_list(target_members);
-                let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
-                    .iter()
-                    .partition(|&&t| self.target_contains_inference_param(t));
-
-                // Expand fixed members: resolve type aliases (Lazy) and flatten unions
-                let expanded_fixed = self.expand_fixed_members(&fixed);
-
-                // Check if source matches any fixed member. Also check the widened
-                // (literal→base) type: `13` should match `number`, `"hi"` should match
-                // `string`, `true` should match `boolean`.
-                let source_matches_fixed = expanded_fixed.contains(&source) || {
-                    let widened =
-                        crate::operations::widening::widen_literal_type(self.interner, source);
-                    widened != source && expanded_fixed.contains(&widened)
-                };
-
-                if !source_matches_fixed {
-                    // Source doesn't match any fixed member — infer against parameterized members
-                    for &target_member in &parameterized {
-                        let _ = self.infer_from_types(source, target_member, priority);
-                    }
-                }
-                // If source matches a fixed member, skip — no inference needed
-            }
-
-            // Target is an intersection but source is not: decompose the target
+            // Target is a union/intersection but source is not: decompose the target
             // and infer against each member. This handles cases like:
             //   source: {store: string}  target: {dispatch: number} & OwnProps
             // We try each intersection member so that type parameters within the
             // target (like OwnProps, or union branches) can be inferred from the source.
-            (_, Some(TypeData::Intersection(target_members))) => {
+            (_, Some(TypeData::Union(target_members) | TypeData::Intersection(target_members))) => {
                 let target_list = self.interner.type_list(target_members);
                 for &target_member in target_list.iter() {
                     let _ = self.infer_from_types(source, target_member, priority);
@@ -829,30 +785,33 @@ impl<'a> InferenceContext<'a> {
         let source_list = self.interner.type_list(source_members);
         let target_list = self.interner.type_list(target_members);
 
-        let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
+        // Resolve Lazy types in target members and flatten any unions they resolve to.
+        // This is critical for type aliases used in union targets: e.g., `T | Primitive`
+        // where `Primitive = number | string | boolean | Date` must be flattened so that
+        // fixed member matching can properly skip source members like `number` or `string`.
+        let resolved_targets = self.resolve_and_flatten_union_members(&target_list);
+
+        // Similarly resolve source members so they can match resolved fixed targets.
+        let resolved_sources = self.resolve_and_flatten_union_members(&source_list);
+
+        let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = resolved_targets
             .iter()
-            .partition(|&&t| self.target_contains_inference_param(t));
+            .copied()
+            .partition(|&t| self.target_contains_inference_param(t));
 
         if parameterized.is_empty() {
             // No inference targets — nothing to infer
             return Ok(());
         }
 
-        // Expand fixed members: resolve Lazy (type alias) references and flatten unions.
-        // Without this, a type alias like `Primitive = number | string | boolean | Date`
-        // stays as a single opaque Lazy(DefId) in the fixed set, and source members
-        // like `number` won't match it by TypeId equality, causing them to be
-        // incorrectly inferred against type parameters instead of being skipped.
-        let expanded_fixed = self.expand_fixed_members(&fixed);
-
         // Further split parameterized into naked type params vs structured
         let (_naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
             .iter()
             .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
 
-        for &source_ty in source_list.iter() {
-            // Skip source members that match fixed targets (including expanded aliases)
-            if expanded_fixed.contains(&source_ty) {
+        for &source_ty in resolved_sources.iter() {
+            // Skip source members that match fixed targets
+            if fixed.contains(&source_ty) {
                 continue;
             }
 
@@ -883,6 +842,40 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Resolve Lazy types in union members and flatten any unions they resolve to.
+    ///
+    /// When a union contains `Lazy(DefId)` members (e.g., type alias references like
+    /// `Primitive` in `T | Primitive`), this resolves them and flattens the result.
+    /// For example, if `Primitive = number | string | boolean | Date`, then:
+    ///   `[T, Lazy(Primitive)]` → `[T, number, string, boolean, Date]`
+    ///
+    /// This is necessary for correct inference matching: without flattening,
+    /// source members like `number` can't be matched against the opaque `Lazy(Primitive)`
+    /// and incorrectly get inferred against type parameter `T`.
+    fn resolve_and_flatten_union_members(&self, members: &[TypeId]) -> Vec<TypeId> {
+        let mut result = Vec::with_capacity(members.len());
+        for &member in members {
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(member) {
+                if let Some(resolved) = self.resolve_lazy_for_inference(def_id, member) {
+                    if resolved != member {
+                        if let Some(TypeData::Union(inner_members)) = self.interner.lookup(resolved)
+                        {
+                            // Flatten: the lazy resolved to a union, add its members
+                            let inner = self.interner.type_list(inner_members);
+                            result.extend(inner.iter().copied());
+                            continue;
+                        }
+                        // Resolved to a non-union type, use the resolved form
+                        result.push(resolved);
+                        continue;
+                    }
+                }
+            }
+            result.push(member);
+        }
+        result
     }
 
     /// Check if two types share the same outer structure (same kind / same generic base).
@@ -952,37 +945,6 @@ impl<'a> InferenceContext<'a> {
                     .any(|&m| self.target_contains_inference_param_inner(m, visited))
             }
             _ => false,
-        }
-    }
-
-    /// Expand fixed (non-parameterized) union members by resolving type aliases.
-    ///
-    /// When a target union contains a type alias like `Primitive` (= `number | string | boolean | Date`),
-    /// the alias is stored as a single `Lazy(DefId)`. Source members like `number` won't match
-    /// it by TypeId equality. This method resolves such aliases and flattens any resulting unions
-    /// so that individual constituent types can be matched against source members.
-    fn expand_fixed_members(&self, fixed: &[TypeId]) -> rustc_hash::FxHashSet<TypeId> {
-        let mut expanded = rustc_hash::FxHashSet::default();
-        for &ty in fixed {
-            expanded.insert(ty);
-            // Resolve Lazy types (type aliases) and flatten unions
-            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(ty) {
-                if let Some(resolved) = self.resolve_lazy_for_inference(def_id, ty) {
-                    self.collect_union_members(resolved, &mut expanded);
-                }
-            }
-        }
-        expanded
-    }
-
-    /// Recursively collect all leaf members of a (possibly nested) union type.
-    fn collect_union_members(&self, ty: TypeId, out: &mut rustc_hash::FxHashSet<TypeId>) {
-        out.insert(ty);
-        if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
-            let list = self.interner.type_list(members);
-            for &m in list.iter() {
-                self.collect_union_members(m, out);
-            }
         }
     }
 
