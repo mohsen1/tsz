@@ -166,16 +166,14 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            // Non-array-applicable object types (e.g., interfaces with index
-            // signatures or extra properties) are irrelevant for array literal
-            // contextual typing.  tsc uses `someType(contextualType, isTupleLikeType)`
-            // to decide tuple context — it only cares whether any union member is
-            // tuple/array-like, not whether other members are object-like.  Treating
-            // them as ambiguous discards the contextual type entirely, causing array
-            // literals to widen (e.g., `["a"]` becomes `string[]`), which then fails
-            // assignability against the tuple member.
-            //
-            // Skip object-like members and let `applicable_shapes.len() > 1` decide.
+            // Non-array-applicable object-like types (e.g., interfaces with required
+            // non-numeric properties) can't meaningfully contextually type array literals.
+            // Skip them rather than treating them as ambiguous. This matches tsc's
+            // getApplicableTypeForExpression which filters union members to only those
+            // applicable to the expression kind (isArrayOrTupleType || unknown[] assignable).
+            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+                continue;
+            }
         }
 
         applicable_shapes.len() > 1
@@ -192,10 +190,7 @@ impl<'a> CheckerState<'a> {
             let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
             else {
-                // Non-array-applicable members (e.g., interfaces without index signatures)
-                // should be skipped — they don't influence whether the array literal
-                // should be typed as a tuple. Only array-applicable members matter.
-                continue;
+                return false;
             };
 
             if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
