@@ -381,6 +381,15 @@ impl<'a> CheckerState<'a> {
         let export_equals_sym_id = exports_table.get("export=")?;
         let export_equals_symbol = binder.get_symbol(export_equals_sym_id)?;
 
+        // When looking for the "default" export in a module with `export =`,
+        // the `export =` value IS the default export. This mirrors the handling
+        // in `resolve_named_export_via_export_equals` and prevents the
+        // namespace-merge fallback below from picking up unrelated symbols
+        // from other ambient modules that share the same name.
+        if export_name == "default" {
+            return Some(export_equals_sym_id);
+        }
+
         if let Some(exports) = export_equals_symbol.exports.as_ref()
             && let Some(sym_id) = exports.get(export_name)
             && binder.get_symbol(sym_id).is_some()
