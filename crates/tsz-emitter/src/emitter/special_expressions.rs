@@ -221,6 +221,10 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Emit a spread element: ...expr
+    ///
+    /// When the operand has a leading inline comment (e.g., `.../** @type */ (x)`),
+    /// tsc inserts a space between `...` and the comment and suppresses the
+    /// normal space after the comment: `... /** @type */(x)`.
     pub(super) fn emit_spread_element(&mut self, node: &Node) {
         let Some(spread) = self.arena.get_spread(node) else {
             self.write("...");
@@ -228,6 +232,19 @@ impl<'a> Printer<'a> {
         };
 
         self.write("...");
+        // tsc separates `...` from a leading inline block comment with a space
+        // and suppresses the normal post-comment space so the paren sits
+        // right against the closing `*/`:
+        //   `.../** @type {T} */(x)` → `... /** @type {T} */(x)`
+        if let Some(expr_node) = self.arena.get(spread.expression) {
+            if self.has_pending_comment_before(expr_node.pos) {
+                self.write(" ");
+                self.emit_comments_before_pos(expr_node.pos);
+                // Suppress the automatic space after block comment — the
+                // spread already inserted its own separator space above.
+                self.pending_block_comment_space = false;
+            }
+        }
         self.emit_expression(spread.expression);
     }
 
