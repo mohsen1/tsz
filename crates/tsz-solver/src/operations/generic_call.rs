@@ -3166,31 +3166,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
                 .expect("write to String is infallible");
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
-            let preferred_lower_bound =
-                infer_ctx
-                    .get_constraints(type_param_vars[i])
-                    .and_then(|constraints| {
-                        let constraint_ty = tp.constraint?;
-                        let mut non_constraint_bounds = Vec::new();
-                        for bound in &constraints.lower_bounds {
-                            if *bound != constraint_ty && !non_constraint_bounds.contains(bound) {
-                                non_constraint_bounds.push(*bound);
-                            }
-                        }
-                        if non_constraint_bounds.is_empty() {
-                            return None;
-                        }
-                        let candidate = self.resolve_direct_parameter_inference_type(
-                            &non_constraint_bounds,
-                            infer_ctx.best_common_type(&non_constraint_bounds),
-                        );
-                        let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
-                            !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
-                                && infer_ctx.is_subtype(candidate, *upper)
-                                || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
-                        });
-                        upper_bounds_ok.then_some(candidate)
-                    });
+            // Skip the preferred_lower_bound optimization in compute_contextual_types.
+            // Unlike resolve_generic_call_inner (which gates this on direct_param_vars
+            // for parameters where the type IS the type parameter, like f<T>(x: T)),
+            // compute_contextual_types lacks that tracking. Applying it unconditionally
+            // can remove genuine candidates that happen to match the constraint type,
+            // leading to false positives when the constraint is also a valid candidate
+            // from object property inference.
+            let preferred_lower_bound: Option<TypeId> = None;
             let resolved = preferred_lower_bound.or_else(|| {
                 match infer_ctx.resolve_with_constraints_by(type_param_vars[i], |source, target| {
                     self.checker.is_assignable_to_strict(source, target)

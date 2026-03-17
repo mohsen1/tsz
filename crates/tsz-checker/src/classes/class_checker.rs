@@ -1409,10 +1409,48 @@ impl<'a> CheckerState<'a> {
                 found
             };
 
-            if let Some(base_any_info) = base_any_info
+            if let Some(ref base_any_info) = base_any_info
                 && self
                     .class_member_visibility_conflicts(member_visibility, base_any_info.visibility)
             {
+                // When both derived and base members are private, tsc checks type
+                // compatibility and emits TS2416 if the types differ, rather than
+                // emitting TS2415 (branding conflict). Only emit TS2415 when the
+                // types are compatible or when visibility differs.
+                if member_visibility == MemberVisibility::Private
+                    && base_any_info.visibility == MemberVisibility::Private
+                {
+                    let base_type =
+                        instantiate_type(self.ctx.types, base_any_info.type_id, &substitution);
+                    if member_type != TypeId::ANY
+                        && base_type != TypeId::ANY
+                        && should_report_member_type_mismatch(
+                            self,
+                            member_type,
+                            base_type,
+                            member_name_idx,
+                        )
+                    {
+                        // TS2416: Private member type incompatibility
+                        self.pop_type_parameters(base_scope.1);
+                        self.error_at_node(
+                            member_name_idx,
+                            &format!(
+                                "Property '{member_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                            ),
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
+                        let member_type_str = self.format_type(member_type);
+                        let base_type_str = self.format_type(base_type);
+                        self.report_type_not_assignable_detail(
+                            member_name_idx,
+                            &member_type_str,
+                            &base_type_str,
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
+                        continue;
+                    }
+                }
                 self.pop_type_parameters(base_scope.1);
                 if !class_extends_error_reported {
                     if is_static {
