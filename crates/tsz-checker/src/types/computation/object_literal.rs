@@ -160,6 +160,9 @@ impl<'a> CheckerState<'a> {
         // When the contextual type is a union (e.g. `A | B`) and the object literal
         // has literal-valued properties that discriminate the union, narrow to the
         // matching member(s) so other properties get precise contextual types.
+        // Save original for TS7006 checks (must use pre-narrowed union to detect
+        // primitive members like `string` in `string | FullRule`).
+        let original_contextual_type = self.ctx.contextual_type;
         if let Some(ctx_type) = self.ctx.contextual_type {
             let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
                 ctx_type,
@@ -236,9 +239,32 @@ impl<'a> CheckerState<'a> {
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
+                    // When the outer contextual type is a union with a non-nullish
+                    // non-object member (e.g. `string | FullRule`), tsc does not
+                    // provide a contextual type for function-like property initializers.
+                    // `function_initializer_context_type` returns `None` to signal this,
+                    // but the `property_context_type` fallback would re-introduce the
+                    // contextual type (suppressing the intended TS7006 on the parameter).
+                    // Skip the fallback in that case.
+                    let suppress_function_ctx = jsdoc_declared_type.is_none()
+                        && initializer_context_type.is_none()
+                        && self.ctx.arena.get(prop.initializer).is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                            )
+                        })
+                        && original_contextual_type.is_some_and(|ctx_type| {
+                            self.contextual_type_has_primitive_union_member(ctx_type)
+                        });
                     let resolved_prop_ctx = jsdoc_declared_type
                         .or(initializer_context_type)
-                        .or(property_context_type);
+                        .or(if suppress_function_ctx {
+                            None
+                        } else {
+                            property_context_type
+                        });
                     self.ctx.contextual_type = self
                         .contextual_type_option_for_expression(resolved_prop_ctx)
                         .or_else(|| {
