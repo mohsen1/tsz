@@ -262,11 +262,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get(yield_expr.expression)
                             .map(|n| n.kind)
                             .and_then(|kind| {
-                                let supports_return_context = matches!(
-                                    kind,
-                                    syntax_kind_ext::CALL_EXPRESSION
-                                        | syntax_kind_ext::AWAIT_EXPRESSION
-                                );
+                                // Only direct call expressions (e.g. `yield* gen()`) should
+                                // receive a generator contextual type. Await expressions
+                                // (e.g. `yield* await promise.then(fn)`) must NOT: the
+                                // generator contextual type would flow into .then() return-type
+                                // inference and produce spurious union types like
+                                // `AsyncGenerator<T> | Result<U, E>` instead of just
+                                // `Result<U, E>`, causing false TS2504 errors.
+                                let supports_return_context =
+                                    kind == syntax_kind_ext::CALL_EXPRESSION;
                                 if !supports_return_context {
                                     return None;
                                 }
