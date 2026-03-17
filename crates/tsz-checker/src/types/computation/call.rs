@@ -229,9 +229,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS1324: Second argument only supported for certain module kinds
+            // TS1324: Second argument only supported for certain module kinds.
+            // Only emit when dynamic imports are supported (TS1323 not emitted),
+            // otherwise TS1323 already covers the unsupported case.
             if let Some(ref args_list) = call.arguments
                 && args_list.nodes.len() >= 2
+                && self.ctx.compiler_options.module.supports_dynamic_import()
                 && !self
                     .ctx
                     .compiler_options
