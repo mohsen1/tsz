@@ -236,11 +236,30 @@ impl<'a> CheckerState<'a> {
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
-                    self.ctx.contextual_type = self.contextual_type_option_for_expression(
-                        jsdoc_declared_type
-                            .or(initializer_context_type)
-                            .or(property_context_type),
-                    );
+                    let resolved_prop_ctx = jsdoc_declared_type
+                        .or(initializer_context_type)
+                        .or(property_context_type);
+                    self.ctx.contextual_type = self
+                        .contextual_type_option_for_expression(resolved_prop_ctx)
+                        .or_else(|| {
+                            // When the outer contextual type is UNKNOWN (e.g., from a
+                            // generic JSX component's spread attribute), preserve UNKNOWN
+                            // as the contextual type for function-like initializers. This
+                            // prevents false TS7006 emissions on callback parameters
+                            // inside object literals spread into generic JSX components.
+                            if prev_context == Some(TypeId::UNKNOWN) {
+                                if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
+                                    if matches!(
+                                        init_node.kind,
+                                        syntax_kind_ext::ARROW_FUNCTION
+                                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    ) {
+                                        return Some(TypeId::UNKNOWN);
+                                    }
+                                }
+                            }
+                            None
+                        });
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
