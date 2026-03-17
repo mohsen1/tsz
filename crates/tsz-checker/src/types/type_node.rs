@@ -956,7 +956,86 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Delegate to TypeLowering with standard resolvers.
         // Enable qualified name resolution so return types like `Ns.Type<T>`
         // resolve correctly (QUALIFIED_NAME nodes need the extended resolver).
-        self.lower_with_resolvers(idx, false, true)
+        let result = self.lower_with_resolvers(idx, false, true);
+
+        // TS2677: Check that a type predicate's type is assignable to its parameter's type.
+        self.check_type_predicate_assignability(func_data.type_annotation, result);
+
+        result
+    }
+
+    /// TS2677: A type predicate's type must be assignable to its parameter's type.
+    fn check_type_predicate_assignability(
+        &mut self,
+        type_annotation: NodeIndex,
+        lowered_type: TypeId,
+    ) {
+        if type_annotation.is_none() {
+            return;
+        }
+        let predicate_node_idx = match self.find_type_predicate_in_type(type_annotation) {
+            Some(idx) => idx,
+            None => return,
+        };
+        let Some(pred_node) = self.ctx.arena.get(predicate_node_idx) else {
+            return;
+        };
+        let Some(pred_data) = self.ctx.arena.get_type_predicate(pred_node) else {
+            return;
+        };
+        if pred_data.type_node.is_none() {
+            return;
+        }
+        let Some(shape) =
+            tsz_solver::type_queries::data::get_function_shape(self.ctx.types, lowered_type)
+        else {
+            return;
+        };
+        let Some(ref predicate) = shape.type_predicate else {
+            return;
+        };
+        let Some(predicate_type) = predicate.type_id else {
+            return;
+        };
+        let Some(param_index) = predicate.parameter_index else {
+            return;
+        };
+        let Some(param) = shape.params.get(param_index) else {
+            return;
+        };
+        let param_type = param.type_id;
+        if !self.ctx.types.is_assignable_to(predicate_type, param_type) {
+            if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+                self.ctx.error(
+                    type_node.pos,
+                    type_node.end - type_node.pos,
+                    "A type predicate's type must be assignable to its parameter's type."
+                        .to_string(),
+                    2677,
+                );
+            }
+        }
+    }
+
+    fn find_type_predicate_in_type(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(node_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_PREDICATE => Some(node_idx),
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                let wrapped = self.ctx.arena.get_wrapped_type(node)?;
+                self.find_type_predicate_in_type(wrapped.type_node)
+            }
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let composite = self.ctx.arena.get_composite_type(node)?;
+                for &member in &composite.types.nodes {
+                    if let Some(found) = self.find_type_predicate_in_type(member) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Get type from a type literal node ({ a: number; `b()`: string; }).
