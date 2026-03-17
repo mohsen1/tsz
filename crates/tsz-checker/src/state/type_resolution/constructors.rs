@@ -950,6 +950,127 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a type argument references an `infer` variable declared in a rest
+    /// position (`...infer X`) within a conditional type's extends clause. In TSC,
+    /// such infer variables get an implicit array constraint (they always infer
+    /// array/tuple types), so we should skip TS2344 constraint checking for them.
+    pub(crate) fn is_infer_in_rest_position_of_conditional(&self, arg_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Get the name of the type argument (e.g., "Tail" from `ExpandSmallerTuples<Tail>`)
+        let arg_name = self.type_arg_identifier_name(arg_idx);
+        let Some(ref name) = arg_name else {
+            return false;
+        };
+
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+
+        // Walk up to find an enclosing conditional type
+        let mut current = arg_idx;
+        for _ in 0..30 {
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |e| e.parent);
+            if parent.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node) {
+                    // Check if arg_idx is in the true branch of this conditional
+                    // (use position-based containment)
+                    if let Some(true_node) = self.ctx.arena.get(cond.true_type) {
+                        if arg_node.pos >= true_node.pos && arg_node.end <= true_node.end {
+                            // Search the extends clause for `...infer <name>`
+                            if self.extends_clause_has_rest_infer_named(cond.extends_type, name) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                // Stop at declaration-level nodes
+                if parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                {
+                    return false;
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
+    /// Recursively search a type node for `...infer <name>` patterns.
+    /// Returns true if a REST_TYPE wrapping an INFER_TYPE with a matching
+    /// type parameter name is found.
+    fn extends_clause_has_rest_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check if this is a REST_TYPE wrapping an INFER_TYPE
+        if node.kind == syntax_kind_ext::REST_TYPE {
+            if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                if let Some(inner_node) = self.ctx.arena.get(wrapped.type_node) {
+                    if inner_node.kind == syntax_kind_ext::INFER_TYPE {
+                        if let Some(infer_data) = self.ctx.arena.get_infer_type(inner_node) {
+                            // Get the type parameter name from the infer type
+                            if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter) {
+                                if let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) {
+                                    if let Some(name_node) = self.ctx.arena.get(tp_data.name) {
+                                        if let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                        {
+                                            if ident.escaped_text == name {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recurse into tuple type elements
+        if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+            for &elem_idx in &tuple.elements.nodes {
+                if self.extends_clause_has_rest_infer_named(elem_idx, name) {
+                    return true;
+                }
+            }
+        }
+
+        // Recurse into named tuple members
+        if let Some(named_member) = self.ctx.arena.get_named_tuple_member(node) {
+            if self.extends_clause_has_rest_infer_named(named_member.type_node, name) {
+                return true;
+            }
+        }
+
+        // Recurse into wrapped types (parenthesized, optional)
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            || node.kind == syntax_kind_ext::OPTIONAL_TYPE
+        {
+            if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                if self.extends_clause_has_rest_infer_named(wrapped.type_node, name) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
     ///
     /// When a class expression extends a generic type parameter but adds no new instance properties
