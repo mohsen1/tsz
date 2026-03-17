@@ -17,6 +17,48 @@ impl<'a> CheckerState<'a> {
         decl_arena: &NodeArena,
         type_alias: &TypeAliasData,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        // Pre-warm type parameters for bare type references (e.g. Uint8Array without
+        // explicit type args) BEFORE creating closures that capture `self` immutably.
+        // This ensures generic types with all-default params get Application wrapping.
+        let prewarmed_type_params = {
+            let mut bare_type_ref_names = Vec::new();
+            let mut stack = vec![type_alias.type_node];
+            while let Some(node_idx) = stack.pop() {
+                let Some(node) = decl_arena.get(node_idx) else {
+                    continue;
+                };
+                if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = decl_arena.get_type_ref(node)
+                {
+                    let has_type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|args| !args.nodes.is_empty());
+                    if !has_type_args
+                        && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                        && let Some(ident) = decl_arena.get_identifier(name_node)
+                        && !is_compiler_managed_type(&ident.escaped_text)
+                    {
+                        bare_type_ref_names.push(ident.escaped_text.clone());
+                    }
+                }
+                stack.extend(decl_arena.get_children(node_idx));
+            }
+            // Resolve names to symbols and get their type params (needs &mut self)
+            let mut params_by_def = rustc_hash::FxHashMap::default();
+            for name in &bare_type_ref_names {
+                if let Some(sym_id) = self.resolve_cross_arena_type_name(decl_arena, decl_idx, name)
+                {
+                    let params = self.get_type_params_for_symbol(sym_id);
+                    if !params.is_empty() {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        params_by_def.insert(def_id, params);
+                    }
+                }
+            }
+            params_by_def
+        };
+
         let binder = &self.ctx.binder;
         let lib_binders = self.get_lib_binders();
         let decl_binder = self
@@ -128,6 +170,12 @@ impl<'a> CheckerState<'a> {
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let bindings = self.get_type_param_bindings();
+        let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+            prewarmed_type_params
+                .get(&def_id)
+                .cloned()
+                .or_else(|| self.ctx.get_def_type_params(def_id))
+        };
         let lowering = TypeLowering::with_hybrid_resolver(
             decl_arena,
             self.ctx.types,
@@ -137,9 +185,65 @@ impl<'a> CheckerState<'a> {
         )
         .with_type_param_bindings(bindings)
         .with_computed_name_resolver(&computed_name_resolver)
-        .with_name_def_id_resolver(&name_resolver);
+        .with_name_def_id_resolver(&name_resolver)
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver);
 
         lowering.lower_type_alias_declaration(type_alias)
+    }
+
+    /// Resolve a type name in the cross-arena context to a SymbolId.
+    /// Used for pre-warming type params before closures are created.
+    fn resolve_cross_arena_type_name(
+        &self,
+        decl_arena: &NodeArena,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let binder = &self.ctx.binder;
+        let lib_binders = self.get_lib_binders();
+        let decl_binder = self
+            .ctx
+            .get_binder_for_arena(decl_arena)
+            .unwrap_or(self.ctx.binder);
+        let namespace_prefix = self.type_alias_namespace_prefix(decl_arena, decl_idx);
+
+        let resolve_in_decl_binder = |name: &str| -> Option<SymbolId> {
+            let mut segments = name.split('.');
+            let root_name = segments.next()?;
+            let mut current_sym = decl_binder.file_locals.get(root_name)?;
+            for segment in segments {
+                let symbol = decl_binder
+                    .get_symbol(current_sym)
+                    .or_else(|| binder.get_symbol_with_libs(current_sym, &lib_binders))?;
+                current_sym = symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(segment))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(segment))
+                    })?;
+            }
+            Some(current_sym)
+        };
+
+        namespace_prefix
+            .as_ref()
+            .and_then(|prefix| {
+                let scoped = format!("{prefix}.{name}");
+                resolve_in_decl_binder(&scoped).or_else(|| {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
+                        .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                })
+            })
+            .or_else(|| {
+                resolve_in_decl_binder(name).or_else(|| {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                        .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                })
+            })
     }
 
     fn precompute_cross_arena_computed_property_names<F>(
