@@ -533,6 +533,9 @@ impl<'a> CheckerState<'a> {
                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
 
+                let lazy_type_params_resolver =
+                    |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+
                 // Create base lowering with the fallback arena and both resolvers
                 let lowering = TypeLowering::with_hybrid_resolver(
                     fallback_arena,
@@ -541,6 +544,7 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &|_| None,
                 )
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
 
                 // Try to lower as interface first (handles declaration merging)
