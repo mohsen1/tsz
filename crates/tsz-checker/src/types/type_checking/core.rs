@@ -1452,7 +1452,23 @@ impl<'a> CheckerState<'a> {
                     .insert(ident.escaped_text.clone(), constrained_param);
             }
         }
+        // TS4109: To detect circular type arguments (e.g., `type X = Foo<X extends {} ? A : B>`),
+        // temporarily register this alias in `symbol_resolution_set` before visiting
+        // the type body. This allows `type_args_reference_resolving_alias` (called from
+        // `validate_type_reference_type_arguments`) to detect when a type argument
+        // directly or indirectly references the alias currently being defined.
+        let alias_sym_id = self.ctx.binder.get_node_symbol(node_idx);
+        let inserted_for_circular_check = alias_sym_id
+            .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
+            .unwrap_or(false);
+
         self.check_type_node(alias.type_node);
+
+        if inserted_for_circular_check {
+            if let Some(sid) = alias_sym_id {
+                self.ctx.symbol_resolution_set.remove(&sid);
+            }
+        }
         // Pre-compute flow-narrowed types for `typeof expr` in the type alias body.
         // This allows `typeof c` inside a type alias to pick up narrowing from
         // control flow (e.g., inside an `if (typeof c === 'string')` block).
