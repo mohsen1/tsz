@@ -45,6 +45,14 @@ impl<'a> CheckerState<'a> {
             ty
         };
 
+        // `typeof default` is not valid — `default` is a keyword and is not visible
+        // as a local binding even if the file has an `export default` declaration.
+        // TypeScript reports TS2304 "Cannot find name 'default'" in this case.
+        if is_identifier && name_text.as_deref() == Some("default") {
+            self.error_cannot_find_name_at("default", type_query.expr_name);
+            return TypeId::ERROR;
+        }
+
         // Check typeof_param_scope — resolves `typeof paramName` in return type
         // annotations where the parameter isn't a file-level binding.
         if is_identifier
