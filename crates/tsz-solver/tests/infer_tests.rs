@@ -413,6 +413,10 @@ fn test_resolve_upper_bound_only() {
 
 #[test]
 fn test_resolve_any_lower_prefers_upper_bound() {
+    // tsc behavior: `any` as the sole candidate for `T extends string` infers T=any.
+    // `any` satisfies all constraints in tsc and should not be discarded just because
+    // there's an informative upper bound. Only discard `any` when there are also
+    // concrete (non-top) candidates that provide more specific inference.
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
@@ -422,7 +426,7 @@ fn test_resolve_any_lower_prefers_upper_bound() {
     ctx.add_upper_bound(var, TypeId::STRING);
 
     let result = ctx.resolve_with_constraints(var).unwrap();
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::ANY);
 }
 
 #[test]
