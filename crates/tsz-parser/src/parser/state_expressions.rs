@@ -1565,10 +1565,13 @@ impl ParserState {
                             self.parse_identifier_name()
                         }
                     } else {
-                        // Emit at the position right after the dot where the identifier
-                        // was expected, matching tsc's parseRightSideOfDot behavior.
+                        // Emit at the current token position (reportAtCurrentPosition: true),
+                        // matching tsc's parseRightSideOfDot/createMissingNode behavior.
+                        // This ensures the TS1003 error is at the same position as where
+                        // parseExpected(CloseParenToken) would emit TS1005, allowing the
+                        // duplicate-position suppression to prevent cascading errors.
                         self.parse_error_at(
-                            missing_name_pos,
+                            self.token_pos(),
                             0,
                             "Identifier expected.",
                             tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
