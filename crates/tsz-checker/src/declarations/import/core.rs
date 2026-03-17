@@ -80,7 +80,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Resolve aliases to find the actual target symbol
+        // Resolve aliases to find the actual target symbol.
+        // If alias resolution fails (e.g., the target doesn't exist),
+        // we cannot determine the export= target's kind, so bail out
+        // rather than falsely triggering TS2497 on the unresolved alias.
         let resolved = if let Some(sym) = self
             .ctx
             .binder
@@ -88,8 +91,11 @@ impl<'a> CheckerState<'a> {
             && (sym.flags & symbol_flags::ALIAS) != 0
         {
             let mut visited = Vec::new();
-            self.resolve_alias_symbol(export_equals_sym, &mut visited)
-                .unwrap_or(export_equals_sym)
+            let Some(resolved_sym) = self.resolve_alias_symbol(export_equals_sym, &mut visited)
+            else {
+                return false;
+            };
+            resolved_sym
         } else {
             export_equals_sym
         };
@@ -104,6 +110,18 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::FUNCTION_SCOPED_VARIABLE
                 | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0;
+
+        // Namespace imports (`import * as X from "mod"`) resolve back to their
+        // alias symbol rather than the module symbol.  They represent the entire
+        // module namespace, so treat them as module-like for TS2497 purposes.
+        if !is_module_or_variable
+            && (target.flags & symbol_flags::ALIAS) != 0
+            && target.import_module.is_some()
+            && target.import_name.as_deref() == Some("*")
+        {
+            return false;
+        }
+
         !is_module_or_variable
     }
 
