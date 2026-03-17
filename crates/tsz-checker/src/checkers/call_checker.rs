@@ -1672,6 +1672,10 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         let mut failures = Vec::new();
+        // When a signature returns TypeParameterConstraintViolation and there are more
+        // overloads to try, store it as a fallback and continue. Used for Object.freeze
+        // where overload 0 (T extends Function) is violated but overload 1 works.
+        let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();
