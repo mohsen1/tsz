@@ -1315,20 +1315,24 @@ impl<'a> CheckerState<'a> {
             // with the concrete `this` type from the enclosing class so that
             // the return-statement assignability check compares against the
             // same concrete type that the `this` keyword expression resolves to.
-            let body_return_type =
-                if tsz_solver::contains_this_type(self.ctx.types, body_return_type) {
-                    if let Some(concrete_this) = self.current_this_type() {
-                        tsz_solver::substitute_this_type(
-                            self.ctx.types,
-                            body_return_type,
-                            concrete_this,
-                        )
-                    } else {
-                        body_return_type
-                    }
+            // Only apply when the function has an explicit type annotation;
+            // contextually-typed functions may carry `ThisType` from their
+            // contextual signature but substituting would produce false positives.
+            let body_return_type = if has_type_annotation
+                && tsz_solver::contains_this_type(self.ctx.types, body_return_type)
+            {
+                if let Some(concrete_this) = self.current_this_type() {
+                    tsz_solver::substitute_this_type(
+                        self.ctx.types,
+                        body_return_type,
+                        concrete_this,
+                    )
                 } else {
                     body_return_type
-                };
+                }
+            } else {
+                body_return_type
+            };
 
             self.push_return_type(body_return_type);
 
