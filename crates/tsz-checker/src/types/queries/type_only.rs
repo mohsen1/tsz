@@ -13,6 +13,134 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Returns true when an expression is an `import x = require("...")` alias
+    /// whose target module has `export =` bound to a pure type (interface or
+    /// type alias) — i.e., NOT a namespace/module.
+    ///
+    /// When this returns true, the caller should emit TS2693 (type used as
+    /// value) rather than TS2708 (namespace used as value).
+    pub(crate) fn import_equals_export_is_pure_type(&self, expr_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+
+        let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node) else {
+            return false;
+        };
+
+        let module_name_owned;
+        let module_name = if let Some(module_node) =
+            self.ctx.arena.get(import_decl.module_specifier)
+            && module_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(literal) = self.ctx.arena.get_literal(module_node)
+        {
+            literal.text.as_str()
+        } else if let Some(specifier) =
+            self.get_require_module_specifier(import_decl.module_specifier)
+        {
+            module_name_owned = specifier;
+            module_name_owned.as_str()
+        } else {
+            return false;
+        };
+
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let quoted = format!("\"{normalized}\"");
+        let single_quoted = format!("'{normalized}'");
+
+        let export_equals_sym = self
+            .ctx
+            .binder
+            .module_exports
+            .get(module_name)
+            .and_then(|exports| exports.get("export="))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(normalized)
+                    .and_then(|exports| exports.get("export="))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(&quoted)
+                    .and_then(|exports| exports.get("export="))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(&single_quoted)
+                    .and_then(|exports| exports.get("export="))
+            });
+
+        let Some(export_equals_sym) = export_equals_sym else {
+            return false;
+        };
+
+        let resolved_export_equals = if let Some(export_sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+            && (export_sym.flags & symbol_flags::ALIAS) != 0
+        {
+            let mut visited_aliases = Vec::new();
+            match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
+                Some(resolved) => resolved,
+                None => return false,
+            }
+        } else {
+            export_equals_sym
+        };
+
+        if let Some(export_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        {
+            // Pure type: has INTERFACE or TYPE_ALIAS flags but no VALUE or NAMESPACE flags
+            let is_pure_type = (export_symbol.flags
+                & (symbol_flags::INTERFACE
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::TYPE_PARAMETER))
+                != 0;
+            let is_namespace_or_module = (export_symbol.flags
+                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                != 0;
+            let has_value = (export_symbol.flags & symbol_flags::VALUE) != 0;
+            return is_pure_type && !is_namespace_or_module && !has_value;
+        }
+
+        false
+    }
+
+    /// Returns true when an expression is an `import x = require("...")` alias
     /// whose target module has `export =` bound to a type-only symbol.
     ///
     /// In value position, member access on such aliases should emit TS2708
