@@ -1920,13 +1920,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2820: spelling suggestion for string literals
-                if let Some(suggestion) = self.find_string_literal_spelling_suggestion(source, target) {
+                if let Some(suggestion) =
+                    self.find_string_literal_spelling_suggestion(source, target)
+                {
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
                         &[&source_str, &target_str, &suggestion],
                     );
-                    return Diagnostic::error(file_name, start, length, message,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN);
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                    );
                 }
 
                 Diagnostic::error(
