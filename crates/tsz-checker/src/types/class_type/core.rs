@@ -262,6 +262,58 @@ impl<'a> CheckerState<'a> {
                     declaration_order: 0,
                 });
             }
+
+            // Also prescan constructor parameter properties (e.g. `constructor(private field: string)`)
+            // so that property initializers like `handler = () => { this.field }` can resolve them.
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                    continue;
+                }
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    continue;
+                };
+                if ctor.body.is_none() {
+                    continue;
+                }
+                for &param_idx in &ctor.parameters.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    if !self.has_parameter_property_modifier(&param.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name(param.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let is_readonly = self.has_readonly_modifier(&param.modifiers);
+                    let declared_type = if param.type_annotation.is_some() {
+                        self.get_type_from_type_node(param.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    };
+                    let visibility = self.get_visibility_from_modifiers(&param.modifiers);
+                    prescan_props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: declared_type,
+                        write_type: declared_type,
+                        optional: param.question_token,
+                        readonly: is_readonly,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility,
+                        parent_id: current_sym,
+                        declaration_order: 0,
+                    });
+                }
+            }
+
             if !prescan_props.is_empty() {
                 let prescan_type = factory.object(prescan_props);
                 self.ctx
