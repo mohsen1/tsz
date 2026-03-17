@@ -302,11 +302,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
                 // Also evaluate true/false types to resolve Lazy alias references.
+                //
+                // EXCEPTION: When the raw extends_type is an Application containing infer
+                // patterns (e.g., `Synthetic<T, infer V>`), preserve the raw extends_type.
+                // Evaluating it would expand the Application to its structural form (e.g., `{}`),
+                // losing the type argument structure needed for Application-level infer matching
+                // when this conditional is later instantiated with concrete types.
+                let deferred_extends = if matches!(
+                    self.interner().lookup(cond.extends_type),
+                    Some(TypeData::Application(_))
+                ) && self.type_contains_infer(cond.extends_type)
+                {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
                 return self.interner().conditional(ConditionalType {
                     check_type,
-                    extends_type,
+                    extends_type: deferred_extends,
                     true_type,
                     false_type,
                     is_distributive: cond.is_distributive,
@@ -1250,20 +1265,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Try infer pattern matching with unevaluated types.
-        // match_infer_pattern handles Application vs Application matching
-        // by comparing base types and recursing on type arguments.
         let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
         let mut visited = FxHashSet::default();
-        if self.match_infer_pattern(
+        let match_result = self.match_infer_pattern(
             check_type,
             cond.extends_type,
             &mut bindings,
             &mut visited,
             &mut checker,
-        ) && !bindings.is_empty()
-        {
+        );
+        if match_result && !bindings.is_empty() {
             let substituted_true = self.substitute_infer(cond.true_type, &bindings);
             return Some(self.evaluate(substituted_true));
         }

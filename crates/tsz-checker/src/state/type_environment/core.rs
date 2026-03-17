@@ -460,11 +460,22 @@ impl<'a> CheckerState<'a> {
         // For conditional type bodies whose extends side contains infer patterns,
         // preserve generic/type-parameter arguments so the conditional evaluator
         // can still use their original constraints during infer matching.
+        // Also preserve Application-type arguments (even concrete ones like
+        // Synthetic<number, number>) because evaluating them loses the type argument
+        // structure needed for Application-level infer matching. Without this,
+        // `Synthetic<number, number> extends Synthetic<number, infer V>` fails because
+        // both sides evaluate to `{}` and the `infer V` binding is lost.
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
+        let body_has_conditional_app_infer =
+            body_has_conditional_infer && self.body_conditional_has_application_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
                 if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                    arg
+                } else if body_has_conditional_app_infer
+                    && tsz_solver::is_generic_application(self.ctx.types, arg)
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
@@ -601,6 +612,18 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
+    }
+
+    /// Check if the body's conditional extends_type is an Application containing infer.
+    /// This is used to preserve Application-type arguments during instantiation,
+    /// since evaluating them would lose the type argument structure needed for
+    /// Application-level infer matching.
+    fn body_conditional_has_application_infer(&self, body_type: TypeId) -> bool {
+        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
+            return false;
+        };
+        tsz_solver::is_generic_application(self.ctx.types, cond.extends_type)
+            && tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.
