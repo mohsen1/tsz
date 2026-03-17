@@ -967,7 +967,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
                 // Try to evaluate the initializer as a numeric constant
                 let value =
-                    crate::types_domain::utilities::enum_utils::evaluate_const_enum_initializer(
+                    crate::types_domain::utilities::const_enum_eval::evaluate_const_enum_initializer(
                         self.ctx.arena,
                         member_data.initializer,
                         enum_data,

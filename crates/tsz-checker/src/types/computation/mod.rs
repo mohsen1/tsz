@@ -2,6 +2,7 @@
 //!
 //! This module group handles all expression-level type computation:
 //! - `helpers` — foundational helpers, contextual typing, relationship queries
+//! - `array_literal` — array literal type construction and contextual typing
 //! - `access` — property/element access type resolution
 //! - `binary` — binary expression operators
 //! - `call` — call expression resolution and overload handling
@@ -14,6 +15,7 @@
 //! - `tagged_template` — tagged template expression type resolution
 
 pub(crate) mod access;
+pub(crate) mod array_literal;
 pub(crate) mod binary;
 pub(crate) mod call;
 pub(crate) mod call_display;

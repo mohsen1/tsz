@@ -1053,6 +1053,7 @@ fn test_direct_assignability_mismatch_decision_usage_is_quarantined() {
     for path in files {
         let rel = path.display().to_string();
         let allowed = rel.ends_with("src/assignability/assignability_checker.rs")
+            || rel.ends_with("src/assignability/assignability_diagnostics.rs")
             || rel.ends_with("src/query_boundaries/class.rs")
             || rel.ends_with("src/query_boundaries/type_checking.rs")
             || rel.contains("/tests/");

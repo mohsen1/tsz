@@ -15,6 +15,7 @@ pub(crate) mod queries;
 pub mod type_checking;
 pub mod type_literal_checker;
 pub mod type_node;
+mod type_node_advanced;
 mod type_node_helpers;
 mod type_node_resolution;
 pub(crate) mod utilities;
