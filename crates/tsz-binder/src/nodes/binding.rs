@@ -1402,6 +1402,16 @@ impl BinderState {
         // was populated during hoisting.
         if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
             && let Some(&existing_id) = self.node_symbols.get(&declaration.0)
+            && self.symbols.get(existing_id).is_some_and(|sym| {
+                // Only reuse the existing symbol if it was actually hoisted as a
+                // function-scoped variable. Constructor parameter properties use the
+                // same AST node (the Parameter) for both the class-scope PROPERTY
+                // symbol and the constructor-scope parameter. Without this check,
+                // the parameter binding would incorrectly reuse the PROPERTY symbol,
+                // leaking it into the function scope and causing false TS2451
+                // diagnostics when a static member shares the name.
+                (sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+            })
         {
             // Already hoisted — just ensure we don't double-add the declaration
             if let Some(sym) = self.symbols.get_mut(existing_id) {
