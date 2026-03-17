@@ -1218,7 +1218,7 @@ impl<'a> CheckerState<'a> {
                         .filter(|(decl_idx, _, is_local, _, _)| {
                             *is_local && conflicts.contains(decl_idx)
                         })
-                        .map(|(decl_idx, _, _, _, _)| {
+                        .map(|(decl_idx, flags, _, _, _)| {
                             // Walk to the parent first to get the CONTAINING scope,
                             // not the scope created by this declaration node itself
                             // (e.g., function declarations create their own scope).
@@ -1228,9 +1228,51 @@ impl<'a> CheckerState<'a> {
                                 .get_extended(*decl_idx)
                                 .map(|ext| ext.parent)
                                 .unwrap_or(*decl_idx);
-                            self.ctx
+                            let scope = self
+                                .ctx
                                 .binder
-                                .find_enclosing_scope(self.ctx.arena, parent_idx)
+                                .find_enclosing_scope(self.ctx.arena, parent_idx);
+
+                            // For non-block-scoped declarations (var, function declarations)
+                            // nested inside block scopes (catch blocks, for-loops, etc.),
+                            // walk up to the enclosing function/module scope. `var` hoists
+                            // to the function scope, so `var w` inside a catch block is at
+                            // the same effective scope as `function w()` at the top level.
+                            // Only walk up from Block scopes; if the declaration is already
+                            // at Function/Module/SourceFile level, keep it as-is to preserve
+                            // correct TS2451 for `let x; var x;` at the same level.
+                            if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+                                if let Some(sid) = scope {
+                                    let is_block =
+                                        self.ctx.binder.scopes.get(sid.0 as usize).is_some_and(
+                                            |s| s.kind == tsz_binder::ContainerKind::Block,
+                                        );
+                                    if is_block {
+                                        let mut cur = sid;
+                                        for _ in 0..20 {
+                                            if let Some(s) =
+                                                self.ctx.binder.scopes.get(cur.0 as usize)
+                                            {
+                                                if matches!(
+                                                    s.kind,
+                                                    tsz_binder::ContainerKind::Function
+                                                        | tsz_binder::ContainerKind::Module
+                                                        | tsz_binder::ContainerKind::SourceFile
+                                                ) {
+                                                    return Some(cur);
+                                                }
+                                                if s.parent == cur {
+                                                    break;
+                                                }
+                                                cur = s.parent;
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            scope
                         })
                         .collect();
                     let first_scope = conflict_scopes.first().copied().flatten();
