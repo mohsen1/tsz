@@ -1737,11 +1737,57 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
+    /// Resolve a `typeof X` type query node.
+    ///
+    /// For simple identifiers in flow-sensitive positions, resolves the
+    /// expression with control-flow narrowing so that `typeof x` inside a
+    /// narrowing guard produces the narrowed type (matching tsc behavior).
+    /// Falls back to [`TypeNodeChecker::get_type_from_type_query`] for
+    /// complex cases (qualified names, type arguments, type-only imports).
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types_domain::type_node::TypeNodeChecker;
+
+        // Try flow-sensitive resolution for simple identifiers in non-parameter
+        // type positions. This ensures `typeof x` inside a narrowing guard
+        // (e.g., `if (typeof x === 'string') { type T = typeof x; }`)
+        // resolves to the narrowed type.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+        {
+            let expr_name = type_query.expr_name;
+            let is_simple_identifier = self
+                .ctx
+                .arena
+                .get(expr_name)
+                .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+            let has_type_args = type_query
+                .type_arguments
+                .as_ref()
+                .is_some_and(|args| !args.nodes.is_empty());
+
+            if is_simple_identifier
+                && !has_type_args
+                && !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx)
+            {
+                // Resolve with flow narrowing enabled.
+                let prev_skip = self.ctx.skip_flow_narrowing;
+                self.ctx.skip_flow_narrowing = false;
+                let expr_type = self.get_type_of_node(expr_name);
+                self.ctx.skip_flow_narrowing = prev_skip;
+
+                let is_lazy =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type).is_some();
+
+                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
+                    // For enums, fall through to TypeNodeChecker which handles
+                    // namespace object types.
+                    if !tsz_solver::is_enum_type(self.ctx.types, expr_type) {
+                        return expr_type;
+                    }
+                }
+            }
+        }
+
         TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
     }
 }
