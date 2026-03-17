@@ -1355,18 +1355,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
 
                     if !non_constraint_bounds.is_empty() {
-                        let candidate = self.resolve_direct_parameter_inference_type(
-                            &non_constraint_bounds,
-                            infer_ctx.best_common_type(&non_constraint_bounds),
-                        );
-                        let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
-                            !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
-                                && infer_ctx.is_subtype(candidate, *upper)
-                                || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
-                        });
+                        // When all non-constraint bounds are subtypes of the constraint,
+                        // the constraint is the correct inference result (it's the best
+                        // common supertype). Stripping it would incorrectly narrow T to
+                        // a subtype. Example: foo<T extends C>(t: X<T>, t2: X<T>) called
+                        // with X<C> and X<D> where D extends C — T should be C, not D.
+                        let all_subtypes_of_constraint = non_constraint_bounds
+                            .iter()
+                            .all(|&bound| self.checker.is_assignable_to(bound, constraint_ty));
+                        if !all_subtypes_of_constraint {
+                            let candidate = self.resolve_direct_parameter_inference_type(
+                                &non_constraint_bounds,
+                                infer_ctx.best_common_type(&non_constraint_bounds),
+                            );
+                            let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
+                                !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                                    && infer_ctx.is_subtype(candidate, *upper)
+                                    || matches!(
+                                        upper,
+                                        &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR
+                                    )
+                            });
 
-                        if upper_bounds_ok {
-                            resolved_direct = Some(candidate);
+                            if upper_bounds_ok {
+                                resolved_direct = Some(candidate);
+                            }
                         }
                     }
                 }

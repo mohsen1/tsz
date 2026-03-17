@@ -142,6 +142,10 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
+        eprintln!(
+            "DEBUG error_property_not_exist_at: prop={prop_name}, type_id={:?}, idx={:?}",
+            type_id, idx
+        );
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
         // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
