@@ -173,6 +173,66 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object(properties)
     }
 
+    /// Build a structural object type from a namespace symbol's exports.
+    ///
+    /// Used when `resolve_type_query_type` returns UNKNOWN for a namespace symbol
+    /// (e.g., merged namespace+interface). Directly builds the namespace's value-side
+    /// structural type from its exports, bypassing `get_type_of_symbol` which may
+    /// return the interface side for merged symbols.
+    fn resolve_namespace_lazy_for_symbol(&mut self, sym_id: tsz_binder::SymbolId) -> TypeId {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return TypeId::UNKNOWN;
+        };
+        let flags = symbol.flags;
+        let is_namespace =
+            flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
+        if !is_namespace {
+            return TypeId::UNKNOWN;
+        }
+
+        let Some(exports) = symbol.exports.as_ref().cloned() else {
+            return TypeId::UNKNOWN;
+        };
+
+        let mut properties = Vec::new();
+        for (name, member_id) in exports.iter() {
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue;
+            }
+
+            let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id) else {
+                continue;
+            };
+            // Skip type-only exports (interfaces, type aliases without value)
+            if member_symbol.flags & symbol_flags::VALUE == 0 {
+                continue;
+            }
+
+            let member_type = self.get_type_of_symbol(*member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            properties.push(tsz_solver::PropertyInfo {
+                name: name_atom,
+                type_id: member_type,
+                write_type: member_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: tsz_solver::Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            });
+        }
+
+        if properties.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+
+        self.ctx.types.factory().object(properties)
+    }
+
     /// Resolve a `TypeQuery` chain iteratively until a non-TypeQuery type is reached.
     ///
     /// Used for TS2403 checking where `typeof x` type annotations may chain
@@ -222,47 +282,13 @@ impl<'a> CheckerState<'a> {
             // equivalent object literal like `{ Origin(): { x: number; y: number } }`.
             if resolved == TypeId::UNKNOWN {
                 let binder_sym = tsz_binder::SymbolId(sym_id);
-                if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym) {
-                    let flags = symbol.flags;
-                    let is_namespace = flags
-                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                            | tsz_binder::symbol_flags::VALUE_MODULE)
-                        != 0;
-                    if is_namespace {
-                        if let Some(exports) = symbol.exports.as_ref().cloned() {
-                            let mut properties = Vec::new();
-                            for (name, member_id) in exports.iter() {
-                                if self.ctx.symbol_resolution_set.contains(member_id) {
-                                    continue;
-                                }
-                                let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id)
-                                else {
-                                    continue;
-                                };
-                                if member_symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
-                                    continue;
-                                }
-                                let member_type = self.get_type_of_symbol(*member_id);
-                                let name_atom = self.ctx.types.intern_string(name);
-                                properties.push(tsz_solver::PropertyInfo {
-                                    name: name_atom,
-                                    type_id: member_type,
-                                    write_type: member_type,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                    is_class_prototype: false,
-                                    visibility: tsz_solver::Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                });
-                            }
-                            if !properties.is_empty() {
-                                return self.ctx.types.factory().object(properties);
-                            }
-                        }
-                    }
+                let ns_type = self.resolve_namespace_lazy_for_symbol(binder_sym);
+                if ns_type != TypeId::UNKNOWN && ns_type != TypeId::ERROR {
+                    return ns_type;
                 }
+                // If we couldn't build a namespace type, treat UNKNOWN as any
+                // to avoid false TS2403 errors from unresolved typeof queries.
+                return TypeId::ANY;
             }
             // When a TypeQuery for an enum symbol resolves to the nominal
             // Enum(DefId, _) type, convert it to the structural enum constructor
