@@ -14,4 +14,5 @@ pub(crate) use self::core::{
 };
 pub use self::core::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
+    TsConfigSettings,
 };

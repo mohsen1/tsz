@@ -1674,6 +1674,7 @@ dependencies = [
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
+ "walkdir",
  "web-time",
 ]
 
