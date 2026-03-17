@@ -16,7 +16,7 @@ fn atom_names(interner: &TypeInterner, atoms: &[tsz_common::interner::Atom]) -> 
 #[test]
 fn test_try_evaluate_mapped_constraint_keyof_object() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object(vec![
         PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
@@ -28,13 +28,14 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
         .try_evaluate_mapped_constraint(constraint)
         .expect("expected concrete keys");
 
+
     assert_eq!(atom_names(&interner, &keys), vec!["a", "b"]);
 }
 
 #[test]
 fn test_try_evaluate_mapped_constraint_string_literal() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     let constraint = interner.literal_string("k");
     let keys = checker
@@ -47,7 +48,7 @@ fn test_try_evaluate_mapped_constraint_string_literal() {
 #[test]
 fn test_try_evaluate_mapped_constraint_union_with_non_literal_member() {
     let interner = TypeInterner::new();
-    let checker = SubtypeChecker::new(&interner);
+    let mut checker = SubtypeChecker::new(&interner);
 
     let constraint = interner.union(vec![
         interner.literal_string("only"),
