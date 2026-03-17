@@ -357,7 +357,8 @@ impl<'a> CheckerState<'a> {
             && prop.initializer.is_none()
             && prop.type_annotation.is_none()
             && !is_private_in_ambient
-            && !self.property_assigned_in_enclosing_class_constructor(prop.name)
+            // Constructor assignments only apply to instance properties, not static
+            && (is_static || !self.property_assigned_in_enclosing_class_constructor(prop.name))
             // TSC also suppresses TS7008 for static properties assigned in class
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static
