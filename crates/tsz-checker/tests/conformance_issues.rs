@@ -12247,9 +12247,12 @@ function f(a: number | string) {
         .iter()
         .filter(|(code, _)| *code == 2345)
         .collect();
+    // tsc narrows `typeof a` in type positions inside control flow blocks.
+    // Inside `if (typeof a === "number")`, `typeof a` resolves to `number`,
+    // so `fn("")` should error because `string` is not assignable to `number`.
     assert!(
-        ts2345.is_empty(),
-        "Type-literal call signature parameters should resolve `typeof` from the declared type, not the narrowed branch type.\nGot: {ts2345:?}"
+        !ts2345.is_empty(),
+        "Type-literal call signature parameters should resolve `typeof` from the narrowed branch type.\nGot: {diagnostics:?}"
     );
 }
 
