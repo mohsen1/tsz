@@ -304,10 +304,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
-    /// Check if source is a subtype of both branches of a conditional type.
+    /// Check if source is a subtype of a conditional type target.
     ///
-    /// When checking `source <: (T extends U ? X : Y)`, we verify that source
-    /// is a subtype of both the true branch (X) and false branch (Y).
+    /// When checking `source <: (T extends U ? X : Y)`, we use multiple strategies:
+    ///
+    /// 1. **Distributive constraint evaluation**: When the check type is a distributive
+    ///    type parameter with a constraint, instantiate the conditional with T→constraint
+    ///    and evaluate. If the conditional resolves to a concrete type that is a supertype
+    ///    of source, succeed. This handles cases like `S <: UnrollOnHover<S>` where
+    ///    S extends Schema extends object, and the conditional resolves to an identity
+    ///    mapped type.
+    ///
+    /// 2. **Both branches**: Check that source is a subtype of both the true
+    ///    branch (X) and false branch (Y).
     ///
     /// This handles cases where a concrete type needs to be assigned to a
     /// deferred conditional — e.g., `{ a: number } <: Foo<K>` where
@@ -317,6 +326,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: &ConditionalType,
     ) -> SubtypeResult {
+        // Strategy 1: Distributive constraint evaluation for target-position conditionals.
+        //
+        // When the target conditional has a distributive check type parameter with a constraint,
+        // instantiate the conditional with T→constraint and evaluate. This resolves the
+        // conditional into a concrete type. Then check if source is assignable to that type.
+        //
+        // This matches tsc's getConstraintOfDistributiveConditionalType() behavior
+        // for target-position conditionals.
+        //
+        // Example: `S <: UnrollOnHover<S>` where UnrollOnHover<O> = O extends object ? {[K in keyof O]: O[K]} : never
+        // S extends Schema extends Record<string, unknown> extends object
+        // Instantiate O → Schema (constraint of the check type parameter in context):
+        //   Schema extends object ? {[K in keyof Schema]: Schema[K]} : never
+        //   → {[K in keyof Schema]: Schema[K]} (resolves to true branch)
+        // But we need to check S <: this result, which requires the original type parameter.
+        // Instead, we instantiate with T→constraint where T is the conditional's own check type:
+        //   constraint(O) = object → object extends object ? {[K in keyof object]: object[K]} : never → {}
+        // This doesn't help. The correct approach is: try evaluating the conditional with
+        // the source as the check type. If the source satisfies the extends clause,
+        // check source against the true branch (with source substituted for check_type).
+        if target.is_distributive
+            && let Some(param_info) = type_param_info(self.interner, target.check_type)
+        {
+            // If the source is itself a type parameter with a constraint that satisfies
+            // the extends clause, try resolving the conditional.
+            if let Some(source_param) = type_param_info(self.interner, source)
+                && let Some(source_constraint) = source_param.constraint
+            {
+                // Check if the source's constraint satisfies the extends clause.
+                if self
+                    .check_subtype(source_constraint, target.extends_type)
+                    .is_true()
+                {
+                    // The conditional would resolve to the true branch when instantiated
+                    // with a type that satisfies the extends clause.
+                    // Substitute source for check_type in the true branch.
+                    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+                    let mut sub = TypeSubstitution::new();
+                    sub.insert(param_info.name, source);
+                    let instantiated_true = instantiate_type(self.interner, target.true_type, &sub);
+                    let evaluated = self.evaluate_type(instantiated_true);
+                    if self.check_subtype(source, evaluated).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+        }
+
+        // Strategy 2: Both branches must be supertypes of source.
         if self.check_subtype(source, target.true_type).is_true()
             && self.check_subtype(source, target.false_type).is_true()
         {
