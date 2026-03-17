@@ -302,11 +302,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
                 // Also evaluate true/false types to resolve Lazy alias references.
+                //
+                // IMPORTANT: When the raw extends_type contains infer patterns (e.g.,
+                // `Empty<T, infer V>`), we must preserve the raw extends_type. Evaluating
+                // an Application like `Empty<number, infer V>` for an empty interface
+                // produces `{}`, losing the infer variable. When the deferred conditional
+                // is later instantiated and re-evaluated, the infer pattern information
+                // is needed for `try_application_infer_match` to bind infer variables
+                // from type arguments.
+                let deferred_extends = if self.type_contains_infer(cond.extends_type) {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
                 return self.interner().conditional(ConditionalType {
                     check_type,
-                    extends_type,
+                    extends_type: deferred_extends,
                     true_type,
                     false_type,
                     is_distributive: cond.is_distributive,
@@ -370,7 +383,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
             // e.g., `keyof Params extends keyof Params ? X : Y` → X
-            if check_type == extends_type {
+            //
+            // IMPORTANT: Skip this shortcut when the raw (pre-evaluation) extends_type
+            // contains infer patterns. Evaluating an Application like `Empty<number, infer V>`
+            // for an empty interface produces `{}`, and `Empty<number, number>` also produces
+            // `{}`, making them look identical. But the infer variable needs to be matched
+            // against the type arguments, not short-circuited.
+            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
                 return self.evaluate(cond.true_type);
             }
 
@@ -378,12 +397,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
 
-            if self.type_contains_infer(extends_type) {
+            // Use the raw (pre-evaluation) extends_type for infer detection. When the
+            // extends_type is an Application of an empty interface (e.g., `Empty<number, infer V>`),
+            // evaluation collapses it to `{}`, losing the infer pattern. The raw type preserves
+            // the Application structure with infer variables for pattern matching.
+            let has_infer_in_raw_extends = self.type_contains_infer(cond.extends_type);
+            let effective_extends_for_infer =
+                if has_infer_in_raw_extends && !self.type_contains_infer(extends_type) {
+                    // Raw extends has infer but evaluated doesn't — use raw for matching
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
+
+            if self.type_contains_infer(effective_extends_for_infer) {
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
+                // When using the raw extends (Application with infer), also try matching
+                // with the raw check_type. The evaluated check_type may be a structurally
+                // expanded Object that can't match against the Application pattern, but
+                // the raw check_type (also an Application) enables Application-level
+                // type argument matching.
+                let effective_check = if has_infer_in_raw_extends
+                    && !self.type_contains_infer(extends_type)
+                    && matches!(
+                        self.interner().lookup(cond.check_type),
+                        Some(TypeData::Application(_))
+                    ) {
+                    cond.check_type
+                } else {
+                    check_type
+                };
                 if self.match_infer_pattern(
-                    check_type,
-                    extends_type,
+                    effective_check,
+                    effective_extends_for_infer,
                     &mut bindings,
                     &mut visited,
                     &mut checker,
@@ -443,7 +490,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
                             constraint,
-                            extends_type,
+                            effective_extends_for_infer,
                             &mut bindings2,
                             &mut visited2,
                             &mut checker2,
