@@ -770,6 +770,19 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // For CLASS symbols, the type_env may already contain the constructor type
+        // (inserted by get_type_of_symbol). This method is called from
+        // ensure_application_symbols_resolved with type_reference_symbol_type() result
+        // which is the INSTANCE type for classes. Don't overwrite the constructor type
+        // because TypeQuery (typeof) resolution needs it.
+        if symbol_already_registered && def_already_registered {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                if symbol.flags & symbol_flags::CLASS != 0 {
+                    return true;
+                }
+            }
+        }
+
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {

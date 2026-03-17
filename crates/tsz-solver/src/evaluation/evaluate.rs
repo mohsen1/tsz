@@ -812,9 +812,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the VALUE type (constructor for classes).
-                // Use resolve_ref, not resolve_symbol_ref, to avoid the resolve_lazy path
-                // which returns instance types for classes.
-                if let Some(resolved) = self.resolver.resolve_ref(sym_ref, self.interner) {
+                // Use resolve_type_query which returns constructor types for classes,
+                // unlike resolve_ref which may return instance types.
+                if let Some(resolved) = self.resolver.resolve_type_query(sym_ref, self.interner) {
                     resolved
                 } else if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
                     self.resolver
@@ -1224,9 +1224,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         use crate::types::SymbolRef;
         let symbol = SymbolRef(symbol_ref);
 
-        // Prefer resolve_ref which returns the VALUE type (constructor for classes).
-        // This is correct for TypeQuery (typeof) which is a value-space query.
-        if let Some(resolved) = self.resolver.resolve_ref(symbol, self.interner) {
+        // Use resolve_type_query which returns the VALUE type (constructor for classes).
+        // Unlike resolve_ref, resolve_type_query is aware that TypeQuery needs the
+        // constructor type, not the instance type that may be stored under SymbolRef
+        // in TypeEnvironment (inserted by type_reference_symbol_type).
+        if let Some(resolved) = self.resolver.resolve_type_query(symbol, self.interner) {
             return resolved;
         }
 
