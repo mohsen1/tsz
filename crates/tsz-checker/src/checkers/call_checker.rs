@@ -1038,7 +1038,11 @@ impl<'a> CheckerState<'a> {
                         } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                             !is_object_literal_diag
                         } else {
-                            false
+                            // For array literals and other contextually-sensitive args,
+                            // keep implicit-any diagnostics (TS7006/TS7019) — these are
+                            // valid regardless of which union member the arg matches.
+                            // Only drop provisional assignability errors.
+                            is_provisional_implicit_any && !is_provisional_assignability
                         }
                     })
                     .collect();
