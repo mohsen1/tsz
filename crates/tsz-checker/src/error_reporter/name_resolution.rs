@@ -223,10 +223,18 @@ impl<'a> CheckerState<'a> {
 
         // Suppress TS2304/TS2552 for expression inside `export default` in a namespace.
         // TS1319 is the correct diagnostic; name resolution produces false positives.
+        // However, do NOT suppress when the identifier is inside a heritage clause
+        // (implements/extends) — those should always emit TS2304 for unresolved names.
         {
             let mut cur = idx;
             for _ in 0..8 {
                 if let Some(n) = self.ctx.arena.get(cur) {
+                    // Heritage clauses (implements/extends) should always emit
+                    // TS2304 for unresolved names — stop walking before we reach
+                    // any enclosing export/namespace that would suppress.
+                    if n.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                        break;
+                    }
                     if n.kind == syntax_kind_ext::EXPORT_DECLARATION
                         || n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                     {

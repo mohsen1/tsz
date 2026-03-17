@@ -15678,3 +15678,48 @@ var x: Promise2<string>;
         "Should NOT get TS2403 when interfaces are structurally identical.\nActual: {diagnostics:#?}"
     );
 }
+
+/// TS2304: implements clause with unresolved name should emit TS2304.
+/// From: bind1.ts
+#[test]
+fn test_ts2304_implements_unresolved_name() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+namespace M {
+    export class C implements I {}
+}
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Should emit TS2304 for unresolved 'I' in implements clause (in namespace).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS2304: implements clause with unresolved name at top level should also emit TS2304.
+#[test]
+fn test_ts2304_implements_unresolved_name_top_level() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C implements I {}
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Should emit TS2304 for unresolved 'I' in implements clause (top level).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS2304: extends clause with unresolved name should emit TS2304.
+#[test]
+fn test_ts2304_extends_unresolved_name() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C extends I {}
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Should emit TS2304 for unresolved 'I' in extends clause.\nActual errors: {diagnostics:#?}"
+    );
+}
