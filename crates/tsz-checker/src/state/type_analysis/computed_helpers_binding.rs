@@ -721,7 +721,27 @@ impl<'a> CheckerState<'a> {
 
         let mut any_changed = false;
         for tq_idx in &type_query_nodes {
-            let narrowed = self.get_type_from_type_query(*tq_idx);
+            // Resolve the typeof expression with flow narrowing.
+            // The default get_type_from_type_query delegates to TypeNodeChecker
+            // which creates TypeQuery(SymbolRef) without flow sensitivity.
+            // Instead, resolve the expression name directly via get_type_of_node
+            // which applies flow narrowing at the usage site.
+            let narrowed = if let Some(tq_node) = self.ctx.arena.get(*tq_idx)
+                && let Some(tq_data) = self.ctx.arena.get_type_query(tq_node)
+                && tq_data.expr_name.is_some()
+            {
+                let prev_skip = self.ctx.skip_flow_narrowing;
+                self.ctx.skip_flow_narrowing = false;
+                let expr_type = self.get_type_of_node(tq_data.expr_name);
+                self.ctx.skip_flow_narrowing = prev_skip;
+                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
+                    expr_type
+                } else {
+                    self.get_type_from_type_query(*tq_idx)
+                }
+            } else {
+                self.get_type_from_type_query(*tq_idx)
+            };
             let existing = self.ctx.node_types.get(&tq_idx.0).copied();
             if existing != Some(narrowed) {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);
