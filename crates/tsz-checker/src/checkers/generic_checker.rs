@@ -1097,6 +1097,38 @@ impl<'a> CheckerState<'a> {
         // Get the type_arg's DefId (it must be an interface/class, i.e., Lazy type).
         let type_arg_def = lazy_def_id(db, type_arg);
         let Some(type_arg_def) = type_arg_def else {
+            // When the type_arg is an Application (e.g., AA<BB>) with the same base
+            // as the constraint (e.g., AA<AA<BB>>), AND the inner type arguments of
+            // the Application type_arg extend the constraint base via heritage, the
+            // constraint is coinductively satisfied. This handles recursive constraints
+            // like `T extends AA<T>` where `interface BB extends AA<AA<BB>>` — checking
+            // `AA<BB>` against `AA<AA<BB>>` leads to infinite nesting that tsc resolves
+            // via deeply-nested type detection.
+            let type_arg_app_info = application_id(db, type_arg).map(|app_id| {
+                let app = db.type_application(app_id);
+                (lazy_def_id(db, app.base), app.args.clone())
+            });
+            if let Some((Some(type_arg_base_def), ref type_arg_args)) = type_arg_app_info {
+                if type_arg_base_def == constraint_base_def {
+                    // Same base type (e.g., both are AA<...>).
+                    // Check if any inner type argument extends the constraint base,
+                    // which would create the circular recursion pattern.
+                    for &inner_arg in type_arg_args.iter() {
+                        let inner_def = lazy_def_id(db, inner_arg);
+                        if let Some(inner_def) = inner_def {
+                            let inner_sym = self.ctx.def_to_symbol_id(inner_def);
+                            let constraint_sym = self.ctx.def_to_symbol_id(constraint_base_def);
+                            if let (Some(inner_sym_id), Some(constraint_sym_id)) =
+                                (inner_sym, constraint_sym)
+                            {
+                                if self.interface_extends_symbol(inner_sym_id, constraint_sym_id) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return false;
         };
 
