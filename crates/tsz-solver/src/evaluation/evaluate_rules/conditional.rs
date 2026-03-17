@@ -370,7 +370,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
             // e.g., `keyof Params extends keyof Params ? X : Y` → X
+            //
+            // EXCEPTION: When the original (pre-evaluation) extends_type contains infer
+            // patterns, we must run infer matching to bind the infer variables, even though
+            // the evaluated types are identical. This happens when empty generic interfaces
+            // like `Foo<A, B>` (no structural members) are used:
+            //   Foo<number, number> extends Foo<number, infer V> ? V : never
+            // After evaluation both sides collapse to `{}`, making check==extends true.
+            // But the true branch contains unbound Infer(V). We use the original
+            // (pre-evaluation) types for infer matching to properly bind V=number.
             if check_type == extends_type {
+                if self.type_contains_infer(cond.extends_type) {
+                    // The evaluated types are equal, so the check_type definitely satisfies
+                    // the extends clause. Perform infer matching on the ORIGINAL types
+                    // to bind the infer variables, then take the true branch.
+                    let mut checker2 =
+                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    checker2.allow_bivariant_rest = true;
+                    let mut bindings = FxHashMap::default();
+                    let mut visited = FxHashSet::default();
+                    if self.match_infer_pattern(
+                        cond.check_type,
+                        cond.extends_type,
+                        &mut bindings,
+                        &mut visited,
+                        &mut checker2,
+                    ) && !bindings.is_empty()
+                    {
+                        let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                        return self.evaluate(substituted_true);
+                    }
+                    // Bindings empty: infer variables couldn't be bound from original
+                    // types. Fall through — the types are still equal, so take the
+                    // true branch. The infer vars may be unconstrained (e.g., never).
+                    return self.evaluate(cond.true_type);
+                }
                 return self.evaluate(cond.true_type);
             }
 
