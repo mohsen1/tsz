@@ -954,6 +954,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
                     );
                     TypeId::ANY
+                } else if self.checker.ctx.no_implicit_this()
+                    && !self.checker.is_js_file()
+                    && self
+                        .checker
+                        .find_enclosing_non_arrow_function(idx)
+                        .is_none()
+                {
+                    // `this` at the top level of a script/module with noImplicitThis.
+                    // tsc resolves this to `typeof globalThis` (an object type), not `any`.
+                    // We approximate with TypeId::OBJECT since we don't have a full
+                    // globalThis type yet. This ensures that operations like `++this`
+                    // correctly emit TS2356 (arithmetic type error) instead of TS2357
+                    // (invalid lvalue) — matching tsc behavior where the type check
+                    // fires first and suppresses the lvalue check.
+                    TypeId::OBJECT
                 } else {
                     TypeId::ANY
                 }
