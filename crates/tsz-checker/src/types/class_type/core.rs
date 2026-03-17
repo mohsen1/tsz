@@ -350,8 +350,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !prescan_props.is_empty() {
-                let prescan_type = factory.object(prescan_props);
+            // Also include the base class's already-cached instance type in the prescan
+            // so that `this.inheritedProp` in a derived class initializer doesn't produce
+            // a false TS2339. For example: `class B extends A { x = this.a; }` where `a`
+            // is declared in A — without this, `this` would only have B's own properties.
+            let base_prescan_type = self.get_base_class_idx(class_idx).and_then(|base_idx| {
+                self.ctx.class_instance_type_cache.get(&base_idx).copied()
+            });
+
+            if !prescan_props.is_empty() || base_prescan_type.is_some() {
+                let own_prescan_type = if !prescan_props.is_empty() {
+                    Some(factory.object(prescan_props))
+                } else {
+                    None
+                };
+                let prescan_type = match (own_prescan_type, base_prescan_type) {
+                    (Some(own), Some(base)) => {
+                        // Intersection: derived-class own props take priority in lookup,
+                        // base props are reachable through the second member.
+                        self.ctx.types.factory().intersection(vec![own, base])
+                    }
+                    (Some(own), None) => own,
+                    (None, Some(base)) => base,
+                    (None, None) => unreachable!(),
+                };
                 self.ctx
                     .class_instance_type_cache
                     .insert(class_idx, prescan_type);
