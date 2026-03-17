@@ -234,10 +234,31 @@ impl<'a> CheckerState<'a> {
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
+                    // When `function_initializer_context_type` suppressed the contextual type
+                    // for a function initializer (returned None), we must also suppress the
+                    // `property_context_type` fallback when the outer union has a primitive
+                    // member that has this specific property through its wrapper interface.
+                    // Example: `string | FullRule` where `String.prototype.normalize` exists —
+                    // the conflicting overload lists prevent contextual parameter typing (TS7006).
+                    // For properties absent from the primitive wrapper (like `validate` on
+                    // `string | FullRule`), there is no conflict and the fallback still applies.
+                    let property_context_type_for_fn = if initializer_context_type.is_none()
+                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                        && matches!(
+                            init_node.kind,
+                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                        )
+                        && let Some(ctx_type) = self.ctx.contextual_type
+                        && self.primitive_union_member_has_property(ctx_type, &name)
+                    {
+                        None
+                    } else {
+                        property_context_type
+                    };
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type
                             .or(initializer_context_type)
-                            .or(property_context_type),
+                            .or(property_context_type_for_fn),
                     );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
