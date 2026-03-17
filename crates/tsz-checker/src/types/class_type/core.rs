@@ -354,9 +354,9 @@ impl<'a> CheckerState<'a> {
             // so that `this.inheritedProp` in a derived class initializer doesn't produce
             // a false TS2339. For example: `class B extends A { x = this.a; }` where `a`
             // is declared in A — without this, `this` would only have B's own properties.
-            let base_prescan_type = self.get_base_class_idx(class_idx).and_then(|base_idx| {
-                self.ctx.class_instance_type_cache.get(&base_idx).copied()
-            });
+            let base_prescan_type = self
+                .get_base_class_idx(class_idx)
+                .and_then(|base_idx| self.ctx.class_instance_type_cache.get(&base_idx).copied());
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {
