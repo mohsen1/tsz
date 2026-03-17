@@ -1733,7 +1733,9 @@ mod tests {
             ParseDiagnostic {
                 start: 100,
                 length: 5,
-                message: "Identifier expected. 'await' is a reserved word that cannot be used here.".to_string(),
+                message:
+                    "Identifier expected. 'await' is a reserved word that cannot be used here."
+                        .to_string(),
                 code: 1359,
             },
             ParseDiagnostic {
@@ -1760,14 +1762,13 @@ mod tests {
     fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
         use tsz::parser::ParseDiagnostic;
 
-        let diagnostics = vec![
-            ParseDiagnostic {
-                start: 100,
-                length: 5,
-                message: "Identifier expected. 'await' is a reserved word that cannot be used here.".to_string(),
-                code: 1359,
-            },
-        ];
+        let diagnostics = vec![ParseDiagnostic {
+            start: 100,
+            length: 5,
+            message: "Identifier expected. 'await' is a reserved word that cannot be used here."
+                .to_string(),
+            code: 1359,
+        }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
