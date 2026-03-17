@@ -1167,11 +1167,15 @@ impl<'a> CheckerState<'a> {
             );
 
             // TS2705/TS1055/TS1064: Check async return type is Promise
+            // Use the pre-evaluation return type (annotated_return_type) so that
+            // type aliases like `type MyPromise<T> = Promise<T>` are still seen
+            // as Application types. After evaluate_application_type(), the type
+            // is flattened to an Object shape and loses its Promise identity.
             self.check_async_return_type_is_promise(
                 has_type_annotation,
                 is_async,
                 is_generator,
-                return_type,
+                annotated_return_type.unwrap_or(return_type),
                 type_annotation,
             );
 

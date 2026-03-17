@@ -47,7 +47,16 @@ impl<'a> CheckerState<'a> {
                         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         {
-                            return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                            if Self::is_exactly_promise_name(symbol.escaped_name.as_str()) {
+                                return true;
+                            }
+                            // If the base is a type alias, resolve through it to check
+                            // if the alias body references Promise. This handles cases
+                            // like `type MyPromise<T> = Promise<T>` where the Application
+                            // base is the alias, not the underlying Promise interface.
+                            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                                return self.type_alias_resolves_to_promise(sym_id, symbol);
+                            }
                         }
                         false
                     }
@@ -773,6 +782,74 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    /// Check if a type alias ultimately resolves to the global Promise type.
+    ///
+    /// For `type MyPromise<T> = Promise<T>`, this returns true because the alias
+    /// body is a TypeReference whose name is "Promise". Handles chains of aliases
+    /// (e.g., `type A<T> = B<T>; type B<T> = Promise<T>`).
+    fn type_alias_resolves_to_promise(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Find the type alias declaration among the symbol's declarations
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                continue;
+            };
+
+            // Check if the alias body is a TypeReference
+            let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
+                continue;
+            };
+            let Some(type_ref) = self.ctx.arena.get_type_ref(body_node) else {
+                continue;
+            };
+
+            // Check if the type reference name is "Promise"
+            let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+                continue;
+            };
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                let name = ident.escaped_text.as_str();
+                if Self::is_exactly_promise_name(name) {
+                    return true;
+                }
+                // The alias body might reference another alias — resolve recursively
+                if let Some(body_sym_id) = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&type_ref.type_name.0)
+                    .copied()
+                {
+                    if body_sym_id != sym_id {
+                        // Avoid infinite loops
+                        if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id) {
+                            if body_symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                                return self
+                                    .type_alias_resolves_to_promise(body_sym_id, body_symbol);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Only check the first matching declaration
+            break;
+        }
+
+        false
     }
 
     /// Strict syntactic check: is the return type annotation exactly `Promise<...>`?
