@@ -10,7 +10,9 @@ use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
     get_string_literal_from_type_index, is_typeof_global_this_type_node,
 };
+use crate::FlowAnalyzer;
 use crate::context::CheckerContext;
+use std::rc::Rc;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1353,6 +1355,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     return TypeId::ERROR;
                 }
             }
+
+            // Apply control-flow narrowing for typeof in type positions.
+            // When `typeof c` appears inside a narrowing guard (e.g.,
+            // `if (typeof c === 'string') { type C = { [key: string]: typeof c }; }`),
+            // resolve to the narrowed type instead of the declared type.
+            if let Some(narrowed) = self.try_narrow_type_query(sym_id, type_query.expr_name) {
+                return narrowed;
+            }
+
             let factory = self.ctx.types.factory();
             return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
         }
@@ -1421,6 +1432,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return TypeId::ERROR;
                     }
                 }
+
+                // Apply control-flow narrowing for typeof in type positions.
+                if let Some(narrowed) = self.try_narrow_type_query(sym_id, type_query.expr_name) {
+                    return narrowed;
+                }
+
                 let factory = self.ctx.types.factory();
                 return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
             }
@@ -1484,6 +1501,135 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
             );
         }
+    }
+
+    /// Try to apply control-flow narrowing for a typeof type query.
+    ///
+    /// When `typeof x` appears in a type position inside a narrowing guard
+    /// (e.g., `if (typeof c === 'string') { type C = typeof c; }`),
+    /// the type should reflect the narrowed value, not the declared type.
+    /// Returns `Some(narrowed_type)` if narrowing applies, `None` otherwise.
+    fn try_narrow_type_query(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        // Only narrow variables (not functions, classes, namespaces, etc.)
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::VARIABLE == 0 {
+            return None;
+        }
+
+        // tsc does NOT apply flow narrowing to `typeof` inside function/call
+        // signature types (parameters or return types). Walk up from the typeof
+        // expression to see if we're inside a FunctionType, ConstructorType,
+        // CallSignature, or ConstructSignature.
+        if self.is_typeof_inside_function_type(expr_name) {
+            return None;
+        }
+
+        // Get the declared type: prefer the already-computed symbol type,
+        // but fall back to resolving the type annotation on the declaration.
+        let declared_type = if let Some(&ty) = self.ctx.symbol_types.get(&sym_id) {
+            ty
+        } else if let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && !var_decl.type_annotation.is_none()
+        {
+            self.check(var_decl.type_annotation)
+        } else {
+            return None;
+        };
+
+        if declared_type == TypeId::ERROR || declared_type == TypeId::ANY {
+            return None;
+        }
+
+        // Find the flow node at or near the typeof expression.
+        // Type-position nodes may not have direct flow links, so walk parents.
+        let flow_node = self.ctx.binder.get_node_flow(expr_name).or_else(|| {
+            let mut current = self.ctx.arena.get_extended(expr_name).map(|ext| ext.parent);
+            while let Some(parent) = current {
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                    return Some(flow);
+                }
+                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            }
+            None
+        })?;
+
+        if !flow_node.is_some() {
+            return None;
+        }
+
+        let analyzer = FlowAnalyzer::with_node_types(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+            &self.ctx.node_types,
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_narrowing_cache(&self.ctx.narrowing_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
+        .with_flow_buffers(
+            &self.ctx.flow_worklist,
+            &self.ctx.flow_in_worklist,
+            &self.ctx.flow_visited,
+            &self.ctx.flow_results,
+        );
+
+        let narrowed = analyzer.get_flow_type(expr_name, declared_type, flow_node);
+        if narrowed != declared_type && narrowed != TypeId::ERROR && narrowed != TypeId::NEVER {
+            Some(narrowed)
+        } else {
+            None
+        }
+    }
+
+    /// Check if a typeof expression is inside a function/call signature type.
+    ///
+    /// tsc does not apply flow narrowing to `typeof` expressions that are nested
+    /// inside function types (including call/construct signatures). This includes
+    /// both parameter types and return types of function types.
+    fn is_typeof_inside_function_type(&self, expr_name: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = self.ctx.arena.get_extended(expr_name).map(|ext| ext.parent);
+        while let Some(idx) = current {
+            if idx.is_none() {
+                break;
+            }
+            if let Some(node) = self.ctx.arena.get(idx) {
+                match node.kind {
+                    // If we reach a function type or call/construct signature, typeof is NOT narrowed
+                    k if k == syntax_kind_ext::FUNCTION_TYPE
+                        || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+                        || k == syntax_kind_ext::CALL_SIGNATURE
+                        || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                    {
+                        return true;
+                    }
+                    // If we reach a type alias, variable declaration, or statement-level construct,
+                    // stop searching — we're not inside a function type
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        || k == syntax_kind_ext::VARIABLE_DECLARATION
+                        || k == syntax_kind_ext::VARIABLE_STATEMENT
+                        || k == syntax_kind_ext::IF_STATEMENT
+                        || k == syntax_kind_ext::BLOCK
+                        || k == syntax_kind_ext::SOURCE_FILE =>
+                    {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        }
+        false
     }
 
     /// Resolve the symbol for a type query expression name.
