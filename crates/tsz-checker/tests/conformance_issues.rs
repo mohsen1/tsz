@@ -12255,7 +12255,6 @@ function f(a: number | string) {
 }
 
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_type_query_in_type_alias_index_signature_stays_flow_sensitive() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
