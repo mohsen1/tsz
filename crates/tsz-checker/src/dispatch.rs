@@ -1016,7 +1016,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
+                    // Save contextual type: check_class_expression may alter it
+                    // while checking members, but it is needed later by
+                    // get_class_constructor_type to preserve literal types in
+                    // static properties that match a contextual interface.
+                    let saved_ctx = self.checker.ctx.contextual_type;
                     self.checker.check_class_expression(idx, &class);
+                    self.checker.ctx.contextual_type = saved_ctx;
+
+                    // When a contextual type has properties (i.e., it's an
+                    // interface/object type like `I` in `let c: I = class { ... }`),
+                    // the cached constructor type (from build-type-environment) may
+                    // have widened literal types for static properties. Invalidate
+                    // the cache so the constructor type is recomputed with contextual
+                    // typing, preserving literal types when the interface requires them.
+                    if let Some(ctx_type) = saved_ctx {
+                        let resolved = self.checker.evaluate_type_for_assignability(ctx_type);
+                        if tsz_solver::type_queries::has_properties(
+                            self.checker.ctx.types,
+                            resolved,
+                        ) {
+                            self.checker.ctx.class_constructor_type_cache.remove(&idx);
+                        }
+                    }
 
                     // When a class extends a type parameter and adds no new instance members,
                     // type it as the type parameter to maintain generic compatibility

@@ -15723,3 +15723,71 @@ class C extends I {}
         "Should emit TS2304 for unresolved 'I' in extends clause.\nActual errors: {diagnostics:#?}"
     );
 }
+
+/// TS2322 false positive: class expression with static fields matching interface.
+/// From conformance test staticFieldWithInterfaceContext.ts.
+/// tsc allows `let c: I = class { static x = { a: "a" } }` when I has `x: { a: "a" }`.
+/// Root cause: the class constructor type was computed and cached during
+/// build-type-environment without contextual typing, widening literal types.
+/// Fix: save/restore contextual type around check_class_expression in dispatch,
+/// invalidate the constructor type cache when a contextual type with properties
+/// is present, and skip widening for static properties that have a matching
+/// contextual member type.
+#[test]
+fn test_no_ts2322_for_class_expression_static_field_interface_context() {
+    // Direct assignment: class expression to interface-typed variable
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface I {
+    x: { a: "a" };
+}
+let c: I = class {
+    static x = { a: "a" };
+};
+        "#,
+    );
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Direct assignment: should not emit TS2322. Got: {ts2322_errors:#?}"
+    );
+
+    // Function default parameter
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface I {
+    x: { a: "a" };
+}
+function f(c: I = class { static x = { a: "a" } }) { }
+        "#,
+    );
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Function default: should not emit TS2322. Got: {ts2322_errors:#?}"
+    );
+
+    // Destructuring with default value
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface I {
+    x: { a: "a" };
+}
+let { c: c4 = class { static x = { a: "a" } }}: { c?: I } = { };
+        "#,
+    );
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Destructuring default: should not emit TS2322. Got: {ts2322_errors:#?}"
+    );
+}
