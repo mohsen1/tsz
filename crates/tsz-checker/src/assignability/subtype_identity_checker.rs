@@ -214,6 +214,56 @@ impl<'a> CheckerState<'a> {
                 // No progress — return as-is
                 return type_id;
             }
+            // When a TypeQuery for a namespace symbol resolves to UNKNOWN
+            // (because type_of_value_declaration_for_symbol returns UNKNOWN for
+            // MODULE_DECLARATION nodes), build the structural namespace object
+            // directly from the symbol's exports. This prevents false TS2403
+            // errors when comparing `typeof NS.Point` against a structurally
+            // equivalent object literal like `{ Origin(): { x: number; y: number } }`.
+            if resolved == TypeId::UNKNOWN {
+                let binder_sym = tsz_binder::SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym) {
+                    let flags = symbol.flags;
+                    let is_namespace = flags
+                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE)
+                        != 0;
+                    if is_namespace {
+                        if let Some(exports) = symbol.exports.as_ref().cloned() {
+                            let mut properties = Vec::new();
+                            for (name, member_id) in exports.iter() {
+                                if self.ctx.symbol_resolution_set.contains(member_id) {
+                                    continue;
+                                }
+                                let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id)
+                                else {
+                                    continue;
+                                };
+                                if member_symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
+                                    continue;
+                                }
+                                let member_type = self.get_type_of_symbol(*member_id);
+                                let name_atom = self.ctx.types.intern_string(name);
+                                properties.push(tsz_solver::PropertyInfo {
+                                    name: name_atom,
+                                    type_id: member_type,
+                                    write_type: member_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility: tsz_solver::Visibility::Public,
+                                    parent_id: None,
+                                    declaration_order: 0,
+                                });
+                            }
+                            if !properties.is_empty() {
+                                return self.ctx.types.factory().object(properties);
+                            }
+                        }
+                    }
+                }
+            }
             // When a TypeQuery for an enum symbol resolves to the nominal
             // Enum(DefId, _) type, convert it to the structural enum constructor
             // object. This ensures `typeof M.Color` (TypeQuery -> Enum) produces
