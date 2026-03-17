@@ -1498,6 +1498,7 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         //
         // Note: TS1047 (A rest parameter cannot be optional) is excluded for the
         // same reason — the parameter is syntactically valid and should be type-checked.
+        | 1034 // 'super' must be followed by an argument list or member access
         | 1036 // Statements are not allowed in ambient contexts
         | 1109 // Expression expected
         | 1110 // Type expected
