@@ -392,7 +392,7 @@ impl<'a> CheckerState<'a> {
             );
         }
         match reason {
-            Some(failure_reason) => {
+            Some(ref failure_reason) => {
                 // Skip ExcessProperty diagnostics here — they are handled by
                 // check_object_literal_excess_properties which also checks for
                 // spelling suggestions (TS2561). Emitting here would cause
