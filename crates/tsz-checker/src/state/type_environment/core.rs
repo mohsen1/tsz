@@ -458,13 +458,20 @@ impl<'a> CheckerState<'a> {
 
         // Resolve type arguments so distributive conditionals can see unions.
         // For conditional type bodies whose extends side contains infer patterns,
-        // preserve generic/type-parameter arguments so the conditional evaluator
-        // can still use their original constraints during infer matching.
+        // preserve Application-typed arguments so the conditional evaluator can
+        // match type arguments directly via try_application_infer_match.
+        // Without this, Application args (e.g., Synthetic<number, number>) are
+        // eagerly evaluated to structural Objects, losing the type argument info
+        // needed for infer pattern matching (e.g., matching against
+        // Synthetic<T, infer V> to resolve V = number).
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                if body_has_conditional_infer
+                    && (self.contains_type_parameters_cached(arg)
+                        || query::application_info(self.ctx.types, arg).is_some())
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)

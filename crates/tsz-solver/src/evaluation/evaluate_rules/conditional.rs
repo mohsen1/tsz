@@ -302,11 +302,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
                 // Also evaluate true/false types to resolve Lazy alias references.
+                //
+                // However, when the raw extends type contains infer patterns, preserve it
+                // unevaluated. Evaluation can destroy infer information when the extends
+                // type is an Application of an interface with no structural members
+                // (e.g., `Synthetic<T, infer V>` evaluates to the same empty object as
+                // `Synthetic<T, number>`). Preserving the raw Application allows
+                // `try_application_infer_match` to match type arguments directly when
+                // the conditional is re-evaluated after instantiation.
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
+                let deferred_extends = if self.type_contains_infer(cond.extends_type) {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 return self.interner().conditional(ConditionalType {
                     check_type,
-                    extends_type,
+                    extends_type: deferred_extends,
                     true_type,
                     false_type,
                     is_distributive: cond.is_distributive,
