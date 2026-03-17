@@ -260,9 +260,12 @@ where
 
         let result = match db.lookup(type_id) {
             Some(TypeData::Recursive(_)) => in_cond_branch,
-            Some(TypeData::Lazy(def_id)) => host.resolve_lazy(def_id, db).is_some_and(|resolved| {
-                resolved != type_id && visit(db, host, resolved, active, finished, in_cond_branch)
-            }),
+            // Lazy(DefId) references named types (interfaces, classes, type aliases)
+            // that can be serialized by name in .d.ts output. Don't traverse into
+            // their definitions — cycles within named types (e.g., conditional types
+            // in lib.d.ts like HTMLElement's type hierarchy) don't affect the
+            // serializability of the declaration being checked.
+            Some(TypeData::Lazy(_)) => false,
             Some(TypeData::Application(app_id)) => {
                 let evaluated = host.evaluate_application_for_serialization(type_id);
                 if evaluated != type_id {
