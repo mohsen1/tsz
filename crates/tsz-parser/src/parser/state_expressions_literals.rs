@@ -674,7 +674,7 @@ impl ParserState {
             let is_jsx_artifact = regex_body.find('>').is_some_and(|gt_pos| {
                 regex_body
                     .find(';')
-                    .map_or(true, |semi_pos| gt_pos < semi_pos)
+                    .is_none_or(|semi_pos| gt_pos < semi_pos)
             });
             if !is_jsx_artifact {
                 use tsz_common::diagnostics::diagnostic_codes;
