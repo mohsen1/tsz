@@ -515,8 +515,12 @@ impl<'a> CheckerState<'a> {
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
-            || contains_infer_types(self.ctx.types, source)
-            || contains_infer_types(self.ctx.types, target)
+            // Evaluate types before checking: conditional types like
+            // `X extends Y<infer V> ? V : never` contain structural `infer` patterns
+            // that are resolved during evaluation. Without evaluation, the visitor
+            // would find these structural infers and incorrectly suppress the diagnostic.
+            || contains_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
+            || contains_infer_types(self.ctx.types, self.ctx.types.evaluate_type(target))
     }
 
     /// Suppress assignability diagnostics for parser-recovery artifacts.
