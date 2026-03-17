@@ -247,16 +247,21 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                    // Shorthand: { x } — property name is the identifier
+                    // Shorthand: { x } or { x = default } — property name is the identifier.
+                    // When a default value is present (e.g. `{ b = '5' }`), tsc does NOT emit
+                    // TS2339 for missing properties because the default handles the absent
+                    // property. Only check existence when there is no default.
                     if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
                         && let Some(name_node) = self.ctx.arena.get(shorthand.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        self.check_destructuring_property_exists(
-                            &ident.escaped_text,
-                            source_type,
-                            shorthand.name,
-                        );
+                        if !shorthand.equals_token {
+                            self.check_destructuring_property_exists(
+                                &ident.escaped_text,
+                                source_type,
+                                shorthand.name,
+                            );
+                        }
                         self.check_property_accessibility(
                             NodeIndex::NONE,
                             &ident.escaped_text,
