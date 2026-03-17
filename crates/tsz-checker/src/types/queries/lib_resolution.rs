@@ -553,17 +553,20 @@ impl<'a> CheckerState<'a> {
 
                     if !is_type_alias {
                         // Deduplicate declaration entries: the lib merger can produce
-                        // duplicate NodeIndex values when the same lib file is loaded
-                        // from multiple lib contexts.  Keep only ONE (decl_idx, arena)
-                        // pair per unique NodeIndex.  Duplicate entries cause the same
-                        // interface body to be lowered N times, producing N copies of
-                        // call signatures (the PromiseConstructor → Date<T> bug).
+                        // duplicate (NodeIndex, arena) pairs when the same lib file is
+                        // loaded from multiple lib contexts.  Compare by BOTH NodeIndex
+                        // AND arena pointer — different lib files can legitimately have
+                        // the same NodeIndex for different interface declarations (e.g.,
+                        // SymbolConstructor in es2015.symbol.wellknown.d.ts and
+                        // es2020.symbol.wellknown.d.ts). Deduplicating by NodeIndex alone
+                        // would drop the second file's members.
                         let deduped: Vec<(NodeIndex, &NodeArena)> = {
-                            let mut seen_idx = Vec::with_capacity(decls_with_arenas.len());
+                            let mut seen = Vec::with_capacity(decls_with_arenas.len());
                             let mut out = Vec::with_capacity(decls_with_arenas.len());
                             for &(idx, arena) in &decls_with_arenas {
-                                if !seen_idx.contains(&idx) {
-                                    seen_idx.push(idx);
+                                let key = (idx, arena as *const NodeArena);
+                                if !seen.contains(&key) {
+                                    seen.push(key);
                                     out.push((idx, arena));
                                 }
                             }
