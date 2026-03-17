@@ -290,7 +290,14 @@ impl<'a> CheckerState<'a> {
         // Without this, long chains like `merge(merge(merge(...)))` cause
         // exponential re-evaluation because each step's Application is only
         // in resolve_cache (checker-only) and not visible to the solver.
-        if result != type_id && !type_id.is_intrinsic() {
+        //
+        // Skip results containing unbound infer types — these arise when
+        // conditional evaluation can't bind infer variables (e.g., empty
+        // interface extends pattern). Caching them poisons later lookups.
+        if result != type_id
+            && !type_id.is_intrinsic()
+            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, result)
+        {
             self.ctx
                 .env_eval_cache
                 .borrow_mut()

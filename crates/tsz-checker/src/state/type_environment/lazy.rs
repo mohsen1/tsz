@@ -172,10 +172,20 @@ impl<'a> CheckerState<'a> {
             // Persist intermediate evaluation results to the shared cache.
             // This prevents re-evaluating recursive type expansions (e.g.,
             // RecursivePaths, DeepPartial) that produce many intermediate TypeIds.
+            //
+            // Skip entries whose result contains unbound `infer` types. These
+            // arise when a conditional type's identity shortcut or subtype check
+            // fires before infer pattern matching can bind the infer variables
+            // (e.g., `Synthetic<number,number> extends Synthetic<T, infer V>`
+            // where both sides evaluate to the same empty object). Caching such
+            // entries would poison later lookups with the unbound infer type.
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v && !k.is_intrinsic() {
+                    if k != v
+                        && !k.is_intrinsic()
+                        && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
+                    {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -201,7 +211,10 @@ impl<'a> CheckerState<'a> {
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v && !k.is_intrinsic() {
+                    if k != v
+                        && !k.is_intrinsic()
+                        && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
+                    {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -214,7 +227,9 @@ impl<'a> CheckerState<'a> {
             result
         };
 
-        if use_cache {
+        if use_cache
+            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, final_result)
+        {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
                 crate::context::EnvEvalCacheEntry {
