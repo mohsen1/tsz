@@ -302,11 +302,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
                 // Also evaluate true/false types to resolve Lazy alias references.
+                //
+                // IMPORTANT: When the raw extends_type contains infer patterns inside an
+                // Application (e.g., `IBox<infer V>`), preserve the raw extends_type
+                // in the deferred conditional. Evaluating `IBox<infer V>` for empty
+                // interfaces produces `{}` which loses the infer information. When
+                // the conditional is later instantiated with concrete types, the
+                // extends_type needs to retain the Application+infer structure for
+                // proper type argument matching.
+                let deferred_extends = if self.type_contains_infer(cond.extends_type)
+                    && !self.type_contains_infer(extends_type)
+                {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
                 return self.interner().conditional(ConditionalType {
                     check_type,
-                    extends_type,
+                    extends_type: deferred_extends,
                     true_type,
                     false_type,
                     is_distributive: cond.is_distributive,
@@ -370,7 +385,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
             // e.g., `keyof Params extends keyof Params ? X : Y` → X
-            if check_type == extends_type {
+            //
+            // IMPORTANT: Skip this shortcut when the raw extends_type contains `infer`
+            // types. Evaluating an Application like `IBox<infer V>` where IBox is an
+            // empty interface produces `{}`, the same as `IBox<number>`. The identity
+            // check would then shortcircuit to the true branch without ever binding V.
+            let raw_extends_has_infer = self.type_contains_infer(cond.extends_type);
+            if check_type == extends_type && !raw_extends_has_infer {
                 return self.evaluate(cond.true_type);
             }
 
@@ -378,12 +399,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
 
-            if self.type_contains_infer(extends_type) {
+            // Use the raw (unevaluated) extends_type for infer matching when the
+            // evaluated extends no longer contains infer (e.g., empty generic interface
+            // IBox<infer V> evaluates to {} erasing the infer).
+            let extends_for_infer =
+                if raw_extends_has_infer && !self.type_contains_infer(extends_type) {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
+
+            if self.type_contains_infer(extends_for_infer) {
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
                     check_type,
-                    extends_type,
+                    extends_for_infer,
                     &mut bindings,
                     &mut visited,
                     &mut checker,
@@ -443,7 +474,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
                             constraint,
-                            extends_type,
+                            extends_for_infer,
                             &mut bindings2,
                             &mut visited2,
                             &mut checker2,
