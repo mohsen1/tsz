@@ -213,13 +213,27 @@ impl<'a> CheckerState<'a> {
                     } else {
                         jsdoc_declared_type
                     };
-                    let property_context_type = if property_context_type.is_none()
+                    let is_fn = self.ctx.arena.get(prop.initializer).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::ARROW_FUNCTION
+                            || n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    });
+                    let suppress_ctx = is_fn
+                        && jsdoc_declared_type.is_none()
+                        && initializer_context_type.is_none()
+                        && self
+                            .ctx
+                            .contextual_type
+                            .is_some_and(|t| self.contextual_type_has_primitive_union_member(t));
+                    let property_context_type = if suppress_ctx {
+                        None
+                    } else if property_context_type.is_none()
                         && let Some(ctx_type) = self.ctx.contextual_type
                         && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                         && matches!(
                             init_node.kind,
                             syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        ) {
+                        )
+                    {
                         self.contextual_object_literal_property_type(ctx_type, "*")
                             .or_else(|| {
                                 self.fallback_contextual_callable_property_type(ctx_type, 6)

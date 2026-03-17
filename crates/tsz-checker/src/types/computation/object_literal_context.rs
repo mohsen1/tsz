@@ -316,6 +316,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn contextual_type_has_primitive_union_member(&mut self, type_id: TypeId) -> bool {
+        self.union_with_non_nullish_non_object_member(type_id, 6)
+    }
+
     fn contextual_property_presence(
         &mut self,
         type_id: TypeId,
