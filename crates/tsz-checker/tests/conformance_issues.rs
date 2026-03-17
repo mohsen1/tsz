@@ -15867,3 +15867,43 @@ if (typeof c === 'string') {
          Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts7006_emitted_when_contextual_function_type_is_never() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let source = r#"
+type Tags<D extends string, P> = P extends Record<D, infer X> ? X : never;
+
+declare const typeTags: <I>() => <
+  P extends {
+    readonly [Tag in Tags<"_tag", I> & string]: (
+      _: Extract<I, { readonly _tag: Tag }>,
+    ) => any;
+  } & { readonly [Tag in Exclude<keyof P, Tags<"_tag", I>>]: never },
+>(
+  fields: P,
+) => unknown;
+
+type Value = { _tag: "A"; a: number } | { _tag: "B"; b: number };
+const matcher = typeTags<Value>();
+
+matcher({
+  A: (_) => _.a,
+  B: (_) => "fail",
+  C: (_) => "fail",
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, opts);
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 for callback assigned to never contextual type. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for callback assigned to never type. Actual: {diagnostics:#?}"
+    );
+}
