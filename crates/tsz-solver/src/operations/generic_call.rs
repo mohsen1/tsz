@@ -2462,12 +2462,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             });
         let prev_contextual_type = self.contextual_type;
-        self.contextual_type = if source_type_params_fully_determined_by_params
-            && target_fn.params.iter().any(|param| param.rest)
-            && !crate::visitor::contains_type_parameters(
-                self.interner.as_type_database(),
-                target_fn.return_type,
-            ) {
+        // Suppress contextual type when source type params are fully determined by params.
+        // This prevents return type from incorrectly constraining T when T already comes
+        // from param positions (e.g., `identity<T>(v:T)=>T` vs `Iterator<S, boolean>`).
+        self.contextual_type = if source_type_params_fully_determined_by_params {
             None
         } else {
             Some(target_ty)
