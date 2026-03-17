@@ -460,11 +460,21 @@ impl<'a> CheckerState<'a> {
         // For conditional type bodies whose extends side contains infer patterns,
         // preserve generic/type-parameter arguments so the conditional evaluator
         // can still use their original constraints during infer matching.
+        // Also preserve Application-form arguments: when a type arg like
+        // `Synthetic<number, number>` is eagerly evaluated to its structural form
+        // (e.g., an empty object `{}`), the conditional evaluator loses the ability
+        // to do Application-level infer matching (e.g., matching
+        // `Synthetic<number, number>` against `Synthetic<number, infer V>`).
+        // Preserving the Application form lets `try_application_infer_match` extract
+        // infer bindings by comparing type arguments positionally.
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                if body_has_conditional_infer
+                    && (self.contains_type_parameters_cached(arg)
+                        || query::application_info(self.ctx.types, arg).is_some())
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
