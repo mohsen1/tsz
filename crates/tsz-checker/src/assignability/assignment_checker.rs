@@ -203,9 +203,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                     // Property assignment: { name: target }
                     if let Some(name) = self.get_property_name_resolved(prop.name) {
-                        self.check_destructuring_property_exists(
-                            &name, source_type, prop.name,
-                        );
+                        self.check_destructuring_property_exists(&name, source_type, prop.name);
                         self.check_property_accessibility(
                             NodeIndex::NONE,
                             &name,
@@ -255,7 +253,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
                         self.check_destructuring_property_exists(
-                            &ident.escaped_text, source_type, shorthand.name,
+                            &ident.escaped_text,
+                            source_type,
+                            shorthand.name,
                         );
                         self.check_property_accessibility(
                             NodeIndex::NONE,
@@ -281,25 +281,23 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Handle spread elements: compute rest type instead of single-element type
-                let (target_idx, check_type) =
-                    if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                        let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
-                            continue;
-                        };
-                        let rest_type =
-                            self.compute_rest_type_for_destructuring(source_type, index);
-                        let Some(rest_type) = rest_type else {
-                            continue;
-                        };
-                        (spread.expression, rest_type)
-                    } else {
-                        let elem_type =
-                            self.resolve_element_type_for_destructuring(source_type, index);
-                        let Some(elem_type) = elem_type else {
-                            continue;
-                        };
-                        (elem_idx, elem_type)
+                let (target_idx, check_type) = if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                {
+                    let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
+                        continue;
                     };
+                    let rest_type = self.compute_rest_type_for_destructuring(source_type, index);
+                    let Some(rest_type) = rest_type else {
+                        continue;
+                    };
+                    (spread.expression, rest_type)
+                } else {
+                    let elem_type = self.resolve_element_type_for_destructuring(source_type, index);
+                    let Some(elem_type) = elem_type else {
+                        continue;
+                    };
+                    (elem_idx, elem_type)
+                };
 
                 if let Some(target_node) = self.ctx.arena.get(target_idx) {
                     if target_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
