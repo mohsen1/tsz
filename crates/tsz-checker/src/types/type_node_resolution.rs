@@ -6,6 +6,7 @@
 
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
+use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
 use super::type_node::TypeNodeChecker;
@@ -785,6 +786,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let computed_name_resolver =
                 |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
 
+            // Provide flow-narrowed types for `typeof expr` in the type alias body.
+            // These were pre-computed by `precompute_type_query_flow_types` during
+            // `check_type_alias_declaration` and stored in `node_types`.
+            let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                let result = self
+                    .ctx
+                    .node_types
+                    .get(&expr_name_idx.0)
+                    .copied()
+                    .filter(|&t| t != TypeId::ERROR);
+                result
+            };
             let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                 decl_arena,
                 self.ctx.types,
@@ -794,7 +807,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             )
             .with_type_param_bindings(bindings)
             .with_computed_name_resolver(&computed_name_resolver)
-            .with_name_def_id_resolver(&name_resolver);
+            .with_name_def_id_resolver(&name_resolver)
+            .with_type_query_override(&type_query_override);
 
             let body = lowering.lower_type(type_alias.type_node);
 

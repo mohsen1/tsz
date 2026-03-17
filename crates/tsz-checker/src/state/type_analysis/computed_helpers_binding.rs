@@ -721,7 +721,34 @@ impl<'a> CheckerState<'a> {
 
         let mut any_changed = false;
         for tq_idx in &type_query_nodes {
-            let narrowed = self.get_type_from_type_query(*tq_idx);
+            // Use flow-sensitive resolution: compute the flow-narrowed type of
+            // the `typeof` expression via `get_type_of_identifier`, which applies
+            // control flow narrowing. The flow narrowing infrastructure walks up
+            // the parent chain for nodes without direct flow links (like identifiers
+            // in type positions), so it will find the narrowing from enclosing
+            // if-statements, typeof guards, etc.
+            let narrowed = {
+                let expr_name = self
+                    .ctx
+                    .arena
+                    .get(*tq_idx)
+                    .and_then(|n| self.ctx.arena.get_type_query(n))
+                    .map(|tq| tq.expr_name);
+                if let Some(expr_name) = expr_name {
+                    let flow_type = self.get_type_of_identifier(expr_name);
+                    if flow_type != TypeId::ERROR {
+                        // Store the flow-narrowed type at the expr_name key so that
+                        // get_type_from_type_query (called during re-resolution below)
+                        // can find it via its node_types lookup.
+                        self.ctx.node_types.insert(expr_name.0, flow_type);
+                        flow_type
+                    } else {
+                        self.get_type_from_type_query(*tq_idx)
+                    }
+                } else {
+                    self.get_type_from_type_query(*tq_idx)
+                }
+            };
             let existing = self.ctx.node_types.get(&tq_idx.0).copied();
             if existing != Some(narrowed) {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);

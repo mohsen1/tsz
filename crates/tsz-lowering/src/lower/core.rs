@@ -71,6 +71,12 @@ pub struct TypeLowering<'a> {
     /// Whether strictNullChecks is enabled. When true, optional parameters
     /// in function types include `| undefined` in their type.
     pub(super) strict_null_checks: bool,
+    /// Optional override for type query resolution. When provided, this callback
+    /// is consulted before creating a `TypeQuery` type. If it returns `Some(type_id)`,
+    /// that type is used directly instead of creating a deferred `TypeQuery`.
+    /// This enables flow-sensitive narrowing for `typeof expr` in type positions
+    /// (e.g., inside type alias bodies where flow narrowing has already been computed).
+    pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -285,6 +291,7 @@ impl<'a> TypeLowering<'a> {
             limit_exceeded: Rc::new(RefCell::new(false)),
             name_def_id_resolver: None,
             strict_null_checks: false,
+            type_query_override: None,
         }
     }
 
@@ -311,6 +318,7 @@ impl<'a> TypeLowering<'a> {
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
+            type_query_override: None,
         }
     }
 
@@ -337,6 +345,7 @@ impl<'a> TypeLowering<'a> {
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
+            type_query_override: None,
         }
     }
 
@@ -367,6 +376,7 @@ impl<'a> TypeLowering<'a> {
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
+            type_query_override: None,
         }
     }
 
@@ -397,6 +407,7 @@ impl<'a> TypeLowering<'a> {
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
+            type_query_override: None,
         }
     }
 
@@ -419,6 +430,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_def_id: self.preferred_self_def_id,
             name_def_id_resolver: self.name_def_id_resolver,
             strict_null_checks: self.strict_null_checks,
+            type_query_override: self.type_query_override,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             operations: Rc::clone(&self.operations),
@@ -695,6 +707,20 @@ impl<'a> TypeLowering<'a> {
     /// collisions between declaration arenas are possible.
     pub const fn prefer_name_def_id_resolution(mut self) -> Self {
         self.prefer_name_def_id_resolution = true;
+        self
+    }
+
+    /// Set a type query override callback for flow-sensitive `typeof` resolution.
+    ///
+    /// When lowering encounters `typeof expr`, this callback is consulted first.
+    /// If it returns `Some(type_id)`, that type is used directly instead of
+    /// creating a deferred `TypeQuery` type. This enables the checker to inject
+    /// flow-narrowed types for `typeof` expressions in type alias bodies.
+    pub fn with_type_query_override(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
+    ) -> Self {
+        self.type_query_override = Some(resolver);
         self
     }
 
