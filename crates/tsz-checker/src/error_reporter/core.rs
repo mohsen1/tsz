@@ -116,7 +116,7 @@ impl<'a> CheckerState<'a> {
                 return current;
             }
 
-            let expr = self.ctx.arena.skip_parenthesized_and_assertions(current);
+            let expr = self.ctx.arena.skip_parenthesized(current);
             let Some(node) = self.ctx.arena.get(expr) else {
                 return current;
             };
