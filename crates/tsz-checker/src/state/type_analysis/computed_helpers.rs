@@ -1933,8 +1933,50 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            // Use original_object_type to preserve nominal identity (e.g., D<string>)
-            self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+            // Check if the object's own class directly declares a private member with
+            // the same name AND the same static-ness as the found symbol. If so, the
+            // member exists but is not accessible from this class scope (TS18013),
+            // not "does not exist" (TS2339). This handles cases like `B.#foo` accessed
+            // from class A's constructor, where both A and B have their own `static #foo`.
+            //
+            // Skip this check when the declaring class of the found symbol IS the same
+            // as the object's class. In that case, the incompatibility is a
+            // static/instance mismatch within the same class (e.g., `x.#foo` where
+            // `#foo` is static), which should be TS2339 "does not exist".
+            let declaring_class_idx = self.private_member_declaring_type(symbols[0])
+                .and_then(|dt| self.get_class_decl_for_display_type(dt))
+                .map(|(ci, _)| ci);
+            let object_class_info = self
+                .get_class_decl_for_display_type(original_object_type)
+                .or_else(|| self.get_class_decl_for_display_type(object_type_for_check));
+            let same_class = declaring_class_idx.is_some()
+                && object_class_info.is_some()
+                && declaring_class_idx == object_class_info.map(|(ci, _)| ci);
+            let object_class_directly_has_member = if same_class {
+                // Same class, static/instance mismatch -> TS2339
+                None
+            } else {
+                object_class_info.and_then(|(class_idx, _)| {
+                    let is_static = self.class_directly_declares_private_member(class_idx, &property_name)?;
+                    // The declared member's static-ness must match the found symbol's.
+                    if is_static == member_is_static {
+                        Some(is_static)
+                    } else {
+                        None
+                    }
+                })
+            };
+            if object_class_directly_has_member.is_some() {
+                self.report_private_identifier_outside_class(
+                    name_idx,
+                    &property_name,
+                    original_object_type,
+                    access.expression,
+                );
+            } else {
+                // Use original_object_type to preserve nominal identity (e.g., D<string>)
+                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+            }
             return TypeId::ERROR;
         }
 
