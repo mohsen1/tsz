@@ -515,8 +515,27 @@ impl<'a> CheckerState<'a> {
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
-            || contains_infer_types(self.ctx.types, source)
-            || contains_infer_types(self.ctx.types, target)
+            //
+            // However, Conditional types contain *structural* infer types (bound within
+            // the conditional's extends clause, e.g., `T extends Foo<infer U> ? U : never`).
+            // These are not transient inference placeholders — they get resolved during
+            // conditional type evaluation. Suppress only for free infer types, not for
+            // conditional types whose infer variables are structurally bound.
+            || self.has_free_infer_types(source)
+            || self.has_free_infer_types(target)
+    }
+
+    /// Check if a type contains free (unbound) infer types that indicate transient
+    /// inference state. Conditional types are excluded because their infer types
+    /// are structurally bound within the extends clause and resolved during evaluation.
+    fn has_free_infer_types(&self, type_id: TypeId) -> bool {
+        match self.ctx.types.lookup(type_id) {
+            // Conditional types contain structural infer types (in extends/true/false).
+            // These are bound, not free inference placeholders. The assignability check
+            // will evaluate the conditional type, resolving the infer types properly.
+            Some(tsz_solver::TypeData::Conditional(_)) => false,
+            _ => contains_infer_types(self.ctx.types, type_id),
+        }
     }
 
     /// Suppress assignability diagnostics for parser-recovery artifacts.
