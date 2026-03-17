@@ -255,61 +255,61 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .or_else(|| self.get_expected_yield_type(idx))
             {
                 if yield_expr.asterisk_token {
-                    let contextual_operand_type =
-                        self.checker
-                            .ctx
-                            .arena
-                            .get(yield_expr.expression)
-                            .map(|n| n.kind)
-                            .and_then(|kind| {
-                                // Only direct call expressions (e.g. `yield* gen()`) should
-                                // receive a generator contextual type. Await expressions
-                                // (e.g. `yield* await promise.then(fn)`) must NOT: the
-                                // generator contextual type would flow into .then() return-type
-                                // inference and produce spurious union types like
-                                // `AsyncGenerator<T> | Result<U, E>` instead of just
-                                // `Result<U, E>`, causing false TS2504 errors.
-                                let supports_return_context =
-                                    kind == syntax_kind_ext::CALL_EXPRESSION;
-                                if !supports_return_context {
-                                    return None;
-                                }
-                                let expected_generator = self.get_expected_generator_type(idx)?;
-                                let result_ctx = prev_contextual.unwrap_or(TypeId::UNKNOWN);
-                                contextual_yield_star_return = Some(result_ctx);
-                                let generator_ctx =
-                                    tsz_solver::ContextualTypeContext::with_expected(
-                                        self.checker.ctx.types,
-                                        expected_generator,
-                                    );
-                                let next_ctx = generator_ctx
-                                    .get_generator_next_type()
-                                    .unwrap_or(TypeId::UNKNOWN);
-                                let generator_name = if is_async_generator {
-                                    "AsyncGenerator"
-                                } else {
-                                    "Generator"
-                                };
-                                let lib_binders = self.checker.get_lib_binders();
-                                let generator_sym = self
-                                    .checker
-                                    .ctx
-                                    .binder
-                                    .get_global_type_with_libs(generator_name, &lib_binders)?;
-                                let generator_def =
-                                    self.checker.ctx.get_or_create_def_id(generator_sym);
-                                let generator_base =
-                                    self.checker.ctx.types.factory().lazy(generator_def);
-                                Some(self.checker.ctx.types.factory().application(
+                    let contextual_operand_type = self
+                        .checker
+                        .ctx
+                        .arena
+                        .get(yield_expr.expression)
+                        .map(|n| n.kind)
+                        .and_then(|kind| {
+                            // Only direct call expressions (e.g. `yield* gen()`) should
+                            // receive a generator contextual type. Await expressions
+                            // (e.g. `yield* await promise.then(fn)`) must NOT: the
+                            // generator contextual type would flow into .then() return-type
+                            // inference and produce spurious union types like
+                            // `AsyncGenerator<T> | Result<U, E>` instead of just
+                            // `Result<U, E>`, causing false TS2504 errors.
+                            let supports_return_context = kind == syntax_kind_ext::CALL_EXPRESSION;
+                            if !supports_return_context {
+                                return None;
+                            }
+                            let expected_generator = self.get_expected_generator_type(idx)?;
+                            let result_ctx = prev_contextual.unwrap_or(TypeId::UNKNOWN);
+                            contextual_yield_star_return = Some(result_ctx);
+                            let generator_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                self.checker.ctx.types,
+                                expected_generator,
+                            );
+                            let next_ctx = generator_ctx
+                                .get_generator_next_type()
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let generator_name = if is_async_generator {
+                                "AsyncGenerator"
+                            } else {
+                                "Generator"
+                            };
+                            let lib_binders = self.checker.get_lib_binders();
+                            let generator_sym = self
+                                .checker
+                                .ctx
+                                .binder
+                                .get_global_type_with_libs(generator_name, &lib_binders)?;
+                            let generator_def =
+                                self.checker.ctx.get_or_create_def_id(generator_sym);
+                            let generator_base =
+                                self.checker.ctx.types.factory().lazy(generator_def);
+                            Some(
+                                self.checker.ctx.types.factory().application(
                                     generator_base,
                                     vec![yield_ctx, result_ctx, next_ctx],
-                                ))
-                            })
-                            .unwrap_or_else(|| {
-                                // yield *[x => ...] needs Array<TYield> as contextual type
-                                // so each array element gets TYield as its contextual type
-                                self.checker.ctx.types.factory().array(yield_ctx)
-                            });
+                                ),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            // yield *[x => ...] needs Array<TYield> as contextual type
+                            // so each array element gets TYield as its contextual type
+                            self.checker.ctx.types.factory().array(yield_ctx)
+                        });
                     self.checker.ctx.contextual_type = Some(contextual_operand_type);
                 } else {
                     self.checker.ctx.contextual_type = Some(yield_ctx);
