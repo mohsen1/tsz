@@ -302,11 +302,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
                 // Also evaluate true/false types to resolve Lazy alias references.
+                //
+                // EXCEPTION: When the raw extends_type is an Application containing infer
+                // patterns (e.g., `Synthetic<T, infer V>`), preserve the raw form.
+                // Evaluation would expand the Application into a structural Object, destroying
+                // the Application structure that `try_application_infer_match` needs when
+                // this deferred conditional is later instantiated with concrete type args
+                // and re-evaluated.
+                let raw_extends_is_app_infer = self.type_contains_infer(cond.extends_type)
+                    && matches!(
+                        self.interner().lookup(cond.extends_type),
+                        Some(TypeData::Application(_))
+                    );
+                let deferred_extends = if raw_extends_is_app_infer {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
                 return self.interner().conditional(ConditionalType {
                     check_type,
-                    extends_type,
+                    extends_type: deferred_extends,
                     true_type,
                     false_type,
                     is_distributive: cond.is_distributive,
