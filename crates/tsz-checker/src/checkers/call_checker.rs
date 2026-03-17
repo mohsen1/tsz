@@ -1978,7 +1978,6 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {

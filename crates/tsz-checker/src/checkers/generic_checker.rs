@@ -579,8 +579,7 @@ impl<'a> CheckerState<'a> {
                 let base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
                     .filter(|&base| base != type_arg);
-                {
-                }
+                {}
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
@@ -674,11 +673,10 @@ impl<'a> CheckerState<'a> {
                             if constraint_is_callable
                                 && self.is_generic_indexed_access(type_arg)
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                                && !self
-                                    .type_argument_is_narrowed_by_conditional_true_branch(
-                                        arg_idx,
-                                        inst_constraint,
-                                    )
+                                && !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                    arg_idx,
+                                    inst_constraint,
+                                )
                             {
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
@@ -735,8 +733,7 @@ impl<'a> CheckerState<'a> {
                             if constraint_is_callable
                                 && !tsz_solver::type_queries::is_callable_type(db, type_arg)
                                 && crate::query_boundaries::common::callable_shape_for_type(
-                                    db,
-                                    type_arg,
+                                    db, type_arg,
                                 )
                                 .is_none()
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)

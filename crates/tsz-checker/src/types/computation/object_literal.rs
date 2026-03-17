@@ -248,23 +248,27 @@ impl<'a> CheckerState<'a> {
                     // Skip the fallback in that case.
                     let suppress_function_ctx = jsdoc_declared_type.is_none()
                         && initializer_context_type.is_none()
-                        && self.ctx.arena.get(prop.initializer).is_some_and(|init_node| {
-                            matches!(
-                                init_node.kind,
-                                syntax_kind_ext::ARROW_FUNCTION
-                                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                            )
-                        })
+                        && self
+                            .ctx
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|init_node| {
+                                matches!(
+                                    init_node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            })
                         && original_contextual_type.is_some_and(|ctx_type| {
                             self.contextual_type_has_primitive_union_member(ctx_type)
                         });
-                    let resolved_prop_ctx = jsdoc_declared_type
-                        .or(initializer_context_type)
-                        .or(if suppress_function_ctx {
+                    let resolved_prop_ctx = jsdoc_declared_type.or(initializer_context_type).or(
+                        if suppress_function_ctx {
                             None
                         } else {
                             property_context_type
-                        });
+                        },
+                    );
                     self.ctx.contextual_type = self
                         .contextual_type_option_for_expression(resolved_prop_ctx)
                         .or_else(|| {
