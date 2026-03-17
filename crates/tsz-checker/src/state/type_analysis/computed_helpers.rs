@@ -1881,9 +1881,9 @@ impl<'a> CheckerState<'a> {
                 declaring_type,
                 &property_name,
             )
-        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
-            true
-        } else if self.is_assignable_to(object_type_for_check, declaring_type) {
+        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
+            || self.is_assignable_to(object_type_for_check, declaring_type)
+        {
             true
         } else {
             // Fallback for partial/intermediate instance types: during class instance

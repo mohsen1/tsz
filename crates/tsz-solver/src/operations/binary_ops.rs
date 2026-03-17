@@ -1001,45 +1001,24 @@ impl<'a> BinaryOpEvaluator<'a> {
                     .iter()
                     .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
             }
-            // TypeQuery (typeof expr) — try to evaluate to the underlying type.
-            // Function return types annotated as `typeof x` resolve to TypeQuery;
-            // we need to resolve them before checking validity.
-            Some(TypeData::TypeQuery(_)) => {
-                let evaluated = self.interner.evaluate_type(type_id);
-                if evaluated != type_id {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
-                } else {
-                    // Unresolvable TypeQuery in generic context — conservatively accept
-                    // to avoid false TS2464 positives.
-                    true
-                }
-            }
-            // Deferred types (generic applications, lazy refs, conditionals) — try to
-            // evaluate first. If they resolve to a concrete type, check it recursively.
-            // If they remain unresolved (generic context), accept conservatively to
+            // TypeQuery, Application, Lazy, Conditional — try to evaluate to a
+            // concrete type. If evaluation succeeds, check the result recursively.
+            // If it remains unresolved (generic context), conservatively accept to
             // avoid false TS2464 positives. tsc uses full assignability which resolves
             // these through getBaseConstraintOfType; our pattern-matching approach needs
             // to be conservative with unresolvable generics.
-            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_)) => {
+            Some(
+                TypeData::TypeQuery(_)
+                | TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Conditional(_),
+            ) => {
                 let evaluated = self.interner.evaluate_type(type_id);
                 if evaluated != type_id {
                     self.is_valid_key_type_impl(evaluated, defer_unresolved)
                 } else {
                     // Unresolvable in generic context — conservatively accept
                     true
-                }
-            }
-            // Non-deferred Application/Lazy/Conditional: try evaluating before falling through.
-            // This handles cases like `Key<U> = keyof U` appearing as a type parameter constraint
-            // where the Application hasn't been resolved to KeyOf yet.
-            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_)) => {
-                let evaluated = self.interner.evaluate_type(type_id);
-                if evaluated != type_id {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
-                } else {
-                    self.is_string_like(type_id)
-                        || self.is_number_like(type_id)
-                        || self.is_symbol_like(type_id)
                 }
             }
 
