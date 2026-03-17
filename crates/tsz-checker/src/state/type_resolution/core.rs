@@ -110,8 +110,14 @@ impl<'a> CheckerState<'a> {
                     }
                     // Validate type arguments against constraints (TS2344)
                     // Skip validation inside type parameter declarations (constraints/defaults)
-                    if !self.is_inside_type_parameter_declaration(idx) {
-                        self.validate_type_reference_type_arguments(sym_id, args, idx);
+                    if !self.is_inside_type_parameter_declaration(idx)
+                        && self.validate_type_reference_type_arguments(sym_id, args, idx)
+                    {
+                        // Wrong number of type arguments (TS2314/TS2707).
+                        // Return ERROR to match tsc's errorType propagation and
+                        // prevent cascading diagnostics (e.g., false TS2322 on
+                        // return statements whose return type has bad arg count).
+                        return TypeId::ERROR;
                     }
                 }
                 let type_param_bindings = self.get_type_param_bindings();
@@ -448,8 +454,13 @@ impl<'a> CheckerState<'a> {
                     if !is_builtin_array
                         && !self.is_inside_type_parameter_declaration(idx)
                         && let Some(sym_id) = sym_id
+                        && self.validate_type_reference_type_arguments(sym_id, args, idx)
                     {
-                        self.validate_type_reference_type_arguments(sym_id, args, idx);
+                        // Wrong number of type arguments (TS2314/TS2707).
+                        // Return ERROR to match tsc's errorType propagation and
+                        // prevent cascading diagnostics (e.g., false TS2322 on
+                        // return statements whose return type has bad arg count).
+                        return TypeId::ERROR;
                     }
                 }
                 if !is_builtin_array && let Some(sym_id) = sym_id {
