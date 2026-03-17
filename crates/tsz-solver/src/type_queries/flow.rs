@@ -114,6 +114,53 @@ pub fn extract_predicate_signature(
     }
 }
 
+/// Returns `true` if a union of callable types is a valid type predicate.
+///
+/// A union of callables `F1 | F2 | ...` is a valid type predicate when:
+/// - At least one member has a type predicate, AND
+/// - All non-predicate members return exclusively `false` or `never`.
+///
+/// TypeScript spec: `(x: unknown) => x is string | (x: unknown) => false` IS valid,
+/// but `(x: unknown) => x is string | (x: unknown) => boolean` is NOT (unsound).
+pub fn is_valid_union_predicate(db: &dyn TypeDatabase, union_type_id: TypeId) -> bool {
+    let Some(TypeData::Union(list_id)) = db.lookup(union_type_id) else {
+        return false;
+    };
+    let members = db.type_list(list_id);
+    let mut has_predicate = false;
+
+    for &member in members.iter() {
+        if extract_predicate_signature(db, member).is_some() {
+            has_predicate = true;
+        } else {
+            // Non-predicate member: return type must be exclusively `false` or `never`
+            let return_ok = match get_return_type(db, member) {
+                Some(rt) => is_type_only_false_or_never(db, rt),
+                None => false,
+            };
+            if !return_ok {
+                return false;
+            }
+        }
+    }
+    has_predicate
+}
+
+/// Returns `true` if `type_id` is exclusively composed of `false` literals and/or `never`.
+fn is_type_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(crate::types::LiteralValue::Boolean(false))) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_type_only_false_or_never(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Classification for constructor instance type extraction.
 /// Used by instanceof narrowing to get the instance type from a constructor.
 #[derive(Debug, Clone)]

@@ -676,6 +676,18 @@ impl<'a> CheckerContext<'a> {
         self.yield_type_stack.last().copied().flatten()
     }
 
+    pub fn push_generator_next_type(&mut self, next_type: Option<TypeId>) {
+        self.generator_next_type_stack.push(next_type);
+    }
+
+    pub fn pop_generator_next_type(&mut self) {
+        self.generator_next_type_stack.pop();
+    }
+
+    pub fn current_generator_next_type(&self) -> Option<TypeId> {
+        self.generator_next_type_stack.last().copied().flatten()
+    }
+
     /// Enter an async context (increment async depth).
     pub const fn enter_async_context(&mut self) {
         self.async_depth += 1;
