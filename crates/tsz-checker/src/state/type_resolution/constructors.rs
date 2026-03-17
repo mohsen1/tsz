@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Walk up the AST to find enclosing function/constructor types whose
+        // Walk up the AST to find enclosing function/constructor/signature types whose
         // type parameter list declares this name with a constraint. This
         // handles function type params not in the binder's symbol table.
         if let Some(ref name) = arg_name {
@@ -883,6 +883,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 if let Some(pn) = self.ctx.arena.get(parent) {
+                    // Check function types and constructor types
                     let tp_list = if pn.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
                         || pn.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
                     {
@@ -890,6 +891,18 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get_function_type(pn)
                             .and_then(|ft| ft.type_parameters.as_ref())
+                    } else if pn.kind == tsz_parser::parser::syntax_kind_ext::CALL_SIGNATURE
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCT_SIGNATURE
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE
+                        || pn.kind == tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION
+                    {
+                        // Call signatures, construct signatures, and method
+                        // signatures/declarations in interfaces and classes can
+                        // also declare type parameters with constraints.
+                        self.ctx
+                            .arena
+                            .get_signature(pn)
+                            .and_then(|sig| sig.type_parameters.as_ref())
                     } else {
                         None
                     };
