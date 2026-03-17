@@ -1957,6 +1957,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         use crate::evaluation::evaluate::TypeEvaluator;
         let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
         evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
+        // Pass query_db to share the application evaluation cache across evaluations.
+        // This ensures that Application(Lazy(DefId), args) evaluated multiple times produces
+        // the same ObjectShapeId, preventing spurious structural subtype failures when two
+        // independent evaluations of the same generic type (e.g., AsyncGenerator<string, string, string[]>)
+        // produce different shape IDs.
+        if let Some(db) = self.query_db {
+            evaluator = evaluator.with_query_db(db);
+        }
         let result = evaluator.evaluate(type_id);
         self.eval_cache.insert(cache_key, result);
         result
