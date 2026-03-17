@@ -1881,9 +1881,9 @@ impl<'a> CheckerState<'a> {
                 declaring_type,
                 &property_name,
             )
-        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
-            || self.is_assignable_to(object_type_for_check, declaring_type)
-        {
+        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
+            true
+        } else if self.is_assignable_to(object_type_for_check, declaring_type) {
             true
         } else {
             // Fallback for partial/intermediate instance types: during class instance
@@ -1897,20 +1897,14 @@ impl<'a> CheckerState<'a> {
             // The single-symbol guard ensures this does not suppress legitimate
             // TS18014 shadowing errors when multiple private identifiers with the
             // same name exist in nested class scopes.
-            if symbols.len() == 1 {
-                let brand = self.get_private_brand(object_type_for_check);
-                if brand.is_none() {
-                    let result = self
-                        .ctx
+            symbols.len() == 1
+                && self.get_private_brand(object_type_for_check).is_none()
+                && matches!(
+                    self.ctx
                         .types
-                        .property_access_type(object_type_for_check, &property_name);
-                    matches!(result, PropertyAccessResult::Success { .. })
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
+                        .property_access_type(object_type_for_check, &property_name),
+                    PropertyAccessResult::Success { .. }
+                )
         };
 
         if !types_compatible {
