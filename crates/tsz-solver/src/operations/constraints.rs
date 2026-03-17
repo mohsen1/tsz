@@ -128,23 +128,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::KeyOf(s_inner)), Some(TypeData::KeyOf(t_inner))) => {
                 self.constrain_types(ctx, var_map, t_inner, s_inner, priority);
             }
-            // Reverse keyof inference: when target is `keyof T` and T is a placeholder,
-            // create Record<source, unknown> and add as contra-candidate for T.
-            // Using contra-candidates ensures intersection during resolution:
-            // "a" and "b" give { a: unknown } & { b: unknown } = { a: unknown, b: unknown },
-            // so keyof T = "a" | "b". This matches tsc's keyofInferenceIntersectsResults behavior.
-            (_, Some(TypeData::KeyOf(t_inner))) if var_map.contains_key(&t_inner) => {
-                if let Some(record_type) = self.create_record_from_keys(source) {
-                    if let Some(&var) = var_map.get(&t_inner) {
-                        // Route through contra-candidates so multiple Record types are
-                        // intersected (not unioned) during resolution.
-                        let old_contra = ctx.in_contra_mode;
-                        ctx.in_contra_mode = true;
-                        ctx.add_candidate(var, record_type, priority);
-                        ctx.in_contra_mode = old_contra;
-                    }
-                }
-            }
             (
                 Some(TypeData::TemplateLiteral(s_spans)),
                 Some(TypeData::TemplateLiteral(t_spans)),
@@ -197,29 +180,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
-                    // The conditional couldn't be evaluated (e.g., check type is an
-                    // unresolved inference placeholder). Match tsc's inferToConditionalType:
-                    // if the check type IS an inference placeholder, infer source directly
-                    // to that variable instead of recursing into both branches blindly.
-                    // Recursing into both true_type and false_type produces spurious
-                    // candidates (e.g., for `DeepPartial<T>` = `T extends object ? ... : T`,
-                    // the false branch `T` would get the raw source as a candidate, while
-                    // the true branch may also contribute — leading to union inference).
                     let mut visited = FxHashSet::default();
                     if self.type_contains_placeholder(target, var_map, &mut visited) {
-                        // Recurse into the true branch for structural matching.
                         self.constrain_types(ctx, var_map, source, cond.true_type, priority);
-                        // For the false branch: skip if it IS the bare check type AND
-                        // the check type is an inference placeholder. This prevents
-                        // spurious candidates from deferred conditionals like
-                        // `DeepPartial<T>` = `T extends object ? {mapped} : T` where
-                        // the false branch `T` would get the raw source as a candidate,
-                        // creating a union with candidates from other parameters.
-                        let false_is_bare_check = cond.false_type == cond.check_type
-                            && var_map.contains_key(&cond.check_type);
-                        if !false_is_bare_check {
-                            self.constrain_types(ctx, var_map, source, cond.false_type, priority);
-                        }
+                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
                     }
                 }
             }
@@ -371,10 +335,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // Collect fixed target members (those without placeholders) once per
                 // target union for this inference pass.
-                // Also resolve Lazy types so their underlying members can be matched.
-                // This mirrors tsc's inferFromMatchingTypes with isTypeOrBaseIdenticalTo:
-                // type aliases like `Primitive` (= number | string | boolean | Date)
-                // should be resolved so source members like `number` match them.
                 let fixed_targets = if let Some(cached) = self
                     .constraint_fixed_union_members
                     .borrow()
@@ -389,24 +349,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         member_visited.clear();
                         if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
                             computed.insert(member);
-                            // Resolve Lazy(DefId) types and add their expanded members.
-                            // When a target union contains `Primitive` (a type alias that
-                            // resolves to `number | string | boolean | Date`), the alias
-                            // stays as Lazy(DefId) in the union. Source members like `number`
-                            // won't match Lazy(DefId) by identity. By resolving and expanding,
-                            // we correctly filter source members that belong to the alias.
-                            let resolved = self.checker.evaluate_type(member);
-                            if resolved != member {
-                                computed.insert(resolved);
-                                if let Some(TypeData::Union(inner_members)) =
-                                    self.interner.lookup(resolved)
-                                {
-                                    let inner_list = self.interner.type_list(inner_members);
-                                    for &inner in inner_list.iter() {
-                                        computed.insert(inner);
-                                    }
-                                }
-                            }
                         }
                     }
                     self.constraint_fixed_union_members
@@ -416,15 +358,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
 
                 for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member.
-                    // Also check if literal types match via widening (e.g., literal `13`
-                    // widens to `number` which may be in the fixed set).
-                    if fixed_targets.contains(&member)
-                        || Self::source_literal_matches_fixed(self.interner, member, &fixed_targets)
-                    {
-                        continue;
+                    // Skip source members that directly match a fixed target member
+                    if !fixed_targets.contains(&member) {
+                        self.constrain_types(ctx, var_map, member, target, priority);
                     }
-                    self.constrain_types(ctx, var_map, member, target, priority);
                 }
             }
             (Some(TypeData::Union(s_members)), _) => {
@@ -555,30 +492,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && let Some(member) = placeholder_member
                 {
                     // Single placeholder-containing member in a union like
-                    // `T | undefined | null` — constrain source against it.
-                    // Defaults don't prevent inference; they're used as fallback
-                    // during resolution when no candidates are found.
-                    //
-                    // However, skip inference when the source already matches a fixed
-                    // (non-placeholder) member of the target union. This implements
-                    // tsc's inferFromMatchingTypes filtering: for `T | Primitive`,
-                    // a source type `number` matches `Primitive` and should NOT be
-                    // inferred as a candidate for T.
-                    let fixed_members: Vec<TypeId> = t_members
-                        .iter()
-                        .filter(|&&m| {
-                            member_visited.clear();
-                            !self.type_contains_placeholder(m, var_map, &mut member_visited)
-                        })
-                        .copied()
-                        .collect();
-                    let source_matches_fixed = if !fixed_members.is_empty() {
-                        let fixed_union = self.interner.union(fixed_members);
-                        self.checker.is_assignable_to(source, fixed_union)
+                    // `T | undefined | null` — constrain source against it,
+                    // BUT only if the source doesn't already match a fixed
+                    // (non-placeholder) member of the target union.
+                    // This implements tsc's inferFromMatchingTypes behavior:
+                    // when source `number` matches fixed target `number` in
+                    // `T | number | string | boolean | Date`, don't infer T = number.
+                    if self.source_matches_fixed_union_member(
+                        source,
+                        t_members.iter().copied(),
+                        var_map,
+                    ) {
+                        // Source is already "explained" by a fixed member — skip inference
                     } else {
-                        false
-                    };
-                    if !source_matches_fixed {
                         self.constrain_types(ctx, var_map, source, member, priority);
                     }
                 } else if placeholder_count > 1 {
@@ -666,7 +592,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems, priority);
             }
             // Array/Tuple → Object/ObjectWithIndex: constrain elements against index signatures
-            // and iterable element types (when target is the structural form of Iterable<T>).
             (
                 Some(TypeData::Array(s_elem)),
                 Some(TypeData::Object(t_shape_id) | TypeData::ObjectWithIndex(t_shape_id)),
@@ -678,14 +603,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     t_shape_id,
                     priority,
                 );
-                // When the target Object is the structural form of an iterable interface
-                // (e.g., Iterable<__infer_0> lowered to Object), also constrain the array
-                // element type against the iterator element type. This enables inference
-                // for `declare function f<T>(items: Iterable<T>, cb: (x: T) => void): void`
-                // when called with an array argument.
-                if let Some(iter_elem) = self.extract_iterable_element_type_from_object(target) {
-                    self.constrain_types(ctx, var_map, s_elem, iter_elem, priority);
-                }
             }
             (
                 Some(TypeData::Tuple(s_elems)),
@@ -1487,60 +1404,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Create an object type from key type(s) for reverse keyof inference.
-    ///
-    /// Maps each literal key to `unknown`:
-    /// - String literal `"a"` => `{ a: unknown }`
-    /// - Union `"a" | "b"` => `{ a: unknown, b: unknown }`
-    /// - Non-literal types => None (can't reverse-infer)
-    fn create_record_from_keys(&self, key_type: TypeId) -> Option<TypeId> {
-        use crate::types::LiteralValue;
-        match self.interner.lookup(key_type) {
-            Some(TypeData::Literal(LiteralValue::String(atom))) => {
-                let prop = PropertyInfo::new(atom, TypeId::UNKNOWN);
-                Some(self.interner.object(vec![prop]))
-            }
-            Some(TypeData::Literal(LiteralValue::Number(n))) => {
-                let name_str = if n.0.fract() == 0.0 && n.0.abs() < 1e15 {
-                    format!("{}", n.0 as i64)
-                } else {
-                    format!("{}", n.0)
-                };
-                let name_atom = self.interner.intern_string(&name_str);
-                let prop = PropertyInfo::new(name_atom, TypeId::UNKNOWN);
-                Some(self.interner.object(vec![prop]))
-            }
-            Some(TypeData::Union(members)) => {
-                let member_list = self.interner.type_list(members);
-                let members_vec: Vec<TypeId> = member_list.to_vec();
-                let mut props = Vec::new();
-                for &member in &members_vec {
-                    match self.interner.lookup(member) {
-                        Some(TypeData::Literal(LiteralValue::String(atom))) => {
-                            props.push(PropertyInfo::new(atom, TypeId::UNKNOWN));
-                        }
-                        Some(TypeData::Literal(LiteralValue::Number(n))) => {
-                            let name_str = if n.0.fract() == 0.0 && n.0.abs() < 1e15 {
-                                format!("{}", n.0 as i64)
-                            } else {
-                                format!("{}", n.0)
-                            };
-                            let name_atom = self.interner.intern_string(&name_str);
-                            props.push(PropertyInfo::new(name_atom, TypeId::UNKNOWN));
-                        }
-                        _ => return None,
-                    }
-                }
-                if props.is_empty() {
-                    None
-                } else {
-                    Some(self.interner.object(props))
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// IteratorResult-specific inference: infer from yield branches only.
     ///
     /// For unions like `{ done: false, value: T } | { done: true, value: undefined }`,
@@ -1620,25 +1483,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         true
-    }
-
-    /// Check if a source literal type matches any fixed target via widening.
-    ///
-    /// Literal types like `13` widen to `number`, `"hello"` to `string`, `true` to
-    /// `boolean`. If the widened primitive is in the fixed target set, the literal
-    /// should be considered matched (not inferred against type parameters).
-    fn source_literal_matches_fixed(
-        interner: &dyn crate::TypeDatabase,
-        source: TypeId,
-        fixed_targets: &FxHashSet<TypeId>,
-    ) -> bool {
-        match interner.lookup(source) {
-            Some(TypeData::Literal(ref value)) => {
-                let widened = value.primitive_type_id();
-                fixed_targets.contains(&widened)
-            }
-            _ => false,
-        }
     }
 
     /// Check if `candidate` matches `target_placeholder`, accounting for
@@ -2263,6 +2107,70 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Check if a source type matches any fixed (non-placeholder) member of a target union.
+    ///
+    /// This implements tsc's `inferFromMatchingTypes` + `isTypeOrBaseIdenticalTo`:
+    /// a source type matches a fixed member if:
+    /// 1. The source TypeId is identical to a fixed member, OR
+    /// 2. The source is a literal type whose base type (e.g., `13` → `number`) matches
+    ///    a fixed member.
+    ///
+    /// Additionally, fixed members that are type aliases (Lazy) are resolved and their
+    /// constituent union members are also checked.
+    fn source_matches_fixed_union_member(
+        &mut self,
+        source: TypeId,
+        target_members: impl Iterator<Item = TypeId>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> bool {
+        // Collect fixed (non-placeholder) members, expanding Lazy types and flattening unions
+        let mut fixed_set = FxHashSet::default();
+        let mut member_visited = FxHashSet::default();
+        for member in target_members {
+            member_visited.clear();
+            if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
+                self.collect_expanded_members(member, &mut fixed_set);
+            }
+        }
+
+        if fixed_set.is_empty() {
+            return false;
+        }
+
+        // Direct match
+        if fixed_set.contains(&source) {
+            return true;
+        }
+
+        // Literal-to-base match: `13` → `number`, `"hi"` → `string`, `true` → `boolean`
+        let widened = crate::operations::widening::widen_literal_type(self.interner, source);
+        widened != source && fixed_set.contains(&widened)
+    }
+
+    /// Collect all leaf types from a type, resolving Lazy (type alias) references
+    /// and flattening unions. Uses the checker's evaluate_type to resolve Lazy types
+    /// since the interner's evaluate_type cannot resolve DefIds without checker context.
+    fn collect_expanded_members(&mut self, ty: TypeId, out: &mut FxHashSet<TypeId>) {
+        out.insert(ty);
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members)) => {
+                let list = self.interner.type_list(members);
+                for &m in list.iter() {
+                    self.collect_expanded_members(m, out);
+                }
+            }
+            Some(TypeData::Lazy(_)) => {
+                // Use the checker's evaluate_type which has access to the full
+                // type environment and can resolve DefIds through the checker context.
+                let evaluated = self.checker.evaluate_type(ty);
+                if evaluated != ty {
+                    self.collect_expanded_members(evaluated, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Filter target union members by discriminant properties.
     ///
     /// When the source is an object with properties whose types are unit/literal
@@ -2341,82 +2249,123 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
         source_is_fresh: bool,
     ) {
-        // Build a lookup map from property name to source property index for O(1) matching.
-        // Property lists may not be sorted by Atom order (e.g., evaluated interface Objects
-        // have properties in declaration order), so a hash-based lookup is required.
-        let source_by_name: FxHashMap<tsz_common::interner::Atom, usize> = source_props
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (p.name, i))
-            .collect();
+        let mut source_idx = 0;
+        let mut target_idx = 0;
 
-        for target in target_props {
-            if let Some(&source_idx) = source_by_name.get(&target.name) {
-                let source = &source_props[source_idx];
-                let property_index = source_idx as u32;
-                if let Some(&var) = var_map.get(&target.type_id) {
-                    ctx.add_property_candidate_with_index(
-                        var,
-                        source.type_id,
-                        priority,
-                        property_index,
-                        Some(source.name),
-                        source_is_fresh,
-                    );
-                } else {
-                    self.constrain_types(ctx, var_map, source.type_id, target.type_id, priority);
-                }
-                // Check write type compatibility for mutable targets
-                if !target.readonly {
-                    if source.readonly {
-                        if let Some(&var) = var_map.get(&target.write_type) {
-                            ctx.add_property_candidate_with_index(
-                                var,
-                                TypeId::ERROR,
-                                priority,
-                                property_index,
-                                Some(source.name),
-                                source_is_fresh,
-                            );
-                        } else {
-                            self.constrain_types(
-                                ctx,
-                                var_map,
-                                TypeId::ERROR,
-                                target.write_type,
-                                priority,
-                            );
-                        }
-                    }
-                    if let Some(&var) = var_map.get(&target.write_type) {
+        while source_idx < source_props.len() && target_idx < target_props.len() {
+            let source = &source_props[source_idx];
+            let target = &target_props[target_idx];
+
+            match source.name.cmp(&target.name) {
+                std::cmp::Ordering::Equal => {
+                    let property_index = source_idx as u32;
+                    if let Some(&var) = var_map.get(&target.type_id) {
                         ctx.add_property_candidate_with_index(
                             var,
-                            source.write_type,
+                            source.type_id,
                             priority,
                             property_index,
                             Some(source.name),
                             source_is_fresh,
                         );
                     } else {
-                        let write_type_differs = source.write_type != source.type_id
-                            || target.write_type != target.type_id;
-                        if write_type_differs {
-                            self.constrain_types(
-                                ctx,
-                                var_map,
-                                target.write_type,
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            source.type_id,
+                            target.type_id,
+                            priority,
+                        );
+                    }
+                    // Check write type compatibility for mutable targets
+                    // A readonly source cannot satisfy a mutable target
+                    if !target.readonly {
+                        // If source is readonly but target is mutable, this is a mismatch
+                        // We constrain with ERROR to signal the failure
+                        if source.readonly {
+                            if let Some(&var) = var_map.get(&target.write_type) {
+                                ctx.add_property_candidate_with_index(
+                                    var,
+                                    TypeId::ERROR,
+                                    priority,
+                                    property_index,
+                                    Some(source.name),
+                                    source_is_fresh,
+                                );
+                            } else {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    TypeId::ERROR,
+                                    target.write_type,
+                                    priority,
+                                );
+                            }
+                        }
+                        if let Some(&var) = var_map.get(&target.write_type) {
+                            ctx.add_property_candidate_with_index(
+                                var,
                                 source.write_type,
                                 priority,
+                                property_index,
+                                Some(source.name),
+                                source_is_fresh,
                             );
+                        } else {
+                            // Skip the reverse-direction write_type constraint when
+                            // write_type == type_id for both sides (the common case).
+                            // The type_id constraint above already handles it —
+                            // constrain_types(target.write_type, source.write_type)
+                            // goes in the contravariant direction and creates spurious
+                            // candidates that widen literals incorrectly.
+                            let write_type_differs = source.write_type != source.type_id
+                                || target.write_type != target.type_id;
+                            if write_type_differs {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    target.write_type,
+                                    source.write_type,
+                                    priority,
+                                );
+                            }
                         }
                     }
+                    source_idx += 1;
+                    target_idx += 1;
                 }
-            } else {
-                // Target property is missing from source.
-                if target.optional && !var_map.contains_key(&target.type_id) {
-                    self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
+                std::cmp::Ordering::Less => {
+                    source_idx += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    // Target property is missing from source.
+                    // For optional properties, only constrain to `undefined` when the
+                    // target type is NOT a direct inference variable.  Constraining an
+                    // inference placeholder to `undefined` from a missing optional
+                    // property would incorrectly fix `T = undefined` during partial
+                    // Round 1 inference (where context-sensitive properties are
+                    // intentionally omitted from the source).
+                    if target.optional && !var_map.contains_key(&target.type_id) {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            TypeId::UNDEFINED,
+                            target.type_id,
+                            priority,
+                        );
+                    }
+                    target_idx += 1;
                 }
             }
+        }
+
+        // Handle remaining target properties that are missing from source
+        while target_idx < target_props.len() {
+            let target = &target_props[target_idx];
+            if target.optional && !var_map.contains_key(&target.type_id) {
+                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
+            }
+            target_idx += 1;
         }
     }
 
@@ -3071,57 +3020,5 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => false,
         }
-    }
-
-    /// Extract the iterable element type from an Object that has `[Symbol.iterator]`.
-    ///
-    /// Follows the chain: Object -> `[Symbol.iterator]` property -> function/callable
-    /// return type -> first Application type argument. For types like the structural
-    /// form of `Set<Employee>`, this extracts `Employee` from the iterator return type
-    /// `IterableIterator<Employee>` or `SetIterator<Employee>`.
-    ///
-    /// Returns `None` if the source is not an iterable Object with a recognizable pattern.
-    fn extract_iterable_element_type_from_object(&self, source: TypeId) -> Option<TypeId> {
-        let shape_id = match self.interner.lookup(source) {
-            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
-            _ => return None,
-        };
-        let shape = self.interner.object_shape(shape_id);
-
-        // Find the [Symbol.iterator] property
-        let iterator_prop = shape.properties.iter().find(|p| {
-            let name = self.interner.resolve_atom(p.name);
-            name == "__@iterator" || name == "[Symbol.iterator]"
-        })?;
-
-        // Collect return types from all call signatures of [Symbol.iterator].
-        // For merged interfaces (e.g., Set gets MapIterator, SetIterator, IteratorObject
-        // overloads), we try each signature to find one with an Application return type.
-        let return_types: Vec<TypeId> = match self.interner.lookup(iterator_prop.type_id) {
-            Some(TypeData::Function(func_id)) => {
-                let func = self.interner.function_shape(func_id);
-                vec![func.return_type]
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                let callable = self.interner.callable_shape(callable_id);
-                callable
-                    .call_signatures
-                    .iter()
-                    .map(|sig| sig.return_type)
-                    .collect()
-            }
-            _ => return None,
-        };
-
-        // Find the first return type that is an Application and extract its first arg.
-        for return_type in return_types {
-            if let Some(TypeData::Application(app_id)) = self.interner.lookup(return_type) {
-                let app = self.interner.type_application(app_id);
-                if let Some(&first_arg) = app.args.first() {
-                    return Some(first_arg);
-                }
-            }
-        }
-        None
     }
 }

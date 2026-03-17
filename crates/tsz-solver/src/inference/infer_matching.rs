@@ -159,6 +159,15 @@ impl<'a> InferenceContext<'a> {
                 self.infer_tuples(source_elems, target_elems, priority)?;
             }
 
+            // Tuple-to-Array: infer each tuple element against the array element type.
+            // Handles cases like `[1, "a", true]` being passed to `Array<T>`.
+            (Some(TypeData::Tuple(source_elems)), Some(TypeData::Array(target_elem))) => {
+                let elems = self.interner.tuple_list(source_elems);
+                for elem in elems.iter() {
+                    self.infer_from_types(elem.type_id, target_elem, priority)?;
+                }
+            }
+
             // Union types: try to infer against each member
             (Some(TypeData::Union(source_members)), Some(TypeData::Union(target_members))) => {
                 self.infer_unions(source_members, target_members, priority)?;
@@ -172,12 +181,47 @@ impl<'a> InferenceContext<'a> {
                 self.infer_intersections(source_members, target_members, priority)?;
             }
 
-            // Target is a union/intersection but source is not: decompose the target
+            // Target is a union but source is not a union: partition target into
+            // parameterized (contains inference vars) and fixed members.
+            // If the source matches a fixed member (by type identity or literal-to-base
+            // widening), skip inference against parameterized members — the source is
+            // already "explained" by the fixed part of the union.
+            // This matches tsc's inferFromMatchingTypes + isTypeOrBaseIdenticalTo.
+            // Example: source `13` (literal), target `T | number | string | boolean | Date`:
+            //   `13` widens to `number` which is in the fixed set, so don't infer T = 13.
+            (_, Some(TypeData::Union(target_members))) => {
+                let target_list = self.interner.type_list(target_members);
+                let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
+                    .iter()
+                    .partition(|&&t| self.target_contains_inference_param(t));
+
+                // Expand fixed members: resolve type aliases (Lazy) and flatten unions
+                let expanded_fixed = self.expand_fixed_members(&fixed);
+
+                // Check if source matches any fixed member. Also check the widened
+                // (literal→base) type: `13` should match `number`, `"hi"` should match
+                // `string`, `true` should match `boolean`.
+                let source_matches_fixed = expanded_fixed.contains(&source) || {
+                    let widened =
+                        crate::operations::widening::widen_literal_type(self.interner, source);
+                    widened != source && expanded_fixed.contains(&widened)
+                };
+
+                if !source_matches_fixed {
+                    // Source doesn't match any fixed member — infer against parameterized members
+                    for &target_member in &parameterized {
+                        let _ = self.infer_from_types(source, target_member, priority);
+                    }
+                }
+                // If source matches a fixed member, skip — no inference needed
+            }
+
+            // Target is an intersection but source is not: decompose the target
             // and infer against each member. This handles cases like:
             //   source: {store: string}  target: {dispatch: number} & OwnProps
             // We try each intersection member so that type parameters within the
             // target (like OwnProps, or union branches) can be inferred from the source.
-            (_, Some(TypeData::Union(target_members) | TypeData::Intersection(target_members))) => {
+            (_, Some(TypeData::Intersection(target_members))) => {
                 let target_list = self.interner.type_list(target_members);
                 for &target_member in target_list.iter() {
                     let _ = self.infer_from_types(source, target_member, priority);
@@ -794,17 +838,21 @@ impl<'a> InferenceContext<'a> {
             return Ok(());
         }
 
+        // Expand fixed members: resolve Lazy (type alias) references and flatten unions.
+        // Without this, a type alias like `Primitive = number | string | boolean | Date`
+        // stays as a single opaque Lazy(DefId) in the fixed set, and source members
+        // like `number` won't match it by TypeId equality, causing them to be
+        // incorrectly inferred against type parameters instead of being skipped.
+        let expanded_fixed = self.expand_fixed_members(&fixed);
+
         // Further split parameterized into naked type params vs structured
         let (_naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
             .iter()
             .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
 
         for &source_ty in source_list.iter() {
-            // Skip source members that match fixed targets (by identity or base type).
-            // This mirrors tsc's inferFromMatchingTypes with isTypeOrBaseIdenticalTo:
-            // literal types like `13` should match their widened primitive `number` in
-            // the fixed set, so they don't pollute type parameter inference candidates.
-            if fixed.contains(&source_ty) || self.source_matches_fixed(&source_ty, &fixed) {
+            // Skip source members that match fixed targets (including expanded aliases)
+            if expanded_fixed.contains(&source_ty) {
                 continue;
             }
 
@@ -835,25 +883,6 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
-    }
-
-    /// Check if a source type matches any fixed target by base type identity.
-    ///
-    /// This handles the case where the source is a literal type (e.g., `13`, `"hello"`,
-    /// `true`) whose widened primitive type (`number`, `string`, `boolean`) appears in
-    /// the fixed target set. Without this check, literal types would be inferred against
-    /// type parameters instead of being matched to their corresponding primitive in the
-    /// fixed union branch, causing incorrect inference results.
-    ///
-    /// Mirrors tsc's `isTypeOrBaseIdenticalTo` in `inferFromMatchingTypes`.
-    fn source_matches_fixed(&self, source: &TypeId, fixed: &[TypeId]) -> bool {
-        match self.interner.lookup(*source) {
-            Some(TypeData::Literal(ref value)) => {
-                let widened = value.primitive_type_id();
-                fixed.contains(&widened)
-            }
-            _ => false,
-        }
     }
 
     /// Check if two types share the same outer structure (same kind / same generic base).
@@ -926,6 +955,37 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
+    /// Expand fixed (non-parameterized) union members by resolving type aliases.
+    ///
+    /// When a target union contains a type alias like `Primitive` (= `number | string | boolean | Date`),
+    /// the alias is stored as a single `Lazy(DefId)`. Source members like `number` won't match
+    /// it by TypeId equality. This method resolves such aliases and flattens any resulting unions
+    /// so that individual constituent types can be matched against source members.
+    fn expand_fixed_members(&self, fixed: &[TypeId]) -> rustc_hash::FxHashSet<TypeId> {
+        let mut expanded = rustc_hash::FxHashSet::default();
+        for &ty in fixed {
+            expanded.insert(ty);
+            // Resolve Lazy types (type aliases) and flatten unions
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(ty) {
+                if let Some(resolved) = self.resolve_lazy_for_inference(def_id, ty) {
+                    self.collect_union_members(resolved, &mut expanded);
+                }
+            }
+        }
+        expanded
+    }
+
+    /// Recursively collect all leaf members of a (possibly nested) union type.
+    fn collect_union_members(&self, ty: TypeId, out: &mut rustc_hash::FxHashSet<TypeId>) {
+        out.insert(ty);
+        if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
+            let list = self.interner.type_list(members);
+            for &m in list.iter() {
+                self.collect_union_members(m, out);
+            }
+        }
+    }
+
     /// Infer from intersection types
     fn infer_intersections(
         &mut self,
@@ -957,59 +1017,17 @@ impl<'a> InferenceContext<'a> {
         let source_info = self.interner.type_application(source_app);
         let target_info = self.interner.type_application(target_app);
 
-        // Check if bases match, either by identity or DefId equivalence
-        let bases_match = source_info.base == target_info.base
-            || self.check_application_bases_equivalent(source_info.base, target_info.base);
-
-        if bases_match && source_info.args.len() == target_info.args.len() {
-            // Recurse into the type arguments
-            for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
-                self.infer_from_types(*source_arg, *target_arg, priority)?;
-            }
+        // The base types must match for inference to work
+        if source_info.base != target_info.base {
             return Ok(());
         }
 
-        // When base types differ (e.g., Set<Employee> vs Iterable<T>), expand the
-        // source application to its structural form and try to infer from the expanded
-        // type against the target. This handles inference through the type hierarchy:
-        // Set<Employee> expands to include Iterable<Employee> members, which can then
-        // match against Iterable<T> to infer T = Employee.
-        let expanded_source = self.try_expand_application(source_app);
-        tracing::debug!(
-            source_base = ?self.interner.lookup(source_info.base),
-            target_base = ?self.interner.lookup(target_info.base),
-            expanded = expanded_source.is_some(),
-            expanded_kind = ?expanded_source.and_then(|e| self.interner.lookup(e)),
-            "infer_applications: bases differ"
-        );
-        if let Some(expanded_source) = expanded_source {
-            let target_app_info = self.interner.type_application(target_app);
-            let target_type = self
-                .interner
-                .application(target_app_info.base, target_app_info.args.clone());
-            return self.infer_from_types(expanded_source, target_type, priority);
+        // Recurse into the type arguments
+        for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
+            self.infer_from_types(*source_arg, *target_arg, priority)?;
         }
 
         Ok(())
-    }
-
-    /// Check if two application base types refer to the same definition.
-    fn check_application_bases_equivalent(&self, source_base: TypeId, target_base: TypeId) -> bool {
-        let resolver = match self.resolver {
-            Some(r) => r,
-            None => return false,
-        };
-
-        let source_def = match self.interner.lookup(source_base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => return false,
-        };
-        let target_def = match self.interner.lookup(target_base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => return false,
-        };
-
-        resolver.defs_are_equivalent(source_def, target_def)
     }
 
     // =========================================================================
