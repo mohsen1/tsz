@@ -1686,6 +1686,19 @@ impl<'a> CheckerState<'a> {
                         "Private identifiers are not allowed outside class bodies.",
                         diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
                     );
+                } else if self.is_js_file() && !self.ctx.should_resolve_jsdoc() {
+                    // In unchecked JS files (allowJs without checkJs/@ts-check), tsc emits
+                    // TS1111 for undeclared private names inside a class (via
+                    // checkGrammarPrivateIdentifierExpression). TS2339 would be filtered
+                    // out by the JS error filter, so we emit the grammar error instead.
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        name_idx,
+                        &format!(
+                            "Private field '{property_name}' must be declared in an enclosing class.",
+                        ),
+                        diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
+                    );
                 } else {
                     // For private identifiers on any-like types inside a class, tsc emits
                     // TS2339 directly (unlike regular properties which are suppressed on `any`).
@@ -1766,9 +1779,22 @@ impl<'a> CheckerState<'a> {
                         original_object_type,
                         access.expression,
                     );
+                } else if saw_class_scope && self.is_js_file() && !self.ctx.should_resolve_jsdoc() {
+                    // In unchecked JS files (allowJs without checkJs/@ts-check), tsc emits
+                    // TS1111 for undeclared private names inside a class (via
+                    // checkGrammarPrivateIdentifierExpression). TS2339 would be filtered
+                    // out by the JS error filter, so we emit the grammar error instead.
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        name_idx,
+                        &format!(
+                            "Private field '{property_name}' must be declared in an enclosing class.",
+                        ),
+                        diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
+                    );
                 } else if saw_class_scope {
-                    // tsc emits TS2339 (property does not exist) when accessing an
-                    // undeclared private name inside a class, not TS1111.
+                    // In TS files, tsc emits TS2339 (property does not exist) when accessing
+                    // an undeclared private name inside a class.
                     self.error_property_not_exist_at(
                         &property_name,
                         original_object_type,
