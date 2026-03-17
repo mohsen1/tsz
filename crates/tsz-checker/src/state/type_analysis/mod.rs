@@ -8,5 +8,6 @@ pub(crate) mod computed_helpers;
 mod computed_helpers_binding;
 mod computed_loops;
 mod core;
+mod core_type_query;
 pub(crate) mod cross_file;
 mod symbol_type_helpers;

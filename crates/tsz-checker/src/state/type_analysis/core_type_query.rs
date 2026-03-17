@@ -397,5 +397,4 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
 }
