@@ -276,6 +276,14 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // VariableStatement uses VariableData which has declarations directly
         if let Some(var_data) = self.arena.get_variable(node) {
+            // Check if any declaration initializer is an object literal that needs
+            // ES5 computed property lowering (methods, accessors, spread, or computed
+            // property names). If so, fall back to ASTRef for the entire statement
+            // so the main printer's ES5 object literal transform handles hoisting.
+            if self.has_initializer_needing_es5_object_lowering(&var_data.declarations.nodes) {
+                return IRNode::ASTRef(idx);
+            }
+
             // Collect all declaration indices, handling the case where
             // VariableData.declarations may contain VARIABLE_DECLARATION_LIST nodes
             let mut decl_indices = Vec::new();
@@ -1021,6 +1029,60 @@ impl<'a> AstToIr<'a> {
         } else {
             None
         }
+    }
+
+    /// Check if any variable declaration's initializer is an object literal
+    /// that needs ES5 computed property lowering (has methods, accessors,
+    /// spread, or computed property names that `convert_object_property`
+    /// cannot handle).
+    fn has_initializer_needing_es5_object_lowering(&self, decl_nodes: &[NodeIndex]) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for &decl_idx in decl_nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            // Handle VARIABLE_DECLARATION_LIST intermediate nodes
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                if let Some(list_data) = self.arena.get_variable(decl_node) {
+                    if self
+                        .has_initializer_needing_es5_object_lowering(&list_data.declarations.nodes)
+                    {
+                        return true;
+                    }
+                }
+                continue;
+            }
+            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            let Some(init_node) = self.arena.get(var_decl.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(obj) = self.arena.get_literal_expr(init_node) else {
+                continue;
+            };
+            for &elem_idx in &obj.elements.nodes {
+                let Some(elem) = self.arena.get(elem_idx) else {
+                    continue;
+                };
+                // Method declarations, get/set accessors, and spread assignments
+                // are not handled by convert_object_property and would be silently
+                // dropped. Fall back to ASTRef for the entire statement.
+                if elem.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || elem.kind == syntax_kind_ext::GET_ACCESSOR
+                    || elem.kind == syntax_kind_ext::SET_ACCESSOR
+                    || elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                    || elem.kind == syntax_kind_ext::SPREAD_ELEMENT
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn get_property_key(&self, idx: NodeIndex) -> Option<IRPropertyKey> {
