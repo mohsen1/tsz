@@ -198,6 +198,16 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
     pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
+    /// Type parameter equivalences established during generic function subtype checking.
+    ///
+    /// When alpha-renaming in `check_function_subtype` maps target type params to source
+    /// type params (e.g., B→D), the substitution may fail to penetrate pre-evaluated Object
+    /// types due to name-based shadowing from inner functions with same-named type params.
+    /// These equivalences allow structural comparison to treat the mapped type params as
+    /// identical, fixing false TS2416 for generic methods with structurally identical signatures
+    /// but different type param names (e.g., `<D>(f: (t: C) => D) => IList<D>` vs
+    /// `<B>(f: (t: C) => B) => IList<B>`).
+    pub(crate) type_param_equivalences: Vec<(TypeId, TypeId)>,
 }
 
 impl<'a> SubtypeChecker<'a, NoopResolver> {
@@ -234,6 +244,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
             tracer: None,
+            type_param_equivalences: Vec::new(),
         }
     }
 }
@@ -271,6 +282,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
             tracer: None,
+            type_param_equivalences: Vec::new(),
         }
     }
 
