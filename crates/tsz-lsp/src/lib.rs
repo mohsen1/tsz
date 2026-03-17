@@ -85,6 +85,7 @@ pub use navigation::{definition, implementation, references, type_definition};
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
+    TsConfigSettings,
 };
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
 pub use signature_help::{

@@ -27,5 +27,8 @@ web-time = { workspace = true }
 globset = { workspace = true }
 regex = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+walkdir = { workspace = true }
+
 [lints]
 workspace = true
