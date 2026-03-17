@@ -433,7 +433,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         true
                     } else {
                         return_type != TypeId::ERROR
-                            && !self.return_type_annotation_looks_like_promise(func.type_annotation)
+                            && !self.return_type_annotation_is_exactly_promise(func.type_annotation)
                     };
 
                 if should_emit_ts2705 {
