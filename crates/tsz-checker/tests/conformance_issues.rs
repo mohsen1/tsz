@@ -4463,11 +4463,10 @@ var r = c.foo('', '');      // Should NOT error (c is still C<string>)
         has_error(&diagnostics, 2322),
         "Should emit TS2322 for assignment incompatibility"
     );
-    // TODO: Currently emits false TS2345 because flow narrowing from the invalid
-    // assignment narrows c's type to E<string>. When fixed, flip to !has_error.
+    // Flow narrowing no longer narrows c's type through the invalid assignment.
     assert!(
-        has_error(&diagnostics, 2345),
-        "If TS2345 is gone, flow narrowing may be fixed — update this test!\nActual errors: {diagnostics:#?}"
+        !has_error(&diagnostics, 2345),
+        "Should NOT emit false TS2345 after invalid assignment\nActual errors: {diagnostics:#?}"
     );
 }
 

@@ -188,6 +188,7 @@ impl<'a> CheckerState<'a> {
     /// provide a contextual type for callback parameters (-> TS7006). This is distinct from
     /// properties that only exist on the object member (e.g. `validate` on `string | FullRule`
     /// where `String` has no `validate`), which should still be contextually typed.
+    #[allow(dead_code)] // Reserved for contextual typing improvements
     pub(crate) fn primitive_union_member_has_property(
         &mut self,
         type_id: TypeId,
