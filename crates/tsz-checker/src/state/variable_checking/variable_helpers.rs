@@ -240,21 +240,28 @@ impl<'a> CheckerState<'a> {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
         }
 
-        if init_node.kind != SyntaxKind::Identifier as u16 {
+        // Handle bare enum identifier: `var x = E`
+        if init_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(init_sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                && let Some(enum_obj) = self.enum_object_type(init_sym_id)
+            {
+                let def_id = self.ctx.get_or_create_def_id(init_sym_id);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(enum_obj, def_id);
+                return enum_obj;
+            }
             return fallback_type;
         }
 
-        if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(init_sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
-            && let Some(enum_obj) = self.enum_object_type(init_sym_id)
-        {
-            let def_id = self.ctx.get_or_create_def_id(init_sym_id);
-            self.ctx
-                .definition_store
-                .register_type_to_def(enum_obj, def_id);
-            return enum_obj;
+        // Handle property access to enum in namespace: `var x = M.Color`
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(enum_obj) = self.resolve_property_access_enum_object(init_idx) {
+                return enum_obj;
+            }
         }
 
         fallback_type
@@ -286,24 +293,118 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
+        // Handle simple identifier: `typeof E`
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                && let Some(enum_obj) = self.enum_object_type(sym_id)
+            {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(enum_obj, def_id);
+                return enum_obj;
+            }
             return fallback_type;
         }
 
-        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
-            && let Some(enum_obj) = self.enum_object_type(sym_id)
-        {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ctx
-                .definition_store
-                .register_type_to_def(enum_obj, def_id);
-            return enum_obj;
+        // Handle qualified name: `typeof M.Color`
+        if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            if let Some(enum_obj) = self.resolve_qualified_name_enum_object(expr_idx) {
+                return enum_obj;
+            }
         }
 
         fallback_type
+    }
+
+    /// For TS2403: resolve a property access expression (like `m3.Color` or `M3.Color`)
+    /// to an enum object type, if the property refers to an enum in a namespace.
+    fn resolve_property_access_enum_object(&mut self, access_idx: NodeIndex) -> Option<TypeId> {
+        let access_node = self.ctx.arena.get(access_idx)?;
+        let access_data = self.ctx.arena.get_access_expr(access_node)?;
+
+        // Get the property name
+        let name_node = self.ctx.arena.get(access_data.name_or_argument)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let name_ident = self.ctx.arena.get_identifier(name_node)?;
+        let prop_name = name_ident.escaped_text.as_str();
+
+        // Resolve the expression (left side) to a symbol
+        let expr_sym_id = self.resolve_identifier_symbol(access_data.expression)?;
+        let expr_symbol = self.ctx.binder.get_symbol(expr_sym_id)?;
+
+        // Look for the property name in the symbol's exports (for namespaces/modules)
+        let enum_sym_id = expr_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(prop_name))?;
+
+        // Check if it's an enum (not an enum member)
+        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
+        if (enum_symbol.flags & tsz_binder::symbol_flags::ENUM) == 0
+            || (enum_symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        {
+            return None;
+        }
+
+        let enum_obj = self.enum_object_type(enum_sym_id)?;
+        let def_id = self.ctx.get_or_create_def_id(enum_sym_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(enum_obj, def_id);
+        Some(enum_obj)
+    }
+
+    /// For TS2403: resolve a qualified name (like `M3.Color` in `typeof M3.Color`)
+    /// to an enum object type, if the qualified name refers to an enum in a namespace.
+    fn resolve_qualified_name_enum_object(&mut self, qname_idx: NodeIndex) -> Option<TypeId> {
+        let qname_node = self.ctx.arena.get(qname_idx)?;
+        let qname_data = self.ctx.arena.get_qualified_name(qname_node)?;
+
+        // Get the right side (property name)
+        let right_node = self.ctx.arena.get(qname_data.right)?;
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let right_ident = self.ctx.arena.get_identifier(right_node)?;
+        let prop_name = right_ident.escaped_text.as_str();
+
+        // Resolve the left side to a symbol
+        let left_node = self.ctx.arena.get(qname_data.left)?;
+        let left_sym_id = if left_node.kind == SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol(qname_data.left)?
+        } else {
+            // Nested qualified names not handled for now
+            return None;
+        };
+
+        let left_symbol = self.ctx.binder.get_symbol(left_sym_id)?;
+
+        // Look for the property name in the symbol's exports
+        let enum_sym_id = left_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(prop_name))?;
+
+        // Check if it's an enum (not an enum member)
+        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
+        if (enum_symbol.flags & tsz_binder::symbol_flags::ENUM) == 0
+            || (enum_symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        {
+            return None;
+        }
+
+        let enum_obj = self.enum_object_type(enum_sym_id)?;
+        let def_id = self.ctx.get_or_create_def_id(enum_sym_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(enum_obj, def_id);
+        Some(enum_obj)
     }
 
     pub(crate) fn is_bare_var_declaration_node(&self, decl_idx: NodeIndex) -> bool {
