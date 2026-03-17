@@ -1243,6 +1243,8 @@ impl<'a> CheckerState<'a> {
                             // `namespace C { export var x }` and `namespace C { export
                             // function x() {} }` should resolve to the same effective scope
                             // and get TS2300, not TS2451.
+                            // Only keep declarations at Function/SourceFile level as-is to
+                            // preserve correct TS2451 for `let x; var x;` at the same level.
                             if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                                 && let Some(sid) = scope
                             {

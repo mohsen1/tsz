@@ -1001,10 +1001,10 @@ impl<'a> BinaryOpEvaluator<'a> {
                     .iter()
                     .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
             }
-            // TypeQuery, Application, Lazy, Conditional — try to evaluate to a
-            // concrete type. If evaluation succeeds, check the result recursively.
-            // If it remains unresolved (generic context), conservatively accept to
-            // avoid false TS2464 positives.
+            // TypeQuery (typeof expr), deferred types (generic applications, lazy refs,
+            // conditionals) — try to evaluate to the underlying type. If they resolve
+            // to a concrete type, check it recursively. If they remain unresolved
+            // (generic context), accept conservatively to avoid false TS2464 positives.
             Some(
                 TypeData::TypeQuery(_)
                 | TypeData::Application(_)
@@ -1019,7 +1019,6 @@ impl<'a> BinaryOpEvaluator<'a> {
                     true
                 }
             }
-
             // For indexed access, try resolving first. If it remains unresolved in generic
             // context, only defer when the index constraint is compatible with the object's
             // key space; otherwise it can become `... | undefined` and is not key-like.
