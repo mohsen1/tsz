@@ -703,12 +703,21 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
+    ///
+    /// When a type alias body contains `typeof expr` inside a narrowed control
+    /// flow scope (e.g. `if (typeof c === 'string') { type C = typeof c; }`),
+    /// the lowering path creates `TypeQuery(SymbolRef)` which resolves to the
+    /// declared type. This method re-resolves each typeof using the checker's
+    /// flow-sensitive `get_type_from_type_query`, then populates the node_types
+    /// cache so subsequent `TypeNodeChecker` resolutions pick up the narrowed
+    /// type.
     pub(super) fn resolve_type_queries_with_flow(
         &mut self,
         alias_type: TypeId,
         type_node: NodeIndex,
     ) -> TypeId {
-        if tsz_solver::collect_type_queries(self.ctx.types, alias_type).is_empty() {
+        let tq_refs = tsz_solver::collect_type_queries(self.ctx.types, alias_type);
+        if tq_refs.is_empty() {
             return alias_type;
         }
 
@@ -727,6 +736,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(tq_idx.0, narrowed);
                 any_changed = true;
             }
+            // Also store at the expr_name key (the identifier inside the type
+            // query node). TypeNodeChecker::get_type_from_type_query looks up
+            // type_query.expr_name.0, not the TYPE_QUERY node index itself.
+            if let Some(node) = self.ctx.arena.get(*tq_idx)
+                && let Some(tq_data) = self.ctx.arena.get_type_query(node)
+            {
+                self.ctx.node_types.insert(tq_data.expr_name.0, narrowed);
+            }
         }
 
         if !any_changed {
@@ -734,7 +751,8 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.node_types.remove(&type_node.0);
-        self.get_type_from_type_node(type_node)
+        let result = self.get_type_from_type_node(type_node);
+        result
     }
 
     /// Recursively collect `TYPE_QUERY` node indices from a type node subtree.

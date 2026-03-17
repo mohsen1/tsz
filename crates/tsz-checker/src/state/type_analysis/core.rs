@@ -1742,12 +1742,4 @@ impl<'a> CheckerState<'a> {
 
         result
     }
-
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
-    pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::types_domain::type_node::TypeNodeChecker;
-        TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
-    }
 }

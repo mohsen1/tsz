@@ -15838,3 +15838,25 @@ a();
          Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_typeof_in_type_alias_with_flow_narrowing() {
+    // From controlFlowForIndexSignatures.ts
+    // typeof c in a type alias inside if (typeof c === 'string') should resolve to 'string'
+    let mut options = CheckerOptions::default();
+    options.strict_null_checks = true;
+    let source = r#"
+declare let c: string | number;
+if (typeof c === 'string') {
+    type C = { [key: string]: typeof c };
+    const boo1: C = { bar: 'works' };
+    const boo2: C = { bar: 1 }; // should error TS2322
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for `bar: 1` not assignable to string (via typeof c narrowed to string). \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
