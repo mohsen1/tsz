@@ -1943,7 +1943,8 @@ impl<'a> CheckerState<'a> {
             // as the object's class. In that case, the incompatibility is a
             // static/instance mismatch within the same class (e.g., `x.#foo` where
             // `#foo` is static), which should be TS2339 "does not exist".
-            let declaring_class_idx = self.private_member_declaring_type(symbols[0])
+            let declaring_class_idx = self
+                .private_member_declaring_type(symbols[0])
                 .and_then(|dt| self.get_class_decl_for_display_type(dt))
                 .map(|(ci, _)| ci);
             let object_class_info = self
@@ -1957,7 +1958,8 @@ impl<'a> CheckerState<'a> {
                 None
             } else {
                 object_class_info.and_then(|(class_idx, _)| {
-                    let is_static = self.class_directly_declares_private_member(class_idx, &property_name)?;
+                    let is_static =
+                        self.class_directly_declares_private_member(class_idx, &property_name)?;
                     // The declared member's static-ness must match the found symbol's.
                     if is_static == member_is_static {
                         Some(is_static)
