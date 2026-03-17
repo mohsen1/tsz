@@ -1737,10 +1737,95 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
+    /// Resolve a `typeof X` type query with flow-sensitive narrowing.
+    ///
+    /// For simple identifiers (not qualified names, not type-only imports),
+    /// this resolves the value-space type at the query site through
+    /// `get_type_of_node`, which applies control-flow narrowing.  This is
+    /// critical for cases like:
+    ///
+    /// ```ts
+    /// declare let c: string | number;
+    /// if (typeof c === 'string') {
+    ///     type C = typeof c;  // should be `string`, not `string | number`
+    /// }
+    /// ```
+    ///
+    /// Falls back to the TypeNodeChecker for complex cases (qualified names,
+    /// type-only imports, circular references, etc.).
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+        let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+            return TypeId::ERROR;
+        };
+
+        // For simple identifiers, try flow-sensitive resolution first.
+        // This ensures `typeof x` inside a narrowing block gets the
+        // narrowed type, not the declared type.
+        let has_type_args = type_query
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty());
+
+        if !has_type_args {
+            if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+                let is_simple_identifier =
+                    expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16;
+
+                if is_simple_identifier {
+                    // Check if it's a type-only import — skip flow resolution
+                    let is_type_only_import = self
+                        .resolve_identifier_symbol(type_query.expr_name)
+                        .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
+
+                    // typeof in function/method signature parameter positions uses the
+                    // declared type, not the narrowed type. E.g.:
+                    //   function f(a: number | string) {
+                    //     if (typeof a === "number") {
+                    //       const fn: { (arg: typeof a): boolean } = ...;
+                    //       // typeof a here = number | string (declared), not number
+                    //     }
+                    //   }
+                    let use_flow =
+                        !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
+
+                    if !is_type_only_import && use_flow {
+                        // Resolve with flow narrowing enabled
+                        let expr_type = self.get_type_of_node(type_query.expr_name);
+                        let is_lazy =
+                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
+                                .is_some();
+
+                        if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
+                            // typeof on an enum should give the namespace object type
+                            if tsz_solver::is_enum_type(self.ctx.types, expr_type) {
+                                if let Some(sym_id) =
+                                    self.resolve_value_symbol_for_lowering(type_query.expr_name)
+                                {
+                                    if let Some(&ns_type) = self
+                                        .ctx
+                                        .enum_namespace_types
+                                        .get(&tsz_binder::SymbolId(sym_id))
+                                    {
+                                        return ns_type;
+                                    }
+                                    return self.merge_namespace_exports_into_object(
+                                        tsz_binder::SymbolId(sym_id),
+                                        expr_type,
+                                    );
+                                }
+                            }
+                            return expr_type;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to TypeNodeChecker for complex cases (qualified names,
+        // type-only imports, circular references, type arguments, etc.)
         use crate::types_domain::type_node::TypeNodeChecker;
         TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
     }
