@@ -28,7 +28,6 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
         .try_evaluate_mapped_constraint(constraint)
         .expect("expected concrete keys");
 
-
     assert_eq!(atom_names(&interner, &keys), vec!["a", "b"]);
 }
 
