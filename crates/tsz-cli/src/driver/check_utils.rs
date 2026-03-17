@@ -998,6 +998,19 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262) && !is_parser_grammar_code(d.code));
 
+    // In tsc, TS1359 for 'await' as a binding identifier in async/static-block
+    // contexts is emitted by the checker via grammarErrorOnNode, NOT by the parser.
+    // grammarErrorOnNode checks hasParseDiagnostics(sourceFile) and suppresses the
+    // error when any parse diagnostic exists. In tsz, this check lives in the parser
+    // (check_illegal_binding_identifier). We replicate tsc's suppression by filtering
+    // out TS1359-for-await when ANY other non-grammar parse diagnostic is present.
+    let has_non_await1359_parse_error = parse_diagnostics.iter().any(|d| {
+        // Exclude the special codes and grammar codes from the trigger check
+        !matches!(d.code, 1009 | 1185 | 1214 | 1262)
+            && !is_parser_grammar_code(d.code)
+            // Also exclude TS1359 for 'await' — those are grammar checks in tsc
+            && !(d.code == 1359 && d.message.contains("'await'"))
+    });
     parse_diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -1008,6 +1021,14 @@ pub(super) fn filtered_parse_diagnostics(
             // Suppress parser-emitted grammar codes that tsc would emit via
             // grammarErrorOnNode (checker-side, suppressed by hasParseDiagnostics).
             if has_non_grammar_parse_error && is_parser_grammar_code(diagnostic.code) {
+                return false;
+            }
+            // Suppress TS1359 for 'await' when other parse diagnostics exist.
+            // In tsc this is a checker grammar check suppressed by hasParseDiagnostics.
+            if diagnostic.code == 1359
+                && diagnostic.message.contains("'await'")
+                && has_non_await1359_parse_error
+            {
                 return false;
             }
             true
@@ -1701,6 +1722,58 @@ mod tests {
         assert!(
             !helpers.contains(&"__extends"),
             "ES2015 target should not need __extends, got: {helpers:?}"
+        );
+    }
+
+    #[test]
+    fn filtered_parse_diagnostics_suppresses_await_ts1359_when_ts1109_present() {
+        use tsz::parser::ParseDiagnostic;
+
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 100,
+                length: 5,
+                message: "Identifier expected. 'await' is a reserved word that cannot be used here.".to_string(),
+                code: 1359,
+            },
+            ParseDiagnostic {
+                start: 200,
+                length: 1,
+                message: "Expression expected.".to_string(),
+                code: 1109,
+            },
+        ];
+
+        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&1359),
+            "TS1359 for 'await' should be suppressed when TS1109 is present, got: {codes:?}"
+        );
+        assert!(
+            codes.contains(&1109),
+            "TS1109 should still be present, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
+        use tsz::parser::ParseDiagnostic;
+
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 100,
+                length: 5,
+                message: "Identifier expected. 'await' is a reserved word that cannot be used here.".to_string(),
+                code: 1359,
+            },
+        ];
+
+        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1359),
+            "TS1359 for 'await' should be kept when it's the only diagnostic, got: {codes:?}"
         );
     }
 }
