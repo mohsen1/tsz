@@ -20,7 +20,7 @@ use crate::parser::{
 };
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::Atom;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, token_is_keyword};
 
 impl ParserState {
     fn look_ahead_is_invalid_shebang(&mut self) -> bool {
@@ -1497,7 +1497,28 @@ impl ParserState {
                 // subsequent statement-parsing loop can emit them.
                 // Example: `var a = q~;` → tsc emits `var a = q;\n~;`
                 if !self.is_statement_start() {
+                    // When a `.` separates what looks like two declarations
+                    // (e.g., `const x: "".typeof(...)`), tsc treats the `.` as
+                    // a missing `,` and continues the declaration list. When the
+                    // next token is a keyword (e.g., `typeof`), tsc's list-parse
+                    // error recovery emits TS1389 "not allowed as a variable
+                    // declaration name". Emit the same diagnostic here, bypassing
+                    // `error_reserved_word_in_variable_declaration` which would be
+                    // suppressed by `should_report_error` proximity heuristic.
+                    let was_dot = self.is_token(SyntaxKind::DotToken);
                     self.next_token();
+                    if was_dot && token_is_keyword(self.token()) {
+                        use tsz_common::diagnostics::diagnostic_messages;
+                        let word = self.current_keyword_text();
+                        let msg =
+                            diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+                                .replace("{0}", word);
+                        self.parse_error_at_current_token(
+                            &msg,
+                            diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
+                        );
+                        self.next_token();
+                    }
                 }
                 break;
             }
