@@ -1190,14 +1190,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // `(p: K) => void` instantiates to `(p: typeof A) => void` rather than
             // `(p: "__unique_<id>") => void` for symbol-keyed mapped types.
             let key_name_str = self.interner.resolve_atom(key_name);
-            let key_literal =
-                if let Some(sym_str) = key_name_str.strip_prefix("__unique_")
-                    && let Ok(id) = sym_str.parse::<u32>()
-                {
-                    self.interner.unique_symbol(SymbolRef(id))
-                } else {
-                    self.interner.literal_string_atom(key_name)
-                };
+            let key_literal = if let Some(sym_str) = key_name_str.strip_prefix("__unique_")
+                && let Ok(id) = sym_str.parse::<u32>()
+            {
+                self.interner.unique_symbol(SymbolRef(id))
+            } else {
+                self.interner.literal_string_atom(key_name)
+            };
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
@@ -1273,9 +1272,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Single unique symbol constraint (e.g., `[K in typeof A]: ...`)
         if let Some(TypeData::UniqueSymbol(sym)) = self.interner.lookup(constraint) {
-            let atom = self
-                .interner
-                .intern_string(&format!("__unique_{}", sym.0));
+            let atom = self.interner.intern_string(&format!("__unique_{}", sym.0));
             return Some(vec![atom]);
         }
 
@@ -1287,9 +1284,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     keys.push(name);
                 } else if let Some(TypeData::UniqueSymbol(sym)) = self.interner.lookup(member) {
                     // Symbol-keyed constraints: `typeof A | typeof B` use `"__unique_<id>"` atoms.
-                    let atom = self
-                        .interner
-                        .intern_string(&format!("__unique_{}", sym.0));
+                    let atom = self.interner.intern_string(&format!("__unique_{}", sym.0));
                     keys.push(atom);
                 }
             }
