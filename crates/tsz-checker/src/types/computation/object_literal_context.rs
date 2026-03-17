@@ -178,6 +178,54 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns true if any non-nullish, non-object union member of `type_id` has the
+    /// given property accessible via its wrapper interface (e.g. `String.prototype.normalize`
+    /// for the `string` primitive).
+    ///
+    /// Used to detect the "contextual overload list from union with primitive" case: when
+    /// `string | SomeObject` is the contextual type and the `string` wrapper (`String`)
+    /// also has the property in question, the two signatures conflict and tsc does not
+    /// provide a contextual type for callback parameters (-> TS7006). This is distinct from
+    /// properties that only exist on the object member (e.g. `validate` on `string | FullRule`
+    /// where `String` has no `validate`), which should still be contextually typed.
+    pub(crate) fn primitive_union_member_has_property(
+        &mut self,
+        type_id: TypeId,
+        property_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::assignability::{
+            ExcessPropertiesKind, classify_for_excess_properties,
+        };
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let evaluated = self.resolve_lazy_type(evaluated);
+
+        let members = match classify_for_excess_properties(self.ctx.types, evaluated) {
+            ExcessPropertiesKind::Union(members) => members,
+            _ => return false,
+        };
+
+        for member in members {
+            if self.ctx.types.is_nullish_type(member) {
+                continue;
+            }
+            let is_primitive = matches!(
+                classify_for_excess_properties(self.ctx.types, member),
+                ExcessPropertiesKind::NotObject
+            );
+            if is_primitive
+                && matches!(
+                    self.resolve_property_access_with_env(member, property_name),
+                    PropertyAccessResult::Success { .. }
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
@@ -228,6 +276,17 @@ impl<'a> CheckerState<'a> {
 
         if !tsz_solver::type_contains_undefined(self.ctx.types, property_context_type) {
             return Some(property_context_type);
+        }
+
+        // TS7006 rule: when the outer contextual type is a union that includes a non-nullish
+        // non-object member (e.g., `string` in `string | FullRule`), do not provide a
+        // contextual type for function properties. Without this, the parameter would get
+        // the type from the object-union member (suppressing the TS7006 implicit-any error).
+        // This check must come before the property-access refinement below.
+        if contextual_type
+            .is_some_and(|ctx_type| self.union_with_non_nullish_non_object_member(ctx_type, 6))
+        {
+            return None;
         }
 
         if let Some(contextual_type) = contextual_type
