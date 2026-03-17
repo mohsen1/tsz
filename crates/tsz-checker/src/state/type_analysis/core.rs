@@ -1740,7 +1740,51 @@ impl<'a> CheckerState<'a> {
     /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
     /// call sites on `CheckerState` continue to compile after the method was
     /// extracted into the type-node checker.
+    ///
+    /// Before delegating, pre-computes the flow-narrowed type for simple
+    /// identifier references in `typeof` type queries. This ensures that
+    /// `typeof x` in a type position respects control-flow narrowing
+    /// (e.g., `typeof c` inside `if (typeof c === 'string')` yields `string`).
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
+        // Pre-compute flow-narrowed type for simple identifiers in type queries.
+        // TypeNodeChecker checks node_types first (line ~1293), so caching the
+        // narrowed type here makes it available without needing FlowAnalyzer
+        // inside TypeNodeChecker.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+        {
+            let expr_name = type_query.expr_name;
+            // Only for simple identifiers (not qualified names)
+            if let Some(expr_node) = self.ctx.arena.get(expr_name)
+                && expr_node.kind == SyntaxKind::Identifier as u16
+            {
+                if let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, expr_name)
+                {
+                    // Only narrow variable symbols (not functions/classes/etc.)
+                    if self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|s| (s.flags & symbol_flags::VARIABLE) != 0)
+                    {
+                        let declared_type = self.get_type_of_symbol(sym_id);
+                        if declared_type != TypeId::ERROR && declared_type != TypeId::ANY {
+                            let narrowed = self.apply_flow_narrowing(expr_name, declared_type);
+                            if narrowed != declared_type
+                                && narrowed != TypeId::ERROR
+                                && narrowed != TypeId::ANY
+                            {
+                                self.ctx.node_types.insert(expr_name.0, narrowed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         use crate::types_domain::type_node::TypeNodeChecker;
         TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
     }
