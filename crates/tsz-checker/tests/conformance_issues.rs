@@ -15848,8 +15848,10 @@ a();
 fn test_typeof_in_type_alias_with_flow_narrowing() {
     // From controlFlowForIndexSignatures.ts
     // typeof c in a type alias inside if (typeof c === 'string') should resolve to 'string'
-    let mut options = CheckerOptions::default();
-    options.strict_null_checks = true;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let source = r#"
 declare let c: string | number;
 if (typeof c === 'string') {

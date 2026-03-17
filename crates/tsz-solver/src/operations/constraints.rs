@@ -180,29 +180,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
-                    // The conditional couldn't be evaluated (e.g., check type is an
-                    // unresolved inference placeholder). Match tsc's inferToConditionalType:
-                    // if the check type IS an inference placeholder, infer source directly
-                    // to that variable instead of recursing into both branches blindly.
-                    // Recursing into both true_type and false_type produces spurious
-                    // candidates (e.g., for `DeepPartial<T>` = `T extends object ? ... : T`,
-                    // the false branch `T` would get the raw source as a candidate, while
-                    // the true branch may also contribute — leading to union inference).
+                    // When the conditional can't be evaluated and its check type is
+                    // an inference placeholder, skip inference entirely. This matches
+                    // tsc's inferToConditionalType: tsc only infers from a conditional
+                    // when its own `infer` type parameters include the check type
+                    // (i.e., `infer X` in the extends clause). When the check type is
+                    // an outer inference variable (from a generic function call), tsc
+                    // does NOT infer through the conditional, preventing false
+                    // candidates that would pollute the inferred type.
+                    if var_map.contains_key(&cond.check_type) {
+                        return;
+                    }
                     let mut visited = FxHashSet::default();
                     if self.type_contains_placeholder(target, var_map, &mut visited) {
-                        // Recurse into the true branch for structural matching.
                         self.constrain_types(ctx, var_map, source, cond.true_type, priority);
-                        // For the false branch: skip if it IS the bare check type AND
-                        // the check type is an inference placeholder. This prevents
-                        // spurious candidates from deferred conditionals like
-                        // `DeepPartial<T>` = `T extends object ? {mapped} : T` where
-                        // the false branch `T` would get the raw source as a candidate,
-                        // creating a union with candidates from other parameters.
-                        let false_is_bare_check = cond.false_type == cond.check_type
-                            && var_map.contains_key(&cond.check_type);
-                        if !false_is_bare_check {
-                            self.constrain_types(ctx, var_map, source, cond.false_type, priority);
-                        }
+                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
                     }
                 }
             }

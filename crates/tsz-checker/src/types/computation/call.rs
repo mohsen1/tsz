@@ -2483,7 +2483,7 @@ impl<'a> CheckerState<'a> {
         self.handle_call_result(result, call_context)
     }
 
-    /// Extract ThisType<T> from parameter types, looking through type alias Applications.
+    /// Extract `ThisType<T>` from parameter types, looking through type alias Applications.
     fn extract_this_type_from_params(&self, params: &[tsz_solver::ParamInfo]) -> Option<TypeId> {
         for param in params {
             use tsz_solver::ContextualTypeContext;

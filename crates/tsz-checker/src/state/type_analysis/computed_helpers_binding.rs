@@ -708,7 +708,7 @@ impl<'a> CheckerState<'a> {
     /// inside `if (typeof c === 'string')`), the initial lowering creates
     /// `TypeQuery(SymbolRef)` which resolves to the declared type, not the
     /// flow-narrowed type. This method re-resolves such references by:
-    /// 1. Finding TYPE_QUERY nodes in the AST
+    /// 1. Finding `TYPE_QUERY` nodes in the AST
     /// 2. Resolving each query's expression with flow narrowing applied
     /// 3. Re-lowering the type node with the narrowed types cached
     pub(super) fn resolve_type_queries_with_flow(
@@ -749,7 +749,7 @@ impl<'a> CheckerState<'a> {
         self.get_type_from_type_node(type_node)
     }
 
-    /// Resolve a single TYPE_QUERY node with flow narrowing applied.
+    /// Resolve a single `TYPE_QUERY` node with flow narrowing applied.
     ///
     /// For simple identifiers (e.g. `typeof c`), resolves the identifier's type
     /// using `get_type_of_node` which applies control-flow narrowing. For other

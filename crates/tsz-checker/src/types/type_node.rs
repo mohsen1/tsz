@@ -1025,7 +1025,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Check if a type contains an Application that can't be evaluated (e.g., NonNullable<T>
+    /// Check if a type contains an Application that can't be evaluated (e.g., `NonNullable<T>`
     /// where the resolver doesn't know about the base type's definition). In such cases,
     /// the Application stays opaque and assignability checks may give incorrect results.
     fn predicate_type_contains_unevaluable_application(&self, type_id: TypeId) -> bool {

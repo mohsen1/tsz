@@ -865,7 +865,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Count elements in an object destructuring pattern for temp-variable optimization.
-    fn count_object_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
+    const fn count_object_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
         elements.len()
     }
 
