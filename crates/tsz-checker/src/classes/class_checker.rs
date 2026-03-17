@@ -774,7 +774,7 @@ impl<'a> CheckerState<'a> {
     /// member in the base class with incompatible type.
     pub(crate) fn check_property_inheritance_compatibility(
         &mut self,
-        _class_idx: NodeIndex,
+        class_idx: NodeIndex,
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
@@ -851,6 +851,9 @@ impl<'a> CheckerState<'a> {
         // Save heritage expression info for type-level fallback when AST resolution fails
         let mut heritage_expr_idx: Option<NodeIndex> = None;
         let mut heritage_type_idx: Option<NodeIndex> = None;
+        // Track the base class symbol for namespace-merged static type check (TS2417).
+        // Set when the heritage clause resolves to a class with NAMESPACE_MODULE flag.
+        let mut base_sym_for_ns_static_check: Option<tsz_binder::SymbolId> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -933,6 +936,15 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
+                        // Track the base symbol for the namespace-merged static check (TS2417).
+                        // Only relevant when the base class has a merged namespace.
+                        if symbol.flags
+                            & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                                | tsz_binder::symbol_flags::VALUE_MODULE)
+                            != 0
+                        {
+                            base_sym_for_ns_static_check = Some(sym_id);
+                        }
                         // Try value_declaration first, then declarations
                         if symbol.value_declaration.is_some() {
                             base_class_idx = Some(symbol.value_declaration);
@@ -1616,6 +1628,54 @@ impl<'a> CheckerState<'a> {
             &substitution,
             class_extends_error_reported,
         );
+
+        // TS2417: Whole-type static side check for namespace-merged classes.
+        //
+        // The member-by-member loop above only examines AST class body members.
+        // When the base class has a merged namespace (e.g.,
+        // `namespace Shape.Utils { export function convert(): Shape { ... } }`),
+        // `typeof Shape` includes those namespace exports. If the derived class
+        // also has a merged namespace with conflicting exports, `typeof Derived`
+        // is structurally incompatible with `typeof Base` — tsc reports this as TS2417.
+        //
+        // We only check when the DERIVED class also has a namespace (NAMESPACE_MODULE
+        // flag), since a derived class without any namespace cannot have conflicting
+        // namespace exports. This avoids false positives for classes that simply
+        // don't replicate namespace exports from their base class.
+        if !class_extends_error_reported {
+            if let Some(base_sym) = base_sym_for_ns_static_check {
+                let derived_sym = self.ctx.binder.get_node_symbol(class_idx);
+                if let Some(derived_sym) = derived_sym {
+                    let derived_symbol_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol(derived_sym)
+                        .map_or(0, |s| s.flags);
+                    let derived_has_namespace = derived_symbol_flags
+                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE)
+                        != 0;
+                    if derived_has_namespace {
+                        let derived_ctor_type = self.get_type_of_symbol(derived_sym);
+                        let base_ctor_type = self.get_type_of_symbol(base_sym);
+                        if derived_ctor_type != TypeId::UNKNOWN
+                            && derived_ctor_type != TypeId::ERROR
+                            && base_ctor_type != TypeId::UNKNOWN
+                            && base_ctor_type != TypeId::ERROR
+                            && !self.is_assignable_to(derived_ctor_type, base_ctor_type)
+                        {
+                            self.error_at_node(
+                                class_data.name,
+                                &format!(
+                                    "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
+                                ),
+                                diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         self.pop_type_parameters(derived_type_param_updates);
     }

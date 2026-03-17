@@ -13,10 +13,6 @@ use tsz_solver::def::DefId;
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
-        eprintln!(
-            "[get_type_from_type_reference] idx={}, file={}",
-            idx.0, self.ctx.file_name
-        );
         // Fuel check: prevent infinite loops in circular type references
         if !self.ctx.consume_fuel() {
             return TypeId::ERROR;

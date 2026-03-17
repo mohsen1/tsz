@@ -192,7 +192,21 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let type_id = self.get_type_of_symbol(*member_id);
+            // For pure namespace sub-members, build a structural object type instead
+            // of using Lazy(DefId). This prevents the solver from seeing two opaque
+            // Lazy types that both resolve to themselves (cycle → false assignable).
+            let is_pure_namespace = member_flags
+                & (tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::NAMESPACE_MODULE)
+                != 0
+                && member_flags
+                    & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION)
+                    == 0;
+            let type_id = if is_pure_namespace {
+                self.build_namespace_object_type(*member_id)
+            } else {
+                self.get_type_of_symbol(*member_id)
+            };
             let name_atom = self.ctx.types.intern_string(name);
 
             let is_duplicate =
@@ -238,6 +252,64 @@ impl<'a> CheckerState<'a> {
                 },
             );
         }
+    }
+
+    /// Build a structural object type for a namespace symbol by collecting its value exports.
+    ///
+    /// This is used instead of `get_type_of_symbol` for pure namespace sub-members when
+    /// merging exports into a class constructor type. Using `get_type_of_symbol` for a
+    /// namespace returns `Lazy(DefId)`, and the type_env stores `def -> Lazy(def)` (a
+    /// self-referential mapping). When the solver tries to check
+    /// `Lazy(def_a) <: Lazy(def_b)` for two different namespaces with the same name,
+    /// both resolve to themselves and the recursion guard fires, returning
+    /// `CycleDetected = true`, falsely treating them as subtypes.
+    ///
+    /// By constructing a real `Object { prop: type, ... }` type we give the solver
+    /// concrete structural types it can compare property-by-property.
+    fn build_namespace_object_type(&mut self, sym_id: SymbolId) -> TypeId {
+        use tsz_solver::PropertyInfo;
+
+        let depth = self.ctx.symbol_resolution_depth.get();
+        if depth >= MAX_MERGE_DEPTH {
+            return self.get_type_of_symbol(sym_id);
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return self.get_type_of_symbol(sym_id);
+        };
+        let Some(exports) = symbol.exports.as_ref().cloned() else {
+            return self.ctx.types.factory().object(vec![]);
+        };
+
+        self.ctx.symbol_resolution_depth.set(depth + 1);
+        let mut props: Vec<PropertyInfo> = Vec::new();
+        for (name, &member_id) in exports.iter() {
+            if self.ctx.symbol_resolution_set.contains(&member_id) {
+                continue;
+            }
+            let member_symbol = self.ctx.binder.get_symbol(member_id);
+            let member_flags = member_symbol.map_or(0, |s| s.flags);
+            // Only value exports produce runtime properties
+            if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
+                continue;
+            }
+            let member_type = self.get_type_of_symbol(member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: member_type,
+                write_type: member_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            });
+        }
+        self.ctx.symbol_resolution_depth.set(depth);
+        self.ctx.types.factory().object(props)
     }
 
     /// Report TS2300 on the class static member that conflicts with a namespace export.
