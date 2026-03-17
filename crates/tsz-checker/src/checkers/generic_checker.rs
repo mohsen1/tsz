@@ -236,7 +236,10 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                     &["0", &got.to_string()],
                 );
-                return true;
+                // For non-generic functions (0 type params), tsc still proceeds with argument
+                // type checking against the original signature. Return false (not a count mismatch)
+                // so the caller continues to check argument types.
+                return false;
             }
             return false;
         }
