@@ -63,6 +63,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Check type parameter equivalences established during generic function
+        // subtype checking (alpha-renaming). When both types are TypeParameters
+        // in the equivalence set, treat them as identical.
+        if !self.type_param_equivalences.is_empty()
+            && matches!(
+                self.interner.lookup(source),
+                Some(TypeData::TypeParameter(_))
+            )
+            && matches!(
+                self.interner.lookup(target),
+                Some(TypeData::TypeParameter(_))
+            )
+        {
+            for &(eq_a, eq_b) in &self.type_param_equivalences {
+                if (source == eq_a && target == eq_b) || (source == eq_b && target == eq_a) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Task #54: Structural Identity Fast-Path (O(1) after canonicalization)
         // Check if source and target canonicalize to the same TypeId, which means
         // they are structurally identical. This avoids expensive structural walks

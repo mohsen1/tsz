@@ -870,6 +870,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let mut source_instantiated = source.clone();
         let mut target_instantiated = target.clone();
+        // Track type param equivalences scope for cleanup at end of function.
+        let equiv_start = self.type_param_equivalences.len();
 
         // Generic source vs generic target (same arity): normalize both signatures so they
         // can be compared structurally.
@@ -919,7 +921,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 });
 
             if all_constraints_compatible {
-                // Strategy 1: alpha-rename — both shapes use source type param identities
+                // Strategy 1: alpha-rename — both shapes use source type param identities.
+                //
+                // Establish type parameter equivalences for structural comparison.
+                // When return types are pre-evaluated Object types (e.g., IList<D> already
+                // expanded to an Object shape), name-based substitution may fail to penetrate
+                // inner functions with same-named type params (shadowing). The equivalences
+                // allow structural comparison to treat the original source/target type params
+                // as identical, fixing false mismatches for structurally identical generic
+                // method signatures with different type param names.
+                for (source_tp, target_tp) in source_instantiated
+                    .type_params
+                    .iter()
+                    .zip(target_instantiated.type_params.iter())
+                {
+                    let source_tp_type = self.interner.type_param(source_tp.clone());
+                    let target_tp_type = self.interner.type_param(target_tp.clone());
+                    if source_tp_type != target_tp_type {
+                        self.type_param_equivalences
+                            .push((source_tp_type, target_tp_type));
+                    }
+                }
+
                 source_instantiated = self.instantiate_function_shape(
                     &source_instantiated,
                     &source_identity_substitution,
@@ -1081,6 +1104,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target_instantiated.return_type,
         );
         if !return_result.is_true() {
+            self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
         }
 
@@ -1088,11 +1112,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_instantiated.this_type,
             target_instantiated.this_type,
         ) {
+            self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
         }
 
         // Type predicates check
         if !self.are_type_predicates_compatible(&source_instantiated, &target_instantiated) {
+            self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
         }
 
@@ -1118,6 +1144,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && self.is_tuple_list_rest_type(s_param.type_id)
             && self.is_tuple_list_rest_type(t_param.type_id)
         {
+            self.type_param_equivalences.truncate(equiv_start);
             return if self.are_parameters_compatible_impl(
                 s_param.type_id,
                 t_param.type_id,
@@ -1186,6 +1213,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         && source_param.rest == target_param.rest
                 })
         {
+            self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::True;
         }
 
@@ -1227,9 +1255,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         )
                         .is_true()
                     {
+                        self.type_param_equivalences.truncate(equiv_start);
                         return SubtypeResult::True;
                     }
                 }
+                self.type_param_equivalences.truncate(equiv_start);
                 return SubtypeResult::False;
             }
         }
@@ -1292,6 +1322,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .take(source_required.saturating_sub(target_fixed_count + target_rest_min_required))
                 .all(|param| self.param_type_contains_void(param.type_id));
             if !extra_are_void {
+                self.type_param_equivalences.truncate(equiv_start);
                 return SubtypeResult::False;
             }
         }
@@ -1412,9 +1443,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             let erasure_sub = erase_type_params_to_constraints(&source_before.type_params);
             let erased_source = self.instantiate_function_shape(&source_before, &erasure_sub);
-            return self.check_function_subtype(&erased_source, &target_instantiated);
+            let retry = self.check_function_subtype(&erased_source, &target_instantiated);
+            self.type_param_equivalences.truncate(equiv_start);
+            return retry;
         }
 
+        // Clean up type parameter equivalences established in this scope.
+        self.type_param_equivalences.truncate(equiv_start);
         result
     }
 
