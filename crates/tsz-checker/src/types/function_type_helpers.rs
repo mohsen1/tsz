@@ -472,10 +472,11 @@ impl<'a> CheckerState<'a> {
             true
         } else if return_type != TypeId::ERROR {
             // Return type evaluated to a non-Application form (e.g., Object).
-            // Fall back to syntactic check on the annotation text. This handles
-            // type aliases like `type PromiseAlias<T> = Promise<T>` which resolve
-            // to the same Object type as Promise<T>.
-            !self.return_type_annotation_looks_like_promise(type_annotation)
+            // Fall back to strict syntactic check: only suppress TS1064 if the
+            // annotation literally says `Promise<...>`. TSC uses `isReferenceToType`
+            // which requires exactly the global Promise — not subclasses like
+            // `MyPromise`, not qualified names like `X.MyPromise`, not type aliases.
+            !self.return_type_annotation_is_exactly_promise(type_annotation)
         } else {
             // Return type is ERROR - use syntactic fallback
             // Check if the type annotation is a primitive keyword (never valid for async function)
