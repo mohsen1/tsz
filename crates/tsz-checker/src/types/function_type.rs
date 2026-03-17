@@ -1310,6 +1310,26 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+            // When the body return type contains the polymorphic `this` type
+            // (e.g. from `async (): Promise<this> => this`), substitute it
+            // with the concrete `this` type from the enclosing class so that
+            // the return-statement assignability check compares against the
+            // same concrete type that the `this` keyword expression resolves to.
+            let body_return_type =
+                if tsz_solver::contains_this_type(self.ctx.types, body_return_type) {
+                    if let Some(concrete_this) = self.current_this_type() {
+                        tsz_solver::substitute_this_type(
+                            self.ctx.types,
+                            body_return_type,
+                            concrete_this,
+                        )
+                    } else {
+                        body_return_type
+                    }
+                } else {
+                    body_return_type
+                };
+
             self.push_return_type(body_return_type);
 
             // For generator functions with explicit annotations, push the yield type
