@@ -1737,11 +1737,59 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
+    /// Resolve a `typeof X` type query node.
+    ///
+    /// For simple identifiers, resolves the symbol's declared type and applies
+    /// flow narrowing so that control-flow analysis is respected (e.g.,
+    /// `typeof c` inside `if (typeof c === 'string')` yields `string`).
+    /// Falls back to [`TypeNodeChecker::get_type_from_type_query`] for complex
+    /// cases (qualified names, type arguments, imports, etc.).
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types_domain::type_node::TypeNodeChecker;
+
+        // Try flow-sensitive resolution for simple identifier expressions.
+        // `apply_flow_narrowing` walks parent nodes when the identifier itself
+        // lacks a direct flow link (common for identifiers inside type queries).
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+            && type_query
+                .type_arguments
+                .as_ref()
+                .map_or(true, |a| a.nodes.is_empty())
+        {
+            let expr_name = type_query.expr_name;
+            if let Some(expr_node) = self.ctx.arena.get(expr_name)
+                && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            {
+                // Resolve the symbol and get its declared type
+                let sym_id = self.ctx.binder.get_node_symbol(expr_name).or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, expr_name)
+                });
+                if let Some(sym_id) = sym_id {
+                    let declared_type = self.get_type_of_symbol(sym_id);
+                    let is_lazy =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, declared_type)
+                            .is_some();
+                    if declared_type != TypeId::ANY && declared_type != TypeId::ERROR && !is_lazy {
+                        // tsc does NOT apply flow narrowing for typeof inside
+                        // call/construct signature parameters (e.g.,
+                        // `{ (arg: typeof x): void }`), but DOES for index
+                        // signatures and property types.
+                        let use_flow =
+                            !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
+                        if use_flow {
+                            let narrowed = self.apply_flow_narrowing(expr_name, declared_type);
+                            return narrowed;
+                        } else {
+                            return declared_type;
+                        }
+                    }
+                }
+            }
+        }
+
         TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
     }
 }
