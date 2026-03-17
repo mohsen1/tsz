@@ -1136,7 +1136,6 @@ pub(super) fn check_file_for_parallel<'a>(
         program_has_real_syntax_errors,
     } = context;
     let file = &program.files[file_idx];
-
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
         return (Vec::new(), None);
@@ -1262,7 +1261,6 @@ pub(super) fn check_file_for_parallel<'a>(
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
         checker.check_source_file(file.source_file);
-
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
         let effective_options = ResolvedCompilerOptions {
             check_js,

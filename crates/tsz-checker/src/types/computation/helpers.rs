@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn union_context_for_array_literal_is_ambiguous(&self, contextual: TypeId) -> bool {
+    fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
         let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
         else {
             return false;
@@ -166,17 +166,38 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            // Non-array-applicable object-like types (e.g., interfaces with required
-            // non-numeric properties) can't meaningfully contextually type array literals.
-            // Skip them rather than treating them as ambiguous. This matches tsc's
-            // getApplicableTypeForExpression which filters union members to only those
-            // applicable to the expression kind (isArrayOrTupleType || unknown[] assignable).
+            // Types with a string index signature (e.g. Record<string, T>, including lazy
+            // types that resolve to such objects) can contextually type array elements via
+            // element access. Treat their index value type as an applicable shape — making
+            // the union ambiguous when combined with an array-typed member. This matches
+            // tsc's behavior where
+            // Record<string, (arg: string) => void> | Array<(arg: number) => void>
+            // is treated as ambiguous, emitting TS7006 for implicit-any parameters.
+            // NOTE: Resolve through Lazy(DefId) first so Record<string,T> becomes an
+            // ObjectWithIndex shape that the IndexSignatureResolver can inspect.
+            {
+                use tsz_solver::IndexSignatureResolver;
+                let resolved = self.resolve_lazy_type(member);
+                let resolved = self.evaluate_type_with_env(resolved);
+                let resolver = IndexSignatureResolver::new(self.ctx.types);
+                let si = resolver.resolve_string_index(resolved);
+                if let Some(value_type) = si {
+                    if !applicable_shapes.contains(&value_type) {
+                        applicable_shapes.push(value_type);
+                    }
+                    continue;
+                }
+            }
+
+            // Non-array-applicable object-like types without index signatures can't
+            // meaningfully contextually type array literals. Skip them.
             if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
                 continue;
             }
         }
 
-        applicable_shapes.len() > 1
+        let result = applicable_shapes.len() > 1;
+        result
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
@@ -720,7 +741,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let prev_context = self.ctx.contextual_type;
-            if let Some(ref helper) = ctx_helper {
+            if union_array_context_is_ambiguous {
+                // When the contextual union is ambiguous (multiple applicable element types),
+                // clear the contextual type for each element so closures don't inherit
+                // the array's union contextual type and inadvertently get typed parameters.
+                self.ctx.contextual_type = None;
+            } else if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some() {
                     let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
                     self.ctx.contextual_type =
