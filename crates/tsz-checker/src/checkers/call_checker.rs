@@ -171,6 +171,93 @@ impl<'a> CheckerState<'a> {
             .map(|body_node| (body_node.pos, body_node.end))
     }
 
+    /// Returns true when the callback argument has at least one explicitly-typed parameter
+    /// whose type is incompatible with the corresponding expected parameter type.
+    ///
+    /// TSC reports TS2345 at the call site when the *parameter* types conflict
+    /// (e.g. `(n: string) => n` where `(b: number) => number` is expected). In that case
+    /// an inner TS2322 from the callback body should not suppress TS2345 — the outer
+    /// diagnostic is more informative. When only the return type differs (e.g.
+    /// `(x: number) => ''` where `(x: number) => number` is expected), TSC still reports
+    /// the inner TS2322.
+    ///
+    /// This uses the inferred `actual` type of the callback (not AST node resolution)
+    /// to get reliable parameter types.
+    pub(crate) fn callback_has_explicit_param_type_conflict(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected: tsz_solver::TypeId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+
+        // Check if ANY parameter has an explicit type annotation.
+        // If none do, this is a fully-contextual callback and we keep the inner error.
+        let has_any_explicit_annotation = func.parameters.nodes.iter().any(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|n| self.ctx.arena.get_parameter(n))
+                .is_some_and(|p| p.type_annotation.is_some())
+        });
+        if !has_any_explicit_annotation {
+            return false;
+        }
+
+        // Resolve the expected function type to extract expected parameter types.
+        let resolved_expected = self.evaluate_type_with_env(expected);
+        let resolved_expected = self.resolve_type_for_property_access(resolved_expected);
+        let resolved_expected = self.resolve_lazy_type(resolved_expected);
+        let expected_params = tsz_solver::type_queries::get_function_parameter_types(
+            self.ctx.types,
+            resolved_expected,
+        );
+        if expected_params.is_empty() {
+            return false;
+        }
+
+        // Get the inferred type of the callback to extract its parameter types.
+        // Using the inferred type is more reliable than walking the AST param nodes.
+        let actual_type = self.get_type_of_node(arg_idx);
+        let resolved_actual = self.evaluate_type_with_env(actual_type);
+        let resolved_actual = self.resolve_type_for_property_access(resolved_actual);
+        let resolved_actual = self.resolve_lazy_type(resolved_actual);
+        let actual_params =
+            tsz_solver::type_queries::get_function_parameter_types(self.ctx.types, resolved_actual);
+
+        // For each explicitly-annotated parameter, check if its type conflicts with
+        // the expected parameter type.
+        func.parameters
+            .nodes
+            .iter()
+            .enumerate()
+            .any(|(i, param_idx)| {
+                let has_annotation = self
+                    .ctx
+                    .arena
+                    .get(*param_idx)
+                    .and_then(|n| self.ctx.arena.get_parameter(n))
+                    .is_some_and(|p| p.type_annotation.is_some());
+                if !has_annotation {
+                    return false;
+                }
+                let actual_param_type = actual_params
+                    .get(i)
+                    .copied()
+                    .unwrap_or(tsz_solver::TypeId::UNKNOWN);
+                let expected_param_type = expected_params
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| *expected_params.last().unwrap());
+                // Parameter types conflict if the actual is NOT assignable to expected.
+                !self.is_assignable_to(actual_param_type, expected_param_type)
+            })
+    }
+
     pub(crate) fn suppress_generic_return_context_for_arg(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
