@@ -175,12 +175,7 @@ impl<'a> CheckerState<'a> {
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v && !k.is_intrinsic()
-                        // TypeQuery results depend on mutable symbol_types state
-                        // which may change as more class constructor types are computed.
-                        // Don't persist these to avoid stale cache entries.
-                        && !matches!(self.ctx.types.lookup(k), Some(tsz_solver::TypeData::TypeQuery(_)))
-                    {
+                    if k != v && !k.is_intrinsic() {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -206,13 +201,7 @@ impl<'a> CheckerState<'a> {
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v
-                        && !k.is_intrinsic()
-                        && !matches!(
-                            self.ctx.types.lookup(k),
-                            Some(tsz_solver::TypeData::TypeQuery(_))
-                        )
-                    {
+                    if k != v && !k.is_intrinsic() {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -225,12 +214,7 @@ impl<'a> CheckerState<'a> {
             result
         };
 
-        if use_cache
-            && !matches!(
-                self.ctx.types.lookup(type_id),
-                Some(tsz_solver::TypeData::TypeQuery(_))
-            )
-        {
+        if use_cache {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
                 crate::context::EnvEvalCacheEntry {
@@ -959,11 +943,13 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                // TypeQuery represents `typeof X` — a VALUE-space reference.
-                // Use get_type_of_symbol which returns the constructor type for classes,
-                // NOT type_reference_symbol_type which returns the instance type.
-                // This prevents overwriting a correct constructor type in the type_env
-                // with the wrong instance type.
+                // CRITICAL: TypeQuery (`typeof X`) is a VALUE-space query.
+                // Use get_type_of_symbol which returns the constructor type for
+                // classes, NOT type_reference_symbol_type which returns the
+                // instance type (designed for TYPE position references).
+                // Without this, the type environment gets the instance type
+                // (ObjectWithIndex) for class symbols, causing false TS2345
+                // when comparing `typeof SubClass` against `typeof BaseClass`.
                 let resolved = self.get_type_of_symbol(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
