@@ -178,9 +178,7 @@ impl<'a> QueryCache<'a> {
     }
 
     fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
-        self.application_eval_cache
-            .borrow_mut()
-            .insert(key, result);
+        self.application_eval_cache.borrow_mut().insert(key, result);
     }
 
     fn check_object_spread_properties_cache(&self, key: TypeId) -> Option<Vec<PropertyInfo>> {
@@ -968,9 +966,7 @@ impl QueryDatabase for QueryCache<'_> {
         let canonical = canon.canonicalize(type_id);
 
         // Cache the result
-        self.canonical_cache
-            .borrow_mut()
-            .insert(type_id, canonical);
+        self.canonical_cache.borrow_mut().insert(type_id, canonical);
 
         canonical
     }
