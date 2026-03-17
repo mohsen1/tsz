@@ -244,10 +244,8 @@ impl<'a> CheckerState<'a> {
                     && !type_params.is_empty()
                     && type_params.iter().all(|p| p.default.is_some())
                 {
-                    let default_args: Vec<tsz_solver::TypeId> = type_params
-                        .iter()
-                        .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
-                        .collect();
+                    let default_args: Vec<tsz_solver::TypeId> =
+                        tsz_solver::resolve_default_type_args(self.ctx.types, &type_params);
                     let app = self.ctx.types.application(type_id, default_args);
                     return self.evaluate_application_type(app);
                 }

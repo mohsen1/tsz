@@ -127,10 +127,8 @@ impl<'a> CheckerState<'a> {
                     {
                         let has_defaults = type_params.iter().any(|p| p.default.is_some());
                         if has_defaults {
-                            let default_args: Vec<TypeId> = type_params
-                                .iter()
-                                .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
-                                .collect();
+                            let default_args: Vec<TypeId> =
+                                tsz_solver::resolve_default_type_args(self.ctx.types, &type_params);
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
                             // Resolve the type alias body so its type params and body
                             // are registered in type_env. Without this, Application
