@@ -488,6 +488,57 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             let source_eval = self.evaluate_type(source);
             let target_eval = self.evaluate_type(target);
+
+            // Guard: if evaluation simplified a union/intersection (e.g., subtype
+            // reduction removed a member), preserve the original compound type.
+            // The visitor pattern handles unions/intersections by iterating over
+            // members and checking each one individually. Letting evaluation
+            // collapse a union like `{} | Dictionary<string>` to just `{}`
+            // loses the constraint that ALL members must satisfy the target,
+            // which can cause false assignability (e.g., {} passes where the
+            // full union should fail).
+            let source_eval = if source_eval != source {
+                use crate::visitor::union_list_id;
+                let source_is_compound = union_list_id(self.interner, source).is_some()
+                    || matches!(
+                        self.interner.lookup(source),
+                        Some(TypeData::Intersection(_))
+                    );
+                let eval_is_compound = union_list_id(self.interner, source_eval).is_some()
+                    || matches!(
+                        self.interner.lookup(source_eval),
+                        Some(TypeData::Intersection(_))
+                    );
+                if source_is_compound && !eval_is_compound {
+                    // Evaluation collapsed the compound type — preserve original
+                    source
+                } else {
+                    source_eval
+                }
+            } else {
+                source_eval
+            };
+            let target_eval = if target_eval != target {
+                use crate::visitor::union_list_id;
+                let target_is_compound = union_list_id(self.interner, target).is_some()
+                    || matches!(
+                        self.interner.lookup(target),
+                        Some(TypeData::Intersection(_))
+                    );
+                let eval_is_compound = union_list_id(self.interner, target_eval).is_some()
+                    || matches!(
+                        self.interner.lookup(target_eval),
+                        Some(TypeData::Intersection(_))
+                    );
+                if target_is_compound && !eval_is_compound {
+                    target
+                } else {
+                    target_eval
+                }
+            } else {
+                target_eval
+            };
+
             if source_eval != source || target_eval != target {
                 // Leave def_guard before recursing ONLY when a Lazy type resolved to an
                 // Enum with the same DefId. When Lazy(DefId(X)) evaluates to Enum(DefId(X), ...),

@@ -75,7 +75,6 @@ pub fn compute_conditional_expression_type(
         return interner.union2(adjusted_true, adjusted_false);
     }
 
-    // Default: return union of both branches
     interner.union2(true_type, false_type)
 }
 
