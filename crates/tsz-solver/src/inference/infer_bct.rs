@@ -129,6 +129,12 @@ impl<'a> InferenceContext<'a> {
             return types[0];
         }
 
+        eprintln!(
+            "[BCT DEBUG] get_common_supertype_for_inference called with {} types: {:?}",
+            types.len(),
+            types
+        );
+
         // Deduplicate and filter never
         let mut seen = FxHashSet::default();
         let mut unique: Vec<TypeId> = Vec::new();
@@ -711,6 +717,17 @@ impl<'a> InferenceContext<'a> {
                 Some(*s_props),
                 &t_shape.properties,
             );
+        }
+
+        // Lazy (class/interface) types: check if source extends target
+        // by walking the class hierarchy. Without this, BCT inference cannot
+        // determine that Derived <: Base and fails to find a common supertype.
+        if matches!(source_key.as_ref(), Some(TypeData::Lazy(_)))
+            && matches!(target_key.as_ref(), Some(TypeData::Lazy(_)))
+        {
+            if let Some(hierarchy) = self.get_class_hierarchy(source) {
+                return hierarchy.contains(&target);
+            }
         }
 
         false
