@@ -333,11 +333,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for (i, &target_member) in target_members.iter().enumerate() {
                     let t_prop =
                         get_property_type_of_object(self.interner, target_member, prop_name);
-                    if let Some(t_prop_type) = t_prop
-                        && self.check_subtype(value, t_prop_type).is_true()
-                    {
-                        reachable[i] = true;
-                        value_has_match = true;
+                    match t_prop {
+                        Some(t_prop_type) if self.check_subtype(value, t_prop_type).is_true() => {
+                            reachable[i] = true;
+                            value_has_match = true;
+                        }
+                        None => {
+                            // Target member doesn't have this discriminant property.
+                            // It's reachable for any discriminant value since the
+                            // absence means it doesn't discriminate on this property.
+                            reachable[i] = true;
+                            value_has_match = true;
+                        }
+                        _ => {}
                     }
                 }
                 if !value_has_match {
