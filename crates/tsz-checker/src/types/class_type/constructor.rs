@@ -263,8 +263,22 @@ impl<'a> CheckerState<'a> {
         // members, so that self-referencing property initializers (e.g., `p = doThing(A)`)
         // can resolve the class type during instance type computation.
 
-        // Get the class symbol for nominal identity
+        // Get the class symbol for nominal identity.
+        // For `export default class Foo`, the class node's symbol is the "default" export
+        // symbol. The class NAME symbol (`Foo`) is a separate symbol that references
+        // inside the class body resolve to when they write `Foo`. We need to cache the
+        // partial constructor under BOTH symbols so that self-referential static
+        // initializers like `static x = make(Foo)` resolve correctly.
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let class_name_sym = if class.name.is_some() {
+            self.ctx
+                .arena
+                .get_identifier_at(class.name)
+                .and_then(|ident| self.ctx.binder.file_locals.get(&ident.escaped_text))
+                .filter(|&name_sym| Some(name_sym) != current_sym)
+        } else {
+            None
+        };
 
         // Pre-compute inherited static properties from base class so they are available
         // for partial constructor types built during static initializer evaluation.
@@ -320,11 +334,59 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Pre-compute a rough partial instance type from declared (annotated) non-static
+        // instance properties. Used as the return type of rough construct signatures so
+        // that type inference for generic functions can extract type arguments from
+        // construct-signature constraints (e.g., `make<P>(x: { new(): { props: P } })`).
+        let rough_instance_return_type = {
+            let mut inst_props: Vec<PropertyInfo> = Vec::new();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                if self.has_static_modifier(&prop.modifiers) {
+                    continue;
+                }
+                let Some(type_id) = self.effective_class_property_declared_type(member_idx, prop)
+                else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name_resolved(prop.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+                inst_props.push(PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: prop.question_token,
+                    readonly: self.has_readonly_modifier(&prop.modifiers),
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: self.get_member_visibility(&prop.modifiers, prop.name),
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                });
+            }
+            if inst_props.is_empty() {
+                TypeId::ANY
+            } else {
+                let factory = self.ctx.types.factory();
+                factory.object(inst_props)
+            }
+        };
+
         // Pre-compute rough construct signatures for the partial static constructor type.
         // Static methods need `this` to be constructable so that `return this` from a
         // static method makes the return type constructable (prevents false TS2351).
-        // We use TypeId::ANY as the instance return type since the real instance type
-        // isn't computed until after static member processing.
+        // The return type uses a rough partial instance type (from declared instance
+        // properties) so that type inference can match construct-signature constraints.
         let rough_construct_signatures = {
             let mut has_ctor_overloads = false;
             for &member_idx in &class.members.nodes {
@@ -355,7 +417,7 @@ impl<'a> CheckerState<'a> {
                         sigs.push(self.call_signature_from_constructor(
                             ctor,
                             member_idx,
-                            TypeId::ANY,
+                            rough_instance_return_type,
                             &class_type_params,
                         ));
                     }
@@ -363,7 +425,7 @@ impl<'a> CheckerState<'a> {
                     sigs.push(self.call_signature_from_constructor(
                         ctor,
                         member_idx,
-                        TypeId::ANY,
+                        rough_instance_return_type,
                         &class_type_params,
                     ));
                     break;
@@ -375,7 +437,7 @@ impl<'a> CheckerState<'a> {
                     type_params: class_type_params.clone(),
                     params: Vec::new(),
                     this_type: None,
-                    return_type: TypeId::ANY,
+                    return_type: rough_instance_return_type,
                     type_predicate: None,
                     is_method: false,
                 });
@@ -444,6 +506,8 @@ impl<'a> CheckerState<'a> {
                         }
                         let prev_sym_cached = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let prev_name_sym_cached = class_name_sym
+                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                         let partial_ctor = self.build_partial_static_constructor_type(
                             current_sym,
                             &properties,
@@ -469,6 +533,13 @@ impl<'a> CheckerState<'a> {
                         );
                         if let Some(sym_id) = current_sym {
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
+                            // For `export default class Foo`, the class node symbol is the
+                            // "default" export symbol. Also cache under the class name symbol
+                            // so that self-referential static initializers using `Foo` resolve
+                            // to the partial constructor type.
+                            if let Some(name_sym) = class_name_sym {
+                                self.ctx.symbol_types.insert(name_sym, partial_ctor);
+                            }
                         }
                         // Push partial constructor type onto this_type_stack so that
                         // `this` in static property initializers resolves to the
@@ -507,6 +578,14 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.insert(sym_id, prev_type);
                             } else {
                                 self.ctx.symbol_types.remove(&sym_id);
+                            }
+                        }
+                        // Also restore the class name symbol (for `export default class Foo`)
+                        if let Some(name_sym) = class_name_sym {
+                            if let Some(prev_type) = prev_name_sym_cached {
+                                self.ctx.symbol_types.insert(name_sym, prev_type);
+                            } else {
+                                self.ctx.symbol_types.remove(&name_sym);
                             }
                         }
                         self.ctx.contextual_type = prev_ctx;
