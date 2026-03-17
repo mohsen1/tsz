@@ -359,10 +359,16 @@ impl<'a> CheckerContext<'a> {
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
         let source_file_idx = symbol.decl_file_idx as usize;
-        let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
-        let target_binder = self.get_binder_for_file(target_idx)?;
+        if let Some(target_idx) =
+            self.resolve_import_target_from_file(source_file_idx, module_specifier)
+        {
+            let target_binder = self.get_binder_for_file(target_idx)?;
+            return target_binder.file_locals.get(import_name);
+        }
 
-        target_binder.file_locals.get(import_name)
+        // Fallback: check ambient module exports (declare module "X" { ... }).
+        // These are keyed by the module specifier in binder.module_exports.
+        self.resolve_import_from_ambient_module(module_specifier, import_name)
     }
 
     /// Like [`resolve_import_alias`], but also registers the resolved symbol in
@@ -385,14 +391,84 @@ impl<'a> CheckerContext<'a> {
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
         let source_file_idx = symbol.decl_file_idx as usize;
-        let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
-        let target_binder = self.get_binder_for_file(target_idx)?;
+        if let Some(target_idx) =
+            self.resolve_import_target_from_file(source_file_idx, module_specifier)
+        {
+            let target_binder = self.get_binder_for_file(target_idx)?;
+            let result = target_binder.file_locals.get(import_name)?;
+            self.cross_file_symbol_targets
+                .borrow_mut()
+                .insert(result, target_idx);
+            return Some(result);
+        }
 
-        let result = target_binder.file_locals.get(import_name)?;
-        self.cross_file_symbol_targets
-            .borrow_mut()
-            .insert(result, target_idx);
-        Some(result)
+        // Fallback: check ambient module exports (declare module "X" { ... }).
+        // These are keyed by the module specifier in binder.module_exports.
+        // For ambient modules, the symbol lives in the same binder that declared
+        // the module, so we also register it in cross_file_symbol_targets with
+        // the declaring file's index for proper cross-arena delegation.
+        if let Some((result, file_idx)) =
+            self.resolve_import_from_ambient_module_with_file_idx(module_specifier, import_name)
+        {
+            self.cross_file_symbol_targets
+                .borrow_mut()
+                .insert(result, file_idx);
+            return Some(result);
+        }
+        None
+    }
+
+    /// Resolve an import name from ambient module exports (`declare module "X" { ... }`).
+    ///
+    /// When file-based module resolution fails (the module specifier doesn't correspond
+    /// to any file), this fallback checks `module_exports` in the current binder and
+    /// all cross-file binders. Ambient module declarations populate `module_exports`
+    /// keyed by their string-literal module specifier (e.g., `"A"` for `declare module "A"`).
+    fn resolve_import_from_ambient_module(
+        &self,
+        module_specifier: &str,
+        import_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(exports) = self.binder.module_exports.get(module_specifier) {
+            if let Some(sym_id) = exports.get(import_name) {
+                return Some(sym_id);
+            }
+        }
+        if let Some(all_binders) = self.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                if let Some(exports) = binder.module_exports.get(module_specifier) {
+                    if let Some(sym_id) = exports.get(import_name) {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Like [`resolve_import_from_ambient_module`] but also returns the file index
+    /// of the binder that owns the resolved symbol, for `cross_file_symbol_targets`
+    /// registration.
+    fn resolve_import_from_ambient_module_with_file_idx(
+        &self,
+        module_specifier: &str,
+        import_name: &str,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        if let Some(exports) = self.binder.module_exports.get(module_specifier) {
+            if let Some(sym_id) = exports.get(import_name) {
+                return Some((sym_id, self.current_file_idx));
+            }
+        }
+        if let Some(all_binders) = self.all_binders.as_ref() {
+            for (idx, binder) in all_binders.iter().enumerate() {
+                if let Some(exports) = binder.module_exports.get(module_specifier) {
+                    if let Some(sym_id) = exports.get(import_name) {
+                        return Some((sym_id, idx));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Extract the persistent cache from this context.
