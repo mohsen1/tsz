@@ -122,6 +122,27 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Check if a type has named properties (non-empty property list).
+///
+/// Returns true for object types with at least one named property.
+/// Used to determine if a contextual type can provide property-level
+/// type information for class expressions.
+pub fn has_properties(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            !db.object_shape(shape_id).properties.is_empty()
+        }
+        Some(TypeData::Union(members)) => {
+            // A union has properties if any non-undefined/null member does.
+            let members = db.type_list(members);
+            members
+                .iter()
+                .any(|&m| m != TypeId::UNDEFINED && m != TypeId::NULL && has_properties(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if an object type has a nominal symbol (class/interface instance).
 ///
 /// Returns true when the type is an Object or `ObjectWithIndex` with a
