@@ -1525,7 +1525,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Create a new object type from `type_id` with the given property names excluded.
-    fn omit_properties_from_type(&mut self, type_id: TypeId, excluded: &[String]) -> TypeId {
+    pub(crate) fn omit_properties_from_type(
+        &mut self,
+        type_id: TypeId,
+        excluded: &[String],
+    ) -> TypeId {
         if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return type_id;
         }
