@@ -3,7 +3,7 @@
 
 use crate::caches::db::QueryDatabase;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
+use crate::types::{IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TypeData, TypeId};
 use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
 use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
@@ -414,8 +414,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 {
                     return PropertyAccessResult::simple(self.optional_property_type(prop));
                 }
-                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                    return result;
+                // Const enums must not inherit Object.prototype members.
+                if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        return result;
+                    }
                 }
 
                 // Check for index signatures using IndexSignatureResolver
@@ -462,8 +465,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return PropertyAccessResult::simple(self.optional_property_type(prop));
                 }
 
-                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                    return result;
+                // Const enums must not inherit Object.prototype members.
+                if !shape.flags.contains(ObjectFlags::CONST_ENUM) {
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        return result;
+                    }
                 }
 
                 // Check string index signature (skip for symbol-keyed properties)
