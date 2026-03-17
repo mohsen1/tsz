@@ -62,6 +62,12 @@ impl<'a> CheckerState<'a> {
                 if decl.name != pattern_idx || decl.type_annotation.is_some() {
                     return false;
                 }
+                // If the variable declaration has no initializer, it may be
+                // in a for-of statement where the type comes from the iterable.
+                // Check if the for-of expression contains object literals.
+                if decl.initializer.is_none() {
+                    return self.is_for_of_with_object_literal_elements(parent_idx);
+                }
                 decl.initializer
             }
             syntax_kind_ext::PARAMETER => {
@@ -97,6 +103,51 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(source_expr)
             .is_some_and(|expr| expr.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+    }
+
+    /// Check if a variable declaration is inside a for-of statement whose
+    /// iterable expression is an array literal containing object literals.
+    /// This handles `for (let {x = default} of [{}])` where the iteration
+    /// element type is `{}` from an object literal, matching tsc behavior
+    /// that suppresses TS2339 for missing properties with defaults.
+    fn is_for_of_with_object_literal_elements(&self, var_decl_idx: NodeIndex) -> bool {
+        // Walk up: VariableDeclaration -> VariableDeclarationList -> ForOfStatement
+        let Some(decl_ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let decl_list_idx = decl_ext.parent;
+        let Some(list_ext) = self.ctx.arena.get_extended(decl_list_idx) else {
+            return false;
+        };
+        let for_stmt_idx = list_ext.parent;
+        let Some(for_stmt_node) = self.ctx.arena.get(for_stmt_idx) else {
+            return false;
+        };
+        if for_stmt_node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
+            return false;
+        }
+        let Some(for_data) = self.ctx.arena.get_for_in_of(for_stmt_node) else {
+            return false;
+        };
+        // Check if the iterable expression is an array literal
+        let expr_idx = self.ctx.arena.skip_parenthesized(for_data.expression);
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+        // Check if at least one element in the array is an object literal
+        let Some(arr_data) = self.ctx.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+        arr_data.elements.nodes.iter().any(|&elem_idx| {
+            let elem_idx = self.ctx.arena.skip_parenthesized(elem_idx);
+            self.ctx
+                .arena
+                .get(elem_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        })
     }
 
     fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {

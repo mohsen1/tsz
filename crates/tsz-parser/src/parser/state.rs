@@ -2500,31 +2500,16 @@ impl ParserState {
 
     /// Get operator precedence
     pub(crate) const fn get_operator_precedence(&self, token: SyntaxKind) -> u8 {
+        // NOTE: Assignment operators (=, +=, -=, etc.) are NOT handled by the
+        // binary expression chain. They are handled at a higher level in
+        // parse_assignment_expression, matching tsc's separation of
+        // parseAssignmentExpressionOrHigher vs parseBinaryExpressionRest.
+        // They fall through to the default `_ => 0` arm below, which prevents
+        // the binary expression loop from consuming `=` after error recovery
+        // (e.g., `1 >> = 2` should parse as `1 >> <missing>; = 2;`, not
+        // `(1 >> <missing>) = 2`).
         match token {
             SyntaxKind::CommaToken => 1,
-            // Assignment operators are NOT handled by the binary expression
-            // chain. They are handled at a higher level in
-            // parse_assignment_expression, matching tsc's separation of
-            // parseAssignmentExpressionOrHigher vs parseBinaryExpressionRest.
-            // Returning 0 here prevents the binary expression loop from
-            // consuming `=` after error recovery (e.g., `1 >> = 2` should
-            // parse as `1 >> <missing>; = 2;`, not `(1 >> <missing>) = 2`).
-            SyntaxKind::EqualsToken
-            | SyntaxKind::PlusEqualsToken
-            | SyntaxKind::MinusEqualsToken
-            | SyntaxKind::AsteriskEqualsToken
-            | SyntaxKind::AsteriskAsteriskEqualsToken
-            | SyntaxKind::SlashEqualsToken
-            | SyntaxKind::PercentEqualsToken
-            | SyntaxKind::LessThanLessThanEqualsToken
-            | SyntaxKind::GreaterThanGreaterThanEqualsToken
-            | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-            | SyntaxKind::AmpersandEqualsToken
-            | SyntaxKind::BarEqualsToken
-            | SyntaxKind::BarBarEqualsToken
-            | SyntaxKind::AmpersandAmpersandEqualsToken
-            | SyntaxKind::QuestionQuestionEqualsToken
-            | SyntaxKind::CaretEqualsToken => 0,
             SyntaxKind::QuestionToken => 3,
             SyntaxKind::BarBarToken | SyntaxKind::QuestionQuestionToken => 4,
             SyntaxKind::AmpersandAmpersandToken => 5,
