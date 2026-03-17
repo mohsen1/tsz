@@ -196,12 +196,37 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
     ) -> Option<tsz_solver::FunctionShape> {
+        // When a generic function has type params, check if a type references any of them.
+        // If so, skip normalization to preserve Application types that use the function's
+        // own type params. Eagerly evaluating these to Objects destroys type param identity
+        // needed for alpha-renaming during generic function subtype comparison.
+        // Example: `<B>(f: (t: A) => B): IList<B>` — the return type `IList<B>` must stay
+        // as Application(IList, [B]), not be expanded to an Object containing methods with
+        // their own type param B that would shadow the outer B.
+        // Collect names of the function's own type params to detect references.
+        let own_tp_names: Vec<_> = shape.type_params.iter().map(|tp| tp.name).collect();
+
         let mut changed = false;
         let params = shape
             .params
             .iter()
             .map(|param| {
-                let evaluated = self.normalize_nested_type_for_assignability(param.type_id);
+                // Skip normalization for params that reference the function's own type
+                // params — eagerly evaluating them destroys Application types needed
+                // for alpha-renaming during generic function subtype comparison.
+                let skip = !own_tp_names.is_empty()
+                    && own_tp_names.iter().any(|&name| {
+                        tsz_solver::visitor::contains_type_parameter_named(
+                            self.ctx.types,
+                            param.type_id,
+                            name,
+                        )
+                    });
+                let evaluated = if skip {
+                    param.type_id
+                } else {
+                    self.normalize_nested_type_for_assignability(param.type_id)
+                };
                 if evaluated != param.type_id {
                     changed = true;
                 }
@@ -221,7 +246,25 @@ impl<'a> CheckerState<'a> {
             evaluated
         });
         let return_type = {
-            let evaluated = self.normalize_nested_type_for_assignability(shape.return_type);
+            // Skip normalization for return types that reference the function's own
+            // type params. This preserves Application types (e.g., IList<B>) so that
+            // alpha-renaming substitution in check_function_subtype works correctly.
+            // Without this, the Application gets expanded to an Object whose inner
+            // methods may have type params with the same name, causing shadowing
+            // that blocks the alpha-renaming substitution.
+            let skip = !own_tp_names.is_empty()
+                && own_tp_names.iter().any(|&name| {
+                    tsz_solver::visitor::contains_type_parameter_named(
+                        self.ctx.types,
+                        shape.return_type,
+                        name,
+                    )
+                });
+            let evaluated = if skip {
+                shape.return_type
+            } else {
+                self.normalize_nested_type_for_assignability(shape.return_type)
+            };
             if evaluated != shape.return_type {
                 changed = true;
             }
