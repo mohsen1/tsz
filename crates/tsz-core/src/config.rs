@@ -3434,15 +3434,15 @@ fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
     // Add fallback aliases so that default target lib names resolve correctly:
     //   "lib" (ES5 default) -> es5.full.d.ts
     //   "es6" (ES2015 default) -> es2015.full.d.ts
-    if !map.contains_key("lib") {
-        if let Some(path) = map.get("es5.full").cloned() {
-            map.insert("lib".to_string(), path);
-        }
+    if !map.contains_key("lib")
+        && let Some(path) = map.get("es5.full").cloned()
+    {
+        map.insert("lib".to_string(), path);
     }
-    if !map.contains_key("es6") {
-        if let Some(path) = map.get("es2015.full").cloned() {
-            map.insert("es6".to_string(), path);
-        }
+    if !map.contains_key("es6")
+        && let Some(path) = map.get("es2015.full").cloned()
+    {
+        map.insert("es6".to_string(), path);
     }
 
     Ok(map)
