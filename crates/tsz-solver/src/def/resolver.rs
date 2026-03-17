@@ -56,19 +56,6 @@ pub trait TypeResolver {
         None
     }
 
-    /// Resolve a `TypeQuery` (`typeof X`) to the value-space type for a symbol.
-    ///
-    /// For classes, this must return the **constructor type** (with construct signatures
-    /// and static members), NOT the instance type. This distinction is critical:
-    /// `typeof MyClass` should give the constructor, not `MyClass` the instance.
-    ///
-    /// Default implementation delegates to `resolve_ref`. Implementations that store
-    /// instance types under `SymbolRef` (like `TypeEnvironment`) should override this
-    /// to return the constructor type via the `DefId` path.
-    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
-        self.resolve_ref(symbol, interner)
-    }
-
     /// Get type parameters for a symbol (for generic type aliases/interfaces).
     /// Returns None by default; implementations can override to support
     /// Application type expansion.
