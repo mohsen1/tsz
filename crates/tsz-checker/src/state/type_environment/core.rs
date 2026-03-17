@@ -1505,9 +1505,16 @@ impl<'a> CheckerState<'a> {
                 // Return cached non-ERROR results when no type params in scope.
                 // Always re-resolve ERROR because TypeNodeChecker may have cached
                 // ERROR for qualified names it can't resolve without binder context.
+                // Also re-resolve TypeQuery(SymbolRef) types — these are unresolved
+                // deferred types cached by TypeNodeChecker that don't incorporate
+                // control-flow narrowing.  The CheckerState path resolves them with
+                // flow sensitivity (e.g., `typeof c` inside `if (typeof c === 'string')`
+                // should yield the narrowed type `string`, not `string | number`).
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0)
                     && cached != TypeId::ERROR
                     && self.ctx.type_parameter_scope.is_empty()
+                    && tsz_solver::type_queries::get_type_query_symbol_ref(self.ctx.types, cached)
+                        .is_none()
                 {
                     return cached;
                 }
