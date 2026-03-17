@@ -245,7 +245,27 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
 
-                return super_expr_node.pos < first_super_pos;
+                if super_expr_node.pos < first_super_pos {
+                    return true;
+                }
+
+                // Also check if the super property access is an argument to the
+                // super() call itself, e.g. `super(super.blah())`.
+                // Arguments are evaluated before the super call completes, so
+                // accessing `super.prop` in an argument is "before super()".
+                let first_super_call_stmt = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .find(|&stmt| self.is_super_call_statement(stmt));
+                if let Some(super_stmt) = first_super_call_stmt {
+                    if self.is_descendant_of_node(idx, super_stmt) {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
