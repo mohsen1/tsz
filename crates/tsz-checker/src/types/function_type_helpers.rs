@@ -466,6 +466,11 @@ impl<'a> CheckerState<'a> {
         let should_emit = if self.is_global_promise_type(return_type) {
             // Return type is exactly the global Promise<T> - OK
             false
+        } else if self.is_promise_type_through_alias(return_type) {
+            // Return type is a type alias application that resolves to Promise
+            // (e.g., `type MyPromise<T> = Promise<T>` with `declare var MyPromise: typeof Promise`).
+            // The merged symbol prevents is_global_promise_type from recognizing it.
+            false
         } else if self.is_non_promise_application_type(return_type) {
             // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
             // TSC requires exactly Promise<T>, not subclasses.
@@ -533,6 +538,80 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
             );
         }
+    }
+
+    /// Check if a type is a type alias application that resolves to Promise.
+    ///
+    /// For example, `type PromiseAlias<T> = Promise<T>; async function f(): PromiseAlias<void>`
+    /// -- the return type `PromiseAlias<void>` is an Application whose base is a type alias.
+    /// This method resolves the alias body and checks if it references the global Promise type.
+    ///
+    /// This handles tsc's `isReferenceToType` semantics for TS1064, where type aliases
+    /// that ultimately resolve to Promise<T> are accepted as valid async return types.
+    /// It also handles merged symbols (e.g., `type MyPromise<T> = Promise<T>` combined
+    /// with `declare var MyPromise: typeof Promise`) by finding the type alias declaration
+    /// among the symbol's declarations.
+    pub(crate) fn is_promise_type_through_alias(&mut self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::checkers::promise as query;
+        use tsz_binder::symbol_flags;
+
+        // Must be an Application type
+        let query::PromiseTypeKind::Application { base, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        // Check if the base is a Lazy(DefId) pointing to a type alias
+        let def_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => def_id,
+            _ => return false,
+        };
+
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Only handle type aliases (not classes/interfaces)
+        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            return false;
+        }
+
+        // Get the alias body type using type_reference_symbol_type_with_params which
+        // correctly handles merged symbols (e.g., `type MyPromise<T> = Promise<T>`
+        // merged with `declare var MyPromise: typeof Promise`). It finds the type
+        // alias declaration in the symbol's declarations list.
+        let (body_type, _params) = self.type_reference_symbol_type_with_params(sym_id);
+        if self.is_global_promise_type(body_type) {
+            return true;
+        }
+
+        // The body might itself be an Application (e.g., `Promise<T>`)
+        // Check if the Application base refers to the global Promise type
+        if let query::PromiseTypeKind::Application {
+            base: body_base, ..
+        } = query::classify_promise_type(self.ctx.types, body_type)
+        {
+            // Check if the body's base is Promise
+            return self.is_global_promise_type(body_base)
+                || match query::classify_promise_type(self.ctx.types, body_base) {
+                    query::PromiseTypeKind::Lazy(body_def_id) => {
+                        if let Some(body_sym_id) = self.ctx.def_to_symbol_id(body_def_id)
+                            && let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
+                        {
+                            body_symbol.escaped_name == "Promise"
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+        }
+
+        false
     }
 
     /// TS2366/TS2355/TS7030: Check that all code paths return a value when required.
