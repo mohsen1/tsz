@@ -203,6 +203,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                     // Property assignment: { name: target }
                     if let Some(name) = self.get_property_name_resolved(prop.name) {
+                        self.check_destructuring_property_exists(
+                            &name, source_type, prop.name,
+                        );
                         self.check_property_accessibility(
                             NodeIndex::NONE,
                             &name,
@@ -251,6 +254,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = self.ctx.arena.get(shorthand.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
+                        self.check_destructuring_property_exists(
+                            &ident.escaped_text, source_type, shorthand.name,
+                        );
                         self.check_property_accessibility(
                             NodeIndex::NONE,
                             &ident.escaped_text,
@@ -274,37 +280,40 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Get element type from the source array/tuple
-                let elem_type = self.resolve_element_type_for_destructuring(source_type, index);
-                let Some(elem_type) = elem_type else {
-                    continue;
-                };
-
-                // Handle spread elements
-                let target_idx = if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                    if let Some(spread) = self.ctx.arena.get_spread(elem_node) {
-                        spread.expression
+                // Handle spread elements: compute rest type instead of single-element type
+                let (target_idx, check_type) =
+                    if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                        let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
+                            continue;
+                        };
+                        let rest_type =
+                            self.compute_rest_type_for_destructuring(source_type, index);
+                        let Some(rest_type) = rest_type else {
+                            continue;
+                        };
+                        (spread.expression, rest_type)
                     } else {
-                        continue;
-                    }
-                } else {
-                    elem_idx
-                };
+                        let elem_type =
+                            self.resolve_element_type_for_destructuring(source_type, index);
+                        let Some(elem_type) = elem_type else {
+                            continue;
+                        };
+                        (elem_idx, elem_type)
+                    };
 
                 if let Some(target_node) = self.ctx.arena.get(target_idx) {
                     if target_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         || target_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     {
-                        self.check_destructuring_property_accessibility(target_idx, elem_type);
+                        self.check_destructuring_property_accessibility(target_idx, check_type);
                     } else if target_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                        // element = default — check LHS
                         if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
                             && bin.operator_token == SyntaxKind::EqualsToken as u16
                             && let Some(lhs_node) = self.ctx.arena.get(bin.left)
                             && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                                 || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                         {
-                            self.check_destructuring_property_accessibility(bin.left, elem_type);
+                            self.check_destructuring_property_accessibility(bin.left, check_type);
                         }
                     }
                 }
@@ -342,6 +351,49 @@ impl<'a> CheckerState<'a> {
         }
         // Fall back to array element type
         tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)
+    }
+
+    /// TS2339: Check that a property exists on a type during destructuring.
+    fn check_destructuring_property_exists(
+        &mut self,
+        property_name: &str,
+        source_type: TypeId,
+        error_node: NodeIndex,
+    ) {
+        if source_type == TypeId::ANY || source_type == TypeId::ERROR {
+            return;
+        }
+        use crate::query_boundaries::common::PropertyAccessResult;
+        match self.resolve_property_access_with_env(source_type, property_name) {
+            PropertyAccessResult::Success { .. } => {}
+            PropertyAccessResult::PropertyNotFound { .. } => {
+                self.error_property_not_exist_at(property_name, source_type, error_node);
+            }
+            _ => {}
+        }
+    }
+
+    /// Compute the rest type for a spread element in array destructuring.
+    fn compute_rest_type_for_destructuring(
+        &mut self,
+        source_type: TypeId,
+        from_index: usize,
+    ) -> Option<TypeId> {
+        if let Some(elems) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type)
+        {
+            if from_index >= elems.len() {
+                return None;
+            }
+            if from_index == 0 {
+                return Some(source_type);
+            }
+            let rest_elems: Vec<_> = elems[from_index..].to_vec();
+            let rest_tuple = self.ctx.types.tuple(rest_elems);
+            Some(rest_tuple)
+        } else {
+            Some(source_type)
+        }
     }
 
     // =========================================================================
