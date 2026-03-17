@@ -806,10 +806,10 @@ impl<'a> TypeInstantiator<'a> {
                                 array_type
                             };
                         }
-                        // Non-array constraint: fall through to standard mapped
-                        // type instantiation below. This produces an object with
-                        // index signature (e.g., `{ [x: string]: any }`), matching
-                        // tsc's behavior for `Objectish<any>`.
+                        // Non-array or unknown constraint: return any.
+                        // tsc returns any for all homomorphic mapped types over any.
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return TypeId::ANY;
                     }
 
                     // Check for Tuple first (tsc: instantiateMappedTupleType)

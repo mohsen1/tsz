@@ -76,8 +76,10 @@ impl<'a> InferenceContext<'a> {
 
         let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
 
-        // Validate against upper bounds
-        if !upper_bounds_only {
+        // Validate against upper bounds.
+        // Skip validation when result is `any` — tsc treats `any` as satisfying
+        // all constraints, so it always passes upper bound checks.
+        if !upper_bounds_only && result != TypeId::ANY {
             let filtered_upper_bounds = Self::filter_relevant_upper_bounds(&upper_bounds);
             if let Some(upper) =
                 self.first_failed_upper_bound(result, &filtered_upper_bounds, |a, b| {
@@ -128,7 +130,8 @@ impl<'a> InferenceContext<'a> {
 
         let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
 
-        if !upper_bounds_only {
+        // Skip upper bound validation for `any` — it satisfies all constraints in tsc.
+        if !upper_bounds_only && result != TypeId::ANY {
             let filtered_upper_bounds = Self::filter_relevant_upper_bounds(&upper_bounds);
             if let Some(upper) =
                 self.first_failed_upper_bound(result, &filtered_upper_bounds, is_subtype)
@@ -267,9 +270,16 @@ impl<'a> InferenceContext<'a> {
             let has_informative_upper_bound = upper_bounds
                 .iter()
                 .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+            // Check if there are concrete (non-top) candidates before filtering.
+            // When `any` is the only meaningful candidate, keep it even with
+            // informative upper bounds. This matches tsc where passing `any` to
+            // `f<T extends X>(v: T)` infers T=any, not T=X.
+            let has_concrete_candidate = candidates
+                .iter()
+                .any(|c| !matches!(c.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
             candidates.retain(|candidate| match candidate.type_id {
                 TypeId::UNKNOWN | TypeId::ERROR => false,
-                TypeId::ANY => !has_informative_upper_bound,
+                TypeId::ANY => !has_informative_upper_bound || !has_concrete_candidate,
                 _ => true,
             });
         }
@@ -1363,9 +1373,12 @@ impl<'a> InferenceContext<'a> {
                     .upper_bounds
                     .iter()
                     .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                let has_concrete_candidate = candidates
+                    .iter()
+                    .any(|c| !matches!(c.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
                 candidates.retain(|candidate| match candidate.type_id {
                     TypeId::UNKNOWN | TypeId::ERROR => false,
-                    TypeId::ANY => !has_informative_upper_bound,
+                    TypeId::ANY => !has_informative_upper_bound || !has_concrete_candidate,
                     _ => true,
                 });
             }
