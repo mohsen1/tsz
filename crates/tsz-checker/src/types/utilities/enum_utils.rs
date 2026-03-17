@@ -290,8 +290,9 @@ impl<'a> CheckerState<'a> {
     /// Evaluate a constant numeric expression (for enum member initializers).
     ///
     /// Handles: numeric literals, unary +/-/~, binary +/-/*/ // /%/|/&/^/<</>>/>>>,
-    /// and parenthesized expressions. Returns None if the expression cannot be
-    /// evaluated at compile time.
+    /// parenthesized expressions, and references to other enum members via
+    /// property access (E.V1) or element access (E["V1"], E[`V1`]).
+    /// Returns None if the expression cannot be evaluated at compile time.
     pub(crate) fn evaluate_constant_expression(&self, expr_idx: NodeIndex) -> Option<f64> {
         let node = self.ctx.arena.get(expr_idx)?;
         match node.kind {
@@ -345,8 +346,181 @@ impl<'a> CheckerState<'a> {
                 let paren = self.ctx.arena.get_parenthesized(node)?;
                 self.evaluate_constant_expression(paren.expression)
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.evaluate_enum_member_access(expr_idx)
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.evaluate_enum_member_access(expr_idx)
+            }
             _ => None,
         }
+    }
+
+    /// Resolve a property access or element access expression that references
+    /// an enum member, and evaluate its numeric value.
+    ///
+    /// Handles patterns like:
+    /// - `E.V1` (property access on enum)
+    /// - `A.B.C.E.V1` (qualified namespace chain)
+    /// - `E["V1"]` (element access with string literal)
+    /// - `E[`V1`]` (element access with template literal)
+    fn evaluate_enum_member_access(&self, expr_idx: NodeIndex) -> Option<f64> {
+        // Collect the chain of identifiers and the final member name.
+        // For `A.B.C.E.V1`: segments = ["A", "B", "C", "E"], member_name = "V1"
+        let (segments, member_name) = self.collect_access_chain(expr_idx)?;
+        if segments.is_empty() {
+            return None;
+        }
+
+        // Walk the binder's symbol table to find the enum symbol.
+        let root_name = &segments[0];
+        let mut current_sym_id = self.ctx.binder.file_locals.get(root_name)?;
+
+        for segment in &segments[1..] {
+            let symbol = self.ctx.binder.get_symbol(current_sym_id)?;
+            // Try exports first (for namespaces), then members (for enums/classes)
+            current_sym_id = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        // current_sym_id should now point to the enum symbol.
+        // Look up the member in its exports (enum members are stored as exports).
+        let enum_symbol = self.ctx.binder.get_symbol(current_sym_id)?;
+        let member_sym_id = enum_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(&member_name))
+            .or_else(|| {
+                enum_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(&member_name))
+            })?;
+
+        let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
+        if member_symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+            return None;
+        }
+
+        // Get the member's value declaration and evaluate its initializer.
+        let member_decl = member_symbol.value_declaration;
+        let member_node = self.ctx.arena.get(member_decl)?;
+        let member_data = self.ctx.arena.get_enum_member(member_node)?;
+
+        if member_data.initializer.is_none() {
+            // Auto-incremented member — we need to compute its position value.
+            // Walk through all declarations of the parent enum to find this member's
+            // auto-incremented value.
+            return self.compute_auto_increment_value(current_sym_id, member_decl);
+        }
+
+        // Recursively evaluate the initializer expression.
+        self.evaluate_constant_expression(member_data.initializer)
+    }
+
+    /// Collect the identifier chain from a property/element access expression.
+    /// Returns (object_segments, member_name).
+    /// For `A.B.C.E.V1`: (["A", "B", "C", "E"], "V1")
+    /// For `E["V1"]`: (["E"], "V1")
+    fn collect_access_chain(&self, expr_idx: NodeIndex) -> Option<(Vec<String>, String)> {
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let prop_node = self.ctx.arena.get(access.name_or_argument)?;
+                let member_name = self
+                    .ctx
+                    .arena
+                    .get_identifier(prop_node)?
+                    .escaped_text
+                    .clone();
+
+                // Recursively collect the object chain
+                let obj_node = self.ctx.arena.get(access.expression)?;
+                if obj_node.kind == SyntaxKind::Identifier as u16 {
+                    let ident = self.ctx.arena.get_identifier(obj_node)?;
+                    Some((vec![ident.escaped_text.clone()], member_name))
+                } else if obj_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    let (mut segments, last_segment) =
+                        self.collect_access_chain(access.expression)?;
+                    segments.push(last_segment);
+                    Some((segments, member_name))
+                } else {
+                    None
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                // Get the string key from the element access argument
+                let arg_node = self.ctx.arena.get(access.name_or_argument)?;
+                let member_name = if arg_node.kind == SyntaxKind::StringLiteral as u16 {
+                    self.ctx.arena.get_literal(arg_node)?.text.clone()
+                } else if arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                    self.ctx.arena.get_literal(arg_node)?.text.clone()
+                } else {
+                    return None;
+                };
+
+                // Collect the object chain
+                let obj_node = self.ctx.arena.get(access.expression)?;
+                if obj_node.kind == SyntaxKind::Identifier as u16 {
+                    let ident = self.ctx.arena.get_identifier(obj_node)?;
+                    Some((vec![ident.escaped_text.clone()], member_name))
+                } else if obj_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    let (mut segments, last_segment) =
+                        self.collect_access_chain(access.expression)?;
+                    segments.push(last_segment);
+                    Some((segments, member_name))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Compute the auto-incremented value for an enum member without an initializer.
+    /// Walks through all declarations of the parent enum up to the target member,
+    /// tracking the auto-increment counter.
+    fn compute_auto_increment_value(
+        &self,
+        enum_sym_id: tsz_binder::SymbolId,
+        target_member_decl: NodeIndex,
+    ) -> Option<f64> {
+        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
+
+        for &decl_idx in &enum_symbol.declarations {
+            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
+            // Reset auto-increment at the start of each declaration block.
+            let mut auto_value: f64 = 0.0;
+            for &member_idx in &enum_decl.members.nodes {
+                if member_idx == target_member_decl {
+                    return Some(auto_value);
+                }
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let member_data = self.ctx.arena.get_enum_member(member_node)?;
+                if member_data.initializer.is_some() {
+                    if let Some(val) = self.evaluate_constant_expression(member_data.initializer) {
+                        auto_value = val + 1.0;
+                    } else {
+                        // Non-numeric initializer breaks auto-increment
+                        return None;
+                    }
+                } else {
+                    auto_value += 1.0;
+                }
+            }
+        }
+        None
     }
 
     // evaluate_const_enum_initializer is a free function in the const_enum_eval module below.
