@@ -35,6 +35,15 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     })
 }
 
+/// Check if a type is directly an `Infer` type (not recursive).
+///
+/// This is a lightweight O(1) check that only inspects the top-level type.
+/// Use this when you need to guard against caching leaked Infer results
+/// without the cost of a full recursive walk.
+pub fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeData::Infer(_)))
+}
+
 /// Check if a type contains any `infer` types.
 ///
 /// Delegates to `visitor_predicates::contains_type_matching` with an `Infer`-only

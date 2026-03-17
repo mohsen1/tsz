@@ -172,10 +172,20 @@ impl<'a> CheckerState<'a> {
             // Persist intermediate evaluation results to the shared cache.
             // This prevents re-evaluating recursive type expansions (e.g.,
             // RecursivePaths, DeepPartial) that produce many intermediate TypeIds.
+            //
+            // Skip caching results that are Infer types: an Infer type should never
+            // be the final evaluation of a non-Infer type. When conditional types
+            // like `U extends Synthetic<T, infer V> ? V : never` are partially
+            // evaluated (e.g., due to missing resolver context or evaluation ordering),
+            // the raw Infer(V) can leak as an intermediate result. Caching it poisons
+            // subsequent evaluations that might otherwise resolve correctly.
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v && !k.is_intrinsic() {
+                    if k != v
+                        && !k.is_intrinsic()
+                        && !tsz_solver::type_queries::is_infer_type(self.ctx.types, v)
+                    {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -198,10 +208,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.depth_exceeded.set(true);
             }
             // Persist intermediate results from the second evaluator pass too.
+            // Same Infer guard: skip caching leaked Infer results.
             if use_cache {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
-                    if k != v && !k.is_intrinsic() {
+                    if k != v
+                        && !k.is_intrinsic()
+                        && !tsz_solver::type_queries::is_infer_type(self.ctx.types, v)
+                    {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -214,7 +228,9 @@ impl<'a> CheckerState<'a> {
             result
         };
 
-        if use_cache {
+        // Same Infer guard for the top-level result: don't cache Infer results
+        // that leaked from partially-evaluated conditional types.
+        if use_cache && !tsz_solver::type_queries::is_infer_type(self.ctx.types, final_result) {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
                 crate::context::EnvEvalCacheEntry {
