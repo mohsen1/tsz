@@ -265,6 +265,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_infer_tests.rs"]
+mod conditional_infer_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
