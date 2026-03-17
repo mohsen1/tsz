@@ -278,7 +278,6 @@ impl<'a> CheckerState<'a> {
         type_ref_idx: NodeIndex,
     ) -> bool {
         use tsz_binder::symbol_flags;
-
         let mut sym_id = sym_id;
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.flags & symbol_flags::ALIAS != 0
@@ -577,6 +576,8 @@ impl<'a> CheckerState<'a> {
                 let base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
                     .filter(|&base| base != type_arg);
+                {
+                }
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
@@ -591,9 +592,46 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::UNKNOWN
                             && base != type_arg
                         {
-                            // Base constraint still contains type parameters — defer
-                            // to instantiation time (matches tsc behavior).
+                            // Base constraint still contains type parameters.
+                            // For most cases, defer to instantiation time. However,
+                            // when the required constraint is a callable signature
+                            // (e.g. `(...args: any) => any` for `ReturnType<T>`),
+                            // tsc eagerly reports TS2344 if the base type is not
+                            // provably callable (e.g. generic indexed access types
+                            // like `DataFetchFns[T][F]` are not callable). This
+                            // matches tsc behavior for ReturnType/Parameters/etc.
                             if query::contains_type_parameters(self.ctx.types, base) {
+                                let constraint_resolved = self.resolve_lazy_type(constraint);
+                                let db = self.ctx.types.as_type_database();
+                                let constraint_is_callable =
+                                    tsz_solver::type_queries::is_callable_type(
+                                        db,
+                                        constraint_resolved,
+                                    );
+                                if !constraint_is_callable {
+                                    continue;
+                                }
+                                // Constraint is callable — check if base is callable too.
+                                // If base still has type params and is not callable, emit TS2344.
+                                let base_is_callable =
+                                    tsz_solver::type_queries::is_callable_type(db, base);
+                                if base_is_callable {
+                                    // Base is callable even with type params — satisfied.
+                                    continue;
+                                }
+                                // Base is not callable and constraint is callable → TS2344.
+                                if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                                    if !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                        arg_idx,
+                                        constraint_resolved,
+                                    ) {
+                                        self.error_type_constraint_not_satisfied(
+                                            type_arg,
+                                            constraint_resolved,
+                                            arg_idx,
+                                        );
+                                    }
+                                }
                                 continue;
                             }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
@@ -619,6 +657,34 @@ impl<'a> CheckerState<'a> {
 
                             let db = self.ctx.types.as_type_database();
                             let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
+
+                            // Special case: tsc eagerly reports TS2344 for generic indexed access
+                            // types (A[B] where A contains type params) when the constraint is
+                            // callable, even if the evaluated base constraint is callable.
+                            // Example: `ReturnType<DataFetchFns[T][F]>` → TS2344 because
+                            // `DataFetchFns[T][F]` is not provably callable (T is free).
+                            // By contrast, `ReturnType<DataFetchFns['Boat'][F]>` → no TS2344
+                            // because 'Boat' is concrete and all its values are callable.
+                            let constraint_is_callable =
+                                tsz_solver::type_queries::is_callable_type(db, inst_constraint)
+                                    || self.is_function_constraint(original_constraint);
+                            if constraint_is_callable
+                                && self.is_generic_indexed_access(type_arg)
+                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                && !self
+                                    .type_argument_is_narrowed_by_conditional_true_branch(
+                                        arg_idx,
+                                        inst_constraint,
+                                    )
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    inst_constraint,
+                                    arg_idx,
+                                );
+                                continue;
+                            }
+
                             let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                                 || self.satisfies_array_like_constraint(base, inst_constraint);
                             if !is_satisfied {
@@ -635,6 +701,50 @@ impl<'a> CheckerState<'a> {
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
                                     inst_constraint,
+                                    arg_idx,
+                                );
+                            }
+                        }
+                        // When base_constraint_type is None (composite type with type params
+                        // that can't be simplified further), check if the required constraint
+                        // is callable. Tsc eagerly emits TS2344 when the constraint is a
+                        // callable signature and the composite type arg is not provably callable.
+                        // Example: `ReturnType<TypeHardcodedAsParameterWithoutReturnType<T,F>>`
+                        // where `TypeHardcodedAsParameterWithoutReturnType<T,F>` = `DataFetchFns[T][F]`.
+                        //
+                        // The constraint TypeId may come from a lib arena (cross-arena). Resolve
+                        // it fully and evaluate before checking callability.
+                        if base_constraint_type.is_none() {
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            // Also try evaluating the constraint in case it's a lazy reference
+                            // to a function type from the lib (e.g., `(...args: any) => any`).
+                            let constraint_evaluated =
+                                self.evaluate_type_for_assignability(constraint_resolved);
+                            let db = self.ctx.types.as_type_database();
+                            let constraint_is_callable =
+                                tsz_solver::type_queries::is_callable_type(db, constraint_resolved)
+                                    || tsz_solver::type_queries::is_callable_type(
+                                        db,
+                                        constraint_evaluated,
+                                    )
+                                    || self.is_function_constraint(constraint)
+                                    || self.is_function_constraint(constraint_resolved);
+                            if constraint_is_callable
+                                && !tsz_solver::type_queries::is_callable_type(db, type_arg)
+                                && crate::query_boundaries::common::callable_shape_for_type(
+                                    db,
+                                    type_arg,
+                                )
+                                .is_none()
+                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                && !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                    arg_idx,
+                                    constraint_resolved,
+                                )
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    constraint_resolved,
                                     arg_idx,
                                 );
                             }
@@ -1063,6 +1173,22 @@ impl<'a> CheckerState<'a> {
             && db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Function)
         {
             return true;
+        }
+        false
+    }
+
+    /// Check if a type is a "generic indexed access" — an `IndexAccess(A, B)` where
+    /// the object part `A` contains free type parameters.
+    ///
+    /// tsc treats such types as not provably callable at definition time, even if
+    /// substituting the type parameter's constraint would produce a callable union.
+    /// For example, `DataFetchFns[T][F]` is a generic indexed access (T is a free
+    /// type param in the object), while `DataFetchFns['Boat'][F]` is not (the object
+    /// `DataFetchFns['Boat']` is concrete).
+    fn is_generic_indexed_access(&self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if let Some((object, _)) = query::index_access_components(db, type_id) {
+            return query::contains_type_parameters(self.ctx.types, object);
         }
         false
     }
