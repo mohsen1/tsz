@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Walk the type alias body in a cross-arena and prime lib type params
-    /// for any TYPE_REFERENCE nodes that lack explicit type arguments.
+    /// for any `TYPE_REFERENCE` nodes that lack explicit type arguments.
     /// This ensures that generic lib types with all-default type params
     /// (e.g., `Uint8Array<TArrayBuffer = ArrayBuffer>`) get their defaults
     /// applied during lowering.

@@ -3150,7 +3150,7 @@ fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
 /// Resolve default lib files for a given target.
 ///
 /// Matches tsc's behavior exactly:
-/// 1. Get the root lib file for the target (e.g., "lib" for ES5, "es6" for ES2015)
+/// 1. Get the root lib file for the target (e.g., "lib" for ES5, "es2015.full" for ES2015)
 /// 2. Follow ALL `/// <reference lib="..." />` directives recursively
 ///
 /// This means `--target es5` loads lib.d.ts -> dom -> es2015 (transitively),
@@ -3184,8 +3184,8 @@ pub fn resolve_default_lib_files_from_dir(
 ///   - `ScriptHost` types
 ///
 /// The mapping matches TypeScript's `getDefaultLibFileName()` in utilitiesPublic.ts:
-/// - ES3/ES5 → lib.d.ts (equivalent to es5.full.d.ts in source tree)
-/// - ES2015  → lib.es6.d.ts (equivalent to es2015.full.d.ts in source tree)
+/// - ES3/ES5 → lib.d.ts (npm) / es5.full.d.ts (source tree)
+/// - ES2015  → lib.es6.d.ts (npm) / es2015.full.d.ts (source tree)
 /// - ES2016+ → lib.es20XX.full.d.ts
 /// - `ESNext`  → lib.esnext.full.d.ts
 ///
@@ -3193,10 +3193,9 @@ pub fn resolve_default_lib_files_from_dir(
 /// We use the source tree naming since that's what exists in TypeScript/src/lib.
 pub const fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
-        // ES3/ES5 -> lib.d.ts (ES5 + DOM + ScriptHost)
+        // ES3/ES5 -> lib.d.ts (npm) or es5.full.d.ts (source tree)
         ScriptTarget::ES3 | ScriptTarget::ES5 => "lib",
-        // ES2015 -> lib.es6.d.ts (ES2015 + DOM + DOM.Iterable + ScriptHost)
-        // Note: NOT "es2015.full" (doesn't exist), use "es6" per tsc convention
+        // ES2015 -> lib.es6.d.ts (npm) or es2015.full.d.ts (source tree)
         ScriptTarget::ES2015 => "es6",
         // ES2016+ use .full variants (ES + DOM + ScriptHost + others)
         ScriptTarget::ES2016 => "es2016.full",
@@ -3396,13 +3395,17 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
         let key = stem.strip_prefix("lib.").unwrap_or(stem);
         map.insert(key, filename);
     }
-    // In npm-installed TypeScript, `lib.d.ts` is the ES5+DOM bundle (equivalent
-    // to `es5.full.d.ts` in the source tree). The default target name for ES3/ES5
-    // is "lib", so we need this alias for the embedded fallback to work.
+    // Add fallback aliases for source tree naming (no lib.d.ts or lib.es6.d.ts):
+    //   "lib" -> es5.full.d.ts, "es6" -> es2015.full.d.ts
     if !map.contains_key("lib")
         && let Some(&es5_full) = map.get("es5.full")
     {
         map.insert("lib", es5_full);
+    }
+    if !map.contains_key("es6")
+        && let Some(&es2015_full) = map.get("es2015.full")
+    {
+        map.insert("es6", es2015_full);
     }
     map
 }
@@ -3425,6 +3428,21 @@ fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
         let stem = stem.strip_suffix(".generated").unwrap_or(stem);
         let key = normalize_lib_name(stem);
         map.insert(key, canonicalize_or_owned(&path));
+    }
+
+    // In TypeScript source tree (v6+), `lib.d.ts` and `lib.es6.d.ts` don't exist.
+    // Add fallback aliases so that default target lib names resolve correctly:
+    //   "lib" (ES5 default) -> es5.full.d.ts
+    //   "es6" (ES2015 default) -> es2015.full.d.ts
+    if !map.contains_key("lib") {
+        if let Some(path) = map.get("es5.full").cloned() {
+            map.insert("lib".to_string(), path);
+        }
+    }
+    if !map.contains_key("es6") {
+        if let Some(path) = map.get("es2015.full").cloned() {
+            map.insert("es6".to_string(), path);
+        }
     }
 
     Ok(map)

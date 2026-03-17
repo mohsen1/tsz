@@ -754,7 +754,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Try to collect inline CJS export info for a variable statement.
-    /// Returns Some(vec of (decoded_name, emit_name, `initializer_idx`)) if ALL
+    /// Returns `Some(vec of (decoded_name, emit_name, initializer_idx))` if ALL
     /// declarators are simple identifier bindings with initializers. Returns None if
     /// any declarator uses destructuring or lacks an initializer (in which case we
     /// fall back to split form).

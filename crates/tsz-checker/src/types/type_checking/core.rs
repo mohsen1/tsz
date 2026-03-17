@@ -1682,7 +1682,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Walk a type node AST subtree to find TYPE_QUERY nodes (`typeof expr`)
+    /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
     /// and pre-compute the flow-narrowed type of each expression.
     ///
     /// This is called during `check_type_alias_declaration` so that when the

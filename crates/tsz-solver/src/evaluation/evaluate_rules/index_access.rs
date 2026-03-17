@@ -703,12 +703,11 @@ impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
 
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
         match kind {
-            IntrinsicKind::Number => Some(self.element_type),
-            // tsc: Array<T>[string] returns T (the element type) because
-            // the numeric index signature (returning T) is implicitly
-            // available under string indexing. String keys subsume numeric
-            // keys, so the numeric index type is returned.
-            IntrinsicKind::String => Some(self.element_type),
+            // tsc: Array<T>[number] and Array<T>[string] both return T (the
+            // element type). For string indexing, the numeric index signature
+            // (returning T) is implicitly available under string keys, so the
+            // numeric index type is returned.
+            IntrinsicKind::Number | IntrinsicKind::String => Some(self.element_type),
             _ => Some(TypeId::UNDEFINED),
         }
     }

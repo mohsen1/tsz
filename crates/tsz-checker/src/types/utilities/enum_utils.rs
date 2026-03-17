@@ -427,8 +427,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect the identifier chain from a property/element access expression.
-    /// Returns (object_segments, member_name).
-    /// For `A.B.C.E.V1`: (["A", "B", "C", "E"], "V1")
+    /// Returns `(object_segments, member_name)`.
+    /// For `A.B.C.E.V1`: `(["A", "B", "C", "E"], "V1")`
     /// For `E["V1"]`: (["E"], "V1")
     fn collect_access_chain(&self, expr_idx: NodeIndex) -> Option<(Vec<String>, String)> {
         let node = self.ctx.arena.get(expr_idx)?;

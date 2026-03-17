@@ -243,7 +243,7 @@ impl TypeInterner {
         false
     }
 
-    /// Check if a TypeParameter with a non-nullable constraint is intersected with
+    /// Check if a `TypeParameter` with a non-nullable constraint is intersected with
     /// null, undefined, or void.
     ///
     /// For example, `T & undefined` where `T extends string` is `never` because
@@ -282,10 +282,10 @@ impl TypeInterner {
     /// Merge same-named type parameters in an intersection, preferring constrained ones.
     ///
     /// When type predicate narrowing produces an intersection like
-    /// `(T_constrained | undefined) & T_unconstrained` (where T_constrained has
-    /// `T extends string` from a class and T_unconstrained is plain `T` from an interface),
+    /// `(T_constrained | undefined) & T_unconstrained` (where `T_constrained` has
+    /// `T extends string` from a class and `T_unconstrained` is plain `T` from an interface),
     /// distribution would produce `(undefined & T_uncon) | (T_con & T_uncon)`.
-    /// Since T_uncon has no constraint, `undefined & T_uncon` doesn't reduce to `never`,
+    /// Since `T_uncon` has no constraint, `undefined & T_uncon` doesn't reduce to `never`,
     /// causing a false TS2532.
     ///
     /// This method replaces unconstrained type parameters with their constrained
