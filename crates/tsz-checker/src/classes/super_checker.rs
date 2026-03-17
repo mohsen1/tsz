@@ -736,14 +736,23 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // When the file has syntax/parse errors (e.g. TS1034 for bare `super`),
+        // tsc suppresses all semantic super-expression diagnostics (TS2335,
+        // TS2337, TS2660, etc.) to avoid cascading noise. Match that behavior.
+        // We still need to track super() calls for TS2377 checking, so we
+        // don't return immediately — instead we gate individual error emissions.
+        let suppress_errors = self.has_syntax_parse_errors();
+
         // TS2466: 'super' cannot be referenced in a computed property name.
         // Check this first — it takes priority over TS2337/TS2660/etc.
         if self.is_super_in_computed_property_name(idx) {
-            self.error_at_node(
-                idx,
-                diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
-                diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
-            );
+            if !suppress_errors {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+                    diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+                );
+            }
             return;
         }
 
@@ -790,28 +799,30 @@ impl<'a> CheckerState<'a> {
         // or TS2660 (super property access) instead.
 
         if !is_super_call && !is_super_property_access {
-            if is_super_new && self.is_in_constructor(idx) {
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                );
-                return;
-            }
+            if !suppress_errors {
+                if is_super_new && self.is_in_constructor(idx) {
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                        diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                    );
+                    return;
+                }
 
-            // TS1034 is now emitted by the parser at the correct position (the
-            // token after `super`), matching tsc's parseExpectedToken behavior.
-            if in_constructor_parameter_context {
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
-                    diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
-                );
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                );
+                // TS1034 is now emitted by the parser at the correct position (the
+                // token after `super`), matching tsc's parseExpectedToken behavior.
+                if in_constructor_parameter_context {
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+                        diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+                    );
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                        diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                    );
+                }
             }
             return;
         }
@@ -826,6 +837,12 @@ impl<'a> CheckerState<'a> {
             {
                 class_info.has_super_call_in_current_constructor = true;
             }
+        }
+
+        // When the file has parse errors, skip all remaining semantic super
+        // diagnostics. The super-call tracking above must still run.
+        if suppress_errors {
+            return;
         }
 
         // Find the enclosing class by walking up the parent chain
