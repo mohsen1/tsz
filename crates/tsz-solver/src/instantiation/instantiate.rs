@@ -62,11 +62,19 @@ impl TypeSubstitution {
                 match param.default {
                     Some(default) => {
                         // Defaults may reference earlier type parameters, so instantiate them
-                        if i > 0 && !map.is_empty() {
+                        let resolved = if i > 0 && !map.is_empty() {
                             let subst = Self { map: map.clone() };
                             instantiate_type(interner, default, &subst)
                         } else {
                             default
+                        };
+                        // Circular default detection: if the resolved default is (or
+                        // contains) the type parameter itself, fall back to `any`.
+                        // This matches tsc behavior for `type T<X extends C = X>`.
+                        if type_references_param(interner, resolved, param.name) {
+                            TypeId::ANY
+                        } else {
+                            resolved
                         }
                     }
                     None => {
@@ -1385,6 +1393,29 @@ fn template_has_lazy_application_in_composite(
             let cond = interner.conditional_type(cond_id);
             template_has_lazy_application_in_composite(interner, cond.true_type)
                 || template_has_lazy_application_in_composite(interner, cond.false_type)
+        }
+        _ => false,
+    }
+}
+
+/// Check whether `type_id` references a type parameter with the given `name`.
+///
+/// Used to detect circular type parameter defaults. When a default resolves
+/// to (or contains) the parameter it is defaulting, tsc falls back to `any`.
+/// This is a shallow check: it handles the direct self-reference case
+/// (`type T<X extends C = X>`) and union/intersection wrappers.
+fn type_references_param(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    param_name: tsz_common::interner::Atom,
+) -> bool {
+    match interner.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info.name == param_name,
+        Some(TypeData::Union(members_id)) | Some(TypeData::Intersection(members_id)) => {
+            let members = interner.type_list(members_id);
+            members
+                .iter()
+                .any(|&m| type_references_param(interner, m, param_name))
         }
         _ => false,
     }
