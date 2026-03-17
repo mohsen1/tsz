@@ -598,6 +598,7 @@ impl<'a> Printer<'a> {
 
     /// Collect parameter property names from constructor parameters.
     /// Returns names of parameters that have accessibility modifiers (public/private/protected/readonly).
+    /// Uses emit text (preserving unicode escapes) to match tsc output.
     pub(in crate::emitter) fn collect_parameter_properties(
         &self,
         params: &[NodeIndex],
@@ -608,7 +609,9 @@ impl<'a> Printer<'a> {
                 && let Some(param) = self.arena.get_parameter(param_node)
                 && self.has_parameter_property_modifier(&param.modifiers)
             {
-                let name = self.get_identifier_text_idx(param.name);
+                let name = crate::transforms::emit_utils::identifier_emit_text_or_empty(
+                    self.arena, param.name,
+                );
                 if !name.is_empty() {
                     names.push(name);
                 }

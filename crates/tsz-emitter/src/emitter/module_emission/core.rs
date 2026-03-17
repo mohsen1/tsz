@@ -754,13 +754,17 @@ impl<'a> Printer<'a> {
     }
 
     /// Try to collect inline CJS export info for a variable statement.
-    /// Returns Some(vec of (name, `initializer_idx`)) if ALL declarators are simple
-    /// identifier bindings with initializers. Returns None if any declarator uses
-    /// destructuring or lacks an initializer (in which case we fall back to split form).
+    /// Returns Some(vec of (decoded_name, emit_name, `initializer_idx`)) if ALL
+    /// declarators are simple identifier bindings with initializers. Returns None if
+    /// any declarator uses destructuring or lacks an initializer (in which case we
+    /// fall back to split form).
+    ///
+    /// `decoded_name` is the semantic name (for set tracking/matching).
+    /// `emit_name` preserves unicode escapes from the source to match tsc output.
     pub(in crate::emitter) fn try_collect_inline_cjs_exports(
         &self,
         node: &Node,
-    ) -> Option<Vec<(String, NodeIndex)>> {
+    ) -> Option<Vec<(String, String, NodeIndex)>> {
         let var_stmt = self.arena.get_variable(node)?;
         let mut result = Vec::new();
 
@@ -777,7 +781,16 @@ impl<'a> Printer<'a> {
                 if name_node.kind != SyntaxKind::Identifier as u16 {
                     return None;
                 }
-                let name = self.arena.get_identifier(name_node)?.escaped_text.clone();
+                let ident = self.arena.get_identifier(name_node)?;
+                let decoded_name = ident.escaped_text.clone();
+                // Use original_text (preserving unicode escapes) when available,
+                // falling back to escaped_text (decoded name). TSC preserves
+                // unicode escape sequences in emitted CJS inline exports.
+                let emit_name = ident
+                    .original_text
+                    .as_deref()
+                    .unwrap_or(&ident.escaped_text)
+                    .to_string();
 
                 // Must have an initializer
                 if decl.initializer.is_none() {
@@ -797,7 +810,7 @@ impl<'a> Printer<'a> {
                     }
                 }
 
-                result.push((name, decl.initializer));
+                result.push((decoded_name, emit_name, decl.initializer));
             }
         }
 

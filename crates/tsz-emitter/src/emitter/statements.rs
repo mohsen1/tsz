@@ -952,7 +952,15 @@ impl<'a> Printer<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             if let Some(id) = self.arena.get_identifier(node) {
-                names.push(id.escaped_text.clone());
+                // Use original_text (preserving unicode escapes) when available,
+                // falling back to escaped_text. TSC preserves unicode escapes
+                // in CJS export assignments (exports.\u0078 = \u0078;).
+                let text = id
+                    .original_text
+                    .as_deref()
+                    .unwrap_or(&id.escaped_text)
+                    .to_string();
+                names.push(text);
             }
             return;
         }
