@@ -1883,8 +1883,28 @@ impl<'a> CheckerState<'a> {
             )
         } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
             true
+        } else if self.is_assignable_to(object_type_for_check, declaring_type) {
+            true
         } else {
-            self.is_assignable_to(object_type_for_check, declaring_type)
+            // Fallback for partial/intermediate instance types: during class instance
+            // type building, resolve_self_referencing_constructor may return a partial
+            // type from symbol_instance_types that lacks the private brand but contains
+            // the declared field. When there is exactly one private symbol in scope
+            // (no shadowing), the object type has no brand (partial type), and the
+            // property exists on the object, treat the access as compatible. This
+            // prevents false TS2339 on patterns like `this.getInstance().#field`.
+            //
+            // The single-symbol guard ensures this does not suppress legitimate
+            // TS18014 shadowing errors when multiple private identifiers with the
+            // same name exist in nested class scopes.
+            symbols.len() == 1
+                && self.get_private_brand(object_type_for_check).is_none()
+                && matches!(
+                    self.ctx
+                        .types
+                        .property_access_type(object_type_for_check, &property_name),
+                    PropertyAccessResult::Success { .. }
+                )
         };
 
         if !types_compatible {
