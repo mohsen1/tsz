@@ -721,11 +721,12 @@ impl<'a> CheckerState<'a> {
 
         let mut any_changed = false;
         for tq_idx in &type_query_nodes {
-            let narrowed = self.get_type_from_type_query(*tq_idx);
-            let existing = self.ctx.node_types.get(&tq_idx.0).copied();
-            if existing != Some(narrowed) {
-                self.ctx.node_types.insert(tq_idx.0, narrowed);
-                any_changed = true;
+            if let Some(narrowed) = self.resolve_single_type_query_with_flow(*tq_idx) {
+                let existing = self.ctx.node_types.get(&tq_idx.0).copied();
+                if existing != Some(narrowed) {
+                    self.ctx.node_types.insert(tq_idx.0, narrowed);
+                    any_changed = true;
+                }
             }
         }
 
@@ -735,6 +736,91 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.node_types.remove(&type_node.0);
         self.get_type_from_type_node(type_node)
+    }
+
+    /// Resolve a single `typeof x` type query using flow narrowing.
+    /// Returns `Some(narrowed_type)` if flow narrowing applies, `None` otherwise.
+    fn resolve_single_type_query_with_flow(&mut self, tq_idx: NodeIndex) -> Option<TypeId> {
+        use tsz_scanner::SyntaxKind;
+
+        let node = self.ctx.arena.get(tq_idx)?;
+        let type_query = self.ctx.arena.get_type_query(node)?;
+        let expr_node = self.ctx.arena.get(type_query.expr_name)?;
+
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, type_query.expr_name)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+
+        // Ensure the symbol's declared type is resolved (it may not be in
+        // symbol_types yet when the type alias is resolved before the variable).
+        let declared_type = self
+            .ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .unwrap_or_else(|| self.get_type_of_symbol(sym_id));
+
+        if declared_type == TypeId::ERROR || declared_type == TypeId::ANY {
+            return None;
+        }
+
+        // Find a flow node at or above the type query position
+        let flow_node = self
+            .ctx
+            .binder
+            .get_node_flow(type_query.expr_name)
+            .or_else(|| self.ctx.binder.get_node_flow(tq_idx))
+            .or_else(|| {
+                let mut current = self.ctx.arena.get_extended(tq_idx).map(|ext| ext.parent);
+                while let Some(parent) = current {
+                    if parent.is_none() {
+                        break;
+                    }
+                    if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                        return Some(flow);
+                    }
+                    current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                }
+                None
+            })?;
+
+        use crate::FlowAnalyzer;
+        let analyzer = FlowAnalyzer::with_node_types(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+            &self.ctx.node_types,
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
+        .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
+        .with_type_environment(std::rc::Rc::clone(&self.ctx.type_environment))
+        .with_narrowing_cache(&self.ctx.narrowing_cache)
+        .with_call_type_predicates(&self.ctx.call_type_predicates)
+        .with_flow_buffers(
+            &self.ctx.flow_worklist,
+            &self.ctx.flow_in_worklist,
+            &self.ctx.flow_visited,
+            &self.ctx.flow_results,
+        )
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
+
+        let narrowed = analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
+        if narrowed != TypeId::ERROR {
+            Some(narrowed)
+        } else {
+            None
+        }
     }
 
     /// Recursively collect `TYPE_QUERY` node indices from a type node subtree.

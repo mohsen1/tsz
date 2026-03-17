@@ -36,6 +36,13 @@ impl<'a> CheckerState<'a> {
             return self.get_type_from_type_reference_in_type_literal(idx);
         }
         if node.kind == syntax_kind_ext::TYPE_QUERY {
+            // Check node_types cache first — resolve_type_queries_with_flow may have
+            // pre-resolved this typeof with flow narrowing.
+            if let Some(&cached) = self.ctx.node_types.get(&idx.0)
+                && cached != TypeId::ERROR
+            {
+                return cached;
+            }
             return self.get_type_from_type_query(idx);
         }
         if node.kind == syntax_kind_ext::UNION_TYPE {
