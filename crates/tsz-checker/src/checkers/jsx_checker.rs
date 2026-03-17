@@ -908,6 +908,32 @@ impl<'a> CheckerState<'a> {
         non_generic_count >= 2
     }
 
+    /// Check if a component type has generic call or construct signatures.
+    fn is_generic_jsx_component(&self, component_type: TypeId) -> bool {
+        if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            && !shape.is_constructor
+            && !shape.type_params.is_empty()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        {
+            if sigs.iter().any(|s| !s.type_params.is_empty()) {
+                return true;
+            }
+        }
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+        {
+            if sigs.iter().any(|s| !s.type_params.is_empty()) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Extract props type from a class component via construct signatures.
     fn get_class_component_props_type(
         &mut self,
