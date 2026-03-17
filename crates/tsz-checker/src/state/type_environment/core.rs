@@ -113,6 +113,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
+        let is_const_enum = symbol.flags & symbol_flags::CONST_ENUM != 0;
+        let flags = if is_const_enum {
+            tsz_solver::ObjectFlags::CONST_ENUM
+        } else {
+            tsz_solver::ObjectFlags::empty()
+        };
         if self.enum_kind(sym_id) == Some(EnumKind::Numeric) {
             let number_index = Some(IndexSignature {
                 key_type: TypeId::NUMBER,
@@ -121,13 +127,14 @@ impl<'a> CheckerState<'a> {
                 param_name: None,
             });
             return Some(factory.object_with_index(ObjectShape {
+                flags,
                 properties,
                 number_index,
                 ..ObjectShape::default()
             }));
         }
 
-        Some(factory.object(properties))
+        Some(factory.object_with_flags_and_symbol(properties, flags, None))
     }
 
     /// Evaluate complex type constructs for assignability checking.
