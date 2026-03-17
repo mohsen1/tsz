@@ -176,6 +176,13 @@ impl<'a> CheckerState<'a> {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
                     if k != v && !k.is_intrinsic() {
+                        // Skip caching results that are bare infer placeholders —
+                        // these are transient solver artifacts from conditional type
+                        // evaluation that would poison later lookups.
+                        if tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, v)
+                        {
+                            continue;
+                        }
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -202,6 +209,10 @@ impl<'a> CheckerState<'a> {
                 let mut cache = self.ctx.env_eval_cache.borrow_mut();
                 for (k, v) in evaluator.drain_cache() {
                     if k != v && !k.is_intrinsic() {
+                        if tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, v)
+                        {
+                            continue;
+                        }
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
                             depth_exceeded: false,
@@ -214,7 +225,9 @@ impl<'a> CheckerState<'a> {
             result
         };
 
-        if use_cache {
+        if use_cache
+            && !tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, final_result)
+        {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
                 crate::context::EnvEvalCacheEntry {
