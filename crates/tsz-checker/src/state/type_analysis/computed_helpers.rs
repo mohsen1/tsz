@@ -1897,14 +1897,20 @@ impl<'a> CheckerState<'a> {
             // The single-symbol guard ensures this does not suppress legitimate
             // TS18014 shadowing errors when multiple private identifiers with the
             // same name exist in nested class scopes.
-            symbols.len() == 1
-                && self.get_private_brand(object_type_for_check).is_none()
-                && matches!(
-                    self.ctx
+            if symbols.len() == 1 {
+                let brand = self.get_private_brand(object_type_for_check);
+                if brand.is_none() {
+                    let result = self
+                        .ctx
                         .types
-                        .property_access_type(object_type_for_check, &property_name),
-                    PropertyAccessResult::Success { .. }
-                )
+                        .property_access_type(object_type_for_check, &property_name);
+                    matches!(result, PropertyAccessResult::Success { .. })
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         };
 
         if !types_compatible {
