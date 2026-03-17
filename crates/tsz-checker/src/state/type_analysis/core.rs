@@ -1612,6 +1612,9 @@ impl<'a> CheckerState<'a> {
                             // Also register the instance type so resolve_lazy returns it
                             // in type position (e.g., `{new(): Foo}` where Foo is a class)
                             env.insert_class_instance_type(def_id, *instance_type);
+                            // Register SymbolId <-> DefId mapping so resolve_type_query
+                            // can find the constructor type via DefId path.
+                            env.register_def_symbol_mapping(def_id, sym_id);
                         }
                     } else {
                         env.insert_with_params(SymbolRef(sym_id.0), result, type_params.clone());
@@ -1619,6 +1622,9 @@ impl<'a> CheckerState<'a> {
                             env.insert_def_with_params(def_id, result, type_params);
                             // Also register the instance type for class
                             env.insert_class_instance_type(def_id, *instance_type);
+                            // Register SymbolId <-> DefId mapping so resolve_type_query
+                            // can find the constructor type via DefId path.
+                            env.register_def_symbol_mapping(def_id, sym_id);
                         }
                     }
                     // Register class extends relationship for nominal instanceof narrowing.

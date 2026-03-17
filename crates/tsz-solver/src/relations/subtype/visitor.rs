@@ -788,10 +788,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         use crate::types::SymbolRef;
 
         // TypeQuery (typeof X) is a reference to a value symbol.
-        // We need to resolve it to its value-space type before comparing.
-        // Use resolve_ref (value-space) first, then fallback to resolve_lazy,
-        // to ensure classes resolve to their constructor type, not instance type.
+        // We need to resolve it to its value-space structural type before comparing.
+        // For classes, this must be the constructor type (from symbol_types),
+        // NOT the instance type (from resolve_lazy/symbol_instance_types).
         let sym = SymbolRef(symbol_ref);
+
+        // Use resolve_ref first (returns constructor type for classes),
+        // then fall back to resolve_lazy for non-class symbols.
         let resolved = self
             .checker
             .resolver
@@ -799,12 +802,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             .or_else(|| {
                 self.checker
                     .resolver
-                    .symbol_to_def_id(sym)
-                    .and_then(|def_id| {
-                        self.checker
-                            .resolver
-                            .resolve_lazy(def_id, self.checker.interner)
-                    })
+                    .resolve_symbol_ref(sym, self.checker.interner)
             })
             .unwrap_or(self.source);
 

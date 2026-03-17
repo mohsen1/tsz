@@ -193,6 +193,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
+    /// Resolve a `TypeQuery(SymbolRef)` to its value-space type.
+    ///
+    /// `TypeQuery` represents `typeof X` — a value-space type query. For classes,
+    /// the value-space type is the **constructor type** (stored in `symbol_types`),
+    /// NOT the instance type (stored in `symbol_instance_types`).
+    ///
+    /// `resolve_lazy` returns the instance type for class symbols, which is correct
+    /// for `Lazy(DefId)` but wrong for `TypeQuery`. We must use `resolve_ref` first
+    /// (which looks up `symbol_types` → constructor type), and only fall back to
+    /// `resolve_lazy` for non-class symbols (e.g., module namespaces).
+    fn resolve_type_query_symbol(&self, sym: SymbolRef) -> Option<TypeId> {
+        // First try resolve_ref which returns the value from symbol_types
+        // (constructor type for classes, function type for functions, etc.)
+        let ref_resolved = self.resolver.resolve_ref(sym, self.interner);
+        if ref_resolved.is_some() {
+            return ref_resolved;
+        }
+        // Fall back to DefId-based resolution for symbols without a symbol_types entry
+        if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            None
+        }
+    }
+
     /// Check `TypeQuery` to `TypeQuery` subtype with optional identity shortcut.
     pub(crate) fn check_typequery_typequery_subtype(
         &mut self,
@@ -205,8 +230,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let s_resolved = Self::resolve_type_query_symbol(self.resolver, s_sym, self.interner);
-        let t_resolved = Self::resolve_type_query_symbol(self.resolver, t_sym, self.interner);
+        let s_resolved = self.resolve_type_query_symbol(s_sym);
+        let t_resolved = self.resolve_type_query_symbol(t_sym);
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
     }
 
@@ -217,8 +242,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = Self::resolve_type_query_symbol(self.resolver, sym, self.interner);
-        match resolved {
+        match self.resolve_type_query_symbol(sym) {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
             None => SubtypeResult::False,
         }
@@ -231,38 +255,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = Self::resolve_type_query_symbol(self.resolver, sym, self.interner);
-        match resolved {
+        match self.resolve_type_query_symbol(sym) {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,
         }
-    }
-
-    /// Resolve a `TypeQuery(SymbolRef)` to its value-space type.
-    ///
-    /// `TypeQuery` represents `typeof X` — a reference to a value, not a type.
-    /// For classes, the value is the constructor (static side), which is stored
-    /// in `symbol_types` via `resolve_ref`. This differs from `resolve_lazy`
-    /// which returns the instance type (the TYPE side of a class).
-    ///
-    /// Uses `resolve_ref` (value-space lookup) first, falling back to
-    /// `resolve_lazy` for non-class symbols where both paths return the same type.
-    fn resolve_type_query_symbol(
-        resolver: &R,
-        sym: SymbolRef,
-        interner: &dyn crate::TypeDatabase,
-    ) -> Option<TypeId> {
-        // First try resolve_ref which returns the value-space type
-        // (constructor type for classes, value type for variables/functions).
-        if let Some(resolved) = resolver.resolve_ref(sym, interner) {
-            return Some(resolved);
-        }
-        // Fallback to resolve_lazy via DefId for symbols that only have
-        // DefId-based resolution (e.g., cross-file references).
-        if let Some(def_id) = resolver.symbol_to_def_id(sym) {
-            return resolver.resolve_lazy(def_id, interner);
-        }
-        None
     }
 
     /// Check if a generic type application is a subtype of another application.
