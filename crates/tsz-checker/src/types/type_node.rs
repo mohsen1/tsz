@@ -1432,6 +1432,106 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     return TypeId::ERROR;
                 }
             }
+
+            // For simple identifiers, try flow-sensitive narrowing. When `typeof c`
+            // appears inside a type alias within a control flow guard (e.g.,
+            // `if (typeof c === 'string') { type C = { [k: string]: typeof c }; }`),
+            // the declared type should be narrowed by the control flow context.
+            //
+            // First try the symbol_types cache, then fall back to resolving
+            // the type annotation from the variable declaration.
+            let mut declared_type: Option<TypeId> = self
+                .ctx
+                .symbol_types
+                .get(&sym_id)
+                .copied()
+                .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR);
+
+            if declared_type.is_none() {
+                // symbol_types may not be populated yet (early phase).
+                // Extract and resolve the type annotation from the declaration.
+                let type_ann_idx = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                    let decl = symbol.value_declaration;
+                    if decl.is_none() {
+                        return None;
+                    }
+                    let decl_node = self.ctx.arena.get(decl)?;
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                        if var_decl.type_annotation.is_some() {
+                            return Some(var_decl.type_annotation);
+                        }
+                    }
+                    None
+                });
+                if let Some(ann_idx) = type_ann_idx {
+                    let resolved = self.check(ann_idx);
+                    if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                        declared_type = Some(resolved);
+                    }
+                }
+            }
+
+            if let Some(declared_type) = declared_type
+                && declared_type != TypeId::ANY
+                && declared_type != TypeId::ERROR
+            {
+                // Find a flow node at or above the expression name for narrowing.
+                let flow_node = self
+                    .ctx
+                    .binder
+                    .get_node_flow(type_query.expr_name)
+                    .or_else(|| {
+                        // Walk up parents to find a flow node (type position nodes
+                        // often don't have direct flow links).
+                        let mut current = self
+                            .ctx
+                            .arena
+                            .get_extended(type_query.expr_name)
+                            .map(|ext| ext.parent);
+                        while let Some(parent) = current {
+                            if parent.is_none() {
+                                break;
+                            }
+                            if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                                return Some(flow);
+                            }
+                            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                        }
+                        None
+                    });
+
+                if let Some(flow_node) = flow_node {
+                    use std::rc::Rc;
+                    let analyzer = crate::FlowAnalyzer::with_node_types(
+                        self.ctx.arena,
+                        self.ctx.binder,
+                        self.ctx.types,
+                        &self.ctx.node_types,
+                    )
+                    .with_flow_cache(&self.ctx.flow_analysis_cache)
+                    .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
+                    .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
+                    .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
+                    .with_type_environment(Rc::clone(&self.ctx.type_environment))
+                    .with_narrowing_cache(&self.ctx.narrowing_cache)
+                    .with_call_type_predicates(&self.ctx.call_type_predicates)
+                    .with_flow_buffers(
+                        &self.ctx.flow_worklist,
+                        &self.ctx.flow_in_worklist,
+                        &self.ctx.flow_visited,
+                        &self.ctx.flow_results,
+                    )
+                    .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
+
+                    let narrowed =
+                        analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
+                    if narrowed != TypeId::ERROR {
+                        return narrowed;
+                    }
+                }
+            }
+
             let factory = self.ctx.types.factory();
             return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
         }
