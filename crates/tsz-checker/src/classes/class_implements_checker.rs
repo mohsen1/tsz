@@ -943,7 +943,7 @@ impl<'a> CheckerState<'a> {
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
                     let (
                         interface_properties,
-                        _interface_has_index_signature,
+                        interface_has_index_signature,
                         interface_display_name,
                     ) = self.implemented_interface_members(
                         &interface_name,
@@ -1109,10 +1109,33 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // Note: index signature compatibility is handled by
-                    // check_index_signature_compatibility (TS2411), not here.
-                    // tsc does not emit TS2420 solely for missing index signatures
-                    // in implements clause checking.
+                    // Check index signature compatibility for implements clauses.
+                    // When an interface has index signatures and the class type
+                    // doesn't satisfy them, tsc emits TS2420.
+                    if interface_has_index_signature
+                        && missing_members.is_empty()
+                        && incompatible_members.is_empty()
+                    {
+                        let class_instance_type =
+                            self.get_class_instance_type(class_idx, class_data);
+                        if !self.is_assignable_to(class_instance_type, interface_type) {
+                            let message = if is_class {
+                                format!(
+                                    "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
+                                )
+                            } else {
+                                format!(
+                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
+                                )
+                            };
+                            let diagnostic_code = if is_class {
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+                            } else {
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                            };
+                            self.error_at_node(class_error_idx, &message, diagnostic_code);
+                        }
+                    }
 
                     // Report error for missing members
                     let diagnostic_code = if is_class {
