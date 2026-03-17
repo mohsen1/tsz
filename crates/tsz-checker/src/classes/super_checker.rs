@@ -260,7 +260,11 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .find(|&stmt| self.is_super_call_statement(stmt));
                 if let Some(super_stmt) = first_super_call_stmt {
-                    if self.is_descendant_of_node(idx, super_stmt) {
+                    // super.prop inside a super() argument is "before super"
+                    // UNLESS it's in a nested arrow/function (deferred execution).
+                    if self.is_descendant_of_node(idx, super_stmt)
+                        && !self.is_super_in_nested_function(idx)
+                    {
                         return true;
                     }
                 }
