@@ -270,8 +270,12 @@ impl<'a> CheckerState<'a> {
         let Some(func) = self.ctx.arena.get_function(node) else {
             return false;
         };
+        // Do not suppress for generator functions: a generator with no parameters
+        // has no parameter-based sensitivity. The outer contextual type should flow
+        // into the generator's return type to correctly constrain generic inference.
         func.parameters.nodes.is_empty()
             && func.type_annotation.is_none()
+            && !func.asterisk_token
             && is_contextually_sensitive(self, idx)
     }
 
@@ -1123,7 +1127,11 @@ impl<'a> CheckerState<'a> {
                             is_direct_callback_body_assignability
                                 || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
                         } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            // For object literal args, keep implicit-any diagnostics
+                            // (TS7006/TS7019) regardless of which overload matches.
+                            // Only drop provisional TS2322/TS2345.
                             !is_object_literal_diag
+                                || (is_provisional_implicit_any && !is_provisional_assignability)
                         } else {
                             // For array literals and other contextually-sensitive args,
                             // keep implicit-any diagnostics (TS7006/TS7019) — these are
@@ -1444,6 +1452,10 @@ impl<'a> CheckerState<'a> {
         // restore this set so TS2454 errors can be re-emitted in the fallback path.
         let initial_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
 
+        // Save implicit-any-checked-closures state before the first pass.
+        let implicit_any_checked_closures_checkpoint =
+            self.ctx.implicit_any_checked_closures.clone();
+
         // Collect argument types ONCE with union contextual type.
         // Diagnostics produced during this pass are speculative: if no overload
         // matches, TypeScript reports the overload failure and suppresses these
@@ -1543,6 +1555,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
                         self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
                         self.ctx.node_types = Default::default();
+                        // Restore closure implicit-any tracking to pre-first-pass state.
+                        self.ctx.implicit_any_checked_closures =
+                            implicit_any_checked_closures_checkpoint.clone();
                         refresh_all_args(self);
 
                         let prev_callable_type = self.ctx.current_callable_type;
@@ -1619,8 +1634,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
-                    // Constraint violation from callback return - overload matched
-                    // but with constraint error. Treat as match for overload resolution.
+                    // For multi-overload: constraint violation means this overload doesn't
+                    // match, try the next. For single-signature: treat as match.
+                    if signatures.len() > 1 {
+                        continue;
+                    }
                     self.ctx.node_types.extend(temp_node_types);
                     return Some(OverloadResolution {
                         arg_types: arg_types.clone(),

@@ -477,7 +477,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                // Infer match failed (and constraint doesn't match either) — take the false branch.
+                // Infer match failed (and constraint doesn't match either).
+                // If check_type is an unresolved TypeQuery, defer rather than eagerly
+                // taking the false branch.
+                if matches!(
+                    self.interner().lookup(check_type),
+                    Some(TypeData::TypeQuery(_))
+                ) {
+                    let true_type = self.evaluate(cond.true_type);
+                    let false_type = self.evaluate(cond.false_type);
+                    return self.interner().conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type,
+                        false_type,
+                        is_distributive: cond.is_distributive,
+                    });
+                }
+
+                // Infer match failed — take the false branch.
                 // Check if the false branch is a tail-recursive conditional.
                 // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
                 if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
