@@ -1090,6 +1090,20 @@ impl<'a> CheckerState<'a> {
                             ret_ctx.get_generator_return_type()
                         }))
                         .or(return_context)
+                } else if is_generator {
+                    // Async generator function bodies return TReturn, not AsyncGenerator<Y, TReturn, N>.
+                    // Unwrap TReturn from the contextual AsyncGenerator application so that
+                    // `return expr` in the body is contextually typed against TReturn
+                    // (matching tsc behavior, same as sync generators).
+                    early_gen_return_type
+                        .or(return_context.and_then(|ctx_ty| {
+                            let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                self.ctx.types,
+                                ctx_ty,
+                            );
+                            ret_ctx.get_generator_return_type()
+                        }))
+                        .or(return_context)
                 } else {
                     return_context
                 };
@@ -1827,9 +1841,15 @@ impl<'a> CheckerState<'a> {
                 // `Ret` in `<Ret>(f: () => Generator<never, Ret, never>)` get
                 // inferred from the generator body's return statements.
                 let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
+                // For TReturn: prefer the body-inferred return type when concrete (not
+                // UNKNOWN/VOID/UNDEFINED), falling back to the contextual TReturn, then VOID.
+                // Also exclude `any` when a contextual TReturn is available - the inferred
+                // `any` may be stale from an earlier type-checking pass where the variable
+                // `next = yield ...` was typed as `any` before contextual types were set.
                 let body_return_t = if return_type != TypeId::UNKNOWN
                     && return_type != TypeId::VOID
                     && return_type != TypeId::UNDEFINED
+                    && !(return_type == TypeId::ANY && early_gen_return_type.is_some())
                 {
                     Some(return_type)
                 } else {
