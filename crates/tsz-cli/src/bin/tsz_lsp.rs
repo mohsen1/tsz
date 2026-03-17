@@ -57,9 +57,11 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, trace};
 
 use tsz::lsp::{
@@ -128,6 +130,9 @@ struct JsonRpcNotification {
 // LSP Server State
 // =============================================================================
 
+/// Counter for generating unique progress tokens.
+static PROGRESS_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 struct LspServer {
     /// Multi-file project state backed by the tsz-lsp infrastructure.
     project: Project,
@@ -137,6 +142,21 @@ struct LspServer {
     shutdown_requested: bool,
     /// Pending diagnostics notifications to send after handling a request.
     pending_notifications: Vec<JsonRpcNotification>,
+    /// Request IDs that have been cancelled by the client.
+    cancelled_requests: FxHashSet<String>,
+    /// Workspace folder URIs.
+    workspace_folders: Vec<WorkspaceFolder>,
+    /// Whether the client supports workspace folder change notifications.
+    client_supports_workspace_folders: bool,
+    /// Whether the client supports progress reporting.
+    client_supports_progress: bool,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct WorkspaceFolder {
+    uri: String,
+    name: String,
 }
 
 impl LspServer {
@@ -146,7 +166,118 @@ impl LspServer {
             initialized: false,
             shutdown_requested: false,
             pending_notifications: Vec::new(),
+            cancelled_requests: FxHashSet::default(),
+            workspace_folders: Vec::new(),
+            client_supports_workspace_folders: false,
+            client_supports_progress: false,
         }
+    }
+
+    /// Check if a request has been cancelled.
+    fn is_cancelled(&self, id: &Option<Value>) -> bool {
+        if let Some(id) = id {
+            let id_str = match id {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => return false,
+            };
+            self.cancelled_requests.contains(&id_str)
+        } else {
+            false
+        }
+    }
+
+    /// Generate a unique progress token.
+    fn next_progress_token() -> String {
+        format!(
+            "tsz-progress-{}",
+            PROGRESS_TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    /// Send a progress begin notification.
+    fn begin_progress(&mut self, token: &str, title: &str, message: Option<&str>) {
+        if !self.client_supports_progress {
+            return;
+        }
+        self.pending_notifications.push(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "$/progress".to_string(),
+            params: serde_json::json!({
+                "token": token,
+                "value": {
+                    "kind": "begin",
+                    "title": title,
+                    "message": message,
+                    "cancellable": false,
+                }
+            }),
+        });
+    }
+
+    /// Send a progress report notification.
+    #[allow(dead_code)]
+    fn report_progress(&mut self, token: &str, message: &str, percentage: Option<u32>) {
+        if !self.client_supports_progress {
+            return;
+        }
+        let mut value = serde_json::json!({
+            "kind": "report",
+            "message": message,
+        });
+        if let Some(pct) = percentage {
+            value["percentage"] = Value::from(pct);
+        }
+        self.pending_notifications.push(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "$/progress".to_string(),
+            params: serde_json::json!({
+                "token": token,
+                "value": value,
+            }),
+        });
+    }
+
+    /// Send a progress end notification.
+    fn end_progress(&mut self, token: &str, message: Option<&str>) {
+        if !self.client_supports_progress {
+            return;
+        }
+        self.pending_notifications.push(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "$/progress".to_string(),
+            params: serde_json::json!({
+                "token": token,
+                "value": {
+                    "kind": "end",
+                    "message": message,
+                }
+            }),
+        });
+    }
+
+    /// Send a window/showMessage notification.
+    fn show_message(&mut self, typ: u32, message: &str) {
+        self.pending_notifications.push(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "window/showMessage".to_string(),
+            params: serde_json::json!({
+                "type": typ,
+                "message": message,
+            }),
+        });
+    }
+
+    /// Send a window/logMessage notification.
+    fn log_message(&mut self, typ: u32, message: &str) {
+        self.pending_notifications.push(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "window/logMessage".to_string(),
+            params: serde_json::json!({
+                "type": typ,
+                "message": message,
+            }),
+        });
     }
 
     // ─── Message dispatch ───────────────────────────────────────────────
@@ -155,10 +286,37 @@ impl LspServer {
         let method = msg.method.as_deref();
         let id = msg.id.clone();
 
+        // Handle cancellation notification
+        if method == Some("$/cancelRequest") {
+            self.handle_cancel_request(msg.params);
+            return None;
+        }
+
+        // Check if this request was already cancelled
+        if self.is_cancelled(&id) {
+            if let Some(id_val) = id {
+                let id_str = match &id_val {
+                    Value::Number(n) => n.to_string(),
+                    Value::String(s) => s.clone(),
+                    _ => String::new(),
+                };
+                self.cancelled_requests.remove(&id_str);
+                return Some(self.error_response(
+                    Some(id_val),
+                    -32800,
+                    "Request cancelled".to_string(),
+                ));
+            }
+        }
+
         match method {
-            Some("initialize") => Some(self.success_response(id, self.handle_initialize())),
+            Some("initialize") => {
+                let result = self.handle_initialize(msg.params.as_ref());
+                Some(self.success_response(id, result))
+            }
             Some("initialized") => {
                 self.initialized = true;
+                self.handle_initialized();
                 None
             }
             Some("shutdown") => {
@@ -342,6 +500,10 @@ impl LspServer {
                 self.handle_did_change_watched_files(msg.params);
                 None
             }
+            Some("workspace/didChangeWorkspaceFolders") => {
+                self.handle_did_change_workspace_folders(msg.params);
+                None
+            }
 
             // ── Execute command ────────────────────────────────────────
             Some("workspace/executeCommand") => {
@@ -366,6 +528,22 @@ impl LspServer {
             }
             Some("workspace/didRenameFiles") => {
                 self.handle_did_rename_files(msg.params);
+                None
+            }
+            Some("workspace/willCreateFiles") => {
+                // Acknowledge but no edits needed for file creation
+                Some(self.success_response(id, Value::Null))
+            }
+            Some("workspace/didCreateFiles") => {
+                self.handle_did_create_files(msg.params);
+                None
+            }
+            Some("workspace/willDeleteFiles") => {
+                // Acknowledge but no edits needed for file deletion
+                Some(self.success_response(id, Value::Null))
+            }
+            Some("workspace/didDeleteFiles") => {
+                self.handle_did_delete_files(msg.params);
                 None
             }
 
@@ -577,9 +755,67 @@ impl LspServer {
         kind as u32
     }
 
+    // ─── Cancel Request ─────────────────────────────────────────────────
+
+    fn handle_cancel_request(&mut self, params: Option<Value>) {
+        if let Some(id) = params.as_ref().and_then(|p| p.get("id")) {
+            let id_str = match id {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => return,
+            };
+            self.cancelled_requests.insert(id_str);
+        }
+    }
+
     // ─── Initialize ─────────────────────────────────────────────────────
 
-    fn handle_initialize(&self) -> Value {
+    fn handle_initialize(&mut self, params: Option<&Value>) -> Value {
+        // Extract workspace folders from initialization params
+        if let Some(p) = params {
+            // Extract workspace folders
+            if let Some(folders) = p.get("workspaceFolders").and_then(|f| f.as_array()) {
+                for folder in folders {
+                    if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
+                        let name = folder
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let folder_path = Self::uri_to_file_name(uri);
+                        self.project.add_workspace_root(folder_path);
+                        self.workspace_folders.push(WorkspaceFolder {
+                            uri: uri.to_string(),
+                            name,
+                        });
+                    }
+                }
+            } else if let Some(root_uri) = p.get("rootUri").and_then(|u| u.as_str()) {
+                // Fallback: use rootUri if no workspace folders
+                let folder_path = Self::uri_to_file_name(root_uri);
+                self.project.add_workspace_root(folder_path);
+                self.workspace_folders.push(WorkspaceFolder {
+                    uri: root_uri.to_string(),
+                    name: "root".to_string(),
+                });
+            }
+
+            // Detect client capabilities
+            if let Some(caps) = p.get("capabilities") {
+                // Check workspace folder support
+                self.client_supports_workspace_folders = caps
+                    .pointer("/workspace/workspaceFolders")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                // Check progress support
+                self.client_supports_progress = caps
+                    .pointer("/window/workDoneProgress")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+            }
+        }
+
         serde_json::json!({
             "capabilities": {
                 "textDocumentSync": {
@@ -653,7 +889,11 @@ impl LspServer {
                     "workspaceDiagnostics": true,
                 },
                 "executeCommandProvider": {
-                    "commands": ["tsz.organizeImports", "tsz.applyCodeAction"]
+                    "commands": [
+                        "tsz.organizeImports",
+                        "tsz.applyCodeAction",
+                        "tsz.reloadProject"
+                    ]
                 },
                 "workspace": {
                     "workspaceFolders": {
@@ -668,6 +908,18 @@ impl LspServer {
                             }]
                         },
                         "didRename": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        },
+                        "didCreate": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        },
+                        "didDelete": {
                             "filters": [{
                                 "scheme": "file",
                                 "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
@@ -783,6 +1035,154 @@ impl LspServer {
         if let Some(uri) = Self::extract_uri(&params) {
             self.publish_diagnostics(&uri);
             self.publish_stale_diagnostics();
+        }
+    }
+
+    /// Called after initialization to discover workspace files and tsconfig.
+    fn handle_initialized(&mut self) {
+        let roots: Vec<String> = self.project.workspace_roots().to_vec();
+
+        if roots.is_empty() {
+            self.log_message(3, "tsz-lsp: No workspace roots configured");
+            return;
+        }
+
+        // Load tsconfig.json from each workspace root
+        for root in &roots {
+            self.project.load_tsconfig(root);
+            self.log_message(3, &format!("tsz-lsp: Loaded configuration from {root}"));
+        }
+
+        // Discover files from workspace roots (with progress reporting)
+        let token = Self::next_progress_token();
+        self.begin_progress(&token, "Indexing workspace", Some("Discovering files..."));
+
+        let discovered = self.project.discover_files(&roots);
+        let count = discovered.len();
+
+        self.end_progress(&token, Some(&format!("Indexed {count} files")));
+
+        self.log_message(
+            3,
+            &format!(
+                "tsz-lsp: Discovered and indexed {count} files from {} workspace root(s)",
+                roots.len()
+            ),
+        );
+
+        // Publish diagnostics for all discovered files
+        for file_name in &discovered {
+            let uri = Self::file_name_to_uri(file_name);
+            self.publish_diagnostics(&uri);
+        }
+    }
+
+    /// Handle workspace folder changes.
+    fn handle_did_change_workspace_folders(&mut self, params: Option<Value>) {
+        let event = match params.as_ref().and_then(|p| p.get("event")) {
+            Some(e) => e,
+            None => return,
+        };
+
+        // Process removed folders
+        if let Some(removed) = event.get("removed").and_then(|r| r.as_array()) {
+            for folder in removed {
+                if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
+                    let path = Self::uri_to_file_name(uri);
+                    self.project.remove_workspace_root(&path);
+                    self.workspace_folders.retain(|f| f.uri != uri);
+                    self.log_message(3, &format!("tsz-lsp: Removed workspace folder: {uri}"));
+                }
+            }
+        }
+
+        // Process added folders
+        if let Some(added) = event.get("added").and_then(|a| a.as_array()) {
+            let mut new_roots = Vec::new();
+            for folder in added {
+                if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
+                    let name = folder
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let path = Self::uri_to_file_name(uri);
+                    self.project.add_workspace_root(path.clone());
+                    self.workspace_folders.push(WorkspaceFolder {
+                        uri: uri.to_string(),
+                        name,
+                    });
+                    new_roots.push(path.clone());
+
+                    // Load tsconfig for new root
+                    self.project.load_tsconfig(&path);
+                    self.log_message(3, &format!("tsz-lsp: Added workspace folder: {uri}"));
+                }
+            }
+
+            // Discover files from new workspace roots
+            if !new_roots.is_empty() {
+                let discovered = self.project.discover_files(&new_roots);
+                self.log_message(
+                    3,
+                    &format!(
+                        "tsz-lsp: Discovered {} files from new workspace folders",
+                        discovered.len()
+                    ),
+                );
+            }
+        }
+    }
+
+    /// Handle file creation notifications.
+    fn handle_did_create_files(&mut self, params: Option<Value>) {
+        let files = match params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+        {
+            Some(f) => f.clone(),
+            None => return,
+        };
+
+        for file_entry in &files {
+            if let Some(uri) = file_entry.get("uri").and_then(|u| u.as_str()) {
+                let file_name = Self::uri_to_file_name(uri);
+                if Self::is_ts_file(&file_name) {
+                    if let Ok(content) = std::fs::read_to_string(&file_name) {
+                        self.project.set_file(file_name, content);
+                        self.publish_diagnostics(uri);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle file deletion notifications.
+    fn handle_did_delete_files(&mut self, params: Option<Value>) {
+        let files = match params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+        {
+            Some(f) => f.clone(),
+            None => return,
+        };
+
+        for file_entry in &files {
+            if let Some(uri) = file_entry.get("uri").and_then(|u| u.as_str()) {
+                let file_name = Self::uri_to_file_name(uri);
+                self.project.remove_file(&file_name);
+                // Clear diagnostics for deleted file
+                self.pending_notifications.push(JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/publishDiagnostics".to_string(),
+                    params: serde_json::json!({
+                        "uri": uri,
+                        "diagnostics": [],
+                    }),
+                });
+            }
         }
     }
 
@@ -2317,8 +2717,40 @@ impl LspServer {
                 }
                 Ok(Value::Null)
             }
+            "tsz.applyCodeAction" => {
+                // Apply a code action edit that was deferred for server-side execution.
+                // Arguments: [workspaceEdit]
+                if let Some(args) = arguments
+                    && let Some(edit_value) = args.first()
+                {
+                    // Send workspace/applyEdit request to the client
+                    self.pending_notifications.push(JsonRpcNotification {
+                        jsonrpc: "2.0".to_string(),
+                        method: "workspace/applyEdit".to_string(),
+                        params: serde_json::json!({
+                            "label": "Apply code action",
+                            "edit": edit_value,
+                        }),
+                    });
+                    return Ok(Value::Bool(true));
+                }
+                Ok(Value::Null)
+            }
+            "tsz.reloadProject" => {
+                // Reload tsconfig.json and re-discover workspace files
+                let roots: Vec<String> = self.project.workspace_roots().to_vec();
+                for root in &roots {
+                    self.project.load_tsconfig(root);
+                }
+                let discovered = self.project.discover_files(&roots);
+                self.show_message(
+                    3, // Info
+                    &format!("Reloaded project: {} files indexed", discovered.len()),
+                );
+                Ok(Value::Bool(true))
+            }
             _ => {
-                debug!("Unknown command: {}", command);
+                debug!("Unknown command: {command}");
                 Ok(Value::Null)
             }
         }

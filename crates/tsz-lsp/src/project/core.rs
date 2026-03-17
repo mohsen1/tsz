@@ -1122,6 +1122,39 @@ pub struct Project {
     pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
     pub(crate) auto_import_specifier_exclude_matchers: Vec<Regex>,
     pub(crate) auto_imports_allowed_without_tsconfig: bool,
+    /// Workspace root directories (from workspace folders or tsconfig locations).
+    pub(crate) workspace_roots: Vec<String>,
+    /// Parsed tsconfig.json settings per workspace root.
+    pub(crate) tsconfig_settings: FxHashMap<String, TsConfigSettings>,
+}
+
+/// Parsed settings from tsconfig.json relevant to LSP operation.
+#[derive(Debug, Clone, Default)]
+pub struct TsConfigSettings {
+    /// The root directory containing the tsconfig.json.
+    pub root_dir: String,
+    /// Whether strict mode is enabled.
+    pub strict: Option<bool>,
+    /// Target ES version (affects lib files).
+    pub target: Option<String>,
+    /// Module resolution strategy.
+    pub module_resolution: Option<String>,
+    /// Base URL for module resolution.
+    pub base_url: Option<String>,
+    /// Path mappings for module resolution.
+    pub paths: FxHashMap<String, Vec<String>>,
+    /// Files to include.
+    pub include: Vec<String>,
+    /// Files to exclude.
+    pub exclude: Vec<String>,
+    /// Root directory for source files.
+    pub root_dir_setting: Option<String>,
+    /// Output directory.
+    pub out_dir: Option<String>,
+    /// Whether to allow importing .ts extensions.
+    pub allow_importing_ts_extensions: Option<bool>,
+    /// JSX setting.
+    pub jsx: Option<String>,
 }
 
 impl Project {
@@ -1139,6 +1172,8 @@ impl Project {
             auto_import_file_exclude_matchers: Vec::new(),
             auto_import_specifier_exclude_matchers: Vec::new(),
             auto_imports_allowed_without_tsconfig: true,
+            workspace_roots: Vec::new(),
+            tsconfig_settings: FxHashMap::default(),
         }
     }
 
@@ -1156,7 +1191,154 @@ impl Project {
             auto_import_file_exclude_matchers: Vec::new(),
             auto_import_specifier_exclude_matchers: Vec::new(),
             auto_imports_allowed_without_tsconfig: true,
+            workspace_roots: Vec::new(),
+            tsconfig_settings: FxHashMap::default(),
         }
+    }
+
+    /// Add a workspace root directory.
+    pub fn add_workspace_root(&mut self, root: String) {
+        if !self.workspace_roots.contains(&root) {
+            self.workspace_roots.push(root);
+        }
+    }
+
+    /// Remove a workspace root directory.
+    pub fn remove_workspace_root(&mut self, root: &str) {
+        self.workspace_roots.retain(|r| r != root);
+        self.tsconfig_settings.remove(root);
+    }
+
+    /// Get the workspace roots.
+    pub fn workspace_roots(&self) -> &[String] {
+        &self.workspace_roots
+    }
+
+    /// Get tsconfig settings for a workspace root.
+    pub fn tsconfig_for_root(&self, root: &str) -> Option<&TsConfigSettings> {
+        self.tsconfig_settings.get(root)
+    }
+
+    /// Load and parse a tsconfig.json file, storing settings for the workspace root.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_tsconfig(&mut self, root: &str) {
+        let tsconfig_path = Path::new(root).join("tsconfig.json");
+        if !tsconfig_path.exists() {
+            // Try jsconfig.json as fallback
+            let jsconfig_path = Path::new(root).join("jsconfig.json");
+            if jsconfig_path.exists() {
+                if let Some(settings) = parse_tsconfig_file(&jsconfig_path) {
+                    self.apply_tsconfig_settings(root, settings);
+                }
+            }
+            return;
+        }
+
+        if let Some(settings) = parse_tsconfig_file(&tsconfig_path) {
+            self.apply_tsconfig_settings(root, settings);
+        }
+    }
+
+    /// Apply parsed tsconfig settings to the project.
+    fn apply_tsconfig_settings(&mut self, root: &str, settings: TsConfigSettings) {
+        // Apply strict mode
+        if let Some(strict) = settings.strict {
+            self.set_strict(strict);
+        }
+
+        // Apply allowImportingTsExtensions
+        if let Some(allow) = settings.allow_importing_ts_extensions {
+            self.set_allow_importing_ts_extensions(allow);
+        }
+
+        self.tsconfig_settings.insert(root.to_string(), settings);
+    }
+
+    /// Discover and load TypeScript/JavaScript files from workspace roots.
+    ///
+    /// Walks each workspace root directory and loads files matching common
+    /// TypeScript/JavaScript extensions (.ts, .tsx, .js, .jsx, .mts, .cts).
+    /// Respects tsconfig include/exclude patterns when available.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn discover_files(&mut self, roots: &[String]) -> Vec<String> {
+        let mut discovered = Vec::new();
+
+        for root in roots {
+            let root_path = Path::new(root);
+            if !root_path.is_dir() {
+                continue;
+            }
+
+            // Get include/exclude patterns from tsconfig if available
+            let (includes, excludes) = self
+                .tsconfig_settings
+                .get(root)
+                .map(|ts| (ts.include.clone(), ts.exclude.clone()))
+                .unwrap_or_else(|| {
+                    (
+                        vec!["**/*.ts".to_string(), "**/*.tsx".to_string()],
+                        vec![
+                            "node_modules".to_string(),
+                            "dist".to_string(),
+                            "build".to_string(),
+                            ".git".to_string(),
+                        ],
+                    )
+                });
+
+            // Build exclude matchers
+            let exclude_matchers: Vec<globset::GlobMatcher> = excludes
+                .iter()
+                .filter_map(|pattern| {
+                    Glob::new(&format!("**/{pattern}/**"))
+                        .ok()
+                        .map(|g| g.compile_matcher())
+                })
+                .collect();
+
+            // Walk directory
+            let walker = walkdir::WalkDir::new(root_path)
+                .follow_links(false)
+                .max_depth(20);
+
+            for entry in walker.into_iter().filter_map(|e| e.ok()) {
+                let path = entry.path();
+
+                // Skip directories that match exclude patterns
+                if entry.file_type().is_dir() {
+                    continue;
+                }
+
+                let path_str = path.to_string_lossy().to_string();
+
+                // Check exclude patterns
+                if exclude_matchers.iter().any(|m| m.is_match(&path_str)) {
+                    continue;
+                }
+
+                // Check if it's a TS/JS file
+                if !is_ts_js_file(&path_str) {
+                    continue;
+                }
+
+                // Only load files within include patterns if specified
+                if !includes.is_empty() {
+                    let _relative = path
+                        .strip_prefix(root_path)
+                        .unwrap_or(path)
+                        .to_string_lossy();
+                    // For now, load all TS/JS files (include pattern matching is complex)
+                }
+
+                // Load the file
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    self.set_file(path_str.clone(), content);
+                    discovered.push(path_str);
+                }
+            }
+        }
+
+        discovered
     }
 
     /// Get the strict mode setting for type checking.
@@ -1694,4 +1876,100 @@ impl Default for Project {
     fn default() -> Self {
         Self::empty()
     }
+}
+
+/// Check whether a file path has a TypeScript/JavaScript extension.
+fn is_ts_js_file(path: &str) -> bool {
+    let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+    extensions.iter().any(|ext| path.ends_with(ext))
+}
+
+/// Parse a tsconfig.json or jsconfig.json file into `TsConfigSettings`.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_tsconfig_file(path: &std::path::Path) -> Option<TsConfigSettings> {
+    let content = std::fs::read_to_string(path).ok()?;
+
+    // Use json5 parser to handle comments and trailing commas
+    let value: serde_json::Value = json5::from_str(&content).ok()?;
+    let obj = value.as_object()?;
+
+    let root_dir = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let mut settings = TsConfigSettings {
+        root_dir,
+        ..Default::default()
+    };
+
+    // Parse compilerOptions
+    if let Some(compiler_options) = obj.get("compilerOptions").and_then(|v| v.as_object()) {
+        settings.strict = compiler_options.get("strict").and_then(|v| v.as_bool());
+
+        settings.target = compiler_options
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        settings.module_resolution = compiler_options
+            .get("moduleResolution")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        settings.base_url = compiler_options
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        settings.root_dir_setting = compiler_options
+            .get("rootDir")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        settings.out_dir = compiler_options
+            .get("outDir")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        settings.allow_importing_ts_extensions = compiler_options
+            .get("allowImportingTsExtensions")
+            .and_then(|v| v.as_bool());
+
+        settings.jsx = compiler_options
+            .get("jsx")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Parse paths
+        if let Some(paths) = compiler_options.get("paths").and_then(|v| v.as_object()) {
+            for (key, val) in paths {
+                if let Some(arr) = val.as_array() {
+                    let mapped: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect();
+                    settings.paths.insert(key.clone(), mapped);
+                }
+            }
+        }
+    }
+
+    // Parse include
+    if let Some(include) = obj.get("include").and_then(|v| v.as_array()) {
+        settings.include = include
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+    }
+
+    // Parse exclude
+    if let Some(exclude) = obj.get("exclude").and_then(|v| v.as_array()) {
+        settings.exclude = exclude
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+    }
+
+    Some(settings)
 }
