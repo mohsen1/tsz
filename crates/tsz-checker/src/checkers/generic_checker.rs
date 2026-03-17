@@ -661,7 +661,9 @@ impl<'a> CheckerState<'a> {
                                 type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.is_inside_mapped_type(arg_idx)
                                         || self.type_arg_has_explicit_constraint_in_ast(arg_idx)
-                                        || self.is_infer_with_implicit_constraint_in_conditional(arg_idx)
+                                        || self.is_infer_with_implicit_constraint_in_conditional(
+                                            arg_idx,
+                                        )
                                 });
                             if has_hidden_constraint {
                                 continue;
