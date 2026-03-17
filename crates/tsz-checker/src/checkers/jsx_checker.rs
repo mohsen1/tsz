@@ -296,6 +296,13 @@ impl<'a> CheckerState<'a> {
 
                 // Evaluate attribute values to trigger nested JSX processing and
                 // definite-assignment checks, even when props type is unknown.
+                // For generic components, set UNKNOWN contextual type to prevent
+                // false TS7006 on callback parameters in JSX attributes.
+                let gen_ctx = self.is_generic_jsx_component(evaluated);
+                let prev_ctx = self.ctx.contextual_type;
+                if gen_ctx {
+                    self.ctx.contextual_type = Some(TypeId::UNKNOWN);
+                }
                 if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
                     && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
                 {
@@ -316,6 +323,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                self.ctx.contextual_type = prev_ctx;
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -1155,7 +1163,14 @@ impl<'a> CheckerState<'a> {
             // Component: resolve tag name to get component type, extract props
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
-            self.get_jsx_props_type_for_children_contextual(evaluated)?
+            if let Some(props) = self.get_jsx_props_type_for_children_contextual(evaluated) {
+                props
+            } else if self.is_generic_jsx_component(evaluated) {
+                // Generic component: return UNKNOWN to prevent false TS7006
+                return Some(TypeId::UNKNOWN);
+            } else {
+                return None;
+            }
         };
 
         // Get 'children' property from the resolved props type

@@ -213,6 +213,7 @@ impl<'a> CheckerState<'a> {
                 // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
                 // This ensures enum members return TypeData::Enum instead of primitives
                 let mut result = self.type_reference_symbol_type(sym_id);
+                let pre_augmentation_result = result;
 
                 // For `import * as x from "m"; type T = x.A`, apply module augmentations
                 // to the referenced member type (A) using the module specifier from `x`.
@@ -240,6 +241,25 @@ impl<'a> CheckerState<'a> {
                             &right_ident.escaped_text,
                             result,
                         );
+                    }
+                }
+
+                // After applying module augmentations, update the DefId->TypeId mapping
+                // for the original symbol so that self-referential Lazy(DefId) types
+                // within the merged type resolve to the augmented version.
+                // Without this, `self: Foo` inside `declare module "./m" { interface Foo { self: Foo } }`
+                // would resolve to the un-augmented Foo, causing false TS2339 on `f.self.self`.
+                if result != pre_augmentation_result {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx.symbol_types.insert(sym_id, result);
+                    self.ctx.symbol_instance_types.insert(sym_id, result);
+                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        if type_params.is_empty() {
+                            env.insert_def(def_id, result);
+                        } else {
+                            env.insert_def_with_params(def_id, result, type_params);
+                        }
                     }
                 }
 
