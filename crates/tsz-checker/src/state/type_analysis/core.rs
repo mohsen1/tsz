@@ -1737,11 +1737,57 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
+    /// Resolve a `typeof` type query. For simple identifier expressions, this
+    /// pre-computes the flow-narrowed type so that `typeof x` inside a narrowing
+    /// guard reflects the narrowed type (e.g., `string` instead of `string | number`).
+    /// Falls back to [`TypeNodeChecker::get_type_from_type_query`] for qualified
+    /// names, type-only imports, and other complex cases.
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types_domain::type_node::TypeNodeChecker;
+
+        // Try to pre-compute a flow-narrowed type for simple identifier expressions.
+        // This ensures `typeof x` in type position respects control-flow narrowing.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+        {
+            let expr_idx = type_query.expr_name;
+            if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                && expr_node.kind == SyntaxKind::Identifier as u16
+            {
+                // Skip flow resolution for type-only imports to avoid false TS1361.
+                let is_type_only_import = self
+                    .resolve_identifier_symbol(expr_idx)
+                    .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
+
+                if !is_type_only_import {
+                    let use_flow =
+                        !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
+                    let prev_skip = self.ctx.skip_flow_narrowing;
+                    self.ctx.skip_flow_narrowing = !use_flow;
+                    let expr_type = self.get_type_of_node(expr_idx);
+                    self.ctx.skip_flow_narrowing = prev_skip;
+
+                    trace!(
+                        expr_idx = expr_idx.0,
+                        expr_type = expr_type.0,
+                        use_flow,
+                        "get_type_from_type_query: pre-computed typeof expr type"
+                    );
+
+                    // Only use the flow-narrowed result for non-lazy, non-error types.
+                    // Lazy types indicate circular references that need symbol-based
+                    // resolution in TypeNodeChecker.
+                    let is_lazy =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
+                            .is_some();
+                    if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
+                        // Store in node_types so TypeNodeChecker's cache check finds it.
+                        self.ctx.node_types.insert(expr_idx.0, expr_type);
+                    }
+                }
+            }
+        }
+
         TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
     }
 }
