@@ -1241,35 +1241,47 @@ impl<'a> CheckerState<'a> {
                             // Only walk up from Block scopes; if the declaration is already
                             // at Function/Module/SourceFile level, keep it as-is to preserve
                             // correct TS2451 for `let x; var x;` at the same level.
-                            if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
-                                if let Some(sid) = scope {
-                                    let is_block =
-                                        self.ctx.binder.scopes.get(sid.0 as usize).is_some_and(
-                                            |s| s.kind == tsz_binder::ContainerKind::Block,
-                                        );
-                                    if is_block {
-                                        let mut cur = sid;
-                                        for _ in 0..20 {
-                                            if let Some(s) =
-                                                self.ctx.binder.scopes.get(cur.0 as usize)
-                                            {
-                                                if matches!(
-                                                    s.kind,
-                                                    tsz_binder::ContainerKind::Function
-                                                        | tsz_binder::ContainerKind::Module
-                                                        | tsz_binder::ContainerKind::SourceFile
-                                                ) {
-                                                    return Some(cur);
-                                                }
-                                                if s.parent == cur {
-                                                    break;
-                                                }
-                                                cur = s.parent;
-                                            } else {
+                            if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                                && let Some(sid) = scope
+                            {
+                                let scope_kind =
+                                    self.ctx.binder.scopes.get(sid.0 as usize).map(|s| s.kind);
+                                let is_block = scope_kind == Some(tsz_binder::ContainerKind::Block);
+                                if is_block {
+                                    let mut cur = sid;
+                                    for _ in 0..20 {
+                                        if let Some(s) = self.ctx.binder.scopes.get(cur.0 as usize)
+                                        {
+                                            if matches!(
+                                                s.kind,
+                                                tsz_binder::ContainerKind::Function
+                                                    | tsz_binder::ContainerKind::Module
+                                                    | tsz_binder::ContainerKind::SourceFile
+                                            ) {
+                                                return Some(cur);
+                                            }
+                                            if s.parent == cur {
                                                 break;
                                             }
+                                            cur = s.parent;
+                                        } else {
+                                            break;
                                         }
                                     }
+                                }
+                                // For non-block-scoped declarations (var, function)
+                                // in Module scopes (namespace blocks), walk up to
+                                // the parent scope. tsc merges namespace blocks into
+                                // one container, so declarations in different blocks
+                                // of the same namespace should be treated as same-scope
+                                // for TS2300 vs TS2451 determination.
+                                let is_module =
+                                    scope_kind == Some(tsz_binder::ContainerKind::Module);
+                                if is_module
+                                    && let Some(s) = self.ctx.binder.scopes.get(sid.0 as usize)
+                                    && s.parent != sid
+                                {
+                                    return Some(s.parent);
                                 }
                             }
                             scope
