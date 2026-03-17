@@ -836,7 +836,13 @@ impl<'a> CheckerState<'a> {
         // Record that we've checked this closure for implicit-any diagnostics so
         // later re-entrant passes do not re-emit TS7006/TS7031. Do this after the
         // full parameter walk so sibling parameters in the same closure are all checked.
-        if is_closure && !closure_already_checked {
+        // Only mark as "checked" in statement-checking mode or when a contextual type was
+        // available. Closures skipped in build_type_environment due to no contextual type
+        // need a second chance in the statement-checking pass — don't pre-emptively lock them.
+        if is_closure
+            && !closure_already_checked
+            && (self.ctx.is_checking_statements || ctx_helper.is_some())
+        {
             self.ctx.implicit_any_checked_closures.insert(idx);
         }
 
