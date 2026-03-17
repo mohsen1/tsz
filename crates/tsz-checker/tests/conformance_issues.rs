@@ -9492,9 +9492,13 @@ test([
         },
     );
 
+    // TSC emits TS7006 here because the union `Record<string, fn> | Array<fn>` is ambiguous:
+    // Record contributes a string-indexed callback type and Array contributes an element
+    // callback type, so no single contextual type can be determined for the array element.
+    // This matches tsc behavior (verified via conformance tests for both es5 and es2015 libs).
     assert!(
-        !has_error(&diagnostics, 7006),
-        "Did not expect TS7006 when array literal contextual type contains an array callback branch. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 because Record<string,fn> | Array<fn> is an ambiguous array context. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
