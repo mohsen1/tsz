@@ -2539,9 +2539,6 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
     let function_count = all_functions.len();
 
-    // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
-
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
     // For now, we group by file and check each file's functions together
@@ -2551,6 +2548,10 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             let functions = collect_functions(&file.arena, file.source_file);
 
             let binder = Arc::clone(&shared_binders[file_idx]);
+
+            // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
+            // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
+            let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
@@ -2626,9 +2627,6 @@ pub fn check_files_parallel(
         })
         .collect();
 
-    // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    // This is thread-safe (uses RwLock internally) and shared across all file checks.
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
     let shared_binders: Vec<Arc<BinderState>> = program
         .files
         .iter()
@@ -2658,6 +2656,10 @@ pub fn check_files_parallel(
         .enumerate()
         .map(|(file_idx, file)| {
             let binder = Arc::clone(&shared_binders[file_idx]);
+
+            // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
+            // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
+            let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
             let mut checker = CheckerState::with_options(
                 &file.arena,

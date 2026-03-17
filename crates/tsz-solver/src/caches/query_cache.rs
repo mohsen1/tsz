@@ -20,8 +20,8 @@ use crate::types::{
     TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
@@ -47,117 +47,88 @@ pub struct RelationCacheStats {
 }
 
 /// Query database wrapper with basic caching.
+///
+/// Uses `RefCell`/`Cell` instead of `RwLock`/`Atomic*` because `QueryCache`
+/// borrows `&'a TypeInterner` and is inherently single-threaded. `RefCell::borrow()`
+/// is a simple integer check vs `RwLock::read()`'s atomic CAS, saving overhead on
+/// every subtype check, property lookup, and evaluation cache hit.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
-    eval_cache: RwLock<FxHashMap<EvalCacheKey, TypeId>>,
-    application_eval_cache: RwLock<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
-    element_access_cache: RwLock<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
-    object_spread_properties_cache: RwLock<FxHashMap<TypeId, Vec<PropertyInfo>>>,
-    subtype_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
+    eval_cache: RefCell<FxHashMap<EvalCacheKey, TypeId>>,
+    application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
+    element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
+    object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
+    subtype_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
     /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
     /// This ensures that loose assignability results (e.g., any is assignable to number)
     /// don't contaminate strict subtype checks.
-    assignability_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
-    property_cache: RwLock<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
+    assignability_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
+    property_cache: RefCell<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
     /// Task #41: Variance cache for generic type parameters.
     /// Stores computed variance masks for `DefIds` to enable O(1) generic assignability.
-    variance_cache: RwLock<FxHashMap<DefId, Arc<[Variance]>>>,
+    variance_cache: RefCell<FxHashMap<DefId, Arc<[Variance]>>>,
     /// Task #49: Canonical cache for O(1) structural identity checks.
     /// Maps `TypeId` -> canonical `TypeId` for structurally identical types.
-    canonical_cache: RwLock<FxHashMap<TypeId, TypeId>>,
-    subtype_cache_hits: AtomicU64,
-    subtype_cache_misses: AtomicU64,
-    assignability_cache_hits: AtomicU64,
-    assignability_cache_misses: AtomicU64,
-    no_unchecked_indexed_access: AtomicBool,
+    canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    subtype_cache_hits: Cell<u64>,
+    subtype_cache_misses: Cell<u64>,
+    assignability_cache_hits: Cell<u64>,
+    assignability_cache_misses: Cell<u64>,
+    no_unchecked_indexed_access: Cell<bool>,
 }
 
 impl<'a> QueryCache<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
         QueryCache {
             interner,
-            eval_cache: RwLock::new(FxHashMap::default()),
-            application_eval_cache: RwLock::new(FxHashMap::default()),
-            element_access_cache: RwLock::new(FxHashMap::default()),
-            object_spread_properties_cache: RwLock::new(FxHashMap::default()),
-            subtype_cache: RwLock::new(FxHashMap::default()),
-            assignability_cache: RwLock::new(FxHashMap::default()),
-            property_cache: RwLock::new(FxHashMap::default()),
-            variance_cache: RwLock::new(FxHashMap::default()),
-            canonical_cache: RwLock::new(FxHashMap::default()),
-            subtype_cache_hits: AtomicU64::new(0),
-            subtype_cache_misses: AtomicU64::new(0),
-            assignability_cache_hits: AtomicU64::new(0),
-            assignability_cache_misses: AtomicU64::new(0),
-            no_unchecked_indexed_access: AtomicBool::new(interner.no_unchecked_indexed_access()),
+            eval_cache: RefCell::new(FxHashMap::default()),
+            application_eval_cache: RefCell::new(FxHashMap::default()),
+            element_access_cache: RefCell::new(FxHashMap::default()),
+            object_spread_properties_cache: RefCell::new(FxHashMap::default()),
+            subtype_cache: RefCell::new(FxHashMap::default()),
+            assignability_cache: RefCell::new(FxHashMap::default()),
+            property_cache: RefCell::new(FxHashMap::default()),
+            variance_cache: RefCell::new(FxHashMap::default()),
+            canonical_cache: RefCell::new(FxHashMap::default()),
+            subtype_cache_hits: Cell::new(0),
+            subtype_cache_misses: Cell::new(0),
+            assignability_cache_hits: Cell::new(0),
+            assignability_cache_misses: Cell::new(0),
+            no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
         }
     }
 
     pub fn clear(&self) {
-        // Handle poisoned locks gracefully - if poisoned, clear the cache anyway
-        match self.eval_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.element_access_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.application_eval_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.object_spread_properties_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.subtype_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.assignability_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.property_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.variance_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
-        match self.canonical_cache.write() {
-            Ok(mut cache) => cache.clear(),
-            Err(e) => e.into_inner().clear(),
-        }
+        self.eval_cache.borrow_mut().clear();
+        self.element_access_cache.borrow_mut().clear();
+        self.application_eval_cache.borrow_mut().clear();
+        self.object_spread_properties_cache.borrow_mut().clear();
+        self.subtype_cache.borrow_mut().clear();
+        self.assignability_cache.borrow_mut().clear();
+        self.property_cache.borrow_mut().clear();
+        self.variance_cache.borrow_mut().clear();
+        self.canonical_cache.borrow_mut().clear();
         self.reset_relation_cache_stats();
     }
 
     pub fn relation_cache_stats(&self) -> RelationCacheStats {
-        let subtype_entries = match self.subtype_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        };
-        let assignability_entries = match self.assignability_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        };
+        let subtype_entries = self.subtype_cache.borrow().len();
+        let assignability_entries = self.assignability_cache.borrow().len();
         RelationCacheStats {
-            subtype_hits: self.subtype_cache_hits.load(Ordering::Relaxed),
-            subtype_misses: self.subtype_cache_misses.load(Ordering::Relaxed),
+            subtype_hits: self.subtype_cache_hits.get(),
+            subtype_misses: self.subtype_cache_misses.get(),
             subtype_entries,
-            assignability_hits: self.assignability_cache_hits.load(Ordering::Relaxed),
-            assignability_misses: self.assignability_cache_misses.load(Ordering::Relaxed),
+            assignability_hits: self.assignability_cache_hits.get(),
+            assignability_misses: self.assignability_cache_misses.get(),
             assignability_entries,
         }
     }
 
     pub fn reset_relation_cache_stats(&self) {
-        self.subtype_cache_hits.store(0, Ordering::Relaxed);
-        self.subtype_cache_misses.store(0, Ordering::Relaxed);
-        self.assignability_cache_hits.store(0, Ordering::Relaxed);
-        self.assignability_cache_misses.store(0, Ordering::Relaxed);
+        self.subtype_cache_hits.set(0);
+        self.subtype_cache_misses.set(0);
+        self.assignability_cache_hits.set(0);
+        self.assignability_cache_misses.set(0);
     }
 
     pub fn probe_subtype_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
@@ -167,105 +138,62 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    /// Helper to check a cache with poisoned lock handling.
+    /// Helper to check a relation cache.
     fn check_cache(
         &self,
-        cache: &RwLock<FxHashMap<RelationCacheKey, bool>>,
+        cache: &RefCell<FxHashMap<RelationCacheKey, bool>>,
         key: RelationCacheKey,
     ) -> Option<bool> {
-        match cache.read() {
-            Ok(cached) => cached.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        }
+        cache.borrow().get(&key).copied()
     }
 
-    /// Helper to insert into a cache with poisoned lock handling.
+    /// Helper to insert into a relation cache.
     fn insert_cache(
         &self,
-        cache: &RwLock<FxHashMap<RelationCacheKey, bool>>,
+        cache: &RefCell<FxHashMap<RelationCacheKey, bool>>,
         key: RelationCacheKey,
         result: bool,
     ) {
-        match cache.write() {
-            Ok(mut c) => {
-                c.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        cache.borrow_mut().insert(key, result);
     }
 
     fn check_property_cache(&self, key: PropertyAccessCacheKey) -> Option<PropertyAccessResult> {
-        match self.property_cache.read() {
-            Ok(cache) => cache.get(&key).cloned(),
-            Err(e) => e.into_inner().get(&key).cloned(),
-        }
+        self.property_cache.borrow().get(&key).cloned()
     }
 
     fn insert_property_cache(&self, key: PropertyAccessCacheKey, result: PropertyAccessResult) {
-        match self.property_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.property_cache.borrow_mut().insert(key, result);
     }
 
     fn check_element_access_cache(&self, key: ElementAccessTypeCacheKey) -> Option<TypeId> {
-        match self.element_access_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        }
+        self.element_access_cache.borrow().get(&key).copied()
     }
 
     fn insert_element_access_cache(&self, key: ElementAccessTypeCacheKey, result: TypeId) {
-        match self.element_access_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.element_access_cache.borrow_mut().insert(key, result);
     }
 
     fn check_application_eval_cache(&self, key: ApplicationEvalCacheKey) -> Option<TypeId> {
-        match self.application_eval_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        }
+        self.application_eval_cache.borrow().get(&key).copied()
     }
 
     fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
-        match self.application_eval_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.application_eval_cache
+            .borrow_mut()
+            .insert(key, result);
     }
 
     fn check_object_spread_properties_cache(&self, key: TypeId) -> Option<Vec<PropertyInfo>> {
-        match self.object_spread_properties_cache.read() {
-            Ok(cache) => cache.get(&key).cloned(),
-            Err(e) => e.into_inner().get(&key).cloned(),
-        }
+        self.object_spread_properties_cache
+            .borrow()
+            .get(&key)
+            .cloned()
     }
 
     fn insert_object_spread_properties_cache(&self, key: TypeId, value: Vec<PropertyInfo>) {
-        match self.object_spread_properties_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, value);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, value);
-            }
-        }
+        self.object_spread_properties_cache
+            .borrow_mut()
+            .insert(key, value);
     }
 
     fn collect_object_spread_properties_inner(
@@ -740,11 +668,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
         let key = (type_id, no_unchecked_indexed_access);
-        // Handle poisoned locks gracefully
-        let cached = match self.eval_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        };
+        let cached = self.eval_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
             if let Some(query_id) = trace_query_id {
@@ -758,14 +682,7 @@ impl QueryDatabase for QueryCache<'_> {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
         let result = evaluator.evaluate(type_id);
-        match self.eval_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.eval_cache.borrow_mut().insert(key, result);
         if let Some(query_id) = trace_query_id {
             query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
@@ -808,11 +725,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
         let key = RelationCacheKey::subtype(source, target, flags, 0);
-        // Handle poisoned locks gracefully
-        let cached = match self.subtype_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        };
+        let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
             if let Some(query_id) = trace_query_id {
@@ -827,14 +740,7 @@ impl QueryDatabase for QueryCache<'_> {
             target,
             flags,
         );
-        match self.subtype_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.subtype_cache.borrow_mut().insert(key, result);
         if let Some(query_id) = trace_query_id {
             query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
         }
@@ -892,53 +798,35 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = match self.subtype_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        };
+        let result = self.subtype_cache.borrow().get(&key).copied();
         if result.is_some() {
-            self.subtype_cache_hits.fetch_add(1, Ordering::Relaxed);
+            self.subtype_cache_hits
+                .set(self.subtype_cache_hits.get() + 1);
         } else {
-            self.subtype_cache_misses.fetch_add(1, Ordering::Relaxed);
+            self.subtype_cache_misses
+                .set(self.subtype_cache_misses.get() + 1);
         }
         result
     }
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
-        match self.subtype_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.subtype_cache.borrow_mut().insert(key, result);
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        let result = match self.assignability_cache.read() {
-            Ok(cache) => cache.get(&key).copied(),
-            Err(e) => e.into_inner().get(&key).copied(),
-        };
+        let result = self.assignability_cache.borrow().get(&key).copied();
         if result.is_some() {
             self.assignability_cache_hits
-                .fetch_add(1, Ordering::Relaxed);
+                .set(self.assignability_cache_hits.get() + 1);
         } else {
             self.assignability_cache_misses
-                .fetch_add(1, Ordering::Relaxed);
+                .set(self.assignability_cache_misses.get() + 1);
         }
         result
     }
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
-        match self.assignability_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(key, result);
-            }
-            Err(e) => {
-                e.into_inner().insert(key, result);
-            }
-        }
+        self.assignability_cache.borrow_mut().insert(key, result);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
@@ -1026,19 +914,16 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn no_unchecked_indexed_access(&self) -> bool {
-        self.no_unchecked_indexed_access.load(Ordering::Relaxed)
+        self.no_unchecked_indexed_access.get()
     }
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
-        self.no_unchecked_indexed_access
-            .store(enabled, Ordering::Relaxed);
+        self.no_unchecked_indexed_access.set(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        // 1. Check cache first (lock-free read)
-        if let Ok(cache) = self.variance_cache.read()
-            && let Some(cached) = cache.get(&def_id)
-        {
+        // 1. Check cache first
+        if let Some(cached) = self.variance_cache.borrow().get(&def_id) {
             return Some(Arc::clone(cached));
         }
 
@@ -1060,24 +945,16 @@ impl QueryDatabase for QueryCache<'_> {
         let result = Arc::from(variances);
 
         // 3. Store in cache
-        match self.variance_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(def_id, Arc::clone(&result));
-            }
-            Err(e) => {
-                e.into_inner().insert(def_id, Arc::clone(&result));
-            }
-        }
+        self.variance_cache
+            .borrow_mut()
+            .insert(def_id, Arc::clone(&result));
 
         Some(result)
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
         // Check cache first
-        let cached = match self.canonical_cache.read() {
-            Ok(cache) => cache.get(&type_id).copied(),
-            Err(e) => e.into_inner().get(&type_id).copied(),
-        };
+        let cached = self.canonical_cache.borrow().get(&type_id).copied();
 
         if let Some(canonical) = cached {
             return canonical;
@@ -1091,14 +968,9 @@ impl QueryDatabase for QueryCache<'_> {
         let canonical = canon.canonicalize(type_id);
 
         // Cache the result
-        match self.canonical_cache.write() {
-            Ok(mut cache) => {
-                cache.insert(type_id, canonical);
-            }
-            Err(e) => {
-                e.into_inner().insert(type_id, canonical);
-            }
-        }
+        self.canonical_cache
+            .borrow_mut()
+            .insert(type_id, canonical);
 
         canonical
     }
