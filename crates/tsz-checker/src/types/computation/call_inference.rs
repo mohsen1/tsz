@@ -266,6 +266,22 @@ impl<'a> CheckerState<'a> {
             }
             contextual_substitution.insert(name, type_id);
         }
+        // When the constraint is self-referential (contains the type parameter
+        // itself) and the parameter is not yet resolved in the substitution,
+        // substitute the self-reference with `unknown` to break the cycle.
+        //
+        // Example: `O extends NoExcessProperties<RepeatOptions<A>, O>` — the
+        // constraint references `O` itself. Without this substitution, the
+        // instantiated constraint still contains `O`, which is detected as
+        // "contains type parameters" and discarded in favor of the unresolved
+        // placeholder, yielding `any` as the contextual type for callbacks.
+        // With `O → unknown`, the constraint evaluates to `RepeatOptions<A>`,
+        // giving the correct contextual type for properties like `until`.
+        if substitution.get(tp_info.name).is_none()
+            && tsz_solver::contains_type_parameter_named(self.ctx.types, constraint, tp_info.name)
+        {
+            contextual_substitution.insert(tp_info.name, TypeId::UNKNOWN);
+        }
         Some(crate::query_boundaries::common::instantiate_type(
             self.ctx.types,
             constraint,
