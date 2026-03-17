@@ -161,6 +161,36 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
     })
 }
 
+/// Build default type arguments for a type parameter list, handling circular/forward
+/// references. In tsc, when a default references the same type parameter or a
+/// later-declared one (TS2744), the default is treated as `any`.
+pub fn resolve_default_type_args(
+    types: &dyn TypeDatabase,
+    type_params: &[TypeParamInfo],
+) -> Vec<TypeId> {
+    type_params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let Some(default) = p.default else {
+                return TypeId::UNKNOWN;
+            };
+            // Check if the default is a type parameter that references itself or a
+            // later-declared type parameter (a forward reference). tsc resolves such
+            // invalid defaults to `any` (cf. fillMissingTypeArguments).
+            if let Some(tp_info) = type_param_info(types, default) {
+                let is_self_or_forward = type_params[i..]
+                    .iter()
+                    .any(|other| other.name == tp_info.name);
+                if is_self_or_forward {
+                    return TypeId::ANY;
+                }
+            }
+            default
+        })
+        .collect()
+}
+
 /// Extract the lazy `DefId` if this is a Lazy type.
 pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
     extract_type_data(types, type_id, |key| match key {
