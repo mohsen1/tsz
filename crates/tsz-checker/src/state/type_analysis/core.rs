@@ -1737,11 +1737,13 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Thin delegation to [`TypeNodeChecker::get_type_from_type_query`] so that
-    /// call sites on `CheckerState` continue to compile after the method was
-    /// extracted into the type-node checker.
+    /// Resolve a `typeof X` type query with flow-sensitive narrowing.
+    ///
+    /// The flow-sensitive version (in `core_type_query.rs`) resolves the
+    /// expression type via `get_type_of_node` which applies control-flow
+    /// narrowing. Falls back to `TypeNodeChecker` for edge cases (qualified
+    /// names, type-only imports, etc.).
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::types_domain::type_node::TypeNodeChecker;
-        TypeNodeChecker::new(&mut self.ctx).get_type_from_type_query(idx)
+        self.get_type_from_type_query_flow_sensitive(idx)
     }
 }
