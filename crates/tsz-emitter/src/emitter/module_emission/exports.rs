@@ -272,14 +272,18 @@ impl<'a> Printer<'a> {
                         if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
                         {
                             let decl_count = inline_decls.len();
-                            for (i, (name, init_idx)) in inline_decls.iter().enumerate() {
+                            for (i, (decoded_name, emit_name, init_idx)) in
+                                inline_decls.iter().enumerate()
+                            {
                                 // Track that this variable was inlined (no local declaration).
+                                // Use decoded name for set tracking (matching uses decoded text).
                                 self.ctx
                                     .module_state
                                     .inlined_var_exports
-                                    .insert(name.clone());
+                                    .insert(decoded_name.clone());
                                 self.write("exports.");
-                                self.write(name);
+                                // Use emit_name to preserve unicode escapes in output.
+                                self.write(emit_name);
                                 self.write(" = ");
                                 // emit_identifier handles `x → exports.x` substitution
                                 // for inline-exported variable names automatically.

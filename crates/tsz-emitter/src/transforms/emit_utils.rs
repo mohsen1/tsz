@@ -18,6 +18,37 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Get the emit text for an identifier, preserving unicode escape sequences.
+///
+/// TSC preserves unicode escapes (e.g., `\u0078` for 'x') in emitted identifiers.
+/// When the parser detected unicode escapes, it stores the original source text in
+/// `IdentifierData::original_text`. This function returns that original text when
+/// available, falling back to `escaped_text` (the decoded name) otherwise.
+///
+/// Use this for synthesized code paths (e.g., constructor parameter property
+/// assignments, CJS inline exports) where the identifier text is written directly
+/// rather than going through `Printer::emit_identifier`.
+pub(crate) fn identifier_emit_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        arena.get_identifier(node).map(|id| {
+            id.original_text
+                .as_deref()
+                .unwrap_or(&id.escaped_text)
+                .to_string()
+        })
+    } else {
+        None
+    }
+}
+
+/// Get the emit text for an identifier, returning an empty string on failure.
+///
+/// See [`identifier_emit_text`] for details on unicode escape preservation.
+pub(crate) fn identifier_emit_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> String {
+    identifier_emit_text(arena, idx).unwrap_or_default()
+}
+
 /// Get the name text from an import/export specifier name node.
 /// Handles both identifiers (`foo`) and string literals (`"<X>"`).
 /// Returns `None` if the node is neither.
