@@ -125,10 +125,15 @@ impl<'a> InferenceContext<'a> {
     {
         // Check if already resolved
         if let Some(ty) = self.probe(var) {
+            eprintln!("[RESOLVE_BY] var={:?} already resolved to {:?}", var, ty);
             return Ok(ty);
         }
 
         let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
+        eprintln!(
+            "[RESOLVE_BY] var={:?} result={:?} upper_bounds={:?} upper_bounds_only={}",
+            var, result, upper_bounds, upper_bounds_only
+        );
 
         // Skip upper bound validation for `any` — it satisfies all constraints in tsc.
         if !upper_bounds_only && result != TypeId::ANY {
@@ -360,6 +365,17 @@ impl<'a> InferenceContext<'a> {
         declared_constraint: Option<TypeId>,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
+        eprintln!(
+            "[RESOLVE DEBUG] resolve_from_candidates: {} candidates, {} filtered",
+            candidates.len(),
+            filtered.len()
+        );
+        for c in &filtered {
+            eprintln!(
+                "[RESOLVE DEBUG]   candidate: {:?}, priority: {:?}, from_obj_prop: {}",
+                c.type_id, c.priority, c.from_object_property
+            );
+        }
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
         }
