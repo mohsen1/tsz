@@ -943,13 +943,12 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                // CRITICAL: TypeQuery (`typeof X`) is a VALUE-space query.
-                // Use get_type_of_symbol which returns the constructor type for
-                // classes, NOT type_reference_symbol_type which returns the
-                // instance type (designed for TYPE position references).
-                // Without this, the type environment gets the instance type
-                // (ObjectWithIndex) for class symbols, causing false TS2345
-                // when comparing `typeof SubClass` against `typeof BaseClass`.
+                // Use get_type_of_symbol (value-space type) for TypeQuery resolution,
+                // NOT type_reference_symbol_type (type-position type). TypeQuery is
+                // `typeof X` which must resolve to the constructor type for classes,
+                // not the instance type. type_reference_symbol_type returns the instance
+                // type for classes, which would overwrite the correct constructor type
+                // previously inserted by ensure_refs_resolved.
                 let resolved = self.get_type_of_symbol(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
