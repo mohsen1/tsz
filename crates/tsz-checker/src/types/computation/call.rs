@@ -1876,7 +1876,14 @@ impl<'a> CheckerState<'a> {
             // solver can infer type parameters from the contextual return type.
             // Example: `declare function from<T>(): T[]; const x: string[] = from();`
             // Here T should be inferred as `string` from the contextual return type.
-            if args.is_empty() {
+            //
+            // Also pass the contextual type when the checker already computed a
+            // return-context substitution. In that case the solver needs to seed
+            // type parameters that are only inferrable from the return type
+            // (e.g., `A` in `repeat<O extends ..., A>(options: O): (self: Effect<A>) => Effect<A>`
+            // where `A` has no argument source but can be inferred by matching the
+            // return type against the contextual type from the outer call).
+            if args.is_empty() || had_return_context_substitution {
                 self.ctx.contextual_type
             } else {
                 None
