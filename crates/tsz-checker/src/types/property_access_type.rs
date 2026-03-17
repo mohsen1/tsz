@@ -48,8 +48,15 @@ impl<'a> CheckerState<'a> {
                 if interface_type == TypeId::ERROR {
                     continue;
                 }
-                let interface_type = self.evaluate_application_type(interface_type);
-                match self.resolve_property_access_with_env(interface_type, property_name) {
+                let interface_type_eval = self.evaluate_application_type(interface_type);
+                // Resolve Lazy(DefId) types through the checker's TypeEnvironment so the
+                // solver can inspect the interface's actual members. Without this step the
+                // solver falls back to TypeId::ANY (its "couldn't resolve" sentinel) which
+                // would incorrectly suppress TS2339 for properties that don't exist at all.
+                let interface_type_resolved =
+                    self.resolve_type_for_property_access(interface_type_eval);
+                match self.resolve_property_access_with_env(interface_type_resolved, property_name)
+                {
                     PropertyAccessResult::Success { type_id, .. }
                     | PropertyAccessResult::PossiblyNullOrUndefined {
                         property_type: Some(type_id),
