@@ -651,11 +651,10 @@ impl<'a> Printer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    if let Some(sp) = self.arena.get_shorthand_property(prop_node)
-                        && self.is_literal_proto_name(sp.name)
-                    {
-                        return false;
-                    }
+                    // Shorthand `{__proto__}` is `{__proto__: __proto__}` which
+                    // is safe to inline (it doesn't set the prototype — it creates
+                    // a property named __proto__ with the variable's value).
+                    // Only non-shorthand `{__proto__: value}` is dangerous.
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION
                     || k == syntax_kind_ext::GET_ACCESSOR
@@ -693,7 +692,21 @@ impl<'a> Printer<'a> {
     }
 
     /// Merge Spread groups with inlinable object literals into `InlinedObjectLiteral`.
+    ///
+    /// tsc only inlines spread object literals when there are no "real"
+    /// (non-inlinable) spread groups. When real spreads like `...a` exist,
+    /// object-literal spreads like `...{c, d}` are kept as-is to match tsc output.
     fn merge_inlinable_spread_groups(&self, groups: Vec<AttrGroup>) -> Vec<AttrGroup> {
+        // Check if any Spread group is NOT inlinable (a "real" spread).
+        let has_real_spread = groups.iter().any(
+            |g| matches!(g, AttrGroup::Spread(expr) if !self.can_inline_jsx_spread_object(*expr)),
+        );
+
+        if has_real_spread {
+            // Don't inline any spreads — keep them all as Spread.
+            return groups;
+        }
+
         groups
             .into_iter()
             .map(|g| match g {
@@ -1019,6 +1032,38 @@ impl<'a> Printer<'a> {
         let groups = group_jsx_attrs(attrs);
         let groups = self.merge_inlinable_spread_groups(groups);
 
+        // When all groups are Named or InlinedObjectLiteral (no real Spread),
+        // we can emit them as a single object literal — no Object.assign needed.
+        // This matches tsc behavior for `{...{__proto__}}` and similar patterns.
+        let all_inlinable = groups.iter().all(|g| !matches!(g, AttrGroup::Spread(_)));
+        if all_inlinable && groups.len() > 1 {
+            self.write("{ ");
+            let mut first = true;
+            for group in &groups {
+                match group {
+                    AttrGroup::Named(named) => {
+                        for attr in named {
+                            if let JsxAttrInfo::Named { name, value } = attr {
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.emit_jsx_prop_name(name);
+                                self.write(": ");
+                                self.emit_jsx_attr_value(value);
+                            }
+                        }
+                    }
+                    AttrGroup::InlinedObjectLiteral(expr) => {
+                        self.emit_jsx_inline_object_literal_props(*expr, &mut first);
+                    }
+                    AttrGroup::Spread(_) => unreachable!(),
+                }
+            }
+            self.write(" }");
+            return;
+        }
+
         if groups.len() == 1 {
             match &groups[0] {
                 AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
@@ -1088,6 +1133,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // tsc only inlines spread object literals when there are no "real"
+        // (non-inlinable) spreads among the attrs. This matches the classic
+        // path's `merge_inlinable_spread_groups` behavior.
+        let has_real_spread = attrs.iter().any(|a| {
+            matches!(a, JsxAttrInfo::Spread { expr } if !self.can_inline_jsx_spread_object(*expr))
+        });
+
         self.write("{ ");
         let mut first = true;
 
@@ -1103,7 +1155,7 @@ impl<'a> Printer<'a> {
                     self.emit_jsx_attr_value(value);
                 }
                 JsxAttrInfo::Spread { expr } => {
-                    if self.can_inline_jsx_spread_object(*expr) {
+                    if !has_real_spread && self.can_inline_jsx_spread_object(*expr) {
                         self.emit_jsx_inline_object_literal_props(*expr, &mut first);
                     } else {
                         if !first {
@@ -1152,6 +1204,54 @@ impl<'a> Printer<'a> {
         children: &[NodeIndex],
         is_jsxs: bool,
     ) {
+        // When all spread attrs are inlinable (no "real" spreads), tsc emits
+        // a single object literal instead of Object.assign. E.g.,
+        // `{...{__proto__}}` → `{ className: "T", __proto__, children: ... }`.
+        let has_real_spread = attrs.iter().any(|a| {
+            matches!(a, JsxAttrInfo::Spread { expr } if !self.can_inline_jsx_spread_object(*expr))
+        });
+        if !has_real_spread {
+            self.write("{ ");
+            let mut first = true;
+            for attr in attrs {
+                match attr {
+                    JsxAttrInfo::Named { name, value } => {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.emit_jsx_prop_name(name);
+                        self.write(": ");
+                        self.emit_jsx_attr_value(value);
+                    }
+                    JsxAttrInfo::Spread { expr } => {
+                        self.emit_jsx_inline_object_literal_props(*expr, &mut first);
+                    }
+                }
+            }
+            // Add children prop
+            if !children.is_empty() {
+                if !first {
+                    self.write(", ");
+                }
+                self.write("children: ");
+                if is_jsxs {
+                    self.write("[");
+                    for (i, child) in children.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.emit_jsx_child_as_expression(*child);
+                    }
+                    self.write("]");
+                } else {
+                    self.emit_jsx_child_as_expression(children[0]);
+                }
+            }
+            self.write(" }");
+            return;
+        }
+
         // Segment attrs into groups of consecutive Named and individual Spreads
         enum Segment {
             Named(usize, usize), // start..end indices into attrs
