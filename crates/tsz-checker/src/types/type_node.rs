@@ -1004,6 +1004,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         };
         let param_type = param.type_id;
+        // Skip the check when the predicate type is an unevaluable Application
+        // (e.g., NonNullable<T> where T is a free type parameter). Our evaluator
+        // can't resolve all lib.d.ts type aliases yet, so the Application stays
+        // opaque and fails the assignability check even when it's structurally sound
+        // (e.g., NonNullable<T> = T & {} which is always assignable to T).
+        // TSC resolves these and succeeds; we defer to avoid false TS2677 errors.
+        if self.predicate_type_contains_unevaluable_application(predicate_type) {
+            return;
+        }
         if !self.ctx.types.is_assignable_to(predicate_type, param_type) {
             if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
                 self.ctx.error(
@@ -1014,6 +1023,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     2677,
                 );
             }
+        }
+    }
+
+    /// Check if a type contains an Application that can't be evaluated (e.g., NonNullable<T>
+    /// where the resolver doesn't know about the base type's definition). In such cases,
+    /// the Application stays opaque and assignability checks may give incorrect results.
+    fn predicate_type_contains_unevaluable_application(&self, type_id: TypeId) -> bool {
+        use tsz_solver::types::TypeData;
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeData::Application(_)) => {
+                // If evaluate_type returns the same TypeId, the Application couldn't be resolved
+                let evaluated = self.ctx.types.evaluate_type(type_id);
+                evaluated == type_id
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.predicate_type_contains_unevaluable_application(m))
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.predicate_type_contains_unevaluable_application(m))
+            }
+            _ => false,
         }
     }
 
