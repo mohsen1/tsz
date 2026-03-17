@@ -151,18 +151,21 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::Resolved(body_type);
         }
 
-        // Evaluate type arguments recursively
-        let evaluated_args: Vec<TypeId> = args
-            .iter()
-            .map(|&arg| match self.evaluate(arg) {
-                ApplicationResult::Resolved(t) => t,
-                _ => arg,
-            })
-            .collect();
-
-        // Create substitution and instantiate
-        let substitution =
-            TypeSubstitution::from_args(self.interner, &type_params, &evaluated_args);
+        // Use type arguments as-is (without eager evaluation).
+        //
+        // Eagerly evaluating Application args before substitution causes a loss of
+        // structural identity: e.g., `Synthetic<number, number>` becomes `{}` before
+        // being substituted as `U` in `U extends Synthetic<T, infer V> ? V : never`.
+        // With the expanded form, `try_application_infer_match` cannot do
+        // Application-vs-Application matching and the `infer V` binding is lost,
+        // causing uninstantiated type parameters to leak into the resolved type.
+        //
+        // TypeScript does not eagerly evaluate type arguments before substitution —
+        // they are substituted raw into the body, and any nested Applications are
+        // evaluated lazily when the body type is used (e.g., in a conditional check
+        // or subtype relation). The recursive `self.evaluate(instantiated)` call below
+        // handles any remaining Application types in the substituted body.
+        let substitution = TypeSubstitution::from_args(self.interner, &type_params, &args);
         let mut instantiated = instantiate_type(self.interner, body_type, &substitution);
         if crate::contains_this_type(self.interner, instantiated) {
             instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
