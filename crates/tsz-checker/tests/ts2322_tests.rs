@@ -590,6 +590,38 @@ fn test_ts2322_no_false_positive_conditional_infer() {
 }
 
 #[test]
+fn test_ts2322_conditional_doesnt_leak_uninstantiated_type_parameter() {
+    // SyntheticDestination<number, Synthetic<number, number>> should resolve to number, not T
+    let source = r#"
+        interface Synthetic<A, B extends A> {}
+        type SyntheticDestination<T, U> = U extends Synthetic<T, infer V> ? V : never;
+        type TestSynthetic = SyntheticDestination<number, Synthetic<number, number>>;
+        const y: TestSynthetic = 3;
+        const z: TestSynthetic = '3';
+    "#;
+
+    let errors = get_all_diagnostics(source);
+    eprintln!("All diagnostics: {:?}", errors);
+
+    // y = 3 should NOT error (number is assignable to number)
+    // z = '3' SHOULD error (string is not assignable to number)
+    let ts2322_errors: Vec<_> = errors
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "Expected exactly 1 TS2322 for string->number mismatch, got: {ts2322_errors:?}"
+    );
+    assert!(
+        ts2322_errors[0].1.contains("not assignable"),
+        "Expected assignability error, got: {:?}",
+        ts2322_errors[0].1
+    );
+}
+
+#[test]
 fn test_ts2322_no_false_positive_conditional_expression_with_generics() {
     // Conditional expressions should compute union type first, not check branches individually
     // This tests the fix for premature assignability checking in conditional expressions

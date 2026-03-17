@@ -12,7 +12,7 @@ use tsz_solver::MappedTypeId;
 use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+use tsz_solver::{CallSignature, CallableShape, ParamInfo, TypeData};
 
 // Thread-local counters for `evaluate_application_type` that survive cross-arena
 // delegation. Per-context counters (`instantiation_depth`, `application_eval_set`)
@@ -458,13 +458,19 @@ impl<'a> CheckerState<'a> {
 
         // Resolve type arguments so distributive conditionals can see unions.
         // For conditional type bodies whose extends side contains infer patterns,
-        // preserve generic/type-parameter arguments so the conditional evaluator
-        // can still use their original constraints during infer matching.
+        // preserve Application arguments so the conditional evaluator can still
+        // match at the declaration level during infer matching (e.g.,
+        // Foo<number, number> vs Foo<number, infer V>). Without this, evaluating
+        // Applications of empty interfaces collapses them to `{}`, losing the
+        // type argument structure needed for infer binding.
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                if body_has_conditional_infer
+                    && (self.contains_type_parameters_cached(arg)
+                        || matches!(self.ctx.types.lookup(arg), Some(TypeData::Application(_))))
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
