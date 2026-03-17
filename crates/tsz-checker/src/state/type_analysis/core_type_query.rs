@@ -6,9 +6,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_from_type_query_flow_sensitive(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::SymbolRef;
-        trace!(idx = idx.0, "ENTER get_type_from_type_query");
+        trace!(idx = idx.0, "ENTER get_type_from_type_query_flow_sensitive");
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -397,5 +397,4 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
 }
