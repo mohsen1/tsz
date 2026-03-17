@@ -1742,4 +1742,14 @@ impl<'a> CheckerState<'a> {
 
         result
     }
+
+    /// Resolve a `typeof X` type query with flow-sensitive narrowing.
+    ///
+    /// Delegates to [`Self::get_type_from_type_query_flow_sensitive`] which
+    /// resolves the expression type via `get_type_of_node` with control-flow
+    /// narrowing enabled, so `typeof c` inside `if (typeof c === 'string')`
+    /// correctly resolves to `string` rather than `string | number`.
+    pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_from_type_query_flow_sensitive(idx)
+    }
 }
