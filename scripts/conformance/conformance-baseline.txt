@@ -24,9 +24,7 @@ FAIL TypeScript/tests/cases/compiler/classExpressionAssignment.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/classExpressionWithResolutionOfNamespaceOfSameName01.ts | expected:[TS2564] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs1.ts | expected:[TS2565] actual:[TS2551]
 FAIL TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expected:[TS2855] actual:[TS2339,TS7053]
-FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping.ts | expected:[TS2301] actual:[TS2301,TS2451]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
-FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/cloduleWithDuplicateMember1.ts | expected:[TS2300] actual:[TS2300,TS2451]
 FAIL TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts | expected:[TS2322,TS2417,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
@@ -457,6 +455,7 @@ FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexp
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts | expected:[TS2564] actual:[TS2339,TS2564]
+FAIL TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationOfAlias.ts | expected:[] actual:[TS2339,TS2666]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext2.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258] actual:[TS1184]
@@ -610,7 +609,6 @@ FAIL TypeScript/tests/cases/compiler/recursiveTypeParameterConstraintReferenceLa
 FAIL TypeScript/tests/cases/compiler/recursiveTypeRelations.ts | expected:[TS2345,TS2391,TS2552] actual:[TS2345,TS2391,TS2552]
 FAIL TypeScript/tests/cases/compiler/recursivelyExpandingUnionNoStackoverflow.ts | expected:[TS2589,TS2615] actual:[]
 FAIL TypeScript/tests/cases/compiler/redefineArray.ts | expected:[TS2739] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/reexportedMissingAlias.ts | expected:[TS2503] actual:[TS2497,TS2503]
 FAIL TypeScript/tests/cases/compiler/referenceTypesPreferedToPathIfPossible.ts | expected:[TS2580] actual:[]
 FAIL TypeScript/tests/cases/compiler/regexMatchAll-esnext.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/regexMatchAll.ts | expected:[] actual:[TS2339]
@@ -783,6 +781,7 @@ FAIL TypeScript/tests/cases/compiler/unusedImports_entireImportDeclaration.ts | 
 FAIL TypeScript/tests/cases/compiler/unusedInvalidTypeArguments.ts | expected:[TS2304,TS2307,TS2315,TS2347] actual:[TS2304,TS2307,TS2315,TS2347]
 FAIL TypeScript/tests/cases/compiler/unusedLocalsAndParameters.ts | expected:[TS1005,TS1109] actual:[TS1005]
 FAIL TypeScript/tests/cases/compiler/unusedLocalsInMethod4.ts | expected:[TS1155,TS2454] actual:[TS1155,TS2454]
+FAIL TypeScript/tests/cases/compiler/unusedParameterProperty1.ts | expected:[TS6133,TS6138] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/unusedPrivateStaticMembers.ts | expected:[TS6133] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_infer.ts | expected:[TS6133] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_templateTag.ts | expected:[TS6133] actual:[]
@@ -2385,6 +2384,7 @@ PASS TypeScript/tests/cases/compiler/classIndexer5.ts
 PASS TypeScript/tests/cases/compiler/classInheritence.ts
 PASS TypeScript/tests/cases/compiler/classMemberInitializerScoping.ts
 PASS TypeScript/tests/cases/compiler/classMemberInitializerScoping2.ts
+PASS TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping.ts
 PASS TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping2.ts
 PASS TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping4.ts
 PASS TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping5.ts
@@ -2401,6 +2401,7 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
+PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -5390,7 +5391,6 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule3.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule4.ts
-PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationNoNewNames.ts
@@ -6306,6 +6306,7 @@ PASS TypeScript/tests/cases/compiler/reexportMissingDefault7.ts
 PASS TypeScript/tests/cases/compiler/reexportMissingDefault8.ts
 PASS TypeScript/tests/cases/compiler/reexportNameAliasedAndHoisted.ts
 PASS TypeScript/tests/cases/compiler/reexportWrittenCorrectlyInDeclaration.ts
+PASS TypeScript/tests/cases/compiler/reexportedMissingAlias.ts
 PASS TypeScript/tests/cases/compiler/referenceSatisfiesExpression.ts
 PASS TypeScript/tests/cases/compiler/regExpWithOpenBracketInCharClass.ts
 PASS TypeScript/tests/cases/compiler/regExpWithSlashInCharClass.ts
@@ -7225,7 +7226,6 @@ PASS TypeScript/tests/cases/compiler/unusedMultipleParameters2InMethodDeclaratio
 PASS TypeScript/tests/cases/compiler/unusedNamespaceInModule.ts
 PASS TypeScript/tests/cases/compiler/unusedNamespaceInNamespace.ts
 PASS TypeScript/tests/cases/compiler/unusedParameterInCatchClause.ts
-PASS TypeScript/tests/cases/compiler/unusedParameterProperty1.ts
 PASS TypeScript/tests/cases/compiler/unusedParameterProperty2.ts
 PASS TypeScript/tests/cases/compiler/unusedParameterUsedInTypeOf.ts
 PASS TypeScript/tests/cases/compiler/unusedParametersInLambda1.ts
@@ -10206,7 +10206,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
