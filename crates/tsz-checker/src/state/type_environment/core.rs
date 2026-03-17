@@ -464,7 +464,15 @@ impl<'a> CheckerState<'a> {
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                if body_has_conditional_infer
+                    && (self.contains_type_parameters_cached(arg)
+                        || query::is_generic_type(self.ctx.types, arg))
+                {
+                    // Preserve Application-typed args when the body is a conditional
+                    // with infer patterns. The conditional evaluator needs to match
+                    // Application-vs-Application (e.g., Synthetic<number, number> extends
+                    // Synthetic<number, infer V>) to correctly infer type variables.
+                    // Eagerly evaluating Application args loses their identity.
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
