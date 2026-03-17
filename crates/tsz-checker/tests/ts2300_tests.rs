@@ -314,7 +314,9 @@ fn getter_setter_pair_allowed() {
 }
 
 /// A method followed by accessor declarations with the same computed symbol name
-/// reports TS2300 on all conflicting declarations (method and accessors).
+/// reports TS2300 only on the later declarations (getter and setter), not the
+/// first-declared method. tsc treats computed names differently from simple
+/// identifiers: it does not flag the first declaration that established the name.
 #[test]
 fn computed_symbol_method_and_accessor_pair_reports_all_duplicates() {
     let diagnostics = verify_errors(
@@ -326,7 +328,6 @@ class C {
 }
 "#,
         &[
-            (3, 5, "Duplicate identifier '[Symbol.toPrimitive]'."),
             (4, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
             (5, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
         ],
@@ -335,8 +336,8 @@ class C {
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
-        3,
-        "expected all conflicting declarations to report TS2300, got: {diagnostics:?}"
+        2,
+        "expected only getter/setter to report TS2300 (not the first-declared method), got: {diagnostics:?}"
     );
 }
 
