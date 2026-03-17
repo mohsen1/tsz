@@ -257,6 +257,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => self.expand_type_param(arg_type_for_check),
             };
 
+            // When the parameter type is an unconstrained type parameter from an outer
+            // generic scope (e.g., `cb: Callback<T>` where `T` is inferred from the call
+            // site), any argument is compatible - type inference will resolve `T` afterward.
+            // This mirrors TSC's overload resolution behavior: inference variables accept
+            // any argument during candidate selection.
+            // Constrained type parameters fall through to the normal assignability path,
+            // where the argument is checked against the constraint.
+            if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
+                self.interner.lookup(param_type)
+            {
+                if info.constraint.is_none() {
+                    continue;
+                }
+            }
+
             // When the parameter is optional, implicitly include `undefined`
             // in the parameter type. This ensures `SomeType | undefined` can be
             // passed to an optional parameter of type `SomeType | null`, since
