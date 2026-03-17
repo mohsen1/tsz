@@ -666,17 +666,18 @@ impl<'a> CheckerState<'a> {
         }
 
         // Suppress TS7053 for for-in variables ONLY when the target type has an
-        // index signature (string or number). Arrays and other indexable types are
-        // safe to index with for-in string keys. But non-indexable types like `{}`
-        // should still emit TS7053 — the string key genuinely can't be used.
+        // index signature. For union types, ALL members must have a string index
+        // signature — a number index alone is not sufficient because for-in produces
+        // string keys and arrays (which only have number index) cannot be string-indexed.
+        // For non-union types, either string or number index is acceptable (arrays
+        // with for-in string keys are a valid pattern in tsc).
         if is_for_in_index {
             let has_string_index = if let Some(members) =
                 tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
             {
-                members.iter().all(|&m| {
-                    resolver.resolve_string_index(m).is_some()
-                        || resolver.resolve_number_index(m).is_some()
-                })
+                members
+                    .iter()
+                    .all(|&m| resolver.resolve_string_index(m).is_some())
             } else {
                 resolver.resolve_string_index(object_type).is_some() || has_number_index
             };
