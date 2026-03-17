@@ -460,11 +460,24 @@ impl<'a> CheckerState<'a> {
         // For conditional type bodies whose extends side contains infer patterns,
         // preserve generic/type-parameter arguments so the conditional evaluator
         // can still use their original constraints during infer matching.
+        //
+        // Also preserve Application-type arguments when the conditional's extends
+        // side is an Application with infer. Evaluating Application args like
+        // `Box<number>` expands them to their structural form (e.g., empty object `{}`),
+        // which destroys the type argument information needed for infer matching.
+        // The conditional evaluator's `try_application_infer_match` needs both
+        // check and extends as Applications to match type arguments directly.
         let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
+        let body_has_conditional_app_infer =
+            self.body_is_conditional_with_application_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
                 if body_has_conditional_infer && self.contains_type_parameters_cached(arg) {
+                    arg
+                } else if body_has_conditional_app_infer
+                    && tsz_solver::is_generic_application(self.ctx.types, arg)
+                {
                     arg
                 } else {
                     self.evaluate_type_with_env(arg)
@@ -601,6 +614,18 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
+    }
+
+    /// Check if the body is a conditional type whose extends side is an Application
+    /// containing infer types. This is used to preserve Application-type arguments
+    /// during type alias instantiation, so the conditional evaluator can match
+    /// type arguments at the Application level (e.g., `Box<number>` vs `Box<infer V>`).
+    fn body_is_conditional_with_application_infer(&self, body_type: TypeId) -> bool {
+        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
+            return false;
+        };
+        tsz_solver::is_generic_application(self.ctx.types, cond.extends_type)
+            && tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.
