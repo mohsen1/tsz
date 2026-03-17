@@ -1272,6 +1272,14 @@ impl<'a> CheckerState<'a> {
 
         let diag_len = self.ctx.diagnostics.len();
         let dedup_snapshot = suppress_diagnostics.then(|| self.ctx.emitted_diagnostics.clone());
+        // Snapshot implicit-any-checked closures when suppressing diagnostics (speculative round2).
+        // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
+        // dropped by the suppress filter. Without restoring, the final retry pass sees these
+        // closures as already-checked and skips TS7006 — silencing real implicit-any errors
+        // for parameters whose object-literal-property contextual type is never (e.g., an
+        // extra key C in a negated-type-like constraint mapped type maps to never).
+        let implicit_any_closure_snapshot =
+            suppress_diagnostics.then(|| self.ctx.implicit_any_checked_closures.clone());
         let arg_type = self.get_type_of_node(arg_idx);
 
         if skip_flow {
@@ -1346,7 +1354,17 @@ impl<'a> CheckerState<'a> {
                             && diag.start >= node.pos
                             && diag.start < node.end
                     });
+                    // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
+                    // literals even in round2 speculative passes. Unlike assignability errors
+                    // (which get a definitive check in resolve_call_with_checker_adapter), TS7006
+                    // is determined by whether the contextual type is available in THIS pass.
+                    // Properties mapping to `never` (e.g., extra keys in negated-type-like
+                    // constraints) have no contextual type for their lambda parameters, so TS7006
+                    // must be preserved here — there is no later pass that re-checks them.
+                    let implicit_any_in_object_literal =
+                        is_provisional_implicit_any && is_object_literal_diag;
                     (!is_assignability && !is_provisional_implicit_any)
+                        || implicit_any_in_object_literal
                         || callback_body_start.is_some_and(|start| diag.start == start)
                         || !(is_object_literal_diag || is_function_arg_implicit_any_diag)
                 })
@@ -1388,6 +1406,11 @@ impl<'a> CheckerState<'a> {
                         .emitted_diagnostics
                         .insert(self.ctx.diagnostic_dedup_key(diag));
                 }
+            }
+            // Restore implicit-any closure tracking to the pre-round2 state so the final
+            // retry pass can re-emit TS7006 for closures whose diagnostics were suppressed.
+            if let Some(snapshot) = implicit_any_closure_snapshot {
+                self.ctx.implicit_any_checked_closures = snapshot;
             }
         }
 
