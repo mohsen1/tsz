@@ -733,8 +733,19 @@ impl<'a> CheckerState<'a> {
                         .enclosing_class
                         .as_ref()
                         .is_some_and(|c| c.is_declared);
+                // When ctx_helper's expected type is  (e.g. a mapped type property
+                // mapping excess keys to ), no param contextual types can be derived.
+                // Do not defer TS7006: the second pass will use the inferred type (possibly
+                // ) and incorrectly suppress TS7006. Emit immediately.
+                let ctx_helper_expected_is_never = ctx_helper
+                    .as_ref()
+                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .is_some_and(|t| t == TypeId::NEVER);
                 let skip_implicit_any = is_setter
-                    || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
+                    || (is_closure
+                        && !self.ctx.is_checking_statements
+                        && !has_contextual_type
+                        && !ctx_helper_expected_is_never)
                     || (is_in_decorator && !has_contextual_type)
                     || is_in_jsdoc_type_cast
                     || closure_already_checked
@@ -1032,18 +1043,13 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 early_yield_type = gen_types.0;
-                // Only use the contextual yield type for the final generator type
-                // when it is fully resolved (no type parameters). When the
-                // contextual type comes from a generic callee (e.g., `T | undefined`
-                // where `T` is unresolved), using it would leak unresolved type
-                // params into the generator type and cause false TS2322 errors.
-                // In that case, let the body inference determine the yield type.
-                let ctx_yield_has_type_params = gen_types.0.is_some_and(|ty| {
-                    tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
-                });
-                if !ctx_yield_has_type_params {
-                    final_generator_yield_type = gen_types.0;
-                }
+                // Do NOT set final_generator_yield_type from the contextual yield type.
+                // The final yield type must be inferred from the actual body (what is
+                // yielded), not from the contextual annotation. This allows the normal
+                // assignment check at the variable declaration site to catch cases like
+                //   var g: () => Iterable<Foo> = function* () { yield new Baz; }
+                // where Baz is not assignable to Foo. Using the contextual type would
+                // hide the incompatibility by making the generator appear to yield Foo.
                 early_gen_return_type = gen_types.1;
                 early_gen_next_type = gen_types.2;
             }
@@ -1691,10 +1697,7 @@ impl<'a> CheckerState<'a> {
                 // and emit TS7055/TS7025 if TYield is 'any'.
                 // TS7055 and TS7057 are independent — TS7055 fires at function name when
                 // TYield is implicit any, while TS7057 fires per-expression.
-                if is_generator
-                    && !has_type_annotation
-                    && (early_yield_type.is_none() || final_generator_yield_type.is_none())
-                {
+                if is_generator && !has_type_annotation {
                     let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
                     // Compute inferred yield type from collected operand types
                     let inferred_yield = if yield_types.is_empty() {
