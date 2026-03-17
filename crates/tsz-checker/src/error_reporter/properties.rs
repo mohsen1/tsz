@@ -675,9 +675,15 @@ impl<'a> CheckerState<'a> {
             let has_string_index = if let Some(members) =
                 tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
             {
+                // For union types: ALL members must have an explicit string index signature.
+                // `resolve_string_index` returns Some for arrays (treating them as string-indexable),
+                // but arrays are only numeric-indexed; string keys produce implicit `any` (TS7053).
+                // Use `is_element_indexable(m, wants_string=true, wants_number=false)` which
+                // correctly returns false for arrays (Array kind only supports wants_number).
+                // e.g. `any[] | Record<string, any>`: `any[]` returns false → don't suppress.
                 members
                     .iter()
-                    .all(|&m| resolver.resolve_string_index(m).is_some())
+                    .all(|&m| self.is_element_indexable(m, true, false))
             } else {
                 resolver.resolve_string_index(object_type).is_some() || has_number_index
             };
