@@ -2,5 +2,6 @@
 
 pub mod constructor;
 mod core;
+mod js_class_properties;
 
 pub(super) use core::can_skip_base_instantiation;
