@@ -1387,8 +1387,12 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            // TS2403 only applies to non-block-scoped variables (var)
-            if !is_block_scoped {
+            // TS2403 only applies to non-block-scoped variables (var).
+            // Also skip when the var shares a block scope with a const/let of the same
+            // name — that case is TS2481 (handled by check_var_declared_names_not_shadowed).
+            let is_ts2481_case =
+                !is_block_scoped && self.is_var_shadowing_block_scoped_in_same_scope(decl_idx);
+            if !is_block_scoped && !is_ts2481_case {
                 // Non-exported variables inside namespace bodies are local to that body.
                 // They should not trigger TS2403 against exported variables of the same
                 // name from other (merged) namespace bodies, even if the binder merged
