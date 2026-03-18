@@ -911,7 +911,7 @@ jobs:
 
   # ─── Fourslash: 5 parallel shards ───────────────────────────────────────
   fourslash:
-    name: "Fourslash (${{ matrix.shard }}/5)"
+    name: "Fourslash (${{ matrix.shard }}/10)"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [changes, test-build]
@@ -919,7 +919,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
@@ -963,7 +963,9 @@ jobs:
         id: shard-results
         run: |
           set -euo pipefail
-          CHUNK=1400
+          # Keep shards small enough that the heaviest language-service ranges do not
+          # exhaust the runner before results are uploaded.
+          CHUNK=400
           OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
           TMPOUT=$(mktemp)
@@ -1040,7 +1042,7 @@ jobs:
             SHARD_COUNT=$((SHARD_COUNT + 1))
             echo "  $(basename "$f"): ${P}/${T}"
           done
-          echo "Received results from ${SHARD_COUNT}/5 shards"
+          echo "Received results from ${SHARD_COUNT}/10 shards"
 
           if [ "$TOTAL_TESTS" -eq 0 ]; then
             echo "::error::Fourslash produced no results"

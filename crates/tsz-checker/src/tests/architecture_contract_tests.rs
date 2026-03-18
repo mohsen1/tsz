@@ -767,8 +767,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_heritage_checking generic-type checks should route through query_boundaries::class_type"
     );
     assert!(
-        state_class_checking_src.contains("class_query::type_includes_undefined("),
-        "state_class_checking undefined-inclusion checks should route through query_boundaries::class_type"
+        state_class_checking_src.contains("class_query::undefined_is_assignable_to("),
+        "state_class_checking undefined-assignability checks should route through query_boundaries::class_type"
     );
     assert!(
         !state_class_checking_src.contains("tsz_solver::type_queries::"),

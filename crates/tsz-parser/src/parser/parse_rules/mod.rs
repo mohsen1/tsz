@@ -17,8 +17,8 @@
 mod utils;
 
 pub use utils::{
-    is_identifier_or_keyword, look_ahead_is, look_ahead_is_abstract_declaration,
-    look_ahead_is_async_declaration, look_ahead_is_const_enum, look_ahead_is_import_call,
-    look_ahead_is_import_equals, look_ahead_is_module_declaration,
+    is_identifier_or_contextual_keyword, is_identifier_or_keyword, look_ahead_is,
+    look_ahead_is_abstract_declaration, look_ahead_is_async_declaration, look_ahead_is_const_enum,
+    look_ahead_is_import_call, look_ahead_is_import_equals, look_ahead_is_module_declaration,
     look_ahead_is_type_alias_declaration,
 };
