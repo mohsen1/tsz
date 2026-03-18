@@ -196,7 +196,6 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
-
     fn is_shadowed(&self, name: Atom) -> bool {
         self.shadowed.contains(&name)
     }
