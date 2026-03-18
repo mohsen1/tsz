@@ -114,7 +114,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Convert to optional chaining".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,
@@ -191,7 +191,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Convert to optional chaining".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,

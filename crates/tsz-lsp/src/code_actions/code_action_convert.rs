@@ -366,7 +366,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Add braces to arrow function".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,
@@ -438,7 +438,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Remove braces from arrow function".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,

@@ -45,7 +45,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Convert to default export".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,
@@ -82,7 +82,7 @@ impl<'a> CodeActionProvider<'a> {
 
         Some(CodeAction {
             title: "Convert to named export".to_string(),
-            kind: CodeActionKind::Refactor,
+            kind: CodeActionKind::RefactorRewrite,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
             data: None,
