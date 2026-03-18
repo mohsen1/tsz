@@ -1096,10 +1096,10 @@ impl<'a> CheckerState<'a> {
                             .insert(stable_key, flow_node);
                         // Also populate the flow_analysis_cache for this exact key
                         // so subsequent cached-path lookups are instant.
-                        self.ctx.flow_analysis_cache.borrow_mut().insert(
-                            (flow_node, sym_id, result),
-                            result,
-                        );
+                        self.ctx
+                            .flow_analysis_cache
+                            .borrow_mut()
+                            .insert((flow_node, sym_id, result), result);
                         return result;
                     }
                 }
@@ -1264,12 +1264,11 @@ impl<'a> CheckerState<'a> {
         }
         // For assignments (x = ..., x += ...), the flow node references the LHS.
         // Check if that identifier's symbol matches our target symbol.
-        if let Some(target_sym) = self
-            .ctx
-            .binder
-            .get_node_symbol(flow.node)
-            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, flow.node))
-        {
+        if let Some(target_sym) = self.ctx.binder.get_node_symbol(flow.node).or_else(|| {
+            self.ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, flow.node)
+        }) {
             return target_sym == sym_id;
         }
         // Can't determine the target — conservatively assume it targets our symbol
@@ -1279,12 +1278,7 @@ impl<'a> CheckerState<'a> {
     /// Update the stable flow cache for a symbol after flow analysis.
     /// If `is_stable` is true (flow returned the declared type), record the current
     /// flow node. If false (narrowing occurred), remove the entry.
-    fn update_symbol_flow_confirmed(
-        &self,
-        idx: NodeIndex,
-        declared_type: TypeId,
-        is_stable: bool,
-    ) {
+    fn update_symbol_flow_confirmed(&self, idx: NodeIndex, declared_type: TypeId, is_stable: bool) {
         if let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
             && let Some(sym_id) = self
                 .ctx
