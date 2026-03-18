@@ -10,6 +10,14 @@ pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
     token == SyntaxKind::Identifier || tsz_scanner::token_is_keyword(token)
 }
 
+/// Check if a token is an identifier or contextual keyword (but NOT a reserved word).
+/// Matches tsc's `isIdentifier()` behavior — contextual keywords like `type`, `async`,
+/// `of` etc. can be binding names, but reserved words like `import`, `class`, `for` cannot.
+pub fn is_identifier_or_contextual_keyword(token: SyntaxKind) -> bool {
+    token == SyntaxKind::Identifier
+        || (tsz_scanner::token_is_keyword(token) && !tsz_scanner::token_is_reserved_word(token))
+}
+
 /// Look ahead to check if current token is followed by a token matching `check`.
 pub fn look_ahead_is<F>(scanner: &mut ScannerState, _current_token: SyntaxKind, check: F) -> bool
 where
