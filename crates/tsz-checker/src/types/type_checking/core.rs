@@ -5,6 +5,7 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -1452,15 +1453,57 @@ impl<'a> CheckerState<'a> {
                     .insert(ident.escaped_text.clone(), constrained_param);
             }
         }
-        // TS4109: To detect circular type arguments (e.g., `type X = Foo<X extends {} ? A : B>`),
-        // temporarily register this alias in `symbol_resolution_set` before visiting
-        // the type body. This allows `type_args_reference_resolving_alias` (called from
-        // `validate_type_reference_type_arguments`) to detect when a type argument
-        // directly or indirectly references the alias currently being defined.
+        // Temporarily register this alias in `symbol_resolution_set` before visiting
+        // the type body. This is used by TS4110 (tuple type circularity) and other
+        // circular-reference detection during type node checking.
         let alias_sym_id = self.ctx.binder.get_node_symbol(node_idx);
         let inserted_for_circular_check = alias_sym_id
             .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
             .unwrap_or(false);
+
+        // TS4109: detect circular type arguments when the alias body is directly
+        // a TypeReference (e.g. `type X = Foo<X extends {} ? A : B>`).  In TSC
+        // this fires only during `resolveTypeArguments` for the direct body type
+        // reference, NOT for nested type references inside unions, mapped types,
+        // etc.  We emulate this by checking only when the alias body node itself
+        // is a TypeReference whose type arguments reference the resolving alias.
+        if let Some(body_node) = self.ctx.arena.get(alias.type_node)
+            && body_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(body_node)
+            && let Some(ref type_args) = type_ref.type_arguments
+            && let Some(alias_sid) = alias_sym_id
+            && self.ctx.symbol_resolution_set.contains(&alias_sid)
+        {
+            let has_circular_arg = type_args
+                .nodes
+                .iter()
+                .copied()
+                .any(|arg_idx| self.type_arg_directly_references_alias(arg_idx, alias_sid));
+            if has_circular_arg {
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol(alias_sid)
+                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+                // Resolve the target type reference to get the name of the
+                // referenced type (e.g. `NumArray`, `Mx`).
+                let target_name = self
+                    .ctx
+                    .arena
+                    .get_type_ref(body_node)
+                    .and_then(|tr| {
+                        self.resolve_type_symbol_for_lowering(tr.type_name)
+                            .and_then(|raw| self.ctx.binder.get_symbol(tsz_binder::SymbolId(raw)))
+                            .map(|s| s.escaped_name.clone())
+                    })
+                    .unwrap_or_else(|| name.clone());
+                self.error_at_node_msg(
+                    alias.type_node,
+                    crate::diagnostics::diagnostic_codes::TYPE_ARGUMENTS_FOR_CIRCULARLY_REFERENCE_THEMSELVES,
+                    &[&target_name],
+                );
+            }
+        }
 
         self.check_type_node(alias.type_node);
 
@@ -1474,6 +1517,110 @@ impl<'a> CheckerState<'a> {
         // via the `type_query_override` callback during `ensure_type_alias_resolved`.
         self.precompute_type_query_flow_types(alias.type_node);
         self.pop_type_parameters(updates);
+    }
+
+    /// Walk a type argument AST node and return true if it contains a reference
+    /// to the alias `alias_sid` inside a "computation" context that would cause
+    /// a true cycle during type argument resolution.
+    ///
+    /// TSC's TS4109 fires only when resolving a type argument requires
+    /// evaluating the alias (e.g. `X extends {} ? A : B` or `X['prop']`).
+    /// A bare reference to the alias (`type T = I<T>`) does NOT trigger TS4109
+    /// because TSC resolves it as a simple type lookup (caught by TS2456).
+    ///
+    /// `inside_computation` tracks whether we are inside a node that requires
+    /// type evaluation (conditional type, indexed access, etc.).
+    fn type_arg_directly_references_alias(
+        &self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        self.type_arg_references_alias_inner(node_idx, alias_sid, false)
+    }
+
+    fn type_arg_references_alias_inner(
+        &self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+        inside_computation: bool,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check identifiers and type references for a direct alias hit.
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::TYPE_REFERENCE
+        {
+            let sym_id = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).and_then(|tr| {
+                    self.resolve_type_symbol_for_lowering(tr.type_name)
+                        .map(tsz_binder::SymbolId)
+                })
+            } else {
+                self.resolve_type_symbol_for_lowering(node_idx)
+                    .map(tsz_binder::SymbolId)
+            };
+
+            if sym_id == Some(alias_sid) {
+                // A TypeReference to the alias WITH type arguments creates a
+                // new instantiation (e.g. `Recursive<T>`) -- not circular.
+                if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                    let has_args = self
+                        .ctx
+                        .arena
+                        .get_type_ref(node)
+                        .is_some_and(|tr| tr.type_arguments.is_some());
+                    if has_args {
+                        return false;
+                    }
+                }
+                // Only flag as circular if we are inside a computation context
+                // (conditional, indexed access, etc.).  A bare reference at the
+                // top level is handled by TS2456 instead.
+                return inside_computation;
+            }
+
+            // A TypeReference to a different type creates a new instantiation
+            // boundary -- do not recurse into its children.
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+        }
+
+        // Type constructions that create instantiation boundaries break
+        // circularity -- do not recurse into them.
+        match node.kind {
+            syntax_kind_ext::ARRAY_TYPE
+            | syntax_kind_ext::TUPLE_TYPE
+            | syntax_kind_ext::FUNCTION_TYPE
+            | syntax_kind_ext::CONSTRUCTOR_TYPE
+            | syntax_kind_ext::TYPE_LITERAL
+            | syntax_kind_ext::MAPPED_TYPE
+            | syntax_kind_ext::TYPE_QUERY => {
+                return false;
+            }
+            _ => {}
+        }
+
+        // Conditional types and indexed access types are "computation"
+        // contexts: resolving them requires evaluating the alias.
+        let enters_computation = matches!(
+            node.kind,
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE
+                || k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+        );
+        let child_inside = inside_computation || enters_computation;
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.type_arg_references_alias_inner(child_idx, alias_sid, child_inside) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check an index signature parameter type for TS1337 (literal/generic) vs TS1268.
