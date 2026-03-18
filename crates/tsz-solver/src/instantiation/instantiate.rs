@@ -1200,11 +1200,24 @@ impl<'a> TypeInstantiator<'a> {
 }
 
 /// Convenience function for instantiating a type with a substitution.
+#[inline]
 pub fn instantiate_type(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
+    // Fast path: intrinsic types never need instantiation
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    // Fast path: if the type is a TypeParameter directly in the substitution,
+    // return the substituted type immediately without creating a TypeInstantiator.
+    // This is the most common case in mapped type template instantiation.
+    if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
+        if let Some(result) = substitution.get(info.name) {
+            return result;
+        }
+    }
     instantiate_type_with_depth_status(interner, type_id, substitution).0
 }
 
