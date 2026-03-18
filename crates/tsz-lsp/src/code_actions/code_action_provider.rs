@@ -377,7 +377,10 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Get the range for removing a declaration, including handling for multi-line declarations.
-    fn declaration_removal_range(&self, node: &tsz_parser::parser::node::Node) -> (Range, String) {
+    pub(super) fn declaration_removal_range(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> (Range, String) {
         let mut end = node.end;
 
         // Include trailing whitespace and newlines
