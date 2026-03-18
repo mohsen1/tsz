@@ -40,7 +40,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Check if a type contains any `infer` type parameters.
+    #[inline]
     pub(crate) fn type_contains_infer(&self, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types never contain infer
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        // Fast path: direct Infer check before allocating visited set
+        if matches!(self.interner().lookup(type_id), Some(TypeData::Infer(_))) {
+            return true;
+        }
         let mut visited = FxHashSet::default();
         self.type_contains_infer_inner(type_id, &mut visited)
     }
