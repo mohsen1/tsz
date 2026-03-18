@@ -348,12 +348,18 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fast path: already property-access-ready types do not need relation-input
-        // preparation or recursive resolution.
+        // preparation or recursive resolution. Cache the identity result to avoid
+        // redundant classification checks on subsequent accesses with the same type.
         if matches!(
             query::classify_for_property_access_resolution(self.ctx.types, type_id),
             query::PropertyAccessResolutionKind::Resolved
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
+            self.ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow_mut()
+                .insert(type_id, type_id);
             return type_id;
         }
 

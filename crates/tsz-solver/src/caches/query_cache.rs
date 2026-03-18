@@ -158,7 +158,7 @@ impl<'a> QueryCache<'a> {
     }
 
     fn check_property_cache(&self, key: PropertyAccessCacheKey) -> Option<PropertyAccessResult> {
-        self.property_cache.borrow().get(&key).cloned()
+        self.property_cache.borrow().get(&key).copied()
     }
 
     fn insert_property_cache(&self, key: PropertyAccessCacheKey, result: PropertyAccessResult) {
@@ -879,7 +879,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         let result = evaluator.resolve_property_access(object_type, prop_name);
-        self.insert_property_cache(key, result.clone());
+        self.insert_property_cache(key, result);
         result
     }
 

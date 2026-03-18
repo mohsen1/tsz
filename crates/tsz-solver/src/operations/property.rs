@@ -24,7 +24,7 @@ mod property_helpers;
 // =============================================================================
 
 /// Result of attempting to access a property on a type.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum PropertyAccessResult {
     /// Property exists, returns its type
     Success {
