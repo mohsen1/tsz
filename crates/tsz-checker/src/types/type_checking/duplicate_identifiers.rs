@@ -1193,35 +1193,38 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Determine TS2451 vs TS2300:
-                // - Cross-file: if ANY declaration is block-scoped → TS2451, because
-                //   each file's binder processes independently.
-                // - Single-file: if all conflicting declarations are in the same
-                //   scope → TS2300; if they span different scopes (e.g., var hoisted
-                //   from a child block to conflict with a let in the parent) → TS2451.
-                let use_ts2451 = if has_remote_declaration {
-                    // Cross-file: any block-scoped declaration in the merged symbol
-                    // triggers TS2451, even when the current file's conflicting
-                    // declaration is non-block-scoped (for example `class Bar {}` in
-                    // one file vs `const Bar = 1` in another). Each file is checked
-                    // against the merged declaration set, not only the local subset.
-                    declarations.iter().any(|(_, flags, _, _, _)| {
-                        (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
-                    })
+                // tsc uses TS2451 ("Cannot redeclare block-scoped variable")
+                // whenever ANY declaration in the conflict set is a block-scoped
+                // variable (let/const). This applies uniformly regardless of
+                // whether the conflict is cross-file or single-file, and
+                // regardless of whether conflicting declarations are at the
+                // same scope level. Only when NO block-scoped variable is
+                // involved does tsc use TS2300 ("Duplicate identifier").
+                //
+                // For non-block-scoped conflicts that span different scopes
+                // (e.g., var hoisted from a child block to conflict with a
+                // function at the parent level), we fall back to scope-based
+                // analysis to choose TS2451 vs TS2300.
+                let has_block_scoped_conflict =
+                    declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                        conflicts.contains(decl_idx)
+                            && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    });
+                let use_ts2451 = if has_block_scoped_conflict {
+                    true
+                } else if has_remote_declaration {
+                    false
                 } else {
-                    // Single-file: check if conflicting declarations are in
-                    // different scopes. If a var is declared in a child block
-                    // and hoists to conflict with a let in the parent, tsc
-                    // uses TS2451. If all declarations are at the same scope
-                    // level, tsc uses TS2300.
+                    // No block-scoped variables involved. Check if non-block-scoped
+                    // conflicting declarations span different scopes (e.g., var
+                    // hoisted from a catch block to conflict with a function at the
+                    // top level) — in that case tsc uses TS2451.
                     let conflict_scopes: Vec<Option<tsz_binder::ScopeId>> = declarations
                         .iter()
                         .filter(|(decl_idx, _, is_local, _, _)| {
                             *is_local && conflicts.contains(decl_idx)
                         })
                         .map(|(decl_idx, flags, _, _, _)| {
-                            // Walk to the parent first to get the CONTAINING scope,
-                            // not the scope created by this declaration node itself
-                            // (e.g., function declarations create their own scope).
                             let parent_idx = self
                                 .ctx
                                 .arena
@@ -1243,8 +1246,6 @@ impl<'a> CheckerState<'a> {
                             // `namespace C { export var x }` and `namespace C { export
                             // function x() {} }` should resolve to the same effective scope
                             // and get TS2300, not TS2451.
-                            // Only keep declarations at Function/SourceFile level as-is to
-                            // preserve correct TS2451 for `let x; var x;` at the same level.
                             if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                                 && let Some(sid) = scope
                             {
@@ -1283,13 +1284,7 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let first_scope = conflict_scopes.first().copied().flatten();
                     let all_same_scope = conflict_scopes.iter().all(|s| *s == first_scope);
-                    if all_same_scope {
-                        // Same scope: tsc uses TS2300 (Duplicate identifier)
-                        false
-                    } else {
-                        // Different scopes: tsc uses TS2451 (Cannot redeclare block-scoped variable)
-                        true
-                    }
+                    !all_same_scope
                 };
                 if use_ts2451 {
                     (
