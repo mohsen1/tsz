@@ -442,6 +442,15 @@ pub struct CheckerContext<'a> {
     /// Tracked separately from references for flow/usage checks.
     pub written_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
+    /// Set of class member symbols that have been accessed via property access
+    /// (e.g., `this.x`, destructuring of `this`). Populated by
+    /// `check_property_accessibility`. Used to determine whether a parameter
+    /// property's value was actually read (for TS6138), since the general
+    /// `referenced_symbols` set conflates parameter variable references with
+    /// property references due to deduplication of symbols sharing the same
+    /// declaration node.
+    pub referenced_as_property: std::cell::RefCell<FxHashSet<SymbolId>>,
+
     // --- Destructured Binding Tracking ---
     /// Maps destructured const binding symbols to their source union type info.
     /// Used for correlated discriminant narrowing (TS 4.6+ feature).
