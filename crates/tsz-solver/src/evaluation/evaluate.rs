@@ -685,6 +685,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Used for conditional type bodies so the conditional evaluator can match
     /// at the Application level for infer pattern matching.
     fn expand_type_args_preserve_applications(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+        // Fast path: check if any non-Application arg needs expansion.
+        let needs_expansion = args.iter().any(|&arg| {
+            if arg.is_intrinsic() {
+                return false;
+            }
+            matches!(
+                self.interner.lookup(arg),
+                Some(
+                    TypeData::TypeQuery(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::Mapped(_)
+                        | TypeData::TemplateLiteral(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::Lazy(_)
+                )
+            )
+        });
+        if !needs_expansion {
+            return args.to_vec();
+        }
         let mut expanded = Vec::with_capacity(args.len());
         for &arg in args {
             let Some(key) = self.interner.lookup(arg) else {
@@ -693,7 +713,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
             match key {
                 TypeData::Application(_) => {
-                    // Preserve Application form for conditional infer matching
                     expanded.push(arg);
                 }
                 _ => expanded.push(self.try_expand_type_arg(arg)),
@@ -705,11 +724,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Expand type arguments by evaluating any that are `TypeQuery` or Application.
     /// Uses a loop instead of closure to allow mutable self access.
     pub(crate) fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+        // Fast path: check if any arg needs expansion before allocating.
+        // Most type args are simple types that pass through unchanged.
+        let needs_expansion = args.iter().any(|&arg| self.needs_type_arg_expansion(arg));
+        if !needs_expansion {
+            return args.to_vec();
+        }
         let mut expanded = Vec::with_capacity(args.len());
         for &arg in args {
             expanded.push(self.try_expand_type_arg(arg));
         }
         expanded
+    }
+
+    /// Check if a type arg needs expansion (without actually expanding it).
+    #[inline]
+    fn needs_type_arg_expansion(&self, arg: TypeId) -> bool {
+        if arg.is_intrinsic() {
+            return false;
+        }
+        matches!(
+            self.interner.lookup(arg),
+            Some(
+                TypeData::TypeQuery(_)
+                    | TypeData::Application(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::KeyOf(_)
+                    | TypeData::Lazy(_)
+            )
+        )
     }
 
     /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
