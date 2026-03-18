@@ -6,12 +6,16 @@
 //! - Go to Implementation
 //! - Find References
 
+pub mod declaration;
 pub mod definition;
 pub mod implementation;
 pub mod references;
+pub mod source_definition;
 pub mod type_definition;
 
+pub use declaration::*;
 pub use definition::*;
 pub use implementation::*;
 pub use references::*;
+pub use source_definition::*;
 pub use type_definition::*;

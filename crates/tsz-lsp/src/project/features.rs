@@ -11,7 +11,7 @@ use web_time::Instant;
 use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
 use crate::completions::{CompletionItem, CompletionItemData};
-use crate::diagnostics::LspDiagnostic;
+use crate::diagnostics::{LspDiagnostic, WorkspaceDiagnosticReport};
 use crate::editor_decorations::code_lens::CodeLens;
 use crate::hover::HoverInfo;
 use crate::navigation::definition::GoToDefinition;
@@ -416,6 +416,24 @@ impl Project {
         result
     }
 
+    /// Get workspace diagnostics for all open files (pull model).
+    ///
+    /// Returns a `WorkspaceDiagnosticReport` containing diagnostics for every
+    /// file in the project. This implements the LSP `workspace/diagnostic`
+    /// request which allows clients to pull diagnostics on demand.
+    pub fn get_workspace_diagnostics(&mut self) -> WorkspaceDiagnosticReport {
+        let file_names: Vec<String> = self.files.keys().cloned().collect();
+        let mut items = Vec::with_capacity(file_names.len());
+
+        for file_name in file_names {
+            if let Some(diagnostics) = self.get_diagnostics(&file_name) {
+                items.push((file_name, diagnostics));
+            }
+        }
+
+        WorkspaceDiagnosticReport::from_file_diagnostics(items)
+    }
+
     /// Get code lenses for a file (project-aware).
     pub fn get_code_lenses(&self, file_name: &str) -> Option<Vec<CodeLens>> {
         let file = self.files.get(file_name)?;
@@ -557,6 +575,53 @@ impl Project {
         } else {
             Some(actions)
         }
+    }
+
+    /// Resolve a code action that was returned with `data` but no `edit`.
+    ///
+    /// This implements the LSP `codeAction/resolve` request, which allows
+    /// the server to defer expensive edit computation until the user
+    /// actually selects the code action.
+    ///
+    /// Returns the code action with the `edit` field populated.
+    pub fn resolve_code_action(&self, mut action: CodeAction) -> CodeAction {
+        if action.edit.is_some() {
+            // Already resolved
+            return action;
+        }
+
+        // Try to resolve based on the data payload
+        if let Some(ref data) = action.data {
+            // Extract file_name and action info from data
+            if let (Some(file_name), Some(action_type)) = (
+                data.get("fileName").and_then(|v| v.as_str()),
+                data.get("actionType").and_then(|v| v.as_str()),
+            ) {
+                if let Some(file) = self.files.get(file_name) {
+                    let provider = CodeActionProvider::new(
+                        file.arena(),
+                        file.binder(),
+                        file.line_map(),
+                        file.file_name().to_string(),
+                        file.source_text(),
+                    );
+
+                    // Resolve the specific action type
+                    match action_type {
+                        "organizeImports" => {
+                            if let Some(edit) = provider.resolve_organize_imports(file.root()) {
+                                action.edit = Some(edit);
+                            }
+                        }
+                        _ => {
+                            // Unknown action type, return as-is
+                        }
+                    }
+                }
+            }
+        }
+
+        action
     }
 
     /// Search for symbols across the entire project.
@@ -1001,6 +1066,43 @@ impl Project {
             crate::formatting::DocumentFormattingProvider::format_document(
                 file_name,
                 file.source_text(),
+                options,
+            ),
+        )
+    }
+
+    /// Format a range within a document (textDocument/rangeFormatting).
+    pub fn format_range(
+        &self,
+        file_name: &str,
+        range: Range,
+        options: &crate::formatting::FormattingOptions,
+    ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
+        let file = self.files.get(file_name)?;
+        Some(crate::formatting::DocumentFormattingProvider::format_range(
+            file.source_text(),
+            range,
+            options,
+        ))
+    }
+
+    /// Format on typing a trigger character (textDocument/onTypeFormatting).
+    ///
+    /// Trigger characters: `;`, `\n`, `}`
+    pub fn format_on_type(
+        &self,
+        file_name: &str,
+        position: Position,
+        ch: &str,
+        options: &crate::formatting::FormattingOptions,
+    ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
+        let file = self.files.get(file_name)?;
+        Some(
+            crate::formatting::DocumentFormattingProvider::format_on_key(
+                file.source_text(),
+                position.line,
+                position.character,
+                ch,
                 options,
             ),
         )
