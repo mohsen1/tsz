@@ -26,7 +26,7 @@ use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
 type EvalCacheKey = (TypeId, bool);
-type ApplicationEvalCacheKey = (DefId, Vec<TypeId>, bool);
+type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
 
@@ -693,7 +693,7 @@ impl QueryDatabase for QueryCache<'_> {
         args: &[TypeId],
         no_unchecked_indexed_access: bool,
     ) -> Option<TypeId> {
-        self.check_application_eval_cache((def_id, args.to_vec(), no_unchecked_indexed_access))
+        self.check_application_eval_cache((def_id, smallvec::SmallVec::from_slice(args), no_unchecked_indexed_access))
     }
 
     fn insert_application_eval_cache(
@@ -704,7 +704,7 @@ impl QueryDatabase for QueryCache<'_> {
         result: TypeId,
     ) {
         self.insert_application_eval_cache(
-            (def_id, args.to_vec(), no_unchecked_indexed_access),
+            (def_id, smallvec::SmallVec::from_slice(args), no_unchecked_indexed_access),
             result,
         );
     }
