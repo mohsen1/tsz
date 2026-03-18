@@ -4,7 +4,6 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -380,73 +379,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if self.type_args_reference_resolving_alias(type_args_list) {
-            let lib_binders = self.get_lib_binders();
-            let name = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(sym_id, &lib_binders)
-                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-
-            self.error_at_node_msg(
-                type_ref_idx,
-                crate::diagnostics::diagnostic_codes::TYPE_ARGUMENTS_FOR_CIRCULARLY_REFERENCE_THEMSELVES,
-                &[name.as_str()],
-            );
-        }
+        // NOTE: TS4109 (circular type arguments) is intentionally NOT checked here
+        // via a syntactic walk.  In TSC, TS4109 is detected during actual type
+        // argument resolution (`resolveTypeArguments`) via `pushTypeResolution`/
+        // `popTypeResolution`, which naturally distinguishes between true cycles
+        // and harmless recursive references (e.g. `type T = string | Promise<T>`).
+        // A syntactic check cannot reliably distinguish these cases and produces
+        // false positives.  TS4109 should be emitted from the solver's type
+        // resolution path once cycle detection is implemented there.
 
         // Validate type arguments against their constraints
         self.validate_type_args_against_params(&type_params, type_args_list);
-
-        false
-    }
-
-    fn type_args_reference_resolving_alias(
-        &self,
-        type_args_list: &tsz_parser::parser::NodeList,
-    ) -> bool {
-        type_args_list
-            .nodes
-            .iter()
-            .copied()
-            .any(|arg_idx| self.type_node_references_resolving_alias(arg_idx))
-    }
-
-    fn type_node_references_resolving_alias(&self, node_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            || node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
-        {
-            let sym_id = if node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
-                self.ctx.arena.get_type_ref(node).and_then(|type_ref| {
-                    self.resolve_type_symbol_for_lowering(type_ref.type_name)
-                        .map(tsz_binder::SymbolId)
-                })
-            } else {
-                self.resolve_type_symbol_for_lowering(node_idx)
-                    .map(tsz_binder::SymbolId)
-            };
-
-            if let Some(sym_id) = sym_id
-                && self.ctx.symbol_resolution_set.contains(&sym_id)
-                && self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
-            {
-                return true;
-            }
-        }
-
-        for child_idx in self.ctx.arena.get_children(node_idx) {
-            if self.type_node_references_resolving_alias(child_idx) {
-                return true;
-            }
-        }
 
         false
     }
