@@ -158,7 +158,8 @@ impl<'a> InferenceContext<'a> {
         let mut has_undefined = false;
         let mut has_null = false;
         let mut primary_types: Vec<TypeId> = Vec::with_capacity(unique.len());
-        let mut primary_seen = FxHashSet::with_capacity_and_hasher(unique.len(), Default::default());
+        let mut primary_seen =
+            FxHashSet::with_capacity_and_hasher(unique.len(), Default::default());
         for &ty in &unique {
             // For union candidates like `D | undefined`, filter nullable members out
             if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
