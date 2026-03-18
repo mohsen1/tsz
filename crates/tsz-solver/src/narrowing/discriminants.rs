@@ -355,9 +355,12 @@ impl<'a> NarrowingContext<'a> {
         // lookup instead of O(N) member iteration. This is the common case in
         // switch-case narrowing where each case clause matches one member.
         if keep_matching && members.len() >= 8 {
-            if let Some(result) =
-                self.fast_narrow_via_discriminant_index(original_union_type, members, property, literal_value)
-            {
+            if let Some(result) = self.fast_narrow_via_discriminant_index(
+                original_union_type,
+                members,
+                property,
+                literal_value,
+            ) {
                 return Some(result);
             }
         }
@@ -412,7 +415,12 @@ impl<'a> NarrowingContext<'a> {
         let cache_key = (original_union_type, property);
 
         // Check if index is already built
-        let existing = self.cache.discriminant_index.borrow().get(&cache_key).cloned();
+        let existing = self
+            .cache
+            .discriminant_index
+            .borrow()
+            .get(&cache_key)
+            .cloned();
 
         let index = if let Some(idx) = existing {
             idx
