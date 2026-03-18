@@ -372,8 +372,8 @@ pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool 
 fn split_nullish_members(
     types: &dyn TypeDatabase,
     type_id: TypeId,
-    non_nullish: &mut Vec<TypeId>,
-    nullish: &mut Vec<TypeId>,
+    non_nullish: &mut smallvec::SmallVec<[TypeId; 4]>,
+    nullish: &mut smallvec::SmallVec<[TypeId; 2]>,
 ) {
     if type_id.is_nullable() {
         nullish.push(normalize_nullish(type_id));
@@ -415,6 +415,7 @@ fn split_nullish_members(
 }
 
 /// Split a type into its non-nullish part and its nullish cause.
+#[inline]
 pub fn split_nullish_type(
     types: &dyn TypeDatabase,
     type_id: TypeId,
@@ -423,12 +424,14 @@ pub fn split_nullish_type(
         return (None, Some(normalize_nullish(type_id)));
     }
 
-    if top_level_union_members(types, type_id).is_none() {
+    // Fast path: non-union, non-nullable types are entirely non-nullish
+    if type_id.is_intrinsic() || top_level_union_members(types, type_id).is_none() {
         return (Some(type_id), None);
     }
 
-    let mut non_nullish = Vec::new();
-    let mut nullish = Vec::new();
+    // Use SmallVec to avoid heap allocation for common cases (e.g., T | undefined)
+    let mut non_nullish: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+    let mut nullish: smallvec::SmallVec<[TypeId; 2]> = smallvec::SmallVec::new();
 
     split_nullish_members(types, type_id, &mut non_nullish, &mut nullish);
 
@@ -441,13 +444,13 @@ pub fn split_nullish_type(
     } else if non_nullish.len() == 1 {
         Some(non_nullish[0])
     } else {
-        Some(types.union(non_nullish))
+        Some(types.union(non_nullish.to_vec()))
     };
 
     let nullish_type = if nullish.len() == 1 {
         Some(nullish[0])
     } else {
-        Some(types.union(nullish))
+        Some(types.union(nullish.to_vec()))
     };
 
     (non_nullish_type, nullish_type)
