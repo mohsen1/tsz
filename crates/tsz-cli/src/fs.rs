@@ -216,7 +216,15 @@ fn expand_exclude_patterns(patterns: &[String]) -> Vec<String> {
     for pattern in patterns {
         expanded.push(pattern.clone());
         if !contains_glob_meta(pattern) && !pattern.ends_with("/**") {
-            expanded.push(format!("{}/**", pattern.trim_end_matches('/')));
+            let base = pattern.trim_end_matches('/');
+            expanded.push(format!("{base}/**"));
+            // tsc treats bare directory names (like "node_modules") as matching
+            // at any depth in the tree — not just at the project root. Expand to
+            // include **/name and **/name/** so nested occurrences are excluded.
+            if !pattern.contains('/') {
+                expanded.push(format!("**/{base}"));
+                expanded.push(format!("**/{base}/**"));
+            }
         }
     }
     expanded

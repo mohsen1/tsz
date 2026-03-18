@@ -852,20 +852,6 @@ fn compile_inner(
         resolved.checker.module = default_module;
     }
 
-    // If config validation already emitted TS5110 (module/moduleResolution mismatch),
-    // bail out early — compilation cannot proceed with incompatible settings.
-    if config_diagnostics.iter().any(|d| {
-        d.code
-            == diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
-    }) {
-        return Ok(CompilationResult {
-            diagnostics: config_diagnostics,
-            emitted_files: Vec::new(),
-            files_read: Vec::new(),
-            file_infos: Vec::new(),
-        });
-    }
-
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = canonicalize_or_owned(&base_dir);
     let root_dir = normalize_root_dir(&base_dir, resolved.root_dir.clone());
@@ -884,6 +870,32 @@ fn compile_inner(
         &resolved,
     )?;
     let mut file_paths = discover_ts_files(&discovery)?;
+
+    // If config validation already emitted TS5110 (module/moduleResolution mismatch),
+    // bail out early — compilation cannot proceed with incompatible settings.
+    // tsc still emits TS18003 alongside TS5110 when no input files are found,
+    // so we must check file discovery before bailing.
+    if config_diagnostics.iter().any(|d| {
+        d.code
+            == diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+    }) {
+        let diagnostics = if file_paths.is_empty() && !discovery.files_explicitly_set {
+            no_input_diagnostics_for_config(
+                config_diagnostics,
+                tsconfig_path.as_deref(),
+                discovery.include.as_deref(),
+                discovery.exclude.as_deref(),
+            )
+        } else {
+            config_diagnostics
+        };
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+        });
+    }
 
     // Track if we should save BuildInfo after successful compilation
     let mut should_save_build_info = false;
@@ -948,6 +960,32 @@ fn compile_inner(
             files_read: Vec::new(),
             file_infos: Vec::new(),
         });
+    }
+
+    // TS6059: Check that all source files are under rootDir when rootDir is set.
+    // tsc emits this as a positional-less error for each file outside rootDir.
+    if let Some(ref root_dir_path) = root_dir {
+        let canonical_root = canonicalize_or_owned(root_dir_path);
+        for file_path in &file_paths {
+            let canonical_file = canonicalize_or_owned(file_path);
+            if !canonical_file.starts_with(&canonical_root) {
+                // Use relative path for the file and rootDir in the diagnostic message,
+                // matching tsc's output which uses the path as seen by the compiler.
+                let file_display = file_path.to_string_lossy();
+                let root_display = root_dir_path.to_string_lossy();
+                let message = format!(
+                    "File '{}' is not under 'rootDir' '{}'. 'rootDir' is expected to contain all source files.",
+                    file_display, root_display
+                );
+                config_diagnostics.push(Diagnostic::error(
+                    String::new(),
+                    0,
+                    0,
+                    message,
+                    diagnostic_codes::FILE_IS_NOT_UNDER_ROOTDIR_ROOTDIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
+                ));
+            }
+        }
     }
 
     let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
