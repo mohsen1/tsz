@@ -563,10 +563,7 @@ impl<'a> CheckerState<'a> {
                 // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }` where
                 // `BoxOfFoo<T extends Foo>` — `this` in Bar satisfies `Foo` but we can't
                 // prove it structurally at definition time.
-                if tsz_solver::visitor::is_this_type(
-                    self.ctx.types.as_type_database(),
-                    type_arg,
-                ) {
+                if tsz_solver::visitor::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
 
