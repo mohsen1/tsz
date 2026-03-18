@@ -670,3 +670,113 @@ fn constructor_param_property_no_conflict_with_static() {
         "Static property should NOT conflict with instance parameter property"
     );
 }
+
+// ========================================================================
+// TS2451 vs TS2300 disambiguation when block-scoped variables are involved
+// ========================================================================
+
+/// When a const (block-scoped variable) conflicts with a class declaration,
+/// tsc emits TS2451 ("Cannot redeclare block-scoped variable") on both
+/// conflicting declarations, NOT TS2300.
+/// Regression test for exportInterfaceClassAndValue.ts conformance.
+#[test]
+fn const_class_conflict_emits_ts2451_not_ts2300() {
+    let source = r#"
+export const foo = 1;
+export declare class foo {}
+export interface foo {}
+"#;
+    let diagnostics = verify_errors(
+        source,
+        &[
+            (2, 14, "Cannot redeclare block-scoped variable 'foo'."),
+            (3, 22, "Cannot redeclare block-scoped variable 'foo'."),
+        ],
+    );
+
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert!(
+        ts2451 >= 2,
+        "Expected TS2451 for const+class conflict, got ts2451={ts2451}, ts2300={ts2300}"
+    );
+    assert_eq!(
+        ts2300, 0,
+        "Should NOT emit TS2300 when a block-scoped variable is in the conflict"
+    );
+}
+
+/// When a const conflicts with a var, tsc uses TS2451 since one party
+/// is block-scoped.
+#[test]
+fn const_var_conflict_emits_ts2451() {
+    let source = "const x = 1;\nvar x = 2;";
+    let diagnostics = verify_errors(
+        source,
+        &[
+            (1, 7, "Cannot redeclare block-scoped variable 'x'."),
+            (2, 5, "Cannot redeclare block-scoped variable 'x'."),
+        ],
+    );
+
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert!(
+        ts2451 >= 2,
+        "Expected TS2451 for const+var conflict, got ts2451={ts2451}, ts2300={ts2300}"
+    );
+    assert_eq!(
+        ts2300, 0,
+        "Should NOT emit TS2300 when a block-scoped variable is in the conflict"
+    );
+}
+
+/// When a let conflicts with a function declaration, tsc uses TS2451
+/// since the let is block-scoped.
+#[test]
+fn let_function_conflict_emits_ts2451() {
+    let source = "let f = 1;\nfunction f() {}";
+    let diagnostics = verify_errors(
+        source,
+        &[
+            (1, 5, "Cannot redeclare block-scoped variable 'f'."),
+            (2, 10, "Cannot redeclare block-scoped variable 'f'."),
+        ],
+    );
+
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert!(
+        ts2451 >= 2,
+        "Expected TS2451 for let+function conflict, got ts2451={ts2451}, ts2300={ts2300}"
+    );
+    assert_eq!(
+        ts2300, 0,
+        "Should NOT emit TS2300 when a block-scoped variable is in the conflict"
+    );
+}
+
+/// Two vars in the same scope without block-scoped involvement should still
+/// get TS2300 (not TS2451) when they conflict.
+#[test]
+fn var_type_alias_conflict_emits_ts2300() {
+    let source = "type X = number;\ntype X = string;";
+    let diagnostics = verify_errors(
+        source,
+        &[
+            (1, 6, "Duplicate identifier 'X'."),
+            (2, 6, "Duplicate identifier 'X'."),
+        ],
+    );
+
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    assert!(
+        ts2300 >= 2,
+        "Expected TS2300 for type alias conflict (no block-scoped), got ts2300={ts2300}, ts2451={ts2451}"
+    );
+    assert_eq!(
+        ts2451, 0,
+        "Should NOT emit TS2451 when no block-scoped variable is involved"
+    );
+}
