@@ -94,6 +94,113 @@ mod ts2481_tests {
 }
 
 #[cfg(test)]
+mod ts2481_same_block_tests {
+    use super::test_utils::check_and_collect;
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn const_and_var_same_block_emits_ts2481() {
+        // { const x = 0; var x = ""; } → TS2481 only (not TS2451 or TS2403)
+        let source = "{\n    const x = 0;\n    var x = \"\";\n}";
+        let ts2481 = check_and_collect(source, 2481);
+        assert_eq!(ts2481.len(), 1, "Expected 1 TS2481: {ts2481:?}");
+        assert!(ts2481[0].1.contains("'x'"));
+    }
+
+    #[test]
+    fn let_and_var_same_block_emits_ts2481() {
+        // { let x; var x = 1; } → TS2481 only
+        let source = "{\n    let x;\n    var x = 1;\n}";
+        let ts2481 = check_and_collect(source, 2481);
+        assert_eq!(ts2481.len(), 1, "Expected 1 TS2481: {ts2481:?}");
+    }
+
+    #[test]
+    fn same_block_no_false_ts2451() {
+        // { const x = 0; var x = ""; } → no TS2451
+        let source = "{\n    const x = 0;\n    var x = \"\";\n}";
+        let ts2451 = check_and_collect(source, 2451);
+        assert_eq!(
+            ts2451.len(),
+            0,
+            "No TS2451 for same-block shadow: {ts2451:?}"
+        );
+    }
+
+    #[test]
+    fn same_block_no_false_ts2403() {
+        // { const x = 0; var x = ""; } → no TS2403
+        let source = "{\n    const x = 0;\n    var x = \"\";\n}";
+        let ts2403 = check_and_collect(source, 2403);
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for same-block shadow: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn multiple_blocks_each_get_ts2481() {
+        let source = r#"
+var x: string;
+{
+    const x = 0;
+    var x = "";
+}
+function f() {
+    {
+        let y = 1;
+        {
+            var y: string = "";
+        }
+    }
+}
+{
+    let z = 1;
+    var z = 2;
+}
+"#;
+        let ts2481 = check_and_collect(source, 2481);
+        assert_eq!(ts2481.len(), 3, "Expected 3 TS2481 errors: {ts2481:?}");
+    }
+
+    #[test]
+    fn function_scope_still_emits_ts2451_not_ts2481() {
+        // function f() { let x; var x; } → TS2451, not TS2481
+        let source = "function f() {\n    let x = 1;\n    var x = 2;\n}";
+        let ts2481 = check_and_collect(source, 2481);
+        assert_eq!(
+            ts2481.len(),
+            0,
+            "No TS2481 for function-scope shared: {ts2481:?}"
+        );
+        let ts2451 = check_and_collect(source, 2451);
+        assert_eq!(
+            ts2451.len(),
+            2,
+            "Expected 2 TS2451 for function-scope: {ts2451:?}"
+        );
+    }
+
+    #[test]
+    fn only_ts2481_errors_present() {
+        // Ensure ONLY TS2481 is emitted for this case, nothing else
+        let source = "{\n    const x = 0;\n    var x = \"\";\n}";
+        let all_diags = check_source_diagnostics(source);
+        let relevant: Vec<_> = all_diags
+            .iter()
+            .filter(|d| d.code == 2451 || d.code == 2403 || d.code == 2481)
+            .collect();
+        assert_eq!(
+            relevant.len(),
+            1,
+            "Expected exactly 1 diagnostic (TS2481): {relevant:?}"
+        );
+        assert_eq!(relevant[0].code, 2481);
+    }
+}
+
+#[cfg(test)]
 mod ts2397_tests {
     use super::test_utils::check_and_collect;
 

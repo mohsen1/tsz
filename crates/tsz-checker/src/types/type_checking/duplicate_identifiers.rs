@@ -1302,6 +1302,17 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
+            // Check if any conflicting declaration is a var shadowing a block-scoped
+            // variable in the same scope. If so, TS2481 applies (emitted by
+            // check_var_declared_names_not_shadowed) and we skip TS2451/TS2300 here.
+            let has_ts2481_var = declarations.iter().any(|(decl_idx, _, is_local, _, _)| {
+                *is_local
+                    && conflicts.contains(decl_idx)
+                    && self.is_var_shadowing_block_scoped_in_same_scope(*decl_idx)
+            });
+            if has_ts2481_var {
+                continue;
+            }
             for (decl_idx, _decl_flags, is_local, _, _) in declarations {
                 if is_local && conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
