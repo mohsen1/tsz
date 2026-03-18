@@ -79,9 +79,10 @@ pub use highlighting::semantic_tokens::{
 pub use highlighting::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightProvider};
 pub use hover::{HoverInfo, HoverProvider};
 pub use jsdoc::jsdoc_for_node;
+pub use navigation::declaration::GoToDeclarationProvider;
 pub use navigation::definition::GoToDefinition;
 pub use navigation::references::{FindReferences, ReferenceInfo, RenameLocation};
-pub use navigation::{definition, implementation, references, type_definition};
+pub use navigation::{declaration, definition, implementation, references, type_definition};
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
