@@ -354,15 +354,16 @@ impl<'a> NarrowingContext<'a> {
         // PERF: For keep_matching (true branch), use discriminant index for O(1)
         // lookup instead of O(N) member iteration. This is the common case in
         // switch-case narrowing where each case clause matches one member.
-        if keep_matching && members.len() >= 8 {
-            if let Some(result) = self.fast_narrow_via_discriminant_index(
+        if keep_matching
+            && members.len() >= 8
+            && let Some(result) = self.fast_narrow_via_discriminant_index(
                 original_union_type,
                 members,
                 property,
                 literal_value,
-            ) {
-                return Some(result);
-            }
+            )
+        {
+            return Some(result);
         }
 
         let mut kept = Vec::with_capacity(members.len());
