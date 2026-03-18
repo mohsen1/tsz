@@ -10,6 +10,7 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
+use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -35,8 +36,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// iterations instead of being limited by `MAX_EVALUATE_DEPTH`.
     pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
         // Setup loop state for tail-recursion elimination
-        let mut current_cond = initial_cond.clone();
+        let mut current_cond = *initial_cond;
         let mut tail_recursion_count = 0;
+        // PERF: Pre-allocate bindings and visited sets outside the tail-recursion
+        // loop so their capacity is preserved across iterations.
+        let mut loop_bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        let mut loop_visited: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
 
         loop {
             // When tail recursion reaches the limit, the type didn't converge.
@@ -394,18 +399,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Step 3: Perform subtype check or infer pattern matching
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
+            // Reuse pre-allocated bindings/visited from outside the loop
+            loop_bindings.clear();
+            loop_visited.clear();
 
             if self.type_contains_infer(extends_type) {
-                let mut bindings = FxHashMap::default();
-                let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
                     check_type,
                     extends_type,
-                    &mut bindings,
-                    &mut visited,
+                    &mut loop_bindings,
+                    &mut loop_visited,
                     &mut checker,
                 ) {
-                    let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                    let substituted_true =
+                        self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
                     // The substituted true branch Trim<T> is an Application that expands
@@ -416,7 +423,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(substituted_true)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = (*next_cond).clone();
+                            current_cond = *next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -427,7 +434,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 self.interner().lookup(instantiated)
                             {
                                 let next_cond = self.interner().conditional_type(next_cond_id);
-                                current_cond = (*next_cond).clone();
+                                current_cond = *next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
@@ -503,7 +510,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(cond.false_type)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = (*next_cond).clone();
+                        current_cond = *next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -517,7 +524,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(instantiated)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = (*next_cond).clone();
+                            current_cond = *next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -607,7 +614,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.interner().lookup(result_branch)
                 {
                     let next_cond = self.interner().conditional_type(next_cond_id);
-                    current_cond = (*next_cond).clone();
+                    current_cond = *next_cond;
                     tail_recursion_count += 1;
                     continue;
                 }
@@ -620,7 +627,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(instantiated)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = (*next_cond).clone();
+                        current_cond = *next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
