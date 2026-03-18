@@ -10,6 +10,7 @@ use crate::visitor::{
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
+use std::sync::Arc;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
@@ -256,6 +257,11 @@ pub struct NarrowingCache {
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
     /// chain for each property of the same object literal.
     pub contextual_resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Discriminant index for fast switch-case narrowing.
+    /// Key: (union_type, discriminant_property) → Map of literal_value → matching members.
+    /// Built once per (union, property) pair, then O(1) lookup per case clause.
+    /// Without this, each case clause iterates ALL union members (O(N) per case = O(N²) total).
+    pub discriminant_index: RefCell<FxHashMap<(TypeId, Atom), Arc<FxHashMap<TypeId, Vec<TypeId>>>>>,
 }
 
 impl NarrowingCache {
@@ -285,6 +291,7 @@ impl NarrowingCache {
                 256,
                 Default::default(),
             )),
+            discriminant_index: RefCell::new(FxHashMap::default()),
         }
     }
 }
