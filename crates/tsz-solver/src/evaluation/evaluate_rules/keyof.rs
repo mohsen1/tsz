@@ -86,35 +86,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate keyof T - extract the keys of an object type
     pub fn evaluate_keyof(&mut self, operand: TypeId) -> TypeId {
-        // CRITICAL: Handle TemplateLiteral BEFORE Union to avoid incorrect intersection.
-        // Template literals that expand to unions should return apparent keys of string,
-        // not the intersection of individual literal keys.
-        if let Some(TypeData::TemplateLiteral(_)) = self.interner().lookup(operand) {
-            return self.apparent_primitive_keyof(IntrinsicKind::String);
+        // PERF: Single lookup for both TemplateLiteral and Union checks.
+        // CRITICAL ordering: TemplateLiteral BEFORE Union to avoid incorrect intersection,
+        // and Union BEFORE general evaluation to avoid union simplification.
+        match self.interner().lookup(operand) {
+            Some(TypeData::TemplateLiteral(_)) => {
+                return self.apparent_primitive_keyof(IntrinsicKind::String);
+            }
+            Some(TypeData::Union(members)) => {
+                let member_list = self.interner().type_list(members);
+
+                // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
+                let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                for &member in member_list.iter() {
+                    key_types.push(self.recurse_keyof(member));
+                }
+
+                // keyof (A | B) = keyof A & keyof B - compute intersection of all key sets
+                // Prefer explicit key-set intersection to avoid opaque literal intersections
+                return if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
+                    intersection
+                } else {
+                    // Fallback: use general intersection
+                    self.interner().intersection(key_types)
+                };
+            }
+            _ => {}
         }
 
-        // CRITICAL: Handle Union types BEFORE general evaluation to avoid union simplification.
-        // keyof (A | B) = keyof A & keyof B (distributive contravariance)
-        // If we call evaluate(operand) first, unions get simplified and we lose members.
-        // See test_keyof_union_string_index_and_literal_narrows
-        if let Some(TypeData::Union(members)) = self.interner().lookup(operand) {
-            let member_list = self.interner().type_list(members);
-
-            // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
-            let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
-            for &member in member_list.iter() {
-                key_types.push(self.recurse_keyof(member));
-            }
-
-            // keyof (A | B) = keyof A & keyof B - compute intersection of all key sets
-            // Prefer explicit key-set intersection to avoid opaque literal intersections
-            if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
-                intersection
-            } else {
-                // Fallback: use general intersection
-                self.interner().intersection(key_types)
-            }
-        } else {
+        {
             // For non-union types, evaluate normally
             let evaluated_operand = self.evaluate(operand);
 
