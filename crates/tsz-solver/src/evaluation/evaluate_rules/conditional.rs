@@ -161,7 +161,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
                 ) {
-                    return self.interner().conditional(cond.clone());
+                    return self.interner().conditional(*cond);
                 }
 
                 if check_type == TypeId::ANY {
@@ -351,7 +351,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if !self.type_contains_infer(extends_type)
                 && self.type_is_compound_generic(cond.check_type)
             {
-                return self.interner().conditional(cond.clone());
+                return self.interner().conditional(*cond);
             }
 
             // Step 2a': Deferred conditional as check_type.
@@ -761,7 +761,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -857,7 +857,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -1032,7 +1032,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -1143,7 +1143,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {

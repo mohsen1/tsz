@@ -107,7 +107,7 @@ fn dedup_conditional_type() {
         false_type: TypeId::NEVER,
         is_distributive: true,
     };
-    let a = i.conditional(cond.clone());
+    let a = i.conditional(cond);
     let b = i.conditional(cond);
     assert_eq!(a, b, "Same conditional type must dedup");
 }
@@ -128,7 +128,7 @@ fn dedup_mapped_type() {
         readonly_modifier: None,
         optional_modifier: None,
     };
-    let a = i.mapped(mapped.clone());
+    let a = i.mapped(mapped);
     let b = i.mapped(mapped);
     assert_eq!(a, b, "Same mapped type must dedup");
 }
@@ -172,7 +172,7 @@ fn dedup_type_param() {
         default: None,
         is_const: false,
     };
-    let a = i.type_param(info.clone());
+    let a = i.type_param(info);
     let b = i.type_param(info);
     assert_eq!(a, b);
 }
@@ -1219,7 +1219,7 @@ fn function_with_type_params() {
         is_const: false,
     };
     let f = i.function(FunctionShape {
-        type_params: vec![tp.clone()],
+        type_params: vec![tp],
         params: vec![],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1933,7 +1933,7 @@ fn infer_type_construction() {
         default: None,
         is_const: false,
     };
-    let inf = i.infer(info.clone());
+    let inf = i.infer(info);
     match i.lookup(inf) {
         Some(TypeData::Infer(got_info)) => {
             assert_eq!(got_info, info);

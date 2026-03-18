@@ -1286,7 +1286,7 @@ impl<'a> CheckerState<'a> {
                     is_const,
                 };
 
-                let constrained_type_id = factory.type_param(info.clone());
+                let constrained_type_id = factory.type_param(info);
                 if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
                     self.ctx
                         .type_parameter_scope

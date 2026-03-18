@@ -155,7 +155,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 constraint = ?self.interner().lookup(constraint),
                 "evaluate_mapped: DEFERRED - mapped type over type parameter"
             );
-            return self.interner().mapped(mapped.clone());
+            return self.interner().mapped(*mapped);
         }
 
         // tsc rule: When a homomorphic mapped type like `{ [P in keyof T]: F<T[P]> }` is
@@ -186,7 +186,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     keys_lookup = ?self.interner().lookup(keys),
                     "evaluate_mapped: DEFERRED - could not extract concrete keys"
                 );
-                return self.interner().mapped(mapped.clone());
+                return self.interner().mapped(*mapped);
             }
         };
 
@@ -358,7 +358,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
-                Err(()) => return self.interner().mapped(mapped.clone()),
+                Err(()) => return self.interner().mapped(*mapped),
             };
             // Extract property name(s) from remapped key.
             // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
@@ -372,11 +372,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .filter_map(|&m| crate::visitor::literal_string(self.interner(), m))
                         .collect();
                     if names.is_empty() {
-                        return self.interner().mapped(mapped.clone());
+                        return self.interner().mapped(*mapped);
                     }
                     names
                 } else {
-                    return self.interner().mapped(mapped.clone());
+                    return self.interner().mapped(*mapped);
                 };
 
             subst.clear();
@@ -470,7 +470,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
-                        return self.interner().mapped(mapped.clone());
+                        return self.interner().mapped(*mapped);
                     }
                     let key_type = TypeId::STRING;
                     subst.clear();
@@ -498,7 +498,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     })
                 }
                 Ok(None) => None,
-                Err(()) => return self.interner().mapped(mapped.clone()),
+                Err(()) => return self.interner().mapped(*mapped),
             }
         } else {
             None
@@ -508,7 +508,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             match self.remap_key_type_for_mapped(mapped, TypeId::NUMBER) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::NUMBER {
-                        return self.interner().mapped(mapped.clone());
+                        return self.interner().mapped(*mapped);
                     }
                     let key_type = TypeId::NUMBER;
                     subst.clear();
@@ -535,7 +535,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     })
                 }
                 Ok(None) => None,
-                Err(()) => return self.interner().mapped(mapped.clone()),
+                Err(()) => return self.interner().mapped(*mapped),
             }
         } else {
             None

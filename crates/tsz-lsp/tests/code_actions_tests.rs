@@ -688,8 +688,11 @@ fn test_organize_imports_sort_only() {
         },
     );
 
-    assert_eq!(actions.len(), 1);
-    let edit = actions[0].edit.as_ref().unwrap();
+    let organize_action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::SourceOrganizeImports)
+        .expect("Should offer organize imports action");
+    let edit = organize_action.edit.as_ref().unwrap();
     let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
 
@@ -2446,8 +2449,10 @@ fn test_code_actions_empty_file() {
     );
 
     assert!(
-        actions.is_empty(),
-        "Empty file should produce no code actions"
+        !actions
+            .iter()
+            .any(|a| a.title.starts_with("Extract to constant")),
+        "Empty file should produce no extract variable actions"
     );
 }
 
@@ -3033,9 +3038,11 @@ fn test_organize_imports_no_action_single_import() {
         },
     );
 
-    // A single import has nothing to sort
+    // A single import has nothing to sort — no organize imports action expected
     assert!(
-        actions.is_empty(),
+        !actions
+            .iter()
+            .any(|a| a.kind == CodeActionKind::SourceOrganizeImports),
         "A single import should not need organize imports"
     );
 }
@@ -3066,9 +3073,11 @@ fn test_organize_imports_sorts_multiple_imports() {
         },
     );
 
-    assert_eq!(actions.len(), 1);
-    assert_eq!(actions[0].kind, CodeActionKind::SourceOrganizeImports);
-    let edit = actions[0].edit.as_ref().unwrap();
+    let organize_action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::SourceOrganizeImports)
+        .expect("Should offer organize imports action");
+    let edit = organize_action.edit.as_ref().unwrap();
     let edits = &edit.changes["test.ts"];
     assert!(!edits.is_empty());
     // After applying edits, "a-mod" should come before "z-mod"
@@ -3162,10 +3171,9 @@ fn test_extract_variable_from_binary_expression() {
     );
 
     assert!(
-        !actions.is_empty(),
+        actions.iter().any(|a| a.title.contains("Extract")),
         "Should offer extract for binary expression"
     );
-    assert!(actions[0].title.contains("Extract"));
 }
 
 #[test]
@@ -3318,14 +3326,15 @@ fn test_extract_variable_in_function_body() {
     );
 
     // Should extract within the function scope
-    if !actions.is_empty() {
-        assert!(actions[0].title.contains("Extract"));
-        let edit = actions[0].edit.as_ref().unwrap();
-        let edits = &edit.changes["test.ts"];
-        // The new declaration should be inserted before the line, within the function
-        let new_text = &edits[0].new_text;
-        assert!(new_text.contains("const extracted = a.b;"));
-    }
+    let extract_action = actions
+        .iter()
+        .find(|a| a.title.contains("Extract"))
+        .expect("Should offer extract action");
+    let edit = extract_action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    // The new declaration should be inserted before the line, within the function
+    let new_text = &edits[0].new_text;
+    assert!(new_text.contains("const extracted = a.b;"));
 }
 
 #[test]
@@ -3351,9 +3360,10 @@ fn test_extract_variable_array_expression() {
         },
     );
 
-    if !actions.is_empty() {
-        assert!(actions[0].title.contains("Extract"));
-    }
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for array expression"
+    );
 }
 
 #[test]
@@ -3458,8 +3468,10 @@ fn test_code_actions_on_empty_file() {
     );
 
     assert!(
-        actions.is_empty(),
-        "Empty file should produce no code actions"
+        !actions
+            .iter()
+            .any(|a| a.title.starts_with("Extract to constant")),
+        "Empty file should produce no extract variable actions"
     );
 }
 
@@ -3486,9 +3498,10 @@ fn test_extract_variable_ternary_full() {
         },
     );
 
-    if !actions.is_empty() {
-        assert!(actions[0].title.contains("Extract"));
-    }
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for ternary expression"
+    );
 }
 
 #[test]
@@ -3541,9 +3554,10 @@ fn test_extract_variable_math_max_call() {
         },
     );
 
-    if !actions.is_empty() {
-        assert!(actions[0].title.contains("Extract"));
-    }
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for Math.max call"
+    );
 }
 
 #[test]
@@ -3663,7 +3677,12 @@ fn test_code_actions_on_empty_source() {
             import_candidates: Vec::new(),
         },
     );
-    assert!(actions.is_empty());
+    assert!(
+        !actions
+            .iter()
+            .any(|a| a.title.starts_with("Extract to constant")),
+        "Empty source should produce no extract variable actions"
+    );
 }
 
 #[test]

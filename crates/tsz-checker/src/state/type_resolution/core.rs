@@ -980,7 +980,7 @@ impl<'a> CheckerState<'a> {
                         default: None,
                         is_const: false,
                     };
-                    let key_type = self.ctx.types.type_param(key_param.clone());
+                    let key_type = self.ctx.types.type_param(key_param);
                     return factory.mapped(tsz_solver::MappedType {
                         type_param: key_param,
                         constraint: type_args[1],

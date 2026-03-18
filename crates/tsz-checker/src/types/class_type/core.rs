@@ -1613,7 +1613,7 @@ impl<'a> CheckerState<'a> {
                 default: None,
                 is_const: false,
             };
-            let ty = factory.type_param(info.clone());
+            let ty = factory.type_param(info);
             type_params.push(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
             scope_updates.push((name, previous, false));

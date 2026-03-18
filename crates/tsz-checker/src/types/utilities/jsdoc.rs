@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
                                     default: None,
                                     is_const: false,
                                 };
-                                let k_id = factory.type_param(k_param.clone());
+                                let k_id = factory.type_param(k_param);
                                 let t_k_id = factory.index_access(t_id, k_id);
                                 let func_shape = FunctionShape {
                                     type_params: Vec::new(),
@@ -858,7 +858,7 @@ impl<'a> CheckerState<'a> {
                     default: None,
                     is_const: false,
                 };
-                let ty = factory.type_param(info.clone());
+                let ty = factory.type_param(info);
                 jsdoc_type_params.push(info);
                 let previous = self.ctx.type_parameter_scope.insert(name.to_string(), ty);
                 type_param_updates.push((name.to_string(), previous));

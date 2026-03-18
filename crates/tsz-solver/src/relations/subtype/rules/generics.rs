@@ -1034,7 +1034,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .name_type
                 .map(|n| instantiate_type(self.interner, n, &subst));
             let new_mapped_id = self.interner.mapped(MappedType {
-                type_param: mapped.type_param.clone(),
+                type_param: mapped.type_param,
                 constraint: inst_constraint,
                 name_type: inst_name,
                 template: inst_template,

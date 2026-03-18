@@ -1047,8 +1047,8 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
         default: None,
         is_const: false,
     };
-    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
-    let b_type = interner.intern(TypeData::TypeParameter(b_param.clone()));
+    let a_type = interner.intern(TypeData::TypeParameter(a_param));
+    let b_type = interner.intern(TypeData::TypeParameter(b_param));
 
     let source = interner.callable(CallableShape {
         symbol: None,
@@ -1118,7 +1118,7 @@ fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let source = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1172,7 +1172,7 @@ fn test_contextual_instantiation_generic_source_rejects_incomparable_param_candi
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let source = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1261,7 +1261,7 @@ fn test_contextual_instantiation_generic_target_from_source_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let target = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
@@ -1321,7 +1321,7 @@ fn test_contextual_instantiation_callable_to_generic_function_target() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let target = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
@@ -1354,7 +1354,7 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let source = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
@@ -1445,7 +1445,7 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let target = interner.callable(CallableShape {
         symbol: None,

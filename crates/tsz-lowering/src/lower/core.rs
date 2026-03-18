@@ -1239,7 +1239,7 @@ impl<'a> TypeLowering<'a> {
             if let Some(mut info) = self.lower_type_parameter(idx) {
                 info.name = name;
                 info.is_const = is_const;
-                let type_id = self.interner.type_param(info.clone());
+                let type_id = self.interner.type_param(info);
                 self.add_type_param_binding(info.name, type_id);
                 params.push(info);
             }

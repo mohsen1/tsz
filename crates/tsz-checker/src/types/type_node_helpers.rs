@@ -213,7 +213,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 default,
                 is_const,
             };
-            let type_id = factory.type_param(info.clone());
+            let type_id = factory.type_param(info);
             self.ctx.type_parameter_scope.insert(name, type_id);
             params.push(info);
         }

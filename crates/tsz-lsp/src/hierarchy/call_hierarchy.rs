@@ -502,6 +502,92 @@ impl<'a> CallHierarchyProvider<'a> {
     }
 
     // -----------------------------------------------------------------------
+    // Public helpers for cross-file hierarchy (called from Project)
+    // -----------------------------------------------------------------------
+
+    /// Get the name of the target function at the given position.
+    /// Used by cross-file incoming call resolution.
+    pub fn get_target_function_name(&self, _root: NodeIndex, position: Position) -> Option<String> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let func_idx = self
+            .resolve_reference_callable(node_idx)
+            .or_else(|| self.find_function_at_or_around(node_idx))
+            .or_else(|| self.export_equals_anonymous_function_callable())?;
+
+        let kind = self.get_function_symbol_kind(func_idx);
+        if kind == SymbolKind::Constructor {
+            self.constructor_target_name(func_idx)
+        } else {
+            self.get_function_name_idx(func_idx)
+                .and_then(|idx| self.get_identifier_text(idx))
+        }
+    }
+
+    /// Find all call sites of a function named `target_name` in this file,
+    /// grouped by containing function. Used for cross-file incoming calls.
+    pub fn find_incoming_calls_by_name(&self, target_name: &str) -> Vec<CallHierarchyIncomingCall> {
+        let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
+        let mut script_from_ranges = Vec::new();
+
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let idx = NodeIndex(i as u32);
+
+            let ident_data = match self.arena.get_identifier(node) {
+                Some(d) => d,
+                None => continue,
+            };
+            if ident_data.escaped_text != target_name {
+                continue;
+            }
+
+            // Only consider identifiers that appear in call expressions
+            if !self.is_inside_call_or_decorator_reference(idx) {
+                continue;
+            }
+
+            let range = node_range(self.arena, self.line_map, self.source_text, idx);
+            if let Some(containing_func) = self.find_containing_function(idx) {
+                let caller_idx = self
+                    .class_parent_for_constructor(containing_func)
+                    .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else {
+                script_from_ranges.push(range);
+            }
+        }
+
+        let mut results = Vec::new();
+        for (caller_idx_raw, ranges) in callers {
+            let caller_idx = NodeIndex(caller_idx_raw);
+            if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
+                results.push(CallHierarchyIncomingCall {
+                    from: item,
+                    from_ranges: ranges,
+                });
+            }
+        }
+
+        if !script_from_ranges.is_empty() {
+            results.push(CallHierarchyIncomingCall {
+                from: self.script_call_hierarchy_item(),
+                from_ranges: script_from_ranges,
+            });
+        }
+
+        results
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 

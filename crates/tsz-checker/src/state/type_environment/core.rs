@@ -452,7 +452,7 @@ impl<'a> CheckerState<'a> {
                     .name_type
                     .map(|nt| instantiate_type(self.ctx.types, nt, &subst));
                 let inst_mapped = tsz_solver::MappedType {
-                    type_param: mapped.type_param.clone(),
+                    type_param: mapped.type_param,
                     constraint: self.ctx.types.keyof(evaluated_arg),
                     name_type: inst_name_type,
                     template: inst_template,

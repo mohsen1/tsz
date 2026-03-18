@@ -2737,7 +2737,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
