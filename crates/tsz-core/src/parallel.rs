@@ -530,7 +530,12 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
             let arena = Arc::new(lib_parser.into_arena());
             let binder = Arc::new(lib_binder);
 
-            Some(Arc::new(lib_loader::LibFile::new(file_name, arena, binder, source_file_idx)))
+            Some(Arc::new(lib_loader::LibFile::new(
+                file_name,
+                arena,
+                binder,
+                source_file_idx,
+            )))
         })
         .collect()
 }
@@ -634,7 +639,12 @@ fn parse_and_bind_lib_file(
 
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
-    Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder, source_file_idx)))
+    Ok(Arc::new(lib_loader::LibFile::new(
+        file_name,
+        arena,
+        binder,
+        source_file_idx,
+    )))
 }
 
 /// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents

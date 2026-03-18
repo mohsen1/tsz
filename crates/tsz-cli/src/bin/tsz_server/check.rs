@@ -628,7 +628,10 @@ impl Server {
             |lib| Arc::clone(&lib.arena),
         );
 
-        let unified_root = lib_files.first().map(|f| f.root_index).unwrap_or(tsz::parser::NodeIndex(0));
+        let unified_root = lib_files
+            .first()
+            .map(|f| f.root_index)
+            .unwrap_or(tsz::parser::NodeIndex(0));
         let unified_lib = Arc::new(LibFile::new(
             "unified-libs".to_string(),
             unified_arena,
