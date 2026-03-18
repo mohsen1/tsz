@@ -663,7 +663,7 @@ impl<'a> CodeActionProvider<'a> {
             .is_some_and(|ch| ch.is_ascii_uppercase())
     }
 
-    fn find_enclosing_scope_id(&self, node_idx: NodeIndex) -> Option<ScopeId> {
+    pub(super) fn find_enclosing_scope_id(&self, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
         while current.is_some() {
             if let Some(&scope_id) = self.binder.node_scope_ids.get(&current.0) {
@@ -679,7 +679,7 @@ impl<'a> CodeActionProvider<'a> {
         (!self.binder.scopes.is_empty()).then_some(ScopeId(0))
     }
 
-    fn collect_scope_names(&self, mut scope_id: ScopeId, names: &mut FxHashSet<String>) {
+    pub(super) fn collect_scope_names(&self, mut scope_id: ScopeId, names: &mut FxHashSet<String>) {
         while scope_id.is_some() {
             let scope = match self.binder.scopes.get(scope_id.0 as usize) {
                 Some(scope) => scope,
