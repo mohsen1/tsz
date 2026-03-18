@@ -40,7 +40,7 @@ type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Used for caches that need thread-safety in parallel compilation but also
 /// need to support `BinderState::clone()` for the checker lib context optimization.
 #[derive(Debug, Default)]
-struct CloneableRwLock<T>(RwLock<T>);
+pub(crate) struct CloneableRwLock<T>(RwLock<T>);
 
 impl<T: Clone> Clone for CloneableRwLock<T> {
     fn clone(&self) -> Self {
