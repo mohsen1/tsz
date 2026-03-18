@@ -50,8 +50,8 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Filter out duplicates and special types
-        let mut seen = FxHashSet::default();
-        let mut unique: Vec<TypeId> = Vec::new();
+        let mut seen = FxHashSet::with_capacity_and_hasher(types.len(), Default::default());
+        let mut unique: Vec<TypeId> = Vec::with_capacity(types.len());
         let mut has_any = false;
         for &ty in types {
             if ty == TypeId::ANY {
@@ -130,8 +130,8 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Deduplicate and filter never
-        let mut seen = FxHashSet::default();
-        let mut unique: Vec<TypeId> = Vec::new();
+        let mut seen = FxHashSet::with_capacity_and_hasher(types.len(), Default::default());
+        let mut unique: Vec<TypeId> = Vec::with_capacity(types.len());
         for &ty in types {
             if ty == TypeId::ANY {
                 return TypeId::ANY;
@@ -157,8 +157,8 @@ impl<'a> InferenceContext<'a> {
         // stripping to `[B, D]`, D <: B succeeds and the result is `B | undefined`.
         let mut has_undefined = false;
         let mut has_null = false;
-        let mut primary_types: Vec<TypeId> = Vec::new();
-        let mut primary_seen = FxHashSet::default();
+        let mut primary_types: Vec<TypeId> = Vec::with_capacity(unique.len());
+        let mut primary_seen = FxHashSet::with_capacity_and_hasher(unique.len(), Default::default());
         for &ty in &unique {
             // For union candidates like `D | undefined`, filter nullable members out
             if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
