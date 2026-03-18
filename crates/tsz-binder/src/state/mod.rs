@@ -36,8 +36,29 @@ type FileReexports = FxHashMap<String, ReexportTarget>;
 type FileReexportsMap = FxHashMap<String, FileReexports>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
-type ExportCacheStorage = RwLock<ExportCache>;
-type IdentifierCacheStorage = RwLock<IdentifierCache>;
+/// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.
+/// Used for caches that need thread-safety in parallel compilation but also
+/// need to support `BinderState::clone()` for the checker lib context optimization.
+#[derive(Debug, Default)]
+struct CloneableRwLock<T>(RwLock<T>);
+
+impl<T: Clone> Clone for CloneableRwLock<T> {
+    fn clone(&self) -> Self {
+        let inner = self.0.read().expect("RwLock poisoned during clone");
+        Self(RwLock::new(inner.clone()))
+    }
+}
+
+impl<T> std::ops::Deref for CloneableRwLock<T> {
+    type Target = RwLock<T>;
+    #[inline]
+    fn deref(&self) -> &RwLock<T> {
+        &self.0
+    }
+}
+
+type ExportCacheStorage = CloneableRwLock<ExportCache>;
+type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 
 /// Bitflags tracking which language features are used in a source file.
 ///
@@ -183,7 +204,7 @@ impl ModuleAugmentation {
 }
 
 /// Binder state using `NodeArena`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BinderState {
     /// Binder options (ES target, etc.)
     pub options: BinderOptions,
@@ -365,6 +386,16 @@ pub struct BinderState {
     /// map links it to the ALIAS symbol (for value/namespace resolution).
     /// Populated by `merge_bind_results` in parallel.rs.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+}
+
+impl BinderState {
+    /// Clear resolution caches that were populated during binding.
+    /// Called after cloning a binder for the checker, which needs a clean
+    /// cache state for its own symbol resolution.
+    pub fn clear_resolution_caches(&mut self) {
+        self.resolved_export_cache.write().expect("not poisoned").clear();
+        self.resolved_identifier_cache.write().expect("not poisoned").clear();
+    }
 }
 
 /// Validation result describing issues found in the symbol table

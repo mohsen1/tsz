@@ -76,7 +76,7 @@ pub struct SymbolMergeEvent {
 }
 
 /// Debugger for module resolution operations.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ModuleResolutionDebugger {
     /// All symbol declaration events
     pub declaration_events: Vec<SymbolDeclarationEvent>,
