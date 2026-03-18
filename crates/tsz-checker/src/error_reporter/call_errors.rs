@@ -67,15 +67,13 @@ impl<'a> CheckerState<'a> {
 
     fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
         let prev_contextual = self.ctx.contextual_type;
-        let diag_len = self.ctx.diagnostics.len();
-        let emitted = self.ctx.emitted_diagnostics.clone();
+        let snap = self.ctx.snapshot_diagnostics();
 
         self.ctx.contextual_type = None;
         let ty = self.compute_type_of_node(expr_idx);
         self.ctx.contextual_type = prev_contextual;
 
-        self.ctx.diagnostics.truncate(diag_len);
-        self.ctx.emitted_diagnostics = emitted;
+        self.ctx.rollback_diagnostics(&snap);
         ty
     }
 

@@ -1270,14 +1270,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.skip_flow_narrowing = true;
         }
 
-        let diag_len = self.ctx.diagnostics.len();
-        let dedup_snapshot = suppress_diagnostics.then(|| self.ctx.emitted_diagnostics.clone());
-        // Snapshot implicit-any-checked closures when suppressing diagnostics (speculative round2).
+        // Snapshot diagnostic + closure state when in speculative round2.
         // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
         // dropped by the suppress filter. Without restoring, the final retry pass sees these
         // closures as already-checked and skips TS7006 — silencing real implicit-any errors
         // for parameters whose object-literal-property contextual type is never (e.g., an
         // extra key C in a negated-type-like constraint mapped type maps to never).
+        let speculation_snap = suppress_diagnostics.then(|| self.ctx.snapshot_diagnostics());
         let implicit_any_closure_snapshot =
             suppress_diagnostics.then(|| self.ctx.implicit_any_checked_closures.clone());
         let arg_type = self.get_type_of_node(arg_idx);
@@ -1302,7 +1301,7 @@ impl<'a> CheckerState<'a> {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }
 
-        if suppress_diagnostics {
+        if let Some(snap) = &speculation_snap {
             let arg_node = self.ctx.arena.get(arg_idx);
             let callback_body_start = arg_node
                 .filter(|node| {
@@ -1313,104 +1312,80 @@ impl<'a> CheckerState<'a> {
                 .and_then(|func| self.ctx.arena.get(func.body))
                 .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
                 .map(|body_node| body_node.pos);
-            let mut seen_new_diags = FxHashSet::default();
-            let new_diags = self.ctx.diagnostics.split_off(diag_len);
-            let kept_new_diags: Vec<_> = new_diags
-                .into_iter()
-                .filter(|diag| {
-                    let key = (diag.code, diag.start);
-                    if !seen_new_diags.insert(key) {
-                        return false;
-                    }
-                    if self
-                        .ctx
-                        .diagnostics
-                        .iter()
-                        .take(diag_len)
-                        .any(|existing| existing.code == diag.code && existing.start == diag.start)
-                    {
-                        return false;
-                    }
-                    let is_provisional_implicit_any = matches!(
-                        diag.code,
-                        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
-                            | diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
-                            | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
-                            | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
-                    );
-                    let is_assignability = diag.code
-                        == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                        || diag.code
-                            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
-                    let is_object_literal_diag = arg_node.is_some_and(|node| {
-                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            && diag.start >= node.pos
-                            && diag.start < node.end
-                    });
-                    let is_function_arg_implicit_any_diag = arg_node.is_some_and(|node| {
-                        (node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                            && is_provisional_implicit_any
-                            && diag.start >= node.pos
-                            && diag.start < node.end
-                    });
-                    // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
-                    // literals even in round2 speculative passes. Unlike assignability errors
-                    // (which get a definitive check in resolve_call_with_checker_adapter), TS7006
-                    // is determined by whether the contextual type is available in THIS pass.
-                    // Properties mapping to `never` (e.g., extra keys in negated-type-like
-                    // constraints) have no contextual type for their lambda parameters, so TS7006
-                    // must be preserved here — there is no later pass that re-checks them.
-                    let implicit_any_in_object_literal =
-                        is_provisional_implicit_any && is_object_literal_diag;
-                    (!is_assignability && !is_provisional_implicit_any)
-                        || implicit_any_in_object_literal
-                        || callback_body_start.is_some_and(|start| diag.start == start)
-                        || !(is_object_literal_diag || is_function_arg_implicit_any_diag)
-                })
-                .collect();
+            let diag_len = snap.diagnostics_len;
+            // Build pre-existing diagnostic keys for exact dedup.
             let existing_diag_keys: Vec<_> = self
                 .ctx
                 .diagnostics
                 .iter()
-                .map(|diag| {
-                    (
-                        diag.code,
-                        diag.start,
-                        diag.length,
-                        diag.message_text.clone(),
-                    )
-                })
+                .take(diag_len)
+                .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                 .collect();
+            let mut seen_new_diags = FxHashSet::default();
             let mut seen_diag_keys = existing_diag_keys;
-            self.ctx
-                .diagnostics
-                .extend(kept_new_diags.into_iter().filter(|diag| {
-                    let key = (
+            self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+                // --- Phase 1: dedup by (code, start) against pre-existing + already-kept ---
+                let key = (diag.code, diag.start);
+                if !seen_new_diags.insert(key) {
+                    return false;
+                }
+                // Duplicate of a pre-speculation diagnostic — drop.
+                if seen_diag_keys.iter().any(|existing| existing.0 == diag.code && existing.1 == diag.start) {
+                    return false;
+                }
+                // --- Phase 2: classify the diagnostic ---
+                let is_provisional_implicit_any = matches!(
+                    diag.code,
+                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                        | diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                        | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                        | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                );
+                let is_assignability = diag.code
+                    == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    || diag.code
+                        == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                let is_object_literal_diag = arg_node.is_some_and(|node| {
+                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && diag.start >= node.pos
+                        && diag.start < node.end
+                });
+                let is_function_arg_implicit_any_diag = arg_node.is_some_and(|node| {
+                    (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                        && is_provisional_implicit_any
+                        && diag.start >= node.pos
+                        && diag.start < node.end
+                });
+                // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
+                // literals even in round2 speculative passes. Unlike assignability errors
+                // (which get a definitive check in resolve_call_with_checker_adapter), TS7006
+                // is determined by whether the contextual type is available in THIS pass.
+                let implicit_any_in_object_literal =
+                    is_provisional_implicit_any && is_object_literal_diag;
+                let keep = (!is_assignability && !is_provisional_implicit_any)
+                    || implicit_any_in_object_literal
+                    || callback_body_start.is_some_and(|start| diag.start == start)
+                    || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
+                // --- Phase 3: exact-message dedup for kept diagnostics ---
+                if keep {
+                    let full_key = (
                         diag.code,
                         diag.start,
                         diag.length,
                         diag.message_text.clone(),
                     );
-                    if seen_diag_keys.iter().any(|existing| existing == &key) {
-                        false
-                    } else {
-                        seen_diag_keys.push(key);
-                        true
+                    if seen_diag_keys.iter().any(|existing| existing == &full_key) {
+                        return false;
                     }
-                }));
-            if let Some(dedup_snapshot) = dedup_snapshot {
-                self.ctx.emitted_diagnostics = dedup_snapshot;
-                for diag in self.ctx.diagnostics.iter().skip(diag_len) {
-                    self.ctx
-                        .emitted_diagnostics
-                        .insert(self.ctx.diagnostic_dedup_key(diag));
+                    seen_diag_keys.push(full_key);
                 }
-            }
+                keep
+            });
             // Restore implicit-any closure tracking to the pre-round2 state so the final
             // retry pass can re-emit TS7006 for closures whose diagnostics were suppressed.
             if let Some(snapshot) = implicit_any_closure_snapshot {
-                self.ctx.implicit_any_checked_closures = snapshot;
+                self.ctx.restore_implicit_any_closures(&snapshot);
             }
         }
 

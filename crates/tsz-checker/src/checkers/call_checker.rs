@@ -85,30 +85,30 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn prune_callback_body_diagnostics_since(
+    fn prune_callback_body_diagnostics(
         &mut self,
         args: &[NodeIndex],
-        diagnostics_checkpoint: usize,
+        snap: &crate::context::speculation::DiagnosticSnapshot,
     ) {
-        let kept_new_diags: Vec<_> = self.ctx.diagnostics[diagnostics_checkpoint..]
+        // Pre-compute callback body spans before entering the mutable borrow
+        // for rollback_diagnostics_filtered.
+        let callback_spans: Vec<Option<(u32, u32)>> = args
             .iter()
-            .filter(|diag| {
-                !args.iter().any(|&arg_idx| {
-                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-                        return false;
-                    };
-                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
-                    is_callback_arg
-                        && self
-                            .callback_body_span(arg_idx)
-                            .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
-                })
+            .map(|&arg_idx| {
+                let arg_node = self.ctx.arena.get(arg_idx)?;
+                let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                if !is_callback_arg {
+                    return None;
+                }
+                self.callback_body_span(arg_idx)
             })
-            .cloned()
             .collect();
-        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
-        self.ctx.diagnostics.extend(kept_new_diags);
+        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            !callback_spans.iter().any(|span| {
+                span.is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+            })
+        });
     }
 
     fn collect_non_callback_diagnostics_between(
@@ -1068,8 +1068,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.skip_flow_narrowing = true;
             }
 
-            let diag_len = self.ctx.diagnostics.len();
-            let emitted_before = self.ctx.emitted_diagnostics.clone();
+            let arg_snap = self.ctx.snapshot_diagnostics();
             let arg_type = self.get_type_of_node(arg_idx);
             if skip_flow {
                 self.ctx.skip_flow_narrowing = prev_skip_flow;
@@ -1096,90 +1095,68 @@ impl<'a> CheckerState<'a> {
                     .and_then(|func| self.ctx.arena.get(func.body))
                     .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
                     .map(|body_node| body_node.pos);
-                let new_diags = self.ctx.diagnostics.split_off(diag_len);
-                let kept_new_diags: Vec<_> = new_diags
-                    .into_iter()
-                    .filter(|diag| {
-                        let is_provisional_assignability = diag.code
-                            == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                            || diag.code
-                                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
-                        let is_provisional_implicit_any =
-                            diag.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE;
-                        let is_callback_body_diag =
-                            callback_body_start.is_some_and(|start| diag.start >= start);
-                        let is_object_literal_diag = arg_node.kind
-                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            && diag.start >= arg_node.pos
-                            && diag.start < arg_node.end;
-                        let is_function_arg_implicit_any_diag =
-                            (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                && is_provisional_implicit_any
-                                && diag.start >= arg_node.pos
-                                && diag.start < arg_node.end;
-                        let is_direct_callback_body_assignability =
-                            callback_body_start.is_some_and(|start| diag.start == start)
-                                && is_provisional_assignability;
-                        if !is_provisional_assignability && !is_provisional_implicit_any {
-                            true
-                        } else if is_direct_function_arg {
-                            is_direct_callback_body_assignability
-                                || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
-                        } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                            // For object literal args, keep implicit-any diagnostics
-                            // (TS7006/TS7019) from inside the literal regardless of
-                            // which overload matches. Only drop provisional TS2322/TS2345.
-                            // This is needed when a property maps to `never` in a
-                            // negated-type-like constraint: the closure for that property
-                            // has no contextual type and must emit TS7006.
-                            !is_object_literal_diag
-                                || (is_provisional_implicit_any && !is_provisional_assignability)
-                        } else {
-                            // For array literals and other contextually-sensitive args,
-                            // keep implicit-any diagnostics (TS7006/TS7019) — these are
-                            // valid regardless of which union member the arg matches.
-                            // Only drop provisional assignability errors.
-                            is_provisional_implicit_any && !is_provisional_assignability
-                        }
-                    })
-                    .collect();
+                // Build pre-existing diagnostic keys for exact dedup.
                 let existing_diag_keys: Vec<_> = self
                     .ctx
                     .diagnostics
                     .iter()
-                    .map(|diag| {
-                        (
-                            diag.code,
-                            diag.start,
-                            diag.length,
-                            diag.message_text.clone(),
-                        )
-                    })
+                    .take(arg_snap.diagnostics_len)
+                    .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                     .collect();
                 let mut seen_diag_keys = existing_diag_keys;
-                self.ctx
-                    .diagnostics
-                    .extend(kept_new_diags.into_iter().filter(|diag| {
-                        let key = (
+                self.ctx.rollback_diagnostics_filtered(&arg_snap, |diag| {
+                    let is_provisional_assignability = diag.code
+                        == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        || diag.code
+                            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                    let is_provisional_implicit_any =
+                        diag.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE;
+                    let is_callback_body_diag =
+                        callback_body_start.is_some_and(|start| diag.start >= start);
+                    let is_object_literal_diag = arg_node.kind
+                        == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && diag.start >= arg_node.pos
+                        && diag.start < arg_node.end;
+                    let is_function_arg_implicit_any_diag =
+                        (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                            && is_provisional_implicit_any
+                            && diag.start >= arg_node.pos
+                            && diag.start < arg_node.end;
+                    let is_direct_callback_body_assignability =
+                        callback_body_start.is_some_and(|start| diag.start == start)
+                            && is_provisional_assignability;
+                    let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
+                        true
+                    } else if is_direct_function_arg {
+                        is_direct_callback_body_assignability
+                            || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
+                    } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        // For object literal args, keep implicit-any diagnostics
+                        // (TS7006/TS7019) from inside the literal regardless of
+                        // which overload matches. Only drop provisional TS2322/TS2345.
+                        !is_object_literal_diag
+                            || (is_provisional_implicit_any && !is_provisional_assignability)
+                    } else {
+                        // For array literals and other contextually-sensitive args,
+                        // keep implicit-any diagnostics (TS7006/TS7019).
+                        is_provisional_implicit_any && !is_provisional_assignability
+                    };
+                    // Exact-message dedup against pre-existing diagnostics.
+                    if keep {
+                        let full_key = (
                             diag.code,
                             diag.start,
                             diag.length,
                             diag.message_text.clone(),
                         );
-                        if seen_diag_keys.iter().any(|existing| existing == &key) {
-                            false
-                        } else {
-                            seen_diag_keys.push(key);
-                            true
+                        if seen_diag_keys.iter().any(|existing| existing == &full_key) {
+                            return false;
                         }
-                    }));
-                self.ctx.emitted_diagnostics = emitted_before;
-                for diag in self.ctx.diagnostics.iter().skip(diag_len) {
-                    self.ctx
-                        .emitted_diagnostics
-                        .insert(self.ctx.diagnostic_dedup_key(diag));
-                }
+                        seen_diag_keys.push(full_key);
+                    }
+                    keep
+                });
             }
             arg_types.push(arg_type);
 
@@ -1448,30 +1425,19 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
-        let saved_emitted_diagnostics = self.ctx.emitted_diagnostics.clone();
 
-        // Save TS2454 dedup state before speculative overload argument collection.
-        // If overload resolution fails and diagnostics are truncated, we must also
-        // restore this set so TS2454 errors can be re-emitted in the fallback path.
-        let initial_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
-
-        // Save implicit-any-checked-closures state before the first pass.
-        // During the first-pass argument collection, closures may get marked as
-        // "already checked" even though their diagnostics (including TS7006) are
-        // later dropped. When the instantiated retry re-collects arguments, those
-        // closures would be skipped due to `closure_already_checked = true`,
-        // causing TS7006 to be silently suppressed. We restore this set before
-        // the retry so closures get a fresh TS7006 check with the correct
-        // (instantiated) contextual type - which may be `never` for extra keys
-        // in a negated-type-like constraint mapped type.
-        let implicit_any_checked_closures_checkpoint =
-            self.ctx.implicit_any_checked_closures.clone();
+        // Snapshot all speculative state before overload resolution begins.
+        // This captures diagnostics, emitted_diagnostics dedup set, TS2454
+        // dedup state, TS2307 module dedup, and implicit-any-checked-closures.
+        // On failure paths we roll back to this snapshot; on success paths
+        // we selectively keep diagnostics via the transaction API.
+        let overload_snap = self.ctx.snapshot_full();
+        let first_pass_diagnostics_checkpoint = overload_snap.diag.diagnostics_len;
 
         // Collect argument types ONCE with union contextual type.
         // Diagnostics produced during this pass are speculative: if no overload
         // matches, TypeScript reports the overload failure and suppresses these
         // nested callback/body diagnostics.
-        let first_pass_diagnostics_checkpoint = self.ctx.diagnostics.len();
         self.ctx.node_types = Default::default();
         for &arg_idx in &contextual_refresh_args {
             self.clear_contextual_resolution_cache();
@@ -1543,10 +1509,7 @@ impl<'a> CheckerState<'a> {
                         args,
                         first_pass_diagnostics_checkpoint,
                     ) {
-                        self.prune_callback_body_diagnostics_since(
-                            args,
-                            first_pass_diagnostics_checkpoint,
-                        );
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
 
@@ -1560,19 +1523,8 @@ impl<'a> CheckerState<'a> {
                         && !contextual_refresh_args.is_empty()
                         && let Some(instantiated_params) = instantiated_params.as_ref()
                     {
-                        self.ctx
-                            .diagnostics
-                            .truncate(first_pass_diagnostics_checkpoint);
-                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
-                        self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
+                        self.ctx.rollback_full(&overload_snap);
                         self.ctx.node_types = Default::default();
-                        // Restore closure implicit-any tracking to pre-first-pass state.
-                        // The first-pass collection may have marked closures as "already
-                        // checked" even though their TS7006 diagnostics were dropped (for
-                        // object-literal args). Without this restore, the instantiated
-                        // retry silently suppresses TS7006 for those closures.
-                        self.ctx.implicit_any_checked_closures =
-                            implicit_any_checked_closures_checkpoint;
                         refresh_all_args(self);
 
                         let prev_callable_type = self.ctx.current_callable_type;
@@ -1693,9 +1645,12 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.no_implicit_any,
             );
 
-            let diagnostics_checkpoint = self.ctx.diagnostics.len();
-            let emitted_before = self.ctx.emitted_diagnostics.clone();
-            self.ctx.emitted_ts2454_errors = initial_ts2454_errors.clone();
+            // Reset TS2454 state to the pre-overload baseline for each candidate.
+            self.ctx
+                .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+            // Snapshot per-candidate diagnostic state so we can roll back on mismatch.
+            let candidate_snap = self.ctx.snapshot_diagnostics();
+            let diagnostics_checkpoint = candidate_snap.diagnostics_len;
             let candidate_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
             self.ctx.node_types = Default::default();
             refresh_all_args(self);
@@ -1738,9 +1693,8 @@ impl<'a> CheckerState<'a> {
                 && !contextual_refresh_args.is_empty()
                 && let Some(instantiated_params) = instantiated_params.as_ref()
             {
-                self.ctx.diagnostics.truncate(diagnostics_checkpoint);
-                self.ctx.emitted_diagnostics = emitted_before.clone();
-                self.ctx.emitted_ts2454_errors = candidate_ts2454_errors.clone();
+                self.ctx.rollback_diagnostics(&candidate_snap);
+                self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
                 self.ctx.node_types = Default::default();
                 refresh_all_args(self);
 
@@ -1805,20 +1759,12 @@ impl<'a> CheckerState<'a> {
                             );
                         let kept_candidate_diags =
                             self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                        // Merge: roll back first-pass diags, keep non-callback ones,
+                        // then append the candidate's diagnostics.
+                        let mut merged = preserved_first_pass_diags;
+                        merged.extend(kept_candidate_diags);
                         self.ctx
-                            .diagnostics
-                            .truncate(first_pass_diagnostics_checkpoint);
-                        self.ctx.diagnostics.extend(preserved_first_pass_diags);
-                        self.ctx.diagnostics.extend(kept_candidate_diags);
-                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
-                        for diag in self
-                            .ctx
-                            .diagnostics
-                            .iter()
-                            .skip(first_pass_diagnostics_checkpoint)
-                        {
-                            self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
-                        }
+                            .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                         let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                         self.ctx.node_types = std::mem::take(&mut original_node_types);
                         self.ctx.node_types.extend(sig_node_types);
@@ -1841,20 +1787,12 @@ impl<'a> CheckerState<'a> {
                     );
                     let kept_candidate_diags =
                         self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                    // Merge: roll back first-pass diags, keep non-callback ones,
+                    // then append the candidate's diagnostics.
+                    let mut merged = preserved_first_pass_diags;
+                    merged.extend(kept_candidate_diags);
                     self.ctx
-                        .diagnostics
-                        .truncate(first_pass_diagnostics_checkpoint);
-                    self.ctx.diagnostics.extend(preserved_first_pass_diags);
-                    self.ctx.diagnostics.extend(kept_candidate_diags);
-                    self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
-                    for diag in self
-                        .ctx
-                        .diagnostics
-                        .iter()
-                        .skip(first_pass_diagnostics_checkpoint)
-                    {
-                        self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
-                    }
+                        .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
                     self.ctx.node_types.extend(sig_node_types);
@@ -1919,7 +1857,7 @@ impl<'a> CheckerState<'a> {
                     // (T extends {[idx:string]:U}) should be tried next.
                     if signatures.len() > 1 && constraint_violation_fallback.is_none() {
                         constraint_violation_fallback = Some((return_type, sig_arg_types.clone()));
-                        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+                        self.ctx.rollback_diagnostics(&candidate_snap);
                         continue;
                     }
                     let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
@@ -1929,20 +1867,10 @@ impl<'a> CheckerState<'a> {
                     );
                     let kept_candidate_diags =
                         self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                    let mut merged = preserved_first_pass_diags;
+                    merged.extend(kept_candidate_diags);
                     self.ctx
-                        .diagnostics
-                        .truncate(first_pass_diagnostics_checkpoint);
-                    self.ctx.diagnostics.extend(preserved_first_pass_diags);
-                    self.ctx.diagnostics.extend(kept_candidate_diags);
-                    self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
-                    for diag in self
-                        .ctx
-                        .diagnostics
-                        .iter()
-                        .skip(first_pass_diagnostics_checkpoint)
-                    {
-                        self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
-                    }
+                        .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
                     self.ctx.node_types.extend(sig_node_types);
@@ -1956,7 +1884,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+            self.ctx.rollback_diagnostics(&candidate_snap);
         }
 
         // If we encountered a TypeParameterConstraintViolation while trying overloads
@@ -1964,9 +1892,7 @@ impl<'a> CheckerState<'a> {
         // as a successful resolution (the return type is still valid; only the
         // constraint check itself failed, which is reported separately).
         if let Some((fallback_return_type, fallback_arg_types)) = constraint_violation_fallback {
-            self.ctx
-                .diagnostics
-                .truncate(first_pass_diagnostics_checkpoint);
+            self.ctx.rollback_diagnostics(&overload_snap.diag);
             self.ctx.node_types = original_node_types;
             return Some(OverloadResolution {
                 arg_types: fallback_arg_types,
@@ -1976,14 +1902,11 @@ impl<'a> CheckerState<'a> {
 
         // No overload matched: drop speculative diagnostics from overload argument
         // collection and keep only overload-level diagnostics.
+        // Roll back diagnostics and TS2454 state to the pre-overload snapshot
+        // so the fallback path can re-evaluate cleanly.
+        self.ctx.rollback_diagnostics(&overload_snap.diag);
         self.ctx
-            .diagnostics
-            .truncate(first_pass_diagnostics_checkpoint);
-
-        // Restore TS2454 dedup state so definite-assignment errors can be
-        // re-emitted when the fallback (non-overloaded) call resolution path
-        // re-evaluates the same argument identifiers.
-        self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
+            .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;
