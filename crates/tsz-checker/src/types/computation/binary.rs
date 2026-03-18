@@ -2,6 +2,7 @@
 //! Extracted from `core.rs` — handles all binary operators including
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -463,10 +464,8 @@ impl<'a> CheckerState<'a> {
                 if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                     // && passes outer contextual type to the right operand only.
                     // The left operand gets no contextual type.
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = None;
-                    let left_type = self.get_type_of_node(left_idx);
-                    self.ctx.contextual_type = prev_context;
+                    let left_type =
+                        self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     let right_type = self.get_type_of_node(right_idx);
 
                     type_stack.push(left_type);
@@ -478,12 +477,12 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
                     let left_type = self.get_type_of_node(left_idx);
-                    let prev_context = self.ctx.contextual_type;
+                    let outer_context = self.ctx.contextual_type;
                     // Right operand: prefer the whole-expression contextual type
                     // inherited from the parent (e.g. assignment target). Fall back
                     // to the left operand with nullish removed when there is no outer
                     // context.
-                    if prev_context.is_none() {
+                    let right_request = if outer_context.is_none() {
                         let evaluated_left = self.evaluate_type_with_env(left_type);
                         let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
                         let right_ctx_idx =
@@ -503,13 +502,16 @@ impl<'a> CheckerState<'a> {
                             && non_nullish != TypeId::NEVER
                             && non_nullish != TypeId::UNKNOWN
                         {
-                            self.ctx.contextual_type = Some(non_nullish);
+                            TypingRequest::with_contextual_type(non_nullish)
+                        } else {
+                            TypingRequest::NONE
                         }
-                    }
-                    let right_type = self.get_type_of_node(right_idx);
-                    self.ctx.contextual_type = prev_context;
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
 
-                    let should_check_contextual_right = prev_context.is_some() && {
+                    let should_check_contextual_right = outer_context.is_some() && {
                         let mut parent_idx = self
                             .ctx
                             .arena
@@ -561,7 +563,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let _ = self.check_assignable_or_report_at_exact_anchor(
                             right_type,
-                            prev_context.expect("guarded by prev_context.is_some() check"),
+                            outer_context.expect("guarded by outer_context.is_some() check"),
                             right_idx,
                             right_idx,
                         );
@@ -576,10 +578,8 @@ impl<'a> CheckerState<'a> {
                 // For comma operator: left gets no contextual type,
                 // right gets the outer contextual type
                 if op_kind == SyntaxKind::CommaToken as u16 {
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = None;
-                    let left_type = self.get_type_of_node(left_idx);
-                    self.ctx.contextual_type = prev_context;
+                    let left_type =
+                        self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     let right_type = self.get_type_of_node(right_idx);
 
                     type_stack.push(left_type);

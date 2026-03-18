@@ -3,6 +3,7 @@
 //! For overload compatibility, signature utilities, and implicit-any return checks,
 //! see [`super::overload_compatibility`].
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -270,16 +271,17 @@ impl<'a> CheckerState<'a> {
             if !self.is_js_file() && prop.type_annotation.is_some() {
                 self.check_type_for_missing_names_skip_top_level_ref(prop.type_annotation);
             }
-            let prev_context = self.ctx.contextual_type;
-            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
-                self.ctx.contextual_type = Some(declared_type);
-                // Clear cached type to force recomputation with contextual type.
-                // Function expressions may have been typed without contextual info
-                // during build_type_environment, missing parameter type inference.
-                self.clear_type_cache_recursive(prop.initializer);
-            }
-            let init_type = self.get_type_of_node(prop.initializer);
-            self.ctx.contextual_type = prev_context;
+            let request =
+                if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
+                    // Clear cached type to force recomputation with contextual type.
+                    // Function expressions may have been typed without contextual info
+                    // during build_type_environment, missing parameter type inference.
+                    self.clear_type_cache_recursive(prop.initializer);
+                    TypingRequest::with_contextual_type(declared_type)
+                } else {
+                    TypingRequest::NONE
+                };
+            let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
 
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
@@ -310,7 +312,7 @@ impl<'a> CheckerState<'a> {
             // class-member `this` context is available, especially for arrow initializers
             // that reference `this`. Re-check under member context to avoid stale `any`.
             self.clear_type_cache_recursive(prop.initializer);
-            let prev_context = self.ctx.contextual_type;
+            let mut request = TypingRequest::NONE;
             if let Some(ctx_type) = self.ctx.contextual_type
                 && let Some(prop_name) = self.get_property_name(prop.name)
             {
@@ -320,12 +322,11 @@ impl<'a> CheckerState<'a> {
                     && member_type != TypeId::ANY
                     && !self.type_contains_error(member_type)
                 {
-                    self.ctx.contextual_type = Some(member_type);
+                    request = TypingRequest::with_contextual_type(member_type);
                     self.clear_type_cache_recursive(prop.initializer);
                 }
             }
-            self.get_type_of_node(prop.initializer);
-            self.ctx.contextual_type = prev_context;
+            self.get_type_of_node_with_request(prop.initializer, &request);
         }
 
         // Error 2729: Property is used before its initialization

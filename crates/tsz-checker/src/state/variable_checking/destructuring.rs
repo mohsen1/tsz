@@ -1,5 +1,6 @@
 //! Destructuring pattern type resolution and validation.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -305,21 +306,22 @@ impl<'a> CheckerState<'a> {
                     element_type = tsz_solver::remove_undefined(self.ctx.types, element_type);
                 }
 
-                let prev_context = self.ctx.contextual_type;
                 // Provide the element type as contextual type for the default
                 // value expression. This is needed for:
                 // - Arrow/function defaults: infers parameter types
                 // - Array literal defaults: produces tuples instead of widened arrays
                 //   e.g., `[b, {x}]=["abc", {x: 10}]` needs the default typed as
                 //   a tuple `[string, {x: number}]`, not `(string | {x: number})[]`
-                if element_type != TypeId::ANY
+                let request = if element_type != TypeId::ANY
                     && element_type != TypeId::UNKNOWN
                     && element_type != TypeId::ERROR
                 {
-                    self.ctx.contextual_type = Some(element_type);
-                }
-                let init_type = self.get_type_of_node(element_data.initializer);
-                self.ctx.contextual_type = prev_context;
+                    TypingRequest::with_contextual_type(element_type)
+                } else {
+                    TypingRequest::NONE
+                };
+                let init_type =
+                    self.get_type_of_node_with_request(element_data.initializer, &request);
                 if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                     element_type = init_type;
                 } else if !self.is_assignable_to(init_type, element_type) {

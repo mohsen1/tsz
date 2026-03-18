@@ -1,4 +1,5 @@
 //! Function call error reporting (TS2345, TS2554, TS2769).
+use crate::context::TypingRequest;
 use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
@@ -66,12 +67,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
-        let prev_contextual = self.ctx.contextual_type;
         let snap = self.ctx.snapshot_diagnostics();
 
-        self.ctx.contextual_type = None;
-        let ty = self.compute_type_of_node(expr_idx);
-        self.ctx.contextual_type = prev_contextual;
+        let ty = self.compute_type_of_node_with_request(expr_idx, &TypingRequest::NONE);
 
         self.ctx.rollback_diagnostics(&snap);
         ty
