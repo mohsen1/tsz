@@ -72,7 +72,10 @@ if [ "$INSTALL_TS" = true ]; then
         fi
 
         echo "Installing pinned TypeScript $PINNED_VERSION into $PROJECT_DIR ..."
-        (cd "$PROJECT_DIR" && npm install --silent --no-save --no-audit --no-fund --no-package-lock --ignore-scripts "typescript@${PINNED_VERSION}")
+        if ! (cd "$PROJECT_DIR" && npm install --silent --no-save --no-audit --no-fund --no-package-lock --ignore-scripts "typescript@${PINNED_VERSION}"); then
+            echo "Pinned TypeScript install hit peer dependency resolution; retrying with --legacy-peer-deps ..." >&2
+            (cd "$PROJECT_DIR" && npm install --silent --no-save --no-audit --no-fund --no-package-lock --ignore-scripts --legacy-peer-deps "typescript@${PINNED_VERSION}")
+        fi
     fi
 
     if [ -f "$PACKAGE_JSON" ]; then
