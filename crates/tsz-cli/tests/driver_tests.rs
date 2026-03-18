@@ -7652,3 +7652,118 @@ before.toFixed();
         result.diagnostics
     );
 }
+
+// TS18003 should be emitted alongside TS5110 when no input files are found
+// and module/moduleResolution are incompatible.
+#[test]
+fn ts18003_emitted_alongside_ts5110_when_no_inputs() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    // Create a tsconfig with incompatible module/moduleResolution and no source files
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "moduleResolution": "nodenext"
+          }
+        }"#,
+    );
+    // No .ts files — should trigger TS18003
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&5110),
+        "Should emit TS5110 for incompatible module/moduleResolution, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&18003),
+        "Should emit TS18003 when no input files found alongside TS5110, got: {codes:?}"
+    );
+}
+
+// TS18003 should NOT be emitted alongside TS5110 when input files exist
+#[test]
+fn ts18003_not_emitted_when_inputs_exist_with_ts5110() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "moduleResolution": "nodenext"
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&5110), "Should emit TS5110, got: {codes:?}");
+    assert!(
+        !codes.contains(&18003),
+        "Should NOT emit TS18003 when input files exist, got: {codes:?}"
+    );
+}
+
+// TS6059: File not under rootDir should produce diagnostic
+#[test]
+fn ts6059_file_not_under_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    // Create a rootDir of "src" but put a file outside it
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "rootDir": "src"
+          },
+          "include": ["**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+    write_file(&base.join("outside.ts"), "export const y = 2;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&6059),
+        "Should emit TS6059 for file outside rootDir, got: {codes:?}"
+    );
+}
+
+// TS6059 should NOT be emitted when all files are under rootDir
+#[test]
+fn ts6059_not_emitted_when_all_files_under_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "rootDir": "src"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+    write_file(&base.join("src/utils.ts"), "export const y = 2;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&6059),
+        "Should NOT emit TS6059 when all files are under rootDir, got: {codes:?}"
+    );
+}
