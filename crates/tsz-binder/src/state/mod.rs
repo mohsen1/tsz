@@ -393,8 +393,14 @@ impl BinderState {
     /// Called after cloning a binder for the checker, which needs a clean
     /// cache state for its own symbol resolution.
     pub fn clear_resolution_caches(&mut self) {
-        self.resolved_export_cache.write().expect("not poisoned").clear();
-        self.resolved_identifier_cache.write().expect("not poisoned").clear();
+        self.resolved_export_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("not poisoned")
+            .clear();
     }
 }
 
