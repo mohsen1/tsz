@@ -3171,9 +3171,7 @@ fn test_extract_variable_from_binary_expression() {
     );
 
     assert!(
-        actions
-            .iter()
-            .any(|a| a.title.contains("Extract")),
+        actions.iter().any(|a| a.title.contains("Extract")),
         "Should offer extract for binary expression"
     );
 }
@@ -3363,9 +3361,7 @@ fn test_extract_variable_array_expression() {
     );
 
     assert!(
-        actions
-            .iter()
-            .any(|a| a.title.contains("Extract")),
+        actions.iter().any(|a| a.title.contains("Extract")),
         "Should offer extract for array expression"
     );
 }
