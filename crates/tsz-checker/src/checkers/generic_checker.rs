@@ -4,7 +4,6 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // =============================================================================
