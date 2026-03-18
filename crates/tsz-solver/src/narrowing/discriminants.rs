@@ -77,6 +77,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Collect all property names from all members
         let mut all_properties: Vec<Atom> = Vec::new();
+        let mut seen_properties: FxHashSet<Atom> = FxHashSet::default();
         let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::new();
 
         for &member in members.iter() {
@@ -88,9 +89,9 @@ impl<'a> NarrowingContext<'a> {
                     .map(|p| (p.name, p.type_id))
                     .collect();
 
-                // Track all property names
+                // Track all property names (O(1) per insert with HashSet)
                 for (name, _) in &props_vec {
-                    if !all_properties.contains(name) {
+                    if seen_properties.insert(*name) {
                         all_properties.push(*name);
                     }
                 }
@@ -107,7 +108,7 @@ impl<'a> NarrowingContext<'a> {
         for prop_name in &all_properties {
             let mut is_discriminant = true;
             let mut variants: Vec<(TypeId, TypeId)> = Vec::new();
-            let mut seen_literals: Vec<TypeId> = Vec::new();
+            let mut seen_literals: FxHashSet<TypeId> = FxHashSet::default();
 
             for (i, props) in member_props.iter().enumerate() {
                 // Find this property in the member
@@ -132,12 +133,11 @@ impl<'a> NarrowingContext<'a> {
                                 is_discriminant = false;
                                 break;
                             };
-                        // Must be unique among members
-                        if seen_literals.contains(&check_ty) {
+                        // Must be unique among members (O(1) with HashSet)
+                        if !seen_literals.insert(check_ty) {
                             is_discriminant = false;
                             break;
                         }
-                        seen_literals.push(check_ty);
                         variants.push((check_ty, members[i]));
                     }
                     None => {
