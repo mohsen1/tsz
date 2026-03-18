@@ -18,7 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench/bench-vs-tsgo.sh"
 
-DEFAULT_FILTER='^(BCT candidates=50|BCT candidates=100|BCT candidates=200|Constraint conflicts N=50|Constraint conflicts N=100|Constraint conflicts N=200|CFA branches=50|CFA branches=100|CFA branches=150)$'
+# Focus on current benchmark losers (2026-03-18 analysis):
+# - Optional-chain/CFA: the biggest loss cluster
+# - Union members: discriminant narrowing and property resolution scaling
+# - Generic functions: inference/constraint conflicts at high N
+# - Classes: heritage/member closure at high N
+# - ts-essentials: real-world complex type computation
+DEFAULT_FILTER='^(Shallow optional-chain N=400|DeepPartial optional-chain N=400|200 union members|200 classes|200 generic functions|Constraint conflicts N=200|CFA branches=150|ts-essentials/xor\.ts|ts-essentials/deep-readonly\.ts)$'
 FILTER="$DEFAULT_FILTER"
 JSON_FILE="$PROJECT_ROOT/artifacts/perf/hotspots-$(date +%Y%m%d-%H%M%S).json"
 QUICK_MODE=false
