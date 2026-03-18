@@ -342,6 +342,7 @@ pub struct Completions<'a> {
 mod context;
 mod core;
 mod filters;
+pub mod import_paths;
 mod member;
 pub mod postfix;
 mod render;
