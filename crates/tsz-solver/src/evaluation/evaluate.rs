@@ -422,7 +422,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             base = app.base.0,
             base_key = ?base_key,
             def_id = ?def_id,
-            args = ?app.args.iter().map(|a| a.0).collect::<Vec<_>>(),
+            num_args = app.args.len(),
             "evaluate_application"
         );
         // If the base is a DefId (Lazy, Ref, or TypeQuery), try to resolve and instantiate

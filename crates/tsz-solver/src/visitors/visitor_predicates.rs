@@ -417,6 +417,12 @@ where
     F: Fn(&TypeData) -> bool,
 {
     fn check(&mut self, type_id: TypeId) -> bool {
+        // Fast path: intrinsic types (primitives, any, never, etc.) have no subtypes
+        // and can never contain nested type structures.
+        if type_id.is_intrinsic() {
+            return false;
+        }
+
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
