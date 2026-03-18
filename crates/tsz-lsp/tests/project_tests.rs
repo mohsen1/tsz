@@ -4292,3 +4292,108 @@ class Document implements Printable {
     // This may or may not find results depending on how file-local impl search works
     let _ = impls;
 }
+
+#[test]
+fn test_project_cross_file_subtypes() {
+    let mut project = Project::new();
+    project.set_file(
+        "base.ts".to_string(),
+        r#"export class Animal {
+    name: string;
+}
+"#
+        .to_string(),
+    );
+    project.set_file(
+        "dog.ts".to_string(),
+        r#"import { Animal } from './base';
+class Dog extends Animal {
+    breed: string;
+}
+"#
+        .to_string(),
+    );
+    project.set_file(
+        "cat.ts".to_string(),
+        r#"import { Animal } from './base';
+class Cat extends Animal {
+    indoor: boolean;
+}
+"#
+        .to_string(),
+    );
+
+    // Position on "Animal" class name in base.ts (line 0, char 13)
+    let subtypes = project.subtypes("base.ts", Position::new(0, 13));
+    // Should find subtypes from other files (Dog and Cat)
+    let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"Dog"),
+        "Should find Dog as a subtype of Animal across files, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"Cat"),
+        "Should find Cat as a subtype of Animal across files, got: {names:?}"
+    );
+}
+
+#[test]
+fn test_project_cross_file_supertypes() {
+    let mut project = Project::new();
+    project.set_file(
+        "base.ts".to_string(),
+        r#"export class Vehicle {
+    wheels: number;
+}
+"#
+        .to_string(),
+    );
+    project.set_file(
+        "car.ts".to_string(),
+        r#"import { Vehicle } from './base';
+class Car extends Vehicle {
+    doors: number;
+}
+"#
+        .to_string(),
+    );
+
+    // Position on "Car" class name in car.ts (line 1, char 6)
+    let supertypes = project.supertypes("car.ts", Position::new(1, 6));
+    let names: Vec<&str> = supertypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"Vehicle"),
+        "Should find Vehicle as a supertype of Car across files, got: {names:?}"
+    );
+}
+
+#[test]
+fn test_project_cross_file_incoming_calls() {
+    let mut project = Project::new();
+    project.set_file(
+        "utils.ts".to_string(),
+        r#"export function helper() {
+    return 42;
+}
+"#
+        .to_string(),
+    );
+    project.set_file(
+        "main.ts".to_string(),
+        r#"import { helper } from './utils';
+function main() {
+    helper();
+}
+"#
+        .to_string(),
+    );
+
+    // Position on "helper" function name in utils.ts (line 0, char 16)
+    let incoming = project.get_incoming_calls("utils.ts", Position::new(0, 16));
+    // Should find the call from main.ts
+    let caller_names: Vec<&str> = incoming.iter().map(|c| c.from.name.as_str()).collect();
+    assert!(
+        caller_names.contains(&"main"),
+        "Should find 'main' as a caller of 'helper' across files, got: {caller_names:?}"
+    );
+}
