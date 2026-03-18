@@ -708,7 +708,7 @@ impl TypeInterner {
         }
 
         // Double-check: another thread might have inserted while we allocated
-        match inner.key_to_index.entry(key.clone()) {
+        match inner.key_to_index.entry(key) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
                 inner.index_to_key.insert(local_index, key);

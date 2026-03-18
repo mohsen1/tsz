@@ -467,7 +467,7 @@ impl<'a> TypeInstantiator<'a> {
                         shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
-                    return self.interner.intern(key.clone());
+                    return self.interner.intern(*key);
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
                     tracing::trace!(
@@ -496,13 +496,13 @@ impl<'a> TypeInstantiator<'a> {
                         }
                     }
                     // No substitution and no instantiated constraint, return original
-                    self.interner.intern(key.clone())
+                    self.interner.intern(*key)
                 }
             }
 
             // Intrinsics don't change
             TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => {
-                self.interner.intern(key.clone())
+                self.interner.intern(*key)
             }
 
             // Lazy types might resolve to something that needs substitution
@@ -511,7 +511,7 @@ impl<'a> TypeInstantiator<'a> {
             | TypeData::BoundParameter(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => self.interner.intern(key.clone()),
+            | TypeData::ModuleNamespace(_) => self.interner.intern(*key),
 
             // Enum types: instantiate the member type (structural part)
             // The DefId (nominal identity) stays the same
@@ -533,7 +533,7 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(this_type) = self.this_type {
                     this_type
                 } else {
-                    self.interner.intern(key.clone())
+                    self.interner.intern(*key)
                 }
             }
 
