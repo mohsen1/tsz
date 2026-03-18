@@ -1,5 +1,6 @@
 //! Class constructor type resolution (static members, construct signatures, inheritance).
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -487,22 +488,20 @@ impl<'a> CheckerState<'a> {
                         // arrow/function expression initializers get parameter inference.
                         // Without this, `(arg) => {}` initializers would see the whole
                         // interface as contextual type instead of the specific member type.
-                        let prev_ctx = self.ctx.contextual_type;
                         let mut has_contextual_member = false;
-                        if let Some(ctx_type) = self.ctx.contextual_type {
+                        let member_ctx_type = self.ctx.contextual_type.and_then(|ctx_type| {
                             let resolved = self.evaluate_type_for_assignability(ctx_type);
                             let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
                                 self.ctx.types,
                                 resolved,
                             );
-                            if let Some(member_type) = ctx_helper.get_property_type(&name)
-                                && member_type != TypeId::ANY
-                                && !self.type_contains_error(member_type)
-                            {
-                                has_contextual_member = true;
-                                self.ctx.contextual_type = Some(member_type);
-                                self.clear_type_cache_recursive(prop.initializer);
-                            }
+                            ctx_helper
+                                .get_property_type(&name)
+                                .filter(|&mt| mt != TypeId::ANY && !self.type_contains_error(mt))
+                        });
+                        if member_ctx_type.is_some() {
+                            has_contextual_member = true;
+                            self.clear_type_cache_recursive(prop.initializer);
                         }
                         let prev_sym_cached = current_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
@@ -555,7 +554,11 @@ impl<'a> CheckerState<'a> {
                         // caching a widened type (e.g., "a" → string). We need the
                         // literal type for the constructor type's static properties.
                         self.clear_type_cache_recursive(prop.initializer);
-                        let init_type = self.get_type_of_node(prop.initializer);
+                        let member_request = member_ctx_type
+                            .map(TypingRequest::with_contextual_type)
+                            .unwrap_or(TypingRequest::NONE);
+                        let init_type =
+                            self.get_type_of_node_with_request(prop.initializer, &member_request);
                         self.ctx.this_type_stack.pop();
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
@@ -588,7 +591,6 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.remove(&name_sym);
                             }
                         }
-                        self.ctx.contextual_type = prev_ctx;
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = false;
                         }

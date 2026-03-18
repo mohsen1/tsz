@@ -5,6 +5,7 @@
 //! and performing two-pass generic inference when needed.
 
 use super::complex::is_contextually_sensitive;
+use crate::context::TypingRequest;
 use crate::query_boundaries::assignability::contains_type_parameters;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
@@ -200,10 +201,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let ctx_type = ctx_helper
                             .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
-                        let prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = ctx_type;
-                        let arg_type = self.get_type_of_node(expr_idx);
-                        self.ctx.contextual_type = prev_context;
+                        let request = match ctx_type {
+                            Some(ty) => TypingRequest::with_contextual_type(ty),
+                            None => TypingRequest::NONE,
+                        };
+                        let arg_type = self.get_type_of_node_with_request(expr_idx, &request);
                         round1_arg_types.push(arg_type);
                     }
                 }
@@ -252,12 +254,15 @@ impl<'a> CheckerState<'a> {
                             let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
                             self.evaluate_type_with_env(instantiated)
                         });
-                    let prev_context = self.ctx.contextual_type;
-                    if is_contextually_sensitive(self, expr_idx) {
-                        self.ctx.contextual_type = ctx_type;
-                    }
-                    let actual_type = self.get_type_of_node(expr_idx);
-                    self.ctx.contextual_type = prev_context;
+                    let request = if is_contextually_sensitive(self, expr_idx) {
+                        match ctx_type {
+                            Some(ty) => TypingRequest::with_contextual_type(ty),
+                            None => TypingRequest::NONE,
+                        }
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    let actual_type = self.get_type_of_node_with_request(expr_idx, &request);
 
                     // Check argument assignability against expected parameter type (TS2345).
                     // tsc reports only the first argument mismatch per tagged template call.
@@ -295,10 +300,11 @@ impl<'a> CheckerState<'a> {
         let mut reported_arg_error = false;
         for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
             let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
-            let prev_context = self.ctx.contextual_type;
-            self.ctx.contextual_type = ctx_type;
-            let actual_type = self.get_type_of_node(expr_idx);
-            self.ctx.contextual_type = prev_context;
+            let request = match ctx_type {
+                Some(ty) => TypingRequest::with_contextual_type(ty),
+                None => TypingRequest::NONE,
+            };
+            let actual_type = self.get_type_of_node_with_request(expr_idx, &request);
 
             // Check argument assignability against expected parameter type (TS2345).
             // tsc reports only the first argument mismatch per tagged template call,

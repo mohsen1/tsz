@@ -1954,16 +1954,10 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
-        // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
-        // non-fresh object types at interning time.
+        // Freshness tracked on TypeId via ObjectFlags (fixes "Zombie Freshness" bug).
 
-        // When type-parameter-containing types were spread alongside explicit
-        // properties, create an intersection to preserve the generic identity.
-        // E.g., `{ ...rest, b: a }` where `rest: T` produces `T & { b: string }`
-        // instead of just `{ b: string }`. This ensures the return type of
-        // generic functions contains the type parameter, enabling proper
-        // instantiation at call sites.
+        // Spread generic types create intersection: `{ ...rest, b: a }` where `rest: T`
+        // produces `T & { b: string }` to preserve type parameter for instantiation.
         let object_type = if !generic_spread_types.is_empty() {
             let mut members = generic_spread_types;
             members.push(object_type);

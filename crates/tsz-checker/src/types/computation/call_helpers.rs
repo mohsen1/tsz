@@ -1,5 +1,6 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeArena;
@@ -650,11 +651,10 @@ impl<'a> CheckerState<'a> {
                         .extract_non_sensitive_object_type(prop.initializer)
                         .unwrap_or_else(|| {
                             // Compute type without contextual type
-                            let prev_context = self.ctx.contextual_type;
-                            self.ctx.contextual_type = None;
-                            let value_type = self.get_type_of_node(prop.initializer);
-                            self.ctx.contextual_type = prev_context;
-                            value_type
+                            self.get_type_of_node_with_request(
+                                prop.initializer,
+                                &TypingRequest::NONE,
+                            )
                         });
 
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -678,12 +678,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
                 && let Some(name) = self.property_name_for_error(method.name)
             {
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type = None;
                 // Use get_type_of_function for methods — get_type_of_node
                 // doesn't handle METHOD_DECLARATION as expression nodes.
-                let value_type = self.get_type_of_function(elem_idx);
-                self.ctx.contextual_type = prev_context;
+                let value_type =
+                    self.get_type_of_function_with_request(elem_idx, &TypingRequest::NONE);
                 let name_atom = self.ctx.types.intern_string(&name);
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -760,10 +758,8 @@ impl<'a> CheckerState<'a> {
                     // Non-sensitive: compute type without context (already handled by
                     // extract_non_sensitive_object_type, but include here for completeness
                     // of the partial type).
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = None;
-                    let value_type = self.get_type_of_node(prop.initializer);
-                    self.ctx.contextual_type = prev_context;
+                    let value_type =
+                        self.get_type_of_node_with_request(prop.initializer, &TypingRequest::NONE);
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
                     continue;
                 }
@@ -781,12 +777,10 @@ impl<'a> CheckerState<'a> {
                 if self.type_contains_any_type_param(target_prop_type, type_param_names)
                     && tsz_solver::type_param_info(self.ctx.types, target_prop_type).is_some()
                 {
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = None;
                     let snap = self.ctx.snapshot_diagnostics();
-                    let value_type = self.get_type_of_node(prop.initializer);
+                    let value_type =
+                        self.get_type_of_node_with_request(prop.initializer, &TypingRequest::NONE);
                     self.ctx.rollback_diagnostics(&snap);
-                    self.ctx.contextual_type = prev_context;
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
                     continue;
                 }
@@ -828,15 +822,14 @@ impl<'a> CheckerState<'a> {
                 // The contextual param types are concrete, so we can safely type this
                 // lambda with those contextual types and extract its return type.
                 // Use the target function type as contextual type for the lambda.
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type = Some(target_prop_type);
-
                 // Suppress diagnostics from this speculative evaluation
                 // (the params WILL get contextual types in the final pass).
                 let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_node(prop.initializer);
+                let value_type = self.get_type_of_node_with_request(
+                    prop.initializer,
+                    &TypingRequest::with_contextual_type(target_prop_type),
+                );
                 self.ctx.rollback_diagnostics(&snap);
-                self.ctx.contextual_type = prev_context;
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -878,12 +871,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type = Some(target_prop_type);
                 let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_function(elem_idx);
+                let value_type = self.get_type_of_function_with_request(
+                    elem_idx,
+                    &TypingRequest::with_contextual_type(target_prop_type),
+                );
                 self.ctx.rollback_diagnostics(&snap);
-                self.ctx.contextual_type = prev_context;
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -935,10 +928,7 @@ impl<'a> CheckerState<'a> {
 
             if !is_contextually_sensitive(self, elem_idx) {
                 // Non-sensitive: compute type without context
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type = None;
-                let value_type = self.get_type_of_node(elem_idx);
-                self.ctx.contextual_type = prev_context;
+                let value_type = self.get_type_of_node_with_request(elem_idx, &TypingRequest::NONE);
                 elements.push(tsz_solver::TupleElement {
                     type_id: value_type,
                     optional: false,
@@ -959,12 +949,12 @@ impl<'a> CheckerState<'a> {
                 .all(|param| !self.type_contains_any_type_param(param.type_id, type_param_names));
 
             if params_are_concrete {
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type = Some(target_elem_type);
                 let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_node(elem_idx);
+                let value_type = self.get_type_of_node_with_request(
+                    elem_idx,
+                    &TypingRequest::with_contextual_type(target_elem_type),
+                );
                 self.ctx.rollback_diagnostics(&snap);
-                self.ctx.contextual_type = prev_context;
                 elements.push(tsz_solver::TupleElement {
                     type_id: value_type,
                     optional: false,

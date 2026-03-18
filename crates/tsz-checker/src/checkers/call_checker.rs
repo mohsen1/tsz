@@ -1,6 +1,7 @@
 //! Call expression checking (overload resolution, contextual typing, signature instantiation).
 
 use crate::computation::complex::is_contextually_sensitive;
+use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,
@@ -249,10 +250,11 @@ impl<'a> CheckerState<'a> {
                     .get(i)
                     .copied()
                     .unwrap_or(tsz_solver::TypeId::UNKNOWN);
-                let expected_param_type = expected_params
-                    .get(i)
-                    .copied()
-                    .unwrap_or_else(|| *expected_params.last().unwrap());
+                let expected_param_type = expected_params.get(i).copied().unwrap_or_else(|| {
+                    *expected_params
+                        .last()
+                        .expect("expected_params should not be empty")
+                });
                 // Parameter types conflict if the actual is NOT assignable to expected.
                 !self.is_assignable_to(actual_param_type, expected_param_type)
             })
@@ -1053,26 +1055,20 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            let prev_context = self.ctx.contextual_type;
-            if apply_contextual {
-                self.ctx.contextual_type = expected_context_type;
-            } else {
-                // Non-sensitive argument expressions should not inherit an outer
-                // contextual type (e.g. variable-initializer context) because that
-                // can trigger unnecessary contextual resolution work.
-                self.ctx.contextual_type = None;
-            }
             let skip_flow = !apply_contextual && self.can_skip_flow_narrowing_for_argument(arg_idx);
-            let prev_skip_flow = self.ctx.skip_flow_narrowing;
-            if skip_flow {
-                self.ctx.skip_flow_narrowing = true;
-            }
+            let request = if apply_contextual {
+                match expected_context_type {
+                    Some(ty) => TypingRequest::with_contextual_type(ty),
+                    None => TypingRequest::NONE,
+                }
+            } else if skip_flow {
+                TypingRequest::for_write_context()
+            } else {
+                TypingRequest::NONE
+            };
 
             let arg_snap = self.ctx.snapshot_diagnostics();
-            let arg_type = self.get_type_of_node(arg_idx);
-            if skip_flow {
-                self.ctx.skip_flow_narrowing = prev_skip_flow;
-            }
+            let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
 
             let is_direct_function_arg = self.ctx.arena.get(arg_idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -1184,7 +1180,6 @@ impl<'a> CheckerState<'a> {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }
 
-            self.ctx.contextual_type = prev_context;
             if pushed_this_type {
                 self.ctx.this_type_stack.pop();
             }

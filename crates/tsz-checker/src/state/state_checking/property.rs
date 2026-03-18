@@ -2,6 +2,7 @@
 //!
 //! Readonly assignment checking lives in the sibling `readonly` module.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use std::collections::HashSet;
@@ -31,11 +32,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
-                        let prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = Some(contextual_type);
+                        let request = TypingRequest::with_contextual_type(contextual_type);
                         self.clear_type_cache_recursive(prop.initializer);
-                        self.get_type_of_node(prop.initializer);
-                        self.ctx.contextual_type = prev_context;
+                        self.get_type_of_node_with_request(prop.initializer, &request);
                     } else {
                         self.check_for_nested_function_ts7006(prop.initializer);
                     }
@@ -51,11 +50,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
-                        let prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = Some(contextual_type);
+                        let request = TypingRequest::with_contextual_type(contextual_type);
                         self.clear_type_cache_recursive(elem_idx);
-                        self.get_type_of_function(elem_idx);
-                        self.ctx.contextual_type = prev_context;
+                        self.get_type_of_function_with_request(elem_idx, &request);
                     } else {
                         for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
                             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -80,11 +77,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
-                        let prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = Some(contextual_type);
+                        let request = TypingRequest::with_contextual_type(contextual_type);
                         self.clear_type_cache_recursive(elem_idx);
-                        self.get_type_of_function(elem_idx);
-                        self.ctx.contextual_type = prev_context;
+                        self.get_type_of_function_with_request(elem_idx, &request);
                     } else {
                         for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
                             if let Some(param_node) = self.ctx.arena.get(param_idx)

@@ -1,5 +1,6 @@
 //! Function parameter validation (duplicates, ordering, initializers).
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -733,18 +734,14 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-            let prev_context = self.ctx.contextual_type;
-            if let Some(dt) = declared_type
-                && dt != TypeId::ANY
-            {
-                self.ctx.contextual_type = Some(dt);
-            }
+            let request = match declared_type {
+                Some(dt) if dt != TypeId::ANY => TypingRequest::with_contextual_type(dt),
+                _ => TypingRequest::NONE,
+            };
 
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
             // This must happen regardless of whether there's a type annotation.
-            let init_type = self.get_type_of_node(param.initializer);
-
-            self.ctx.contextual_type = prev_context;
+            let init_type = self.get_type_of_node_with_request(param.initializer, &request);
 
             // Only check type assignability if there's a type annotation
             let Some(declared_type) = declared_type else {

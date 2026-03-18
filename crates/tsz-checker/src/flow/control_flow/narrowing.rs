@@ -1429,15 +1429,5 @@ fn callable_returns_only_false_or_never(
 
 /// Returns true if the type is exclusively composed of `false` literals and/or `never`.
 fn is_only_false_or_never(interner: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
-        return true;
-    }
-    match interner.lookup(type_id) {
-        Some(tsz_solver::TypeData::Literal(tsz_solver::LiteralValue::Boolean(false))) => true,
-        Some(tsz_solver::TypeData::Union(list_id)) => {
-            let members = interner.type_list(list_id);
-            members.iter().all(|&m| is_only_false_or_never(interner, m))
-        }
-        _ => false,
-    }
+    tsz_solver::type_queries::is_only_false_or_never(interner, type_id)
 }

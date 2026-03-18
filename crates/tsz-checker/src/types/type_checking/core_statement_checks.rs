@@ -3,6 +3,7 @@
 //!
 //! Extracted from `core.rs` to keep module size manageable.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -69,7 +70,6 @@ impl<'a> CheckerState<'a> {
             // TS1359: Check for await expressions outside async function
             self.check_await_expression(return_data.expression);
 
-            let prev_context = self.ctx.contextual_type;
             let should_contextualize =
                 self.ctx
                     .arena
@@ -77,7 +77,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|expr_node| {
                         expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
                     });
-            if should_contextualize
+            let request = if should_contextualize
                 && expected_type != TypeId::ANY
                 && !self.type_contains_error(expected_type)
             {
@@ -105,28 +105,30 @@ impl<'a> CheckerState<'a> {
                 // Only apply when expected_type is the unwrapped T (not a union or Promise).
                 // If expected_type is already a union or Promise-like, the transformation
                 // would create nonsensical nested types.
-                if use_async_promise_union_context {
+                let ctx_type = if use_async_promise_union_context {
                     let promise_like_t = self.get_promise_like_type(expected_type);
                     let promise_t = self.get_promise_type(expected_type);
                     let mut members = vec![expected_type, promise_like_t];
                     if let Some(pt) = promise_t {
                         members.push(pt);
                     }
-                    let union_context = self.ctx.types.factory().union(members);
-                    self.ctx.contextual_type = Some(union_context);
+                    self.ctx.types.factory().union(members)
                 } else {
-                    self.ctx.contextual_type = Some(expected_type);
-                }
+                    expected_type
+                };
                 // Clear cached type to force recomputation with contextual type
                 // This is necessary because the expression might have been previously typed
                 // without contextual information (e.g., during function body analysis)
                 self.clear_type_cache_recursive(return_data.expression);
-            }
-            let mut return_type = self.get_type_of_node(return_data.expression);
+                TypingRequest::with_contextual_type(ctx_type)
+            } else {
+                TypingRequest::NONE
+            };
+            let mut return_type =
+                self.get_type_of_node_with_request(return_data.expression, &request);
             if self.ctx.in_async_context() {
                 return_type = self.unwrap_promise_type(return_type).unwrap_or(return_type);
             }
-            self.ctx.contextual_type = prev_context;
             return_type
         } else {
             // `return;` without expression returns undefined

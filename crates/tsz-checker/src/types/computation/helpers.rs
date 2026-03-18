@@ -2,6 +2,7 @@
 //! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -311,10 +312,12 @@ impl<'a> CheckerState<'a> {
             };
 
         // Compute branch types with the outer contextual type for inference.
-        // Branch typing may mutate contextual state while recursing, so restore
-        // it explicitly before each branch.
-        self.ctx.contextual_type = prev_context
+        // Use per-branch requests so each branch gets its own narrowed contextual type.
+        let true_ctx = prev_context
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_true));
+        let true_request = true_ctx
+            .map(TypingRequest::with_contextual_type)
+            .unwrap_or(TypingRequest::NONE);
         let when_true = if condition_is_false {
             // Dead branch — suppress diagnostics but still compute type.
             // Must save/restore BOTH the diagnostics vec AND the dedup set,
@@ -322,32 +325,34 @@ impl<'a> CheckerState<'a> {
             // diagnostic from being emitted later by the regular checker pass
             // (e.g. TS8010 grammar errors in JS files).
             let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node(cond.when_true);
+            let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
             self.ctx.rollback_diagnostics(&snap);
             ty
         } else {
             let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node(cond.when_true);
+            let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
             suppress_contextual_branch_ts2322(self, cond.when_true, &snap);
             ty
         };
 
-        self.ctx.contextual_type = prev_context
+        let false_ctx = prev_context
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_false));
+        let false_request = false_ctx
+            .map(TypingRequest::with_contextual_type)
+            .unwrap_or(TypingRequest::NONE);
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
             let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node(cond.when_false);
+            let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
             self.ctx.rollback_diagnostics(&snap);
             ty
         } else {
             let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node(cond.when_false);
+            let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
             suppress_contextual_branch_ts2322(self, cond.when_false, &snap);
             ty
         };
 
-        self.ctx.contextual_type = prev_context;
         self.ctx.preserve_literal_types = prev_preserve;
 
         // Do NOT widen branch literal types here. In tsc, conditional expressions

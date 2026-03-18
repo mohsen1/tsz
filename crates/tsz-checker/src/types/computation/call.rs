@@ -112,7 +112,10 @@ impl<'a> CheckerState<'a> {
 
         // For IIFEs, wrap the contextual type into a callable type so
         // the function expression resolver can extract the return type.
-        let saved_contextual_for_iife = self.setup_iife_contextual_type(call.expression);
+        let iife_info = self.setup_iife_contextual_type(call.expression);
+        if let Some((wrapper_fn, _original_ctx)) = iife_info {
+            self.ctx.contextual_type = Some(wrapper_fn);
+        }
 
         // Get the type of the callee
         let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
@@ -2490,7 +2493,7 @@ impl<'a> CheckerState<'a> {
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,
         };
-        if let Some(original_ctx) = saved_contextual_for_iife {
+        if let Some((_wrapper_fn, original_ctx)) = iife_info {
             self.ctx.contextual_type = Some(original_ctx);
         }
         self.handle_call_result(result, call_context)

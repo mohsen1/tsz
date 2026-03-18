@@ -340,3 +340,22 @@ pub fn classify_for_augmentation(db: &dyn TypeDatabase, type_id: TypeId) -> Augm
         _ => AugmentationTargetKind::Other,
     }
 }
+
+/// Returns true if the type is exclusively composed of `false` literals and/or `never`.
+///
+/// Used by the checker to validate non-predicate members in a union of callables:
+/// TSC permits a union to act as a type guard only when non-predicate members
+/// can never return a truthy value.
+pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NEVER || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(crate::LiteralValue::Boolean(false))) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_only_false_or_never(db, m))
+        }
+        _ => false,
+    }
+}
