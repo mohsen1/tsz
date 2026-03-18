@@ -724,7 +724,6 @@ impl TypeInterner {
     ///
     /// This uses lock-free `DashMap` access with lazy shard initialization.
     #[inline]
-    #[inline]
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
