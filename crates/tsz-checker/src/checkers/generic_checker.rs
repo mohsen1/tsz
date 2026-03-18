@@ -4,6 +4,7 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -118,14 +119,28 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
                 && self.is_descendant_type_node(arg_idx, cond.true_type)
-                && self.type_nodes_structurally_equal(arg_idx, cond.check_type)
             {
-                let extends_type = self.get_type_from_type_node(cond.extends_type);
-                if extends_type != TypeId::ERROR
-                    && (extends_type == constraint
-                        || (self.is_assignable_to(extends_type, constraint)
-                            && self.is_assignable_to(constraint, extends_type)))
-                {
+                // Case 1: The type arg IS the check type (e.g., `T extends U ? X<T> : never`).
+                // Suppress when the extends type satisfies the required constraint.
+                if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
+                    let extends_type = self.get_type_from_type_node(cond.extends_type);
+                    if extends_type != TypeId::ERROR
+                        && (extends_type == constraint
+                            || (self.is_assignable_to(extends_type, constraint)
+                                && self.is_assignable_to(constraint, extends_type)))
+                    {
+                        return true;
+                    }
+                }
+
+                // Case 2: The type arg is derived from the check type (e.g.,
+                // `T extends O ? X<ReturnType<T['m']>> : never`). In the true branch,
+                // TSC wraps the check type with a substitute type carrying the extends
+                // constraint. Any use of the check type in the true branch benefits
+                // from this constraint, so TS2344 checks are deferred to instantiation
+                // time. Suppress when the arg contains a syntactic reference to the
+                // conditional's check type.
+                if self.type_node_contains_reference(arg_idx, cond.check_type) {
                     return true;
                 }
             }
@@ -134,6 +149,25 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_extended(parent_idx)
                 .map(|ext| ext.parent);
+        }
+        false
+    }
+
+    /// Check if `node_idx` contains a syntactic reference to a type node that
+    /// is structurally equal to `target_type_node`. Used to detect when a type
+    /// argument like `T['m']` references the conditional's check type `T`.
+    fn type_node_contains_reference(
+        &self,
+        node_idx: NodeIndex,
+        target_type_node: NodeIndex,
+    ) -> bool {
+        if self.type_nodes_structurally_equal(node_idx, target_type_node) {
+            return true;
+        }
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.type_node_contains_reference(child_idx, target_type_node) {
+                return true;
+            }
         }
         false
     }
