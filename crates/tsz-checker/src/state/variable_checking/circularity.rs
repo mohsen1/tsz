@@ -25,8 +25,7 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn suppress_circular_initializer_relation_diagnostics(
         &mut self,
-        diag_start: usize,
-        emitted_before: &rustc_hash::FxHashSet<(u32, u32)>,
+        snap: &crate::context::speculation::DiagnosticSnapshot,
         init_idx: NodeIndex,
     ) {
         let Some(init_node) = self.ctx.arena.get(init_idx) else {
@@ -34,25 +33,12 @@ impl<'a> CheckerState<'a> {
         };
         let init_start = init_node.pos;
         let init_end = init_node.end;
-        let kept_new_diags: Vec<_> = self.ctx.diagnostics[diag_start..]
-            .iter()
-            .filter(|diag| {
-                let in_initializer = diag.start >= init_start && diag.start <= init_end;
-                let is_downstream_relation_noise =
-                    matches!(diag.code, 2322 | 2345 | 2769) && in_initializer;
-                !is_downstream_relation_noise
-            })
-            .cloned()
-            .collect();
-
-        self.ctx.diagnostics.truncate(diag_start);
-        self.ctx.diagnostics.extend(kept_new_diags.iter().cloned());
-        self.ctx.emitted_diagnostics = emitted_before.clone();
-        for diag in &kept_new_diags {
-            self.ctx
-                .emitted_diagnostics
-                .insert(self.ctx.diagnostic_dedup_key(diag));
-        }
+        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            let in_initializer = diag.start >= init_start && diag.start <= init_end;
+            let is_downstream_relation_noise =
+                matches!(diag.code, 2322 | 2345 | 2769) && in_initializer;
+            !is_downstream_relation_noise
+        });
     }
 
     pub(super) fn emit_circular_return_site_diagnostic(
