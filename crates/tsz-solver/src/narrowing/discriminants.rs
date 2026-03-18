@@ -9,6 +9,10 @@
 //! - `narrow_by_discriminant`: Narrows to matching union members
 //! - `narrow_by_excluding_discriminant`: Excludes matching union members
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+
 use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::relations::subtype::is_subtype_of;
@@ -347,6 +351,17 @@ impl<'a> NarrowingContext<'a> {
         literal_value: TypeId,
         keep_matching: bool,
     ) -> Option<TypeId> {
+        // PERF: For keep_matching (true branch), use discriminant index for O(1)
+        // lookup instead of O(N) member iteration. This is the common case in
+        // switch-case narrowing where each case clause matches one member.
+        if keep_matching && members.len() >= 8 {
+            if let Some(result) =
+                self.fast_narrow_via_discriminant_index(original_union_type, members, property, literal_value)
+            {
+                return Some(result);
+            }
+        }
+
         let mut kept = Vec::with_capacity(members.len());
 
         for &member in members {
@@ -382,6 +397,79 @@ impl<'a> NarrowingContext<'a> {
         }
 
         Some(union_or_single_preserve(self.db, kept))
+    }
+
+    /// O(1) discriminant narrowing using a cached index.
+    /// Builds the index once per (union, property) pair, then returns matching members
+    /// in O(1) for each literal value lookup.
+    fn fast_narrow_via_discriminant_index(
+        &self,
+        original_union_type: TypeId,
+        members: &[TypeId],
+        property: Atom,
+        literal_value: TypeId,
+    ) -> Option<TypeId> {
+        let cache_key = (original_union_type, property);
+
+        // Check if index is already built
+        let existing = self.cache.discriminant_index.borrow().get(&cache_key).cloned();
+
+        let index = if let Some(idx) = existing {
+            idx
+        } else {
+            // Build the discriminant index: literal_value → Vec<matching_members>
+            let mut index_map: FxHashMap<TypeId, Vec<TypeId>> = FxHashMap::default();
+            let mut any_unknown_members: Vec<TypeId> = Vec::new();
+            let mut has_non_indexable = false;
+
+            for &member in members {
+                if member.is_any_or_unknown() {
+                    any_unknown_members.push(member);
+                    continue;
+                }
+                match self.get_top_level_property_type_fast(member, property) {
+                    Some(prop_type) => {
+                        index_map.entry(prop_type).or_default().push(member);
+                    }
+                    None => {
+                        // Member doesn't have a simple property lookup — can't index
+                        has_non_indexable = true;
+                        break;
+                    }
+                }
+            }
+
+            if has_non_indexable {
+                return None; // Fall back to linear scan
+            }
+
+            // Add any/unknown members to every bucket (they always match)
+            if !any_unknown_members.is_empty() {
+                for bucket in index_map.values_mut() {
+                    bucket.extend_from_slice(&any_unknown_members);
+                }
+            }
+
+            let index = Arc::new(index_map);
+            self.cache
+                .discriminant_index
+                .borrow_mut()
+                .insert(cache_key, Arc::clone(&index));
+            index
+        };
+
+        // O(1) lookup
+        match index.get(&literal_value) {
+            Some(matching) if matching.is_empty() => Some(TypeId::NEVER),
+            Some(matching) if matching.len() == 1 => Some(matching[0]),
+            Some(matching) => Some(self.db.union(matching.clone())),
+            None => {
+                // No exact match — try subtype matching for non-literal discriminants
+                // This handles cases like `type: string` matching `type: "specific"`.
+                // Fall back to linear scan for these edge cases.
+                None
+            }
+        }
     }
 
     /// Narrow a union type based on a discriminant property check.
