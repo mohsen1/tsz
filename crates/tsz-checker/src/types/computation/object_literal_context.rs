@@ -404,17 +404,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let prev_context = self.ctx.contextual_type;
-        if target_type != TypeId::ANY
+        let request = if target_type != TypeId::ANY
             && target_type != TypeId::NEVER
             && target_type != TypeId::UNKNOWN
             && !self.type_contains_error(target_type)
         {
-            self.ctx.contextual_type =
-                self.contextual_type_option_for_expression(Some(target_type));
-        }
-        let default_type = self.get_type_of_node(default_idx);
-        self.ctx.contextual_type = prev_context;
+            match self.contextual_type_option_for_expression(Some(target_type)) {
+                Some(ctx_ty) => crate::context::TypingRequest::with_contextual_type(ctx_ty),
+                None => crate::context::TypingRequest::NONE,
+            }
+        } else {
+            crate::context::TypingRequest::NONE
+        };
+        let default_type = self.get_type_of_node_with_request(default_idx, &request);
 
         if target_type != TypeId::ANY
             && target_type != TypeId::NEVER

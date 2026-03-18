@@ -1151,6 +1151,43 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Compute the type of a node using an explicit [`TypingRequest`] instead of
+    /// mutating ambient context fields.
+    ///
+    /// This is the preferred entry point for new code. It temporarily installs the
+    /// request's fields into `ctx` (compatibility bridge) and delegates to the
+    /// existing `get_type_of_node`. As the migration completes, the bridge will
+    /// be removed and the request will be threaded directly.
+    ///
+    /// # Compatibility bridge (TEMPORARY)
+    ///
+    /// Internally saves/restores `ctx.contextual_type`, `ctx.contextual_type_is_assertion`,
+    /// and `ctx.skip_flow_narrowing`. This shim exists only until the dispatch layer
+    /// reads from a request object natively.
+    pub fn get_type_of_node_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
+        // --- compatibility bridge: install request into ambient ctx ---
+        let prev_contextual = self.ctx.contextual_type;
+        let prev_assertion = self.ctx.contextual_type_is_assertion;
+        let prev_skip_flow = self.ctx.skip_flow_narrowing;
+
+        self.ctx.contextual_type = request.contextual_type;
+        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
+        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
+
+        let result = self.get_type_of_node(idx);
+
+        // --- compatibility bridge: restore ---
+        self.ctx.contextual_type = prev_contextual;
+        self.ctx.contextual_type_is_assertion = prev_assertion;
+        self.ctx.skip_flow_narrowing = prev_skip_flow;
+
+        result
+    }
+
     /// Check if `from` can reach `to` via a flow chain that doesn't narrow `sym_id`.
     /// Returns true if the backward walk from `from` encounters no flow nodes that
     /// could change the type of `sym_id` (assignments to the symbol, loops, or calls).

@@ -22,6 +22,8 @@ mod module_entity;
 mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
+pub mod typing_request;
+pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};

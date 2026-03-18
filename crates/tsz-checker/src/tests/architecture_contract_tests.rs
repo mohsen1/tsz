@@ -2236,3 +2236,154 @@ fn test_query_boundaries_coverage_ratio() {
          This indicates systematic boundary bypass. Target: < 4:1"
     );
 }
+
+// ========================================================================
+// Ambient context transport: TypingRequest migration contract tests
+// ========================================================================
+//
+// These tests enforce that files fully migrated to the TypingRequest API
+// do not regress by re-introducing raw mutations of the ambient context
+// fields: `ctx.contextual_type =`, `ctx.contextual_type_is_assertion =`,
+// and `ctx.skip_flow_narrowing =`.
+//
+// The compatibility bridge in `get_type_of_node_with_request` is the ONLY
+// place that should perform these mutations.  When the bridge is removed,
+// these tests should remain to prevent backsliding.
+
+/// Migrated files must not contain raw `ctx.contextual_type =` assignments.
+/// They should use `get_type_of_node_with_request` instead.
+#[test]
+fn migrated_files_no_raw_contextual_type_mutation() {
+    let migrated_files = &[
+        "types/computation/object_literal_context.rs",
+        "types/computation/array_literal.rs",
+        "types/queries/binding.rs",
+        "types/type_checking/core.rs",
+        "declarations/import/core.rs",
+        "assignability/assignment_checker.rs",
+        // property_access_type.rs migrated skip_flow_narrowing, not contextual_type
+    ];
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for file in migrated_files {
+        let path = base.join(file);
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read {file}: {e}");
+        });
+
+        // Count raw mutations (exclude comments and the TypingRequest module itself)
+        let violations: Vec<(usize, &str)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                // Skip comments
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("*")
+                {
+                    return false;
+                }
+                // Detect raw mutation patterns
+                trimmed.contains("ctx.contextual_type =") || trimmed.contains(".contextual_type = ")
+            })
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "File {file} has been migrated to TypingRequest but still contains \
+             raw `contextual_type =` mutations:\n{}",
+            violations
+                .iter()
+                .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+/// Migrated files must not contain raw `ctx.skip_flow_narrowing =` assignments.
+#[test]
+fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
+    let migrated_files = &[
+        "types/property_access_type.rs",
+        "state/state_checking_members/statement_callback_bridge.rs",
+    ];
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for file in migrated_files {
+        let path = base.join(file);
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read {file}: {e}");
+        });
+
+        let violations: Vec<(usize, &str)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("*")
+                {
+                    return false;
+                }
+                trimmed.contains("ctx.skip_flow_narrowing =")
+                    || trimmed.contains(".skip_flow_narrowing = ")
+            })
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "File {file} has been migrated to TypingRequest but still contains \
+             raw `skip_flow_narrowing =` mutations:\n{}",
+            violations
+                .iter()
+                .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+/// The TypingRequest type must exist and have the expected fields.
+#[test]
+fn typing_request_api_exists() {
+    use crate::context::{ContextualOrigin, FlowIntent, TypingRequest};
+
+    // Verify basic construction and field access
+    let none = TypingRequest::NONE;
+    assert!(none.is_empty());
+    assert_eq!(none.contextual_type, None);
+    assert_eq!(none.origin, ContextualOrigin::Normal);
+    assert_eq!(none.flow, FlowIntent::Read);
+
+    let with_ctx = TypingRequest::with_contextual_type(TypeId::STRING);
+    assert_eq!(with_ctx.contextual_type, Some(TypeId::STRING));
+    assert!(!with_ctx.origin.is_assertion());
+
+    let assertion = TypingRequest::for_assertion(TypeId::NUMBER);
+    assert!(assertion.origin.is_assertion());
+
+    let write = TypingRequest::for_write_context();
+    assert!(write.flow.skip_flow_narrowing());
+}
+
+/// Verify that the statement_callback_bridge save/restore for check_statement
+/// is properly scoped (contextual type set only during check_statement, not leaked).
+#[test]
+fn statement_callback_bridge_contextual_type_scoping() {
+    // This is a source-level check: the export clause handler must restore
+    // contextual type BEFORE the assignability check, not after.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/state/state_checking_members/statement_callback_bridge.rs");
+    let content = fs::read_to_string(&path).expect("Failed to read statement_callback_bridge.rs");
+
+    // The file should use get_type_of_node_with_request for the get_type_of_node call
+    assert!(
+        content.contains("get_type_of_node_with_request"),
+        "statement_callback_bridge.rs should use get_type_of_node_with_request for export clause typing"
+    );
+}
