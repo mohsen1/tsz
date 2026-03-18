@@ -56,8 +56,8 @@ type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
 struct TypeShardInner {
     /// Map from `TypeData` to local index within this shard
     key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
-    /// Map from local index to `TypeData` (using Arc for shared access)
-    index_to_key: DashMap<u32, Arc<TypeData>, FxBuildHasher>,
+    /// Map from local index to `TypeData` (stored inline since TypeData is Copy)
+    index_to_key: DashMap<u32, TypeData, FxBuildHasher>,
 }
 
 /// A single shard of the type interned storage.
@@ -711,8 +711,7 @@ impl TypeInterner {
         match inner.key_to_index.entry(key.clone()) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
-                let key_arc = Arc::new(key);
-                inner.index_to_key.insert(local_index, key_arc);
+                inner.index_to_key.insert(local_index, key);
                 let id = self.make_id(local_index, shard_idx as u32);
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
@@ -749,7 +748,7 @@ impl TypeInterner {
             .get_inner()
             .index_to_key
             .get(&{ local_index })
-            .map(|r| r.value().as_ref().clone())
+            .map(|r| *r.value())
     }
 
     pub(super) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
