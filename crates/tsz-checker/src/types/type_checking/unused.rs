@@ -233,6 +233,7 @@ impl<'a> CheckerState<'a> {
                     .get(decl_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER);
 
+            #[allow(clippy::nonminimal_bool)]
             if referenced
                 && !is_parameter_property
                 && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)

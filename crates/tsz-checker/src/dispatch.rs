@@ -1617,31 +1617,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // comparability which succeeds when the generic
                                     // element could include the source element type.
                                     // Assume overlap to suppress false TS2352.
-                                    if array_like_generic_assertion_target {
-                                        if let query_utils::ArrayLikeKind::Array(target_elem)
+                                    if array_like_generic_assertion_target
+                                        && let query_utils::ArrayLikeKind::Array(target_elem)
                                         | query_utils::ArrayLikeKind::Readonly(target_elem) =
                                             query_utils::classify_array_like(
                                                 self.checker.ctx.types,
                                                 effective_asserted,
                                             )
-                                        {
-                                            if generic_query::contains_type_parameters(
+                                        && generic_query::contains_type_parameters(
+                                            self.checker.ctx.types,
+                                            target_elem,
+                                        )
+                                    {
+                                        let source_is_array = matches!(
+                                            query_utils::classify_array_like(
                                                 self.checker.ctx.types,
-                                                target_elem,
-                                            ) {
-                                                let source_is_array = matches!(
-                                                    query_utils::classify_array_like(
-                                                        self.checker.ctx.types,
-                                                        expr_type,
-                                                    ),
-                                                    query_utils::ArrayLikeKind::Array(_)
-                                                        | query_utils::ArrayLikeKind::Tuple
-                                                        | query_utils::ArrayLikeKind::Readonly(_)
-                                                );
-                                                if source_is_array {
-                                                    have_overlap = true;
-                                                }
-                                            }
+                                                expr_type,
+                                            ),
+                                            query_utils::ArrayLikeKind::Array(_)
+                                                | query_utils::ArrayLikeKind::Tuple
+                                                | query_utils::ArrayLikeKind::Readonly(_)
+                                        );
+                                        if source_is_array {
+                                            have_overlap = true;
                                         }
                                     }
 

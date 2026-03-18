@@ -1680,36 +1680,34 @@ impl<'a> CheckerState<'a> {
         // flag), since a derived class without any namespace cannot have conflicting
         // namespace exports. This avoids false positives for classes that simply
         // don't replicate namespace exports from their base class.
-        if !class_extends_error_reported {
-            if let Some(base_sym) = base_sym_for_ns_static_check {
-                let derived_sym = self.ctx.binder.get_node_symbol(class_idx);
-                if let Some(derived_sym) = derived_sym {
-                    let derived_symbol_flags = self
-                        .ctx
-                        .binder
-                        .get_symbol(derived_sym)
-                        .map_or(0, |s| s.flags);
-                    let derived_has_namespace = derived_symbol_flags
-                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                            | tsz_binder::symbol_flags::VALUE_MODULE)
-                        != 0;
-                    if derived_has_namespace {
-                        let derived_ctor_type = self.get_type_of_symbol(derived_sym);
-                        let base_ctor_type = self.get_type_of_symbol(base_sym);
-                        if derived_ctor_type != TypeId::UNKNOWN
-                            && derived_ctor_type != TypeId::ERROR
-                            && base_ctor_type != TypeId::UNKNOWN
-                            && base_ctor_type != TypeId::ERROR
-                            && !self.is_assignable_to(derived_ctor_type, base_ctor_type)
-                        {
-                            self.error_at_node(
+        if !class_extends_error_reported && let Some(base_sym) = base_sym_for_ns_static_check {
+            let derived_sym = self.ctx.binder.get_node_symbol(class_idx);
+            if let Some(derived_sym) = derived_sym {
+                let derived_symbol_flags = self
+                    .ctx
+                    .binder
+                    .get_symbol(derived_sym)
+                    .map_or(0, |s| s.flags);
+                let derived_has_namespace = derived_symbol_flags
+                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE)
+                    != 0;
+                if derived_has_namespace {
+                    let derived_ctor_type = self.get_type_of_symbol(derived_sym);
+                    let base_ctor_type = self.get_type_of_symbol(base_sym);
+                    if derived_ctor_type != TypeId::UNKNOWN
+                        && derived_ctor_type != TypeId::ERROR
+                        && base_ctor_type != TypeId::UNKNOWN
+                        && base_ctor_type != TypeId::ERROR
+                        && !self.is_assignable_to(derived_ctor_type, base_ctor_type)
+                    {
+                        self.error_at_node(
                                 class_data.name,
                                 &format!(
                                     "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                                 ),
                                 diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                             );
-                        }
                     }
                 }
             }

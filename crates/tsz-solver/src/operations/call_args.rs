@@ -266,10 +266,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // where the argument is checked against the constraint.
             if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
                 self.interner.lookup(param_type)
+                && info.constraint.is_none()
             {
-                if info.constraint.is_none() {
-                    continue;
-                }
+                continue;
             }
 
             // When the parameter is optional, implicitly include `undefined`

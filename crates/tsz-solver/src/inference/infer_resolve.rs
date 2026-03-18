@@ -125,15 +125,10 @@ impl<'a> InferenceContext<'a> {
     {
         // Check if already resolved
         if let Some(ty) = self.probe(var) {
-            eprintln!("[RESOLVE_BY] var={:?} already resolved to {:?}", var, ty);
             return Ok(ty);
         }
 
         let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
-        eprintln!(
-            "[RESOLVE_BY] var={:?} result={:?} upper_bounds={:?} upper_bounds_only={}",
-            var, result, upper_bounds, upper_bounds_only
-        );
 
         // Skip upper bound validation for `any` — it satisfies all constraints in tsc.
         if !upper_bounds_only && result != TypeId::ANY {
@@ -652,7 +647,7 @@ impl<'a> InferenceContext<'a> {
         false
     }
 
-    /// Check whether a declared constraint contains a TypeParameter whose own
+    /// Check whether a declared constraint contains a `TypeParameter` whose own
     /// declared constraint is a primitive type (string/number/boolean/bigint/symbol).
     ///
     /// This handles `Object.freeze` overload 1:
@@ -685,7 +680,7 @@ impl<'a> InferenceContext<'a> {
                 })
             }
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id).clone();
+                let shape = self.interner.object_shape(shape_id);
                 if shape.properties.iter().any(|prop| {
                     self.constraint_contains_type_param_with_primitive_constraint(
                         prop.type_id,
@@ -694,21 +689,21 @@ impl<'a> InferenceContext<'a> {
                 }) {
                     return true;
                 }
-                if let Some(idx) = shape.string_index.as_ref() {
-                    if self.constraint_contains_type_param_with_primitive_constraint(
+                if let Some(idx) = shape.string_index.as_ref()
+                    && self.constraint_contains_type_param_with_primitive_constraint(
                         idx.value_type,
                         depth + 1,
-                    ) {
-                        return true;
-                    }
+                    )
+                {
+                    return true;
                 }
-                if let Some(idx) = shape.number_index.as_ref() {
-                    if self.constraint_contains_type_param_with_primitive_constraint(
+                if let Some(idx) = shape.number_index.as_ref()
+                    && self.constraint_contains_type_param_with_primitive_constraint(
                         idx.value_type,
                         depth + 1,
-                    ) {
-                        return true;
-                    }
+                    )
+                {
+                    return true;
                 }
                 false
             }

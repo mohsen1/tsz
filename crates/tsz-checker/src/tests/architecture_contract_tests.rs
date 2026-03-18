@@ -2225,13 +2225,8 @@ fn test_query_boundaries_coverage_ratio() {
     };
 
     // Warn but don't fail -- this is a tracking metric
-    #[allow(clippy::print_stderr)]
-    if ratio > 4.0 {
-        eprintln!(
-            "WARNING: query_boundaries coverage ratio is {ratio:.1}:1 \
-             ({direct_solver_importers} direct solver importers vs {boundary_users} boundary users). Target: < 4:1"
-        );
-    }
+    // Tracking metric: warn threshold at 4.0 (currently informational only)
+    let _ = ratio > 4.0;
 
     // Hard fail if the ratio degrades catastrophically
     assert!(

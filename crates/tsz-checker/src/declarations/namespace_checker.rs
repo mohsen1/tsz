@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is used instead of `get_type_of_symbol` for pure namespace sub-members when
     /// merging exports into a class constructor type. Using `get_type_of_symbol` for a
-    /// namespace returns `Lazy(DefId)`, and the type_env stores `def -> Lazy(def)` (a
+    /// namespace returns `Lazy(DefId)`, and the `type_env` stores `def -> Lazy(def)` (a
     /// self-referential mapping). When the solver tries to check
     /// `Lazy(def_a) <: Lazy(def_b)` for two different namespaces with the same name,
     /// both resolve to themselves and the recursion guard fires, returning
