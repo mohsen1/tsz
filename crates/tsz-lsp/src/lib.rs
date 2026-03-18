@@ -68,7 +68,10 @@ pub use code_actions::{
     ImportCandidate, ImportCandidateKind,
 };
 pub use completions::{CompletionItem, CompletionItemData, CompletionItemKind, Completions};
-pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
+pub use diagnostics::{
+    DiagnosticSeverity, DocumentDiagnosticReportKind, FullDocumentDiagnosticReport, LspDiagnostic,
+    UnchangedDocumentDiagnosticReport, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportItem,
+};
 pub use editor_ranges::folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
     DocumentFormattingProvider, FormattingOptions, TextEdit as FormattingTextEdit,
