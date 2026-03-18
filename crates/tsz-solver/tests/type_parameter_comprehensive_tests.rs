@@ -271,7 +271,7 @@ fn test_type_parameter_in_function() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let func = interner.function(crate::types::FunctionShape {
         params: vec![crate::types::ParamInfo {
@@ -307,7 +307,7 @@ fn test_type_parameter_as_return_type() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let func = interner.function(crate::types::FunctionShape {
         params: vec![],
@@ -618,8 +618,8 @@ fn test_function_with_multiple_type_parameters() {
         default: None,
         is_const: false,
     };
-    let t_param = interner.intern(TypeData::TypeParameter(t_info.clone()));
-    let u_param = interner.intern(TypeData::TypeParameter(u_info.clone()));
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+    let u_param = interner.intern(TypeData::TypeParameter(u_info));
 
     // function<T, U>(a: T, b: U): [T, U]
     let tuple = interner.tuple(vec![

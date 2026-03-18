@@ -104,7 +104,7 @@ fn test_intersection_with_mapped_type_member_matches_target() {
     let keyof_t = interner.keyof(t_param);
 
     // Create a mapped type like Readonly<T>: { readonly [P in keyof T]: T[P] }
-    let p_param_type = interner.intern(TypeData::TypeParameter(p_param.clone()));
+    let p_param_type = interner.intern(TypeData::TypeParameter(p_param));
     let t_index_p = interner.index_access(t_param, p_param_type);
     let mapped = interner.mapped(MappedType {
         type_param: p_param,

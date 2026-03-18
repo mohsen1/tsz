@@ -140,7 +140,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
             let mut sub = TypeSubstitution::new();
             sub.insert(param_info.name, constraint);
-            let cond_type_id = self.interner.conditional(cond.clone());
+            let cond_type_id = self.interner.conditional(*cond);
             let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
             if instantiated != cond_type_id {
                 let evaluated = self.evaluate_type(instantiated);

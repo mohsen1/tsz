@@ -589,7 +589,7 @@ fn test_type_param_ref_and_lazy_extractors() {
         default: None,
         is_const: false,
     };
-    let param_type = interner.intern(TypeData::TypeParameter(param_info.clone()));
+    let param_type = interner.intern(TypeData::TypeParameter(param_info));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
 
     // interner.reference() creates TypeData::Lazy(DefId) — verify via lazy_def_id

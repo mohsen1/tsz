@@ -103,7 +103,7 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_mapped_type(node) {
             let (type_param, constraint) = self.lower_mapped_type_param(data.type_parameter);
             self.push_type_param_scope();
-            let type_param_id = self.interner.type_param(type_param.clone());
+            let type_param_id = self.interner.type_param(type_param);
             self.add_type_param_binding(type_param.name, type_param_id);
             let name_type =
                 (data.name_type != NodeIndex::NONE).then(|| self.lower_type(data.name_type));

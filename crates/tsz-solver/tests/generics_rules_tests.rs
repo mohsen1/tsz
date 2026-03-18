@@ -128,7 +128,7 @@ fn test_try_expand_application_instantiates_type_params() {
         default: None,
         is_const: false,
     };
-    let param_type = interner.intern(TypeData::TypeParameter(param_info.clone()));
+    let param_type = interner.intern(TypeData::TypeParameter(param_info));
 
     let def_id = DefId(20);
     let box_struct = interner.object(vec![PropertyInfo::new(
@@ -288,7 +288,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         default: None,
         is_const: false,
     };
-    let pick_t_type = interner.intern(TypeData::TypeParameter(pick_t.clone()));
+    let pick_t_type = interner.intern(TypeData::TypeParameter(pick_t));
 
     let pick_k = TypeParamInfo {
         name: interner.intern_string("K"),
@@ -296,7 +296,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         default: None,
         is_const: false,
     };
-    let pick_k_type = interner.intern(TypeData::TypeParameter(pick_k.clone()));
+    let pick_k_type = interner.intern(TypeData::TypeParameter(pick_k));
 
     let pick_param = TypeParamInfo {
         name: interner.intern_string("P"),
@@ -304,7 +304,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         default: None,
         is_const: false,
     };
-    let pick_p_type = interner.intern(TypeData::TypeParameter(pick_param.clone()));
+    let pick_p_type = interner.intern(TypeData::TypeParameter(pick_param));
 
     let pick_body = interner.mapped(MappedType {
         type_param: pick_param,
@@ -330,7 +330,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
         default: None,
         is_const: false,
     };
-    let x_type = interner.intern(TypeData::TypeParameter(x_info.clone()));
+    let x_type = interner.intern(TypeData::TypeParameter(x_info));
 
     let pick_x_alias = interner.application(
         interner.lazy(pick_def),
@@ -386,7 +386,7 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
         default: None,
         is_const: false,
     };
-    let x_type = interner.intern(TypeData::TypeParameter(x_info.clone()));
+    let x_type = interner.intern(TypeData::TypeParameter(x_info));
 
     let mapped_param = TypeParamInfo {
         name: interner.intern_string("P"),
@@ -394,7 +394,7 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
         default: None,
         is_const: false,
     };
-    let mapped_param_type = interner.intern(TypeData::TypeParameter(mapped_param.clone()));
+    let mapped_param_type = interner.intern(TypeData::TypeParameter(mapped_param));
 
     let mapped_body = interner.mapped(MappedType {
         type_param: mapped_param,
@@ -453,7 +453,7 @@ fn test_application_subtype_canonicalizes_lazy_and_typequery_bases() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let promise_body = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
         t_type,
@@ -496,7 +496,7 @@ fn test_function_subtype_accepts_canonicalized_application_return_types() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let promise_body = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
         t_type,
@@ -565,14 +565,14 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // IObservable<T> = { n: IObservable<T[]> }
     let obs_body = interner.object(vec![PropertyInfo::new(
         interner.intern_string("n"),
         interner.application(interner.lazy(obs_def), vec![interner.array(t_type)]),
     )]);
-    env.insert_def_with_params(obs_def, obs_body, vec![t_param.clone()]);
+    env.insert_def_with_params(obs_def, obs_body, vec![t_param]);
 
     // ISubject<T> = IObservable<T>
     let subject_body = interner.application(interner.lazy(obs_def), vec![t_type]);

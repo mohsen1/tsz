@@ -289,11 +289,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        // If source and target are the same TypeId, there is no actual type
-        // mismatch — the failure was at a higher structural level (e.g., the
-        // containing object), not at the property type level. Emitting TS2322
-        // for identical types produces confusing "Type 'X' is not assignable
-        // to type 'X'" diagnostics.
+        // Same TypeId → no actual type mismatch (failure at a higher structural level).
         if source == target {
             return;
         }
@@ -351,9 +347,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2375: When exactOptionalPropertyTypes is enabled, check if the failure
-        // is due to assigning undefined to optional properties that don't include undefined.
-        // This mirrors tsc's reportRelationError which selects TS2375 over TS2322.
+        // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
         if self.has_exact_optional_property_mismatch(source, target)
             && let Some(loc) = self.get_source_location(anchor_idx)
         {
@@ -393,23 +387,14 @@ impl<'a> CheckerState<'a> {
         }
         match reason {
             Some(ref failure_reason) => {
-                // Skip ExcessProperty diagnostics here — they are handled by
-                // check_object_literal_excess_properties which also checks for
-                // spelling suggestions (TS2561). Emitting here would cause
-                // duplicate diagnostics: TS2353 from the solver reason + TS2561
-                // from the explicit checker.
+                // Skip ExcessProperty — handled by check_object_literal_excess_properties (avoids duplicate TS2353/TS2561).
                 if matches!(
                     failure_reason,
                     tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
                 ) {
                     return;
                 }
-                // Skip MissingProperty when the property name is a computed symbol
-                // expression (e.g. `[Symbol.nonsense]`). This means the computed key
-                // references a non-existent Symbol member — TSC doesn't infer required
-                // properties for error-type computed keys, so no assignment error
-                // should be produced. The TS2339 error on the symbol access is already
-                // emitted separately.
+                // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
                 if let tsz_solver::SubtypeFailureReason::MissingProperty { property_name, .. } =
                     &failure_reason
                 {

@@ -64,8 +64,9 @@ mod project_tests;
 mod tests;
 
 pub use code_actions::{
-    CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry,
-    ImportCandidate, ImportCandidateKind,
+    CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry, FileEvent,
+    FileEventKind, FileReference, ImportCandidate, ImportCandidateKind, LspCommands, PasteAnalysis,
+    SourceActionKind,
 };
 pub use completions::{CompletionItem, CompletionItemData, CompletionItemKind, Completions};
 pub use diagnostics::{

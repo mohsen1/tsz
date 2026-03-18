@@ -133,7 +133,7 @@ fn test_homomorphic_mapped_preserves_optional() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     // Template is T[K] (index access)
     let template = interner.index_access(source, type_param);
@@ -189,7 +189,7 @@ fn test_homomorphic_mapped_preserves_readonly() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source, type_param);
 
@@ -248,7 +248,7 @@ fn test_mapped_type_add_optional() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source, type_param);
 
@@ -297,7 +297,7 @@ fn test_mapped_type_remove_optional() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source, type_param);
 
@@ -350,7 +350,7 @@ fn test_mapped_type_add_readonly() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source, type_param);
 
@@ -399,7 +399,7 @@ fn test_mapped_type_remove_readonly() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source, type_param);
 
@@ -448,7 +448,7 @@ fn test_mapped_type_key_remap_with_template_literal() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     // Create template literal: `get${K}`
     let template_literal = interner.template_literal(vec![
@@ -545,7 +545,7 @@ fn test_mapped_type_identity() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let mapped_type = MappedType {
         type_param: type_param_info,
@@ -729,7 +729,7 @@ fn test_identity_name_type_preserves_array_structure() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     // Template is T[K] (index access)
     let template = interner.index_access(source_array, type_param);
@@ -781,7 +781,7 @@ fn test_non_identity_name_type_degrades_to_object() {
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
     let template = interner.index_access(source_array, type_param);
 
@@ -923,7 +923,7 @@ fn test_is_mapped_type_with_readonly_modifier() {
 
     // With +readonly
     let readonly_mapped = MappedType {
-        type_param: type_param_info.clone(),
+        type_param: type_param_info,
         constraint: TypeId::STRING,
         name_type: None,
         template: TypeId::NUMBER,
@@ -938,7 +938,7 @@ fn test_is_mapped_type_with_readonly_modifier() {
 
     // Without readonly
     let mutable_mapped = MappedType {
-        type_param: type_param_info.clone(),
+        type_param: type_param_info,
         constraint: TypeId::STRING,
         name_type: None,
         template: TypeId::STRING,
@@ -978,7 +978,7 @@ fn test_is_readonly_index_signature_on_mapped_type() {
     };
 
     let readonly_mapped = MappedType {
-        type_param: type_param_info.clone(),
+        type_param: type_param_info,
         constraint: TypeId::STRING,
         name_type: None,
         template: TypeId::NUMBER,

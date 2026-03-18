@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
         let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
         for param in self.get_type_params_for_symbol(sym_id) {
             let name = self.ctx.types.resolve_atom(param.name).to_string();
-            let param_ty = self.ctx.types.type_param(param.clone());
+            let param_ty = self.ctx.types.type_param(param);
             let prev = self.ctx.type_parameter_scope.insert(name.clone(), param_ty);
             scope_restore.push((name, prev));
         }

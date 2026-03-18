@@ -1421,7 +1421,7 @@ fn test_lazy_type_params_falls_back_from_symbol_based_lazy_ref() {
         is_const: false,
     };
     let generic_def = DefId(200);
-    env.insert_def_with_params(generic_def, TypeId::STRING, vec![t_param.clone()]);
+    env.insert_def_with_params(generic_def, TypeId::STRING, vec![t_param]);
     env.register_def_symbol_mapping(generic_def, SymbolId(42));
 
     let raw_lazy = env
@@ -5809,7 +5809,7 @@ fn test_mapped_type_over_string_keys_key_remap_omit_length() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
     let length_key = interner.literal_string("length");
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6250,7 +6250,7 @@ fn test_mapped_type_key_remap_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6296,7 +6296,7 @@ fn test_mapped_type_key_remap_optional_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6342,7 +6342,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6388,7 +6388,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6460,7 +6460,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6511,7 +6511,7 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6558,7 +6558,7 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6602,7 +6602,7 @@ fn test_mapped_type_key_remap_all_never_empty_object() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6659,7 +6659,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let u_id = interner.intern(TypeData::TypeParameter(u.clone()));
+    let u_id = interner.intern(TypeData::TypeParameter(u));
 
     let v = TypeParamInfo {
         name: interner.intern_string("V"),
@@ -6667,7 +6667,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let v_id = interner.intern(TypeData::TypeParameter(v.clone()));
+    let v_id = interner.intern(TypeData::TypeParameter(v));
 
     let fn_t = interner.function(FunctionShape {
         type_params: vec![u],
@@ -16476,8 +16476,8 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         is_const: false,
     };
 
-    let outer_t_ty = interner.type_param(outer_t.clone());
-    let inner_u_ty = interner.type_param(inner_u.clone());
+    let outer_t_ty = interner.type_param(outer_t);
+    let inner_u_ty = interner.type_param(inner_u);
 
     let promise_like_u = interner.application(interner.lazy(promise_like_def), vec![inner_u_ty]);
     let promise_u = interner.application(interner.lazy(promise_def), vec![inner_u_ty]);
@@ -16501,7 +16501,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            type_params: vec![inner_u.clone()],
+            type_params: vec![inner_u],
             params: vec![ParamInfo {
                 name: Some(interner.intern_string("onfulfilled")),
                 type_id: interner.union(vec![onfulfilled_promise_like, TypeId::UNDEFINED]),
@@ -16565,7 +16565,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         then_promise,
     )]);
 
-    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t.clone()]);
+    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t]);
     env.insert_def_kind(promise_like_def, crate::def::DefKind::Interface);
     env.insert_def_with_params(promise_def, promise_body, vec![outer_t]);
     env.insert_def_kind(promise_def, crate::def::DefKind::Interface);
@@ -16598,7 +16598,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
     let result1 = TypeParamInfo {
         name: interner.intern_string("TResult1"),
         constraint: None,
-        default: Some(interner.type_param(outer_t.clone())),
+        default: Some(interner.type_param(outer_t)),
         is_const: false,
     };
     let result2 = TypeParamInfo {
@@ -16608,9 +16608,9 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         is_const: false,
     };
 
-    let outer_t_ty = interner.type_param(outer_t.clone());
-    let result1_ty = interner.type_param(result1.clone());
-    let result2_ty = interner.type_param(result2.clone());
+    let outer_t_ty = interner.type_param(outer_t);
+    let result1_ty = interner.type_param(result1);
+    let result2_ty = interner.type_param(result2);
     let result_union = interner.union(vec![result1_ty, result2_ty]);
     let promise_like_result =
         interner.application(interner.lazy(promise_like_def), vec![result_union]);
@@ -16657,7 +16657,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            type_params: vec![result1.clone(), result2.clone()],
+            type_params: vec![result1, result2],
             params: vec![
                 ParamInfo {
                     name: Some(interner.intern_string("onfulfilled")),
@@ -16722,7 +16722,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         then_promise,
     )]);
 
-    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t.clone()]);
+    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t]);
     env.insert_def_kind(promise_like_def, crate::def::DefKind::Interface);
     env.insert_def_with_params(promise_def, promise_body, vec![outer_t]);
     env.insert_def_kind(promise_def, crate::def::DefKind::Interface);
@@ -20363,7 +20363,7 @@ fn test_constructor_generic_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let generic_ctor = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -20390,7 +20390,7 @@ fn test_constructor_generic_with_constraint() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let constrained_ctor = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -24171,7 +24171,7 @@ fn test_explain_failure_mapped_type_target_missing_property() {
         default: None,
         is_const: false,
     };
-    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(source_obj, k_param);
     let required_target = interner.mapped(MappedType {
         type_param: k_param_info,
@@ -24234,7 +24234,7 @@ fn test_explain_failure_mapped_type_source_evaluated() {
         default: None,
         is_const: false,
     };
-    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(concrete_obj, k_param);
     let partial_source = interner.mapped(MappedType {
         type_param: k_param_info,
@@ -25774,7 +25774,7 @@ fn test_this_type_with_constrained_generic() {
         is_const: false,
     };
 
-    let t_type_param = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type_param = interner.intern(TypeData::TypeParameter(t_param));
 
     // method<T extends Base>(this: T): T
     let constrained_method = interner.function(FunctionShape {

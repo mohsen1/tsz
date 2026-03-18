@@ -156,7 +156,7 @@ pub fn template_literal_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// Extract the type parameter info if this is a type parameter or infer type.
 pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeParamInfo> {
     extract_type_data(types, type_id, |key| match key {
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => Some(info.clone()),
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => Some(*info),
         _ => None,
     })
 }

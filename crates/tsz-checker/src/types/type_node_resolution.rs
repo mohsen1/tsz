@@ -681,7 +681,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     default: None,
                     is_const: false,
                 };
-                let type_id = factory.type_param(info.clone());
+                let type_id = factory.type_param(info);
                 bindings.push((atom, type_id));
                 params.push(info);
             }

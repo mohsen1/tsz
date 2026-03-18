@@ -318,4 +318,130 @@ impl<'a> CodeActionProvider<'a> {
         }
         None
     }
+
+    /// Add braces to an arrow function with an expression body.
+    ///
+    /// `(x) => x * 2` → `(x) => { return x * 2; }`
+    pub fn add_braces_to_arrow_function(
+        &self,
+        root: NodeIndex,
+        range: Range,
+    ) -> Option<CodeAction> {
+        let start_offset = self.line_map.position_to_offset(range.start, self.source)?;
+        let arrow_idx = self.find_arrow_at_offset(root, start_offset)?;
+        let arrow_node = self.arena.get(arrow_idx)?;
+
+        if arrow_node.kind != syntax_kind_ext::ARROW_FUNCTION {
+            return None;
+        }
+
+        let func_data = self.arena.get_function(arrow_node)?;
+        if func_data.body.is_none() {
+            return None;
+        }
+
+        let body_node = self.arena.get(func_data.body)?;
+
+        // Only apply when body is NOT a block (i.e., expression body)
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return None;
+        }
+
+        let body_text = self
+            .source
+            .get(body_node.pos as usize..body_node.end as usize)?;
+
+        let new_body = format!("{{ return {body_text}; }}");
+
+        let replace_start = self.line_map.offset_to_position(body_node.pos, self.source);
+        let replace_end = self.line_map.offset_to_position(body_node.end, self.source);
+
+        let edit = TextEdit {
+            range: Range::new(replace_start, replace_end),
+            new_text: new_body,
+        };
+
+        let mut changes = FxHashMap::default();
+        changes.insert(self.file_name.clone(), vec![edit]);
+
+        Some(CodeAction {
+            title: "Add braces to arrow function".to_string(),
+            kind: CodeActionKind::RefactorRewrite,
+            edit: Some(WorkspaceEdit { changes }),
+            is_preferred: false,
+            data: None,
+        })
+    }
+
+    /// Remove braces from an arrow function with a single return statement.
+    ///
+    /// `(x) => { return x * 2; }` → `(x) => x * 2`
+    pub fn remove_braces_from_arrow_function(
+        &self,
+        root: NodeIndex,
+        range: Range,
+    ) -> Option<CodeAction> {
+        let start_offset = self.line_map.position_to_offset(range.start, self.source)?;
+        let arrow_idx = self.find_arrow_at_offset(root, start_offset)?;
+        let arrow_node = self.arena.get(arrow_idx)?;
+
+        if arrow_node.kind != syntax_kind_ext::ARROW_FUNCTION {
+            return None;
+        }
+
+        let func_data = self.arena.get_function(arrow_node)?;
+        if func_data.body.is_none() {
+            return None;
+        }
+
+        let body_node = self.arena.get(func_data.body)?;
+
+        // Only apply when body IS a block
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return None;
+        }
+
+        let block_data = self.arena.get_block(body_node)?;
+
+        // Must have exactly one statement, and it must be a return statement
+        if block_data.statements.nodes.len() != 1 {
+            return None;
+        }
+
+        let stmt_idx = block_data.statements.nodes[0];
+        let stmt_node = self.arena.get(stmt_idx)?;
+
+        if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+
+        let return_data = self.arena.get_return_statement(stmt_node)?;
+        if return_data.expression.is_none() {
+            return None;
+        }
+
+        let expr_node = self.arena.get(return_data.expression)?;
+        let expr_text = self
+            .source
+            .get(expr_node.pos as usize..expr_node.end as usize)?;
+
+        let replace_start = self.line_map.offset_to_position(body_node.pos, self.source);
+        let replace_end = self.line_map.offset_to_position(body_node.end, self.source);
+
+        let edit = TextEdit {
+            range: Range::new(replace_start, replace_end),
+            new_text: expr_text.to_string(),
+        };
+
+        let mut changes = FxHashMap::default();
+        changes.insert(self.file_name.clone(), vec![edit]);
+
+        Some(CodeAction {
+            title: "Remove braces from arrow function".to_string(),
+            kind: CodeActionKind::RefactorRewrite,
+            edit: Some(WorkspaceEdit { changes }),
+            is_preferred: false,
+            data: None,
+        })
+    }
 }

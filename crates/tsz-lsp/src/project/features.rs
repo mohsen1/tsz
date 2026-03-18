@@ -663,20 +663,23 @@ impl Project {
         provider.prepare(file.root(), position)
     }
 
-    /// Get supertypes for a symbol (file-local only for now).
+    /// Get supertypes for a symbol (cross-file via `SymbolIndex`).
     ///
-    /// TODO: Extend to search across all files using `SymbolIndex`.
+    /// First searches the current file for supertypes. If a supertype name
+    /// is not found locally, searches across all project files using the
+    /// symbol index definitions.
     pub fn supertypes(
         &self,
         file_name: &str,
         position: Position,
     ) -> Vec<crate::hierarchy::type_hierarchy::TypeHierarchyItem> {
+        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
+
         let file = match self.files.get(file_name) {
             Some(f) => f,
             None => return Vec::new(),
         };
 
-        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
         let provider = TypeHierarchyProvider::new(
             file.arena(),
             file.binder(),
@@ -685,23 +688,77 @@ impl Project {
             file.source_text(),
         );
 
-        provider.supertypes(file.root(), position)
+        // Get file-local supertypes first
+        let local_results = provider.supertypes(file.root(), position);
+
+        // Also collect supertype names to check which ones weren't resolved locally
+        let local_names: FxHashSet<String> =
+            local_results.iter().map(|item| item.name.clone()).collect();
+
+        // Get the declaration at position so we can read its heritage clause names
+        let offset = match file
+            .line_map()
+            .position_to_offset(position, file.source_text())
+        {
+            Some(o) => o,
+            None => return local_results,
+        };
+        let node_idx = find_node_at_offset(file.arena(), offset);
+        if node_idx.is_none() {
+            return local_results;
+        }
+
+        // Collect heritage type names via the provider
+        let heritage_names = provider.collect_heritage_names(node_idx);
+
+        // For any heritage name not resolved locally, search other files
+        let mut results = local_results;
+        for name in heritage_names {
+            if local_names.contains(&name) {
+                continue;
+            }
+            // Find files that contain this symbol name via the symbol index
+            let candidate_files = self.symbol_index.get_files_with_symbol(&name);
+            for candidate_file in candidate_files {
+                if candidate_file == file_name {
+                    continue; // Already searched locally
+                }
+                if let Some(other_file) = self.files.get(&candidate_file) {
+                    let other_provider = TypeHierarchyProvider::new(
+                        other_file.arena(),
+                        other_file.binder(),
+                        other_file.line_map(),
+                        other_file.file_name().to_string(),
+                        other_file.source_text(),
+                    );
+                    if let Some(item) = other_provider.find_type_declaration_item_by_name(&name) {
+                        results.push(item);
+                        break; // Found it, no need to check more files
+                    }
+                }
+            }
+        }
+
+        results
     }
 
-    /// Get subtypes for a symbol (file-local only for now).
+    /// Get subtypes for a symbol (cross-file via `SymbolIndex` heritage clauses).
     ///
-    /// TODO: Extend to search across all files using `SymbolIndex` heritage clauses.
+    /// First searches the current file, then uses the symbol index's
+    /// heritage clause tracking to find files that extend/implement the
+    /// target type and searches those files too.
     pub fn subtypes(
         &self,
         file_name: &str,
         position: Position,
     ) -> Vec<crate::hierarchy::type_hierarchy::TypeHierarchyItem> {
+        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
+
         let file = match self.files.get(file_name) {
             Some(f) => f,
             None => return Vec::new(),
         };
 
-        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
         let provider = TypeHierarchyProvider::new(
             file.arena(),
             file.binder(),
@@ -710,7 +767,37 @@ impl Project {
             file.source_text(),
         );
 
-        provider.subtypes(file.root(), position)
+        // Get file-local subtypes first
+        let mut results = provider.subtypes(file.root(), position);
+
+        // Get the target type name for cross-file search
+        let target_name = provider.get_target_type_name(file.root(), position);
+        let target_name = match target_name {
+            Some(name) => name,
+            None => return results,
+        };
+
+        // Use the symbol index to find files that extend/implement this type
+        let heritage_files = self.symbol_index.get_files_with_heritage(&target_name);
+        for heritage_file in heritage_files {
+            if heritage_file == file_name {
+                continue; // Already searched locally
+            }
+            if let Some(other_file) = self.files.get(&heritage_file) {
+                let other_provider = TypeHierarchyProvider::new(
+                    other_file.arena(),
+                    other_file.binder(),
+                    other_file.line_map(),
+                    other_file.file_name().to_string(),
+                    other_file.source_text(),
+                );
+                // Find all class/interface declarations in this file that
+                // reference the target name in their heritage clauses
+                results.extend(other_provider.find_subtypes_of(&target_name));
+            }
+        }
+
+        results
     }
 
     // ── Provider-based features (document-local, no type checking) ──────
@@ -833,24 +920,61 @@ impl Project {
         provider.prepare(file.root(), position)
     }
 
-    /// Get incoming calls at a position.
+    /// Get incoming calls at a position (cross-file via `SymbolIndex`).
+    ///
+    /// First finds callers in the current file, then uses the symbol index
+    /// to discover callers in other files that reference the target function name.
     pub fn get_incoming_calls(
         &self,
         file_name: &str,
         position: Position,
     ) -> Vec<crate::hierarchy::call_hierarchy::CallHierarchyIncomingCall> {
+        use crate::hierarchy::call_hierarchy::CallHierarchyProvider;
+
         let file = match self.files.get(file_name) {
             Some(f) => f,
             None => return Vec::new(),
         };
-        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
+
+        let provider = CallHierarchyProvider::new(
             file.arena(),
             file.binder(),
             file.line_map(),
             file.file_name().to_string(),
             file.source_text(),
         );
-        provider.incoming_calls(file.root(), position)
+
+        // Get the target function name for cross-file search
+        let target_name = provider.get_target_function_name(file.root(), position);
+
+        // Get file-local incoming calls
+        let mut results = provider.incoming_calls(file.root(), position);
+
+        // Cross-file: find other files that reference the same function name
+        let target_name = match target_name {
+            Some(name) => name,
+            None => return results,
+        };
+
+        let candidate_files = self.symbol_index.get_files_with_symbol(&target_name);
+        for candidate_file in candidate_files {
+            if candidate_file == file_name {
+                continue; // Already searched locally
+            }
+            if let Some(other_file) = self.files.get(&candidate_file) {
+                let other_provider = CallHierarchyProvider::new(
+                    other_file.arena(),
+                    other_file.binder(),
+                    other_file.line_map(),
+                    other_file.file_name().to_string(),
+                    other_file.source_text(),
+                );
+                // Find calls to the target function name in this other file
+                results.extend(other_provider.find_incoming_calls_by_name(&target_name));
+            }
+        }
+
+        results
     }
 
     /// Get outgoing calls at a position.
