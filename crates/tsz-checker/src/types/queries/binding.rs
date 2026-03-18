@@ -74,12 +74,14 @@ impl<'a> CheckerState<'a> {
                         //   stays "foo" for assignability checks against union types)
                         // The first evaluation caches the type, so contextual typing
                         // must be set here to ensure the cached type is correct.
-                        let prev_ctx = self.ctx.contextual_type;
-                        if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN {
-                            self.ctx.contextual_type = Some(element_type);
-                        }
-                        let init_type = self.get_type_of_node(element_data.initializer);
-                        self.ctx.contextual_type = prev_ctx;
+                        let request =
+                            if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN {
+                                crate::context::TypingRequest::with_contextual_type(element_type)
+                            } else {
+                                crate::context::TypingRequest::NONE
+                            };
+                        let init_type =
+                            self.get_type_of_node_with_request(element_data.initializer, &request);
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
                         } else if !self.is_assignable_to(init_type, element_type) {
@@ -138,17 +140,18 @@ impl<'a> CheckerState<'a> {
 
                     if element_data.initializer.is_some() {
                         // Set contextual type for function-like initializers
-                        let prev_ctx = self.ctx.contextual_type;
-                        if element_type != TypeId::ANY
+                        let request = if element_type != TypeId::ANY
                             && element_type != TypeId::UNKNOWN
                             && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
                             && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                                 || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
                         {
-                            self.ctx.contextual_type = Some(element_type);
-                        }
-                        let init_type = self.get_type_of_node(element_data.initializer);
-                        self.ctx.contextual_type = prev_ctx;
+                            crate::context::TypingRequest::with_contextual_type(element_type)
+                        } else {
+                            crate::context::TypingRequest::NONE
+                        };
+                        let init_type =
+                            self.get_type_of_node_with_request(element_data.initializer, &request);
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
                         } else if !self.is_assignable_to(init_type, element_type) {

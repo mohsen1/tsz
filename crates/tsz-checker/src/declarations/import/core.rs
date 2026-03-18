@@ -1261,10 +1261,10 @@ impl<'a> CheckerState<'a> {
                         } else if let Some(expected_type) =
                             self.jsdoc_type_annotation_for_node(stmt_idx)
                         {
-                            let prev_context = self.ctx.contextual_type;
-                            self.ctx.contextual_type = Some(expected_type);
-                            let actual_type = self.get_type_of_node(export_data.expression);
-                            self.ctx.contextual_type = prev_context;
+                            let request =
+                                crate::context::TypingRequest::with_contextual_type(expected_type);
+                            let actual_type = self
+                                .get_type_of_node_with_request(export_data.expression, &request);
                             self.check_assignable_or_report(
                                 actual_type,
                                 expected_type,

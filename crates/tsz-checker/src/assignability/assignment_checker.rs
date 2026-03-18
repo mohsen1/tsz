@@ -1048,8 +1048,7 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(right_idx);
         }
 
-        let prev_context = self.ctx.contextual_type;
-        if !is_destructuring
+        let contextual_request = if !is_destructuring
             && left_type != TypeId::ANY
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
@@ -1066,7 +1065,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 left_type
             };
-            self.ctx.contextual_type = Some(contextual_target);
             if let Some(right_node) = self.ctx.arena.get(right_idx) {
                 let needs_fresh_contextual_check = right_node.kind
                     == syntax_kind_ext::ARROW_FUNCTION
@@ -1092,15 +1090,16 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(right_idx);
                 }
             }
-        }
+            crate::context::TypingRequest::with_contextual_type(contextual_target)
+        } else {
+            crate::context::TypingRequest::NONE
+        };
 
-        let right_raw = self.get_type_of_node(right_idx);
+        let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
         let right_type = self.resolve_type_query_type(right_raw);
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // No need to manually track freshness removal here.
-
-        self.ctx.contextual_type = prev_context;
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);

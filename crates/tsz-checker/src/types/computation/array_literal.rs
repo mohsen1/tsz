@@ -375,19 +375,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let prev_context = self.ctx.contextual_type;
-            if union_array_context_is_ambiguous {
+            // Build per-element typing request instead of mutating ctx.contextual_type
+            let elem_request = if union_array_context_is_ambiguous {
                 // When the contextual union is ambiguous (multiple applicable element types),
                 // clear the contextual type for each element so closures don't inherit
                 // the array's union contextual type and inadvertently get typed parameters.
-                self.ctx.contextual_type = None;
+                crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some() {
                     let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
-                    self.ctx.contextual_type =
-                        helper.get_tuple_element_type_with_count(index, elem_count);
+                    match helper.get_tuple_element_type_with_count(index, elem_count) {
+                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
+                        None => crate::context::TypingRequest::NONE,
+                    }
                 } else {
-                    self.ctx.contextual_type = helper
+                    let elem_ctx_type = helper
                         .get_array_element_type()
                         .filter(|&ty| ty != TypeId::NEVER)
                         .or_else(|| {
@@ -402,8 +404,14 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
+                    match elem_ctx_type {
+                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
+                        None => crate::context::TypingRequest::NONE,
+                    }
                 }
-            }
+            } else {
+                crate::context::TypingRequest::NONE
+            };
 
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -415,7 +423,7 @@ impl<'a> CheckerState<'a> {
                 let spread_expr_type = if self.ctx.in_destructuring_target {
                     self.get_type_of_assignment_target(spread_data.expression)
                 } else {
-                    self.get_type_of_node(spread_data.expression)
+                    self.get_type_of_node_with_request(spread_data.expression, &elem_request)
                 };
                 let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
                 // Check if spread argument is iterable, emit TS2488 if not.
@@ -465,7 +473,6 @@ impl<'a> CheckerState<'a> {
                             element_types.push(elem.type_id);
                         }
                     }
-                    self.ctx.contextual_type = prev_context;
                     continue;
                 }
 
@@ -476,8 +483,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.for_of_element_type(spread_expr_type, false)
                 };
-
-                self.ctx.contextual_type = prev_context;
 
                 if let Some(ref _expected) = tuple_context {
                     let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index))
@@ -501,10 +506,8 @@ impl<'a> CheckerState<'a> {
             let elem_type = if self.ctx.in_destructuring_target {
                 self.destructuring_target_type_from_initializer(elem_idx)
             } else {
-                self.get_type_of_node(elem_idx)
+                self.get_type_of_node_with_request(elem_idx, &elem_request)
             };
-
-            self.ctx.contextual_type = prev_context;
 
             if let Some(ref _expected) = tuple_context {
                 let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
