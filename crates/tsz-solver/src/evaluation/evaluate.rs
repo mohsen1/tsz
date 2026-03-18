@@ -310,23 +310,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Cross-evaluator stack overflow prevention.
-        // See MAX_GLOBAL_EVAL_DEPTH doc comment for rationale.
-        thread_local! {
-            static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-        }
-        let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
-            let v = d.get();
-            d.set(v + 1);
-            v
-        });
-        if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
+        // Only check thread-local global depth when the local guard depth
+        // is already significant (>= 10). This avoids expensive TLS access
+        // on the vast majority of shallow evaluations.
+        if self.guard.depth() >= 10 {
+            thread_local! {
+                static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            }
+            let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
+                let v = d.get();
+                d.set(v + 1);
+                v
+            });
+            if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
+                GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                self.guard.mark_exceeded();
+                return TypeId::ERROR;
+            }
+            let result = self.evaluate_guarded(type_id);
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            self.guard.mark_exceeded();
-            return TypeId::ERROR;
+            return result;
         }
-        let result = self.evaluate_guarded(type_id);
-        GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-        result
+
+        self.evaluate_guarded(type_id)
     }
 
     /// Inner evaluate logic, called after global depth check.
