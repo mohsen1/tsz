@@ -207,18 +207,62 @@ impl<'a> CodeActionProvider<'a> {
             actions.push(action);
         }
 
-        // Refactorings (selection-based)
-        // Only if the range is non-empty (user selected text) and the caller
-        // requested refactor kinds.
-        let request_extract_refactor = context.only.as_ref().is_none_or(|kinds| {
+        // Refactorings
+        let request_refactor = context.only.as_ref().is_none_or(|kinds| {
             kinds.contains(&CodeActionKind::Refactor)
                 || kinds.contains(&CodeActionKind::RefactorExtract)
+                || kinds.contains(&CodeActionKind::RefactorInline)
         });
-        if request_extract_refactor
-            && range.start != range.end
-            && let Some(action) = self.extract_variable(root, range)
-        {
-            actions.push(action);
+
+        if request_refactor {
+            // Extract refactorings require a non-empty selection
+            if range.start != range.end {
+                if let Some(action) = self.extract_variable(root, range) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.extract_function(root, range) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.extract_type_alias(root, range) {
+                    actions.push(action);
+                }
+                actions.extend(self.surround_with_actions(root, range));
+            }
+
+            // Point refactorings (cursor position)
+            if let Some(action) = self.convert_to_arrow_function(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.convert_to_named_function(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.inline_variable(root, range) {
+                actions.push(action);
+            }
+            actions.extend(self.generate_accessors(root, range));
+            if let Some(action) = self.convert_namespace_to_named(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.convert_named_to_namespace(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.sort_import_specifiers(root, range) {
+                actions.push(action);
+            }
+        }
+
+        // Quick fixes requiring deeper analysis
+        if request_quickfix {
+            if let Some(action) = self.implement_interface(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.override_methods(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.add_missing_switch_cases(root, range) {
+                actions.push(action);
+            }
+            actions.extend(self.fix_all_actions(root, &context.diagnostics));
         }
 
         actions
