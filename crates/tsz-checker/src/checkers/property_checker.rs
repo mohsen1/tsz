@@ -90,6 +90,13 @@ impl<'a> CheckerState<'a> {
                 .referenced_symbols
                 .borrow_mut()
                 .insert(member_sym_id);
+            // Also track in the property-specific set so TS6138 can distinguish
+            // genuine property reads (this.x, destructuring of this) from
+            // parameter variable references that get conflated during dedup.
+            self.ctx
+                .referenced_as_property
+                .borrow_mut()
+                .insert(member_sym_id);
         }
 
         if self.is_super_expression(object_expr)
