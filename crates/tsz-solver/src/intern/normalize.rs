@@ -1258,7 +1258,11 @@ impl TypeInterner {
         // the already-guarded union, and the direct caller caps at 25 members).
         debug_assert!(len <= 64, "reduce_union_subtypes_quadratic: len={len} > 64");
         // Initialize bitset with first `len` bits set. Guard against shift overflow at len==64.
-        let mut keep: u64 = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+        let mut keep: u64 = if len >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << len) - 1
+        };
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;
