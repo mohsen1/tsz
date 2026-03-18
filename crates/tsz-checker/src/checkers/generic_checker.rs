@@ -534,6 +534,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip constraint checking when the type argument is `this` type.
+                // The `this` type is polymorphic (like a type parameter constrained
+                // to the enclosing type) and its constraint satisfaction depends on
+                // the instantiation context. TSC defers this check, so we should too.
+                // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }`
+                // where `BoxOfFoo<T extends Foo>` — `this` satisfies `T extends Foo`
+                // because `this` in `Bar` is bounded by `Bar` which extends `Foo`.
+                if tsz_solver::is_this_type(self.ctx.types, type_arg) {
+                    continue;
+                }
+
                 // Skip constraint checking for `infer` type arguments in conditional
                 // types (e.g., `R extends Reducer<any, infer A>`). TSC does not emit
                 // TS2344 for infer positions — constraints on inferred type params
