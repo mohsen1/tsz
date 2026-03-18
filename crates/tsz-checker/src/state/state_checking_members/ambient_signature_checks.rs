@@ -1167,9 +1167,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS1093: Check for @return/@returns tag with type annotation on constructor
+        // TS1093: Check for @return/@returns tag with type annotation on constructor.
+        // We must skip @returns tags that appear after @callback or @typedef, since
+        // those tags create nested type definitions whose @returns belong to the
+        // callback/typedef, not to the constructor itself.
+        let nested_scope_start = ["@callback", "@typedef"]
+            .iter()
+            .filter_map(|t| raw_comment.find(t))
+            .min();
+
         for tag in ["@returns", "@return"] {
             if let Some(tag_offset) = raw_comment.find(tag) {
+                // Skip if this @returns belongs to a @callback/@typedef block
+                if let Some(scope_start) = nested_scope_start {
+                    if tag_offset > scope_start {
+                        continue;
+                    }
+                }
                 let rest = &raw_comment[tag_offset + tag.len()..];
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with('{') {
