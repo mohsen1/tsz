@@ -324,10 +324,10 @@ impl ShardedInterner {
 
         // PERF: Try read lock first — most intern calls are for already-interned strings.
         // Read locks are shared (no contention), write locks are exclusive.
-        if let Ok(state) = shard.state.read() {
-            if let Some(&atom) = state.map.get(s) {
-                return atom;
-            }
+        if let Ok(state) = shard.state.read()
+            && let Some(&atom) = state.map.get(s)
+        {
+            return atom;
         }
 
         let Ok(mut state) = shard.state.write() else {
