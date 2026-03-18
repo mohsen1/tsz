@@ -184,7 +184,7 @@ pub fn is_readonly_index_signature(
             }
         }
         Some(TypeData::Union(types)) => {
-        let type_list = interner.type_list(types);
+            let type_list = interner.type_list(types);
             let resolver = IndexSignatureResolver::new(interner);
             return type_list.iter().any(|&t| {
                 (wants_string && resolver.is_readonly(t, IndexKind::String))
