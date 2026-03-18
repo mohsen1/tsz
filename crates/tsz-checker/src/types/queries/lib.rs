@@ -1583,6 +1583,41 @@ impl<'a> CheckerState<'a> {
                 let paren = self.ctx.arena.get_parenthesized(node)?;
                 self.literal_type_from_initializer(paren.expression)
             }
+            k if k == tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                let template = self.ctx.arena.get_template_expr(node)?;
+                // Get the head text (text before the first ${})
+                let head_text = self
+                    .ctx
+                    .arena
+                    .get(template.head)
+                    .and_then(|n| self.ctx.arena.get_literal(n))
+                    .map(|lit| lit.text.clone())
+                    .unwrap_or_default();
+                let mut result = head_text.to_string();
+                // For each span, try to evaluate the expression to a string literal
+                for &span_idx in &template.template_spans.nodes {
+                    let span_node = self.ctx.arena.get(span_idx)?;
+                    let span = self.ctx.arena.get_template_span(span_node)?;
+                    // Recursively evaluate the expression inside ${}
+                    let expr_type = self.literal_type_from_initializer(span.expression)?;
+                    // Extract the string value from the literal type
+                    let expr_str = tsz_solver::type_queries::get_string_literal_value(
+                        self.ctx.types,
+                        expr_type,
+                    )?;
+                    result.push_str(&self.ctx.types.resolve_atom(expr_str));
+                    // Get the text after this expression (middle or tail)
+                    let tail_text = self
+                        .ctx
+                        .arena
+                        .get(span.literal)
+                        .and_then(|n| self.ctx.arena.get_literal(n))
+                        .map(|lit| lit.text.clone())
+                        .unwrap_or_default();
+                    result.push_str(&tail_text);
+                }
+                Some(self.ctx.types.literal_string(&result))
+            }
             _ => None,
         }
     }
