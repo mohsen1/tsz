@@ -30,7 +30,7 @@ mod code_action_switch;
 mod code_action_template_string;
 
 pub use code_action_editor_features::{
-    FileEvent, FileEventKind, FileReference, LspCommands, SourceActionKind,
+    FileEvent, FileEventKind, FileReference, LspCommands, PasteAnalysis, SourceActionKind,
 };
 pub use code_action_fixes::{
     CodeFixFileChange, CodeFixInfo, CodeFixPosition, CodeFixRegistry, CodeFixTextChange,

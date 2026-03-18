@@ -47,9 +47,24 @@ pub enum CodeActionKind {
     /// Inline variable/function.
     #[serde(rename = "refactor.inline")]
     RefactorInline,
+    /// Rewrite-style refactoring (convert syntax form).
+    #[serde(rename = "refactor.rewrite")]
+    RefactorRewrite,
+    /// Generic source action.
+    #[serde(rename = "source")]
+    Source,
     /// Organize imports.
     #[serde(rename = "source.organizeImports")]
     SourceOrganizeImports,
+    /// Add missing imports on save.
+    #[serde(rename = "source.addMissingImports")]
+    SourceAddMissingImports,
+    /// Remove unused imports on save.
+    #[serde(rename = "source.removeUnusedImports")]
+    SourceRemoveUnusedImports,
+    /// Sort imports on save.
+    #[serde(rename = "source.sortImports")]
+    SourceSortImports,
 }
 
 #[derive(Debug, Clone)]
@@ -216,15 +231,18 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Source Actions (file-level)
-        let request_organize = context
-            .only
-            .as_ref()
-            .is_none_or(|kinds| kinds.contains(&CodeActionKind::SourceOrganizeImports));
-        if request_organize {
+        let request_source = context.only.as_ref().is_none_or(|kinds| {
+            kinds.contains(&CodeActionKind::Source)
+                || kinds.contains(&CodeActionKind::SourceOrganizeImports)
+                || kinds.contains(&CodeActionKind::SourceAddMissingImports)
+                || kinds.contains(&CodeActionKind::SourceRemoveUnusedImports)
+                || kinds.contains(&CodeActionKind::SourceSortImports)
+        });
+        if request_source {
             if let Some(action) = self.organize_imports(root) {
                 actions.push(action);
             }
-            // Additional source actions
+            // Additional source actions (remove unused, sort-only, etc.)
             actions.extend(self.source_actions(root));
         }
 
@@ -233,6 +251,7 @@ impl<'a> CodeActionProvider<'a> {
             kinds.contains(&CodeActionKind::Refactor)
                 || kinds.contains(&CodeActionKind::RefactorExtract)
                 || kinds.contains(&CodeActionKind::RefactorInline)
+                || kinds.contains(&CodeActionKind::RefactorRewrite)
         });
 
         if request_refactor {
