@@ -48,7 +48,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some((wrapper_fn, original_ctx_type))` if wrapping is needed, or `None`
     /// if the callee is not a function expression. The caller is responsible for installing
-    /// the wrapper via the TypingRequest API and restoring the original after resolution.
+    /// the wrapper via the `TypingRequest` API and restoring the original after resolution.
     pub(crate) fn setup_iife_contextual_type(
         &mut self,
         callee_expression: NodeIndex,
