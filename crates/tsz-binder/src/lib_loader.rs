@@ -178,7 +178,10 @@ pub(crate) fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>>
         None => return lib_files,
     };
     let merged_binder = Arc::new(merged_binder);
-    let merged_root = lib_files.first().map(|f| f.root_index).unwrap_or(NodeIndex(0));
+    let merged_root = lib_files
+        .first()
+        .map(|f| f.root_index)
+        .unwrap_or(NodeIndex(0));
     let merged_file = Arc::new(LibFile::new(
         "merged-libs".to_string(),
         merged_arena,
