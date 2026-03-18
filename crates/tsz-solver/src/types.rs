@@ -440,7 +440,7 @@ pub struct MappedTypeId(pub u32);
 /// The structural "shape" of a type.
 /// This is the key used for interning - structurally identical types
 /// will have the same `TypeData` and therefore the same `TypeId`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TypeData {
     /// Intrinsic types (any, unknown, never, void, null, undefined, boolean, number, string, bigint, symbol, object)
     Intrinsic(IntrinsicKind),
@@ -675,7 +675,7 @@ impl IntrinsicKind {
 }
 
 /// Literal values (for literal types)
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LiteralValue {
     String(Atom),
     Number(OrderedFloat),

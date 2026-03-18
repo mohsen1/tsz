@@ -74,18 +74,10 @@ impl<'a> CheckerState<'a> {
         };
         let var_name = ident.escaped_text.as_str();
 
-        // Get the symbol for this var declaration itself
-        let Some(decl_symbol_id) = self.ctx.binder.get_node_symbol(decl_idx) else {
-            return;
-        };
-        let Some(decl_symbol) = self.ctx.binder.get_symbol(decl_symbol_id) else {
-            return;
-        };
-
-        // Only check function-scoped variables (var)
-        if decl_symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0 {
-            return;
-        }
+        // Note: We do NOT check the symbol's flags here. When `const x` and `var x`
+        // appear in the same block, the binder may map the var node to the block-scoped
+        // symbol (since they share a name in the block scope table). The syntactic check
+        // above (parent VariableDeclarationList flags) is the reliable guard.
 
         // Walk the scope chain from the var's name position, looking for a block-scoped
         // symbol with the same name in an enclosing scope.
@@ -217,6 +209,115 @@ impl<'a> CheckerState<'a> {
                 &[var_name, var_name],
             );
         }
+    }
+
+    /// Check if a `var` declaration is in a TS2481 situation: it shares a block
+    /// scope with a `let`/`const` declaration of the same name. When this is true,
+    /// TS2481 applies and TS2451/TS2403 should be suppressed for this declaration.
+    ///
+    /// This handles the case where the binder merges `const x` and `var x` in the
+    /// same block into a single symbol, which would otherwise incorrectly trigger
+    /// TS2451 (from duplicate identifier checking) and TS2403 (from var redeclaration
+    /// checking).
+    pub(crate) fn is_var_shadowing_block_scoped_in_same_scope(&self, decl_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::node_flags;
+
+        // Must be a var declaration (not let/const)
+        let is_var = self
+            .ctx
+            .arena
+            .get_extended(decl_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent| {
+                let flags = parent.flags as u32;
+                parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && (flags & (node_flags::LET | node_flags::CONST)) == 0
+            });
+        if !is_var {
+            return false;
+        }
+
+        // Get the variable name
+        let Some(var_decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let var_name = ident.escaped_text.as_str();
+
+        // Find the enclosing scope of the var declaration
+        let Some(scope_id) = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, var_decl.name)
+        else {
+            return false;
+        };
+        let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+            return false;
+        };
+
+        // Check if this scope has a symbol with BLOCK_SCOPED_VARIABLE flag for this name
+        if let Some(sym_id) = scope.table.get(var_name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            && (sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+        {
+            // The scope has a block-scoped binding for this name.
+            // Check that this scope is NOT at function/module/source-file level
+            // (those cases are TS2451, not TS2481).
+            if matches!(
+                scope.kind,
+                tsz_binder::ContainerKind::SourceFile
+                    | tsz_binder::ContainerKind::Function
+                    | tsz_binder::ContainerKind::Module
+            ) {
+                return false;
+            }
+            // Check if this Block scope is a function body
+            if scope.kind == tsz_binder::ContainerKind::Block {
+                let is_function_body = self
+                    .ctx
+                    .binder
+                    .scopes
+                    .get(scope_id.0 as usize)
+                    .and_then(|s| {
+                        self.ctx
+                            .arena
+                            .get_extended(s.container_node)
+                            .map(|ext| ext.parent)
+                    })
+                    .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                    .is_some_and(|parent_node| {
+                        use tsz_parser::parser::syntax_kind_ext;
+                        matches!(
+                            parent_node.kind,
+                            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || k == syntax_kind_ext::METHOD_DECLARATION
+                                || k == syntax_kind_ext::CONSTRUCTOR
+                                || k == syntax_kind_ext::GET_ACCESSOR
+                                || k == syntax_kind_ext::SET_ACCESSOR
+                                || k == syntax_kind_ext::ARROW_FUNCTION
+                        )
+                    });
+                if is_function_body {
+                    return false;
+                }
+            }
+            return true;
+        }
+        false
     }
 
     /// For TS2403 redeclaration checking, compute the "declared type" of an

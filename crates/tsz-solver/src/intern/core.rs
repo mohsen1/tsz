@@ -56,8 +56,8 @@ type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
 struct TypeShardInner {
     /// Map from `TypeData` to local index within this shard
     key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
-    /// Map from local index to `TypeData` (using Arc for shared access)
-    index_to_key: DashMap<u32, Arc<TypeData>, FxBuildHasher>,
+    /// Map from local index to `TypeData` (stored inline since TypeData is Copy)
+    index_to_key: DashMap<u32, TypeData, FxBuildHasher>,
 }
 
 /// A single shard of the type interned storage.
@@ -139,12 +139,15 @@ where
         }
 
         let inner = self.get_inner();
-        let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
 
-        // Try to get existing ID via reverse map — O(1)
-        if let Some(ref_entry) = inner.map.get(&temp_arc) {
+        // PERF: Try lookup with borrowed slice first to avoid Vec+Arc allocation on cache hits.
+        // Arc<[T]>: Borrow<[T]> enables DashMap lookup with &[T] key.
+        if let Some(ref_entry) = inner.map.get(items_slice) {
             return *ref_entry.value();
         }
+
+        // Cache miss — allocate for insertion
+        let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
 
         // Allocate new ID
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -231,12 +234,16 @@ where
     #[inline]
     fn intern(&self, value: T) -> u32 {
         let inner = self.get_inner();
-        let value_arc = Arc::new(value);
 
-        // Try to get existing ID
-        if let Some(ref_entry) = inner.map.get(&value_arc) {
+        // PERF: Try lookup with borrowed value first to avoid Arc allocation on cache hits.
+        // Most intern calls are for already-interned values, so this saves an Arc::new()
+        // (heap allocation + atomic ref count) on the hot path.
+        if let Some(ref_entry) = inner.map.get(&value) {
             return *ref_entry.value();
         }
+
+        // Cache miss — allocate Arc for insertion
+        let value_arc = Arc::new(value);
 
         // Allocate new ID
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -704,8 +711,7 @@ impl TypeInterner {
         match inner.key_to_index.entry(key.clone()) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
-                let key_arc = Arc::new(key);
-                inner.index_to_key.insert(local_index, key_arc);
+                inner.index_to_key.insert(local_index, key);
                 let id = self.make_id(local_index, shard_idx as u32);
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
@@ -742,7 +748,7 @@ impl TypeInterner {
             .get_inner()
             .index_to_key
             .get(&{ local_index })
-            .map(|r| r.value().as_ref().clone())
+            .map(|r| *r.value())
     }
 
     pub(super) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {

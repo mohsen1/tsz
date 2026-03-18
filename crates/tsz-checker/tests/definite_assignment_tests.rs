@@ -929,3 +929,144 @@ fn test_non_null_assertion_does_not_emit_ts2454() {
         "Non-null assertions should not emit TS2454, got: {diags:?}"
     );
 }
+
+// ===== Type parameter property initialization tests =====
+// Mirrors tsc behavior: `isTypeAssignableTo(undefinedType, T)` is true for
+// unconstrained type parameters, so TS2564 should NOT be emitted.
+
+#[test]
+fn test_ts2564_no_error_for_unconstrained_type_parameter() {
+    // Matches superWithTypeArgument3.ts: `foo: T` where T is unconstrained
+    let source = r"
+        class C<T> {
+            foo: T;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "TS2564 should not be emitted for property typed as unconstrained type parameter T, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_error_for_constrained_type_parameter_excluding_undefined() {
+    // T extends string → undefined NOT assignable to string → TS2564 required
+    let source = r"
+        class C<T extends string> {
+            foo: T;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        1,
+        "TS2564 should be emitted for property typed as T extends string, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_no_error_for_type_parameter_constrained_to_undefined() {
+    // T extends string | undefined → undefined IS assignable → no TS2564
+    let source = r"
+        class C<T extends string | undefined> {
+            foo: T;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "TS2564 should not be emitted for T extends string | undefined, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_still_emitted_for_concrete_types() {
+    // Ensure the fix doesn't break concrete type TS2564
+    let source = r"
+        class C {
+            x: number;
+            y: string;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        2,
+        "TS2564 should still be emitted for concrete types number and string, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_no_error_without_strict_mode() {
+    // Mirrors superWithTypeArgument3.ts: no @strict → no TS2564
+    let source = r"
+        class C<T> {
+            foo: T;
+            bar(): void {}
+        }
+        class D<T> extends C<T> {
+            constructor() {
+                super();
+            }
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: false,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "TS2564 should not be emitted when strict mode is off, got: {diags:?}"
+    );
+}

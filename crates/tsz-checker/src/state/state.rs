@@ -1463,6 +1463,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // PERF: Skip clearing for nodes that never benefit from contextual retyping.
+        // `null` is always TypeId::NULL, `true`/`false` are always boolean literals,
+        // and regex literals are always RegExp. These never change under any context.
+        // NOTE: String/numeric literals are NOT safe to skip — contextual typing
+        // determines whether they widen ("hello" → string vs staying as "hello").
+        // Identifiers are also not safe — they can resolve differently under context.
+        if let Some(node) = self.ctx.arena.get(idx) {
+            let k = node.kind;
+            if k == tsz_scanner::SyntaxKind::NullKeyword as u16
+                || k == tsz_scanner::SyntaxKind::RegularExpressionLiteral as u16
+            {
+                return;
+            }
+        }
+
         // Clear this node's cache
         self.ctx.node_types.remove(&idx.0);
         if !self.ctx.implicit_any_contextual_closures.contains(&idx) {

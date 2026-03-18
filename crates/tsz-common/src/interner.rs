@@ -321,12 +321,20 @@ impl ShardedInterner {
 
         let shard_idx = Self::shard_for(s);
         let shard = &self.shards[shard_idx];
+
+        // PERF: Try read lock first — most intern calls are for already-interned strings.
+        // Read locks are shared (no contention), write locks are exclusive.
+        if let Ok(state) = shard.state.read()
+            && let Some(&atom) = state.map.get(s)
+        {
+            return atom;
+        }
+
         let Ok(mut state) = shard.state.write() else {
-            // If lock is poisoned, return a fallback atom
-            // This maintains availability even if internal state is corrupted
             return Atom::NONE;
         };
 
+        // Double-check after acquiring write lock (another thread may have interned it)
         if let Some(&atom) = state.map.get(s) {
             return atom;
         }

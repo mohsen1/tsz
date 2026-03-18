@@ -976,7 +976,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         member_idx: NodeIndex,
         prop: &tsz_parser::parser::node::PropertyDeclData,
-        is_derived_class: bool,
+        _is_derived_class: bool,
     ) -> bool {
         use tsz_scanner::SyntaxKind;
 
@@ -1041,6 +1041,7 @@ impl<'a> CheckerState<'a> {
         // 1. ANY/UNKNOWN types don't need initialization
         // 2. Union types with undefined don't need initialization
         // 3. Optional types don't need initialization
+        // 4. Type parameters (unconstrained or constrained to allow undefined)
         if prop_type == TypeId::ANY || prop_type == TypeId::UNKNOWN {
             return false;
         }
@@ -1050,16 +1051,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For derived classes, be more strict about definite assignment
-        // Properties in derived classes that redeclare base class properties need initialization
-        // This catches cases like: class B extends A { property: any; } where A has property
-        if is_derived_class {
-            // In derived classes, properties without definite assignment assertions
-            // need initialization unless they include undefined in their type
-            return !class_query::type_includes_undefined(self.ctx.types, prop_type);
-        }
-
-        !class_query::type_includes_undefined(self.ctx.types, prop_type)
+        // Check if undefined is assignable to the property type.
+        // This handles: union types with undefined, type parameters with
+        // unconstrained or undefined-allowing constraints (mirrors tsc's
+        // `isTypeAssignableTo(undefinedType, type)` check for TS2564).
+        !class_query::undefined_is_assignable_to(self.ctx.types, prop_type)
     }
 
     /// Check for TS2565: Properties used before being assigned in the constructor.

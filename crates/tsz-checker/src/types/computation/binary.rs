@@ -343,8 +343,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-        let mut stack = vec![(idx, false)];
-        let mut type_stack: Vec<TypeId> = Vec::new();
+        // PERF: Use SmallVec to avoid heap allocation for simple binary expressions.
+        // Most binary ops (??. ||, &&, +=, etc.) have exactly 1 stack frame and 2 types.
+        // Only deep + chains or nested binary expressions spill to heap.
+        let mut stack: smallvec::SmallVec<[(NodeIndex, bool); 4]> =
+            smallvec::smallvec![(idx, false)];
+        let mut type_stack: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
 
         while let Some((node_idx, visited)) = stack.pop() {
             let Some(node) = self.ctx.arena.get(node_idx) else {
