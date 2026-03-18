@@ -1179,10 +1179,10 @@ impl<'a> CheckerState<'a> {
         for tag in ["@returns", "@return"] {
             if let Some(tag_offset) = raw_comment.find(tag) {
                 // Skip if this @returns belongs to a @callback/@typedef block
-                if let Some(scope_start) = nested_scope_start {
-                    if tag_offset > scope_start {
-                        continue;
-                    }
+                if let Some(scope_start) = nested_scope_start
+                    && tag_offset > scope_start
+                {
+                    continue;
                 }
                 let rest = &raw_comment[tag_offset + tag.len()..];
                 let trimmed = rest.trim_start();
