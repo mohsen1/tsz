@@ -786,6 +786,95 @@ impl DocumentFormattingProvider {
     }
 
     // =========================================================================
+    // Range formatting
+    // =========================================================================
+
+    /// Format a specific range within a document.
+    ///
+    /// This implements the LSP `textDocument/rangeFormatting` request.
+    /// Only lines that fall within the given range are reformatted;
+    /// surrounding lines are left untouched.
+    pub fn format_range(
+        source_text: &str,
+        range: Range,
+        options: &FormattingOptions,
+    ) -> Result<Vec<TextEdit>, String> {
+        let lines: Vec<&str> = source_text.lines().collect();
+        let start_line = range.start.line as usize;
+        let end_line = (range.end.line as usize).min(lines.len().saturating_sub(1));
+
+        if start_line > end_line || start_line >= lines.len() {
+            return Ok(vec![]);
+        }
+
+        // Extract the range of lines and format them
+        let range_text: String = lines[start_line..=end_line].join("\n");
+        let formatted = Self::format_text(
+            &range_text,
+            &FormattingOptions {
+                // Don't add final newline for range formatting
+                insert_final_newline: Some(false),
+                trim_final_newlines: Some(false),
+                ..options.clone()
+            },
+        );
+
+        let formatted_lines: Vec<&str> = formatted.lines().collect();
+
+        let mut edits = Vec::new();
+        let max_lines = lines[start_line..=end_line]
+            .len()
+            .min(formatted_lines.len());
+
+        for i in 0..max_lines {
+            let orig_line = lines[start_line + i];
+            let fmt_line = formatted_lines.get(i).copied().unwrap_or("");
+            if orig_line != fmt_line {
+                edits.push(TextEdit::new(
+                    Range::new(
+                        Position::new((start_line + i) as u32, 0),
+                        Position::new((start_line + i) as u32, orig_line.len() as u32),
+                    ),
+                    fmt_line.to_string(),
+                ));
+            }
+        }
+
+        // Handle line count differences
+        let orig_count = end_line - start_line + 1;
+        if formatted_lines.len() < orig_count {
+            // Remove extra lines
+            let last_fmt = formatted_lines.len().saturating_sub(1);
+            let last_fmt_len = formatted_lines.last().map_or(0, |l| l.len()) as u32;
+            edits.push(TextEdit::new(
+                Range::new(
+                    Position::new((start_line + last_fmt) as u32, last_fmt_len),
+                    Position::new(end_line as u32, lines[end_line].len() as u32),
+                ),
+                String::new(),
+            ));
+        } else if formatted_lines.len() > orig_count {
+            // Insert extra lines
+            let extra: Vec<&str> = formatted_lines[orig_count..].to_vec();
+            let mut new_text = String::new();
+            for line in &extra {
+                new_text.push('\n');
+                new_text.push_str(line);
+            }
+            let end_char = lines[end_line].len() as u32;
+            edits.push(TextEdit::new(
+                Range::new(
+                    Position::new(end_line as u32, end_char),
+                    Position::new(end_line as u32, end_char),
+                ),
+                new_text,
+            ));
+        }
+
+        Ok(edits)
+    }
+
+    // =========================================================================
     // Format on key support
     // =========================================================================
 
@@ -805,6 +894,7 @@ impl DocumentFormattingProvider {
         match key {
             ";" => Self::format_on_semicolon(source_text, line, options),
             "\n" => Self::format_on_enter(source_text, line, options),
+            "}" => Self::format_on_closing_brace(source_text, line, options),
             _ => Ok(vec![]),
         }
     }
@@ -898,6 +988,43 @@ impl DocumentFormattingProvider {
         }
 
         Ok(edits)
+    }
+
+    /// Format after typing a closing brace `}`.
+    /// Re-indents the current line to match the corresponding opening brace.
+    fn format_on_closing_brace(
+        source_text: &str,
+        line: u32,
+        options: &FormattingOptions,
+    ) -> Result<Vec<TextEdit>, String> {
+        let lines: Vec<&str> = source_text.lines().collect();
+        let line_idx = line as usize;
+        if line_idx >= lines.len() {
+            return Ok(vec![]);
+        }
+
+        let current_line = lines[line_idx];
+        let trimmed = current_line.trim();
+
+        // Only apply if the line is just a closing brace (with possible whitespace)
+        if !trimmed.starts_with('}') {
+            return Ok(vec![]);
+        }
+
+        let expected_indent = Self::compute_indent_for_line(lines.as_slice(), line_idx, options);
+        let new_text = format!("{expected_indent}{trimmed}");
+
+        if new_text != current_line {
+            Ok(vec![TextEdit::new(
+                Range::new(
+                    Position::new(line, 0),
+                    Position::new(line, current_line.len() as u32),
+                ),
+                new_text,
+            )])
+        } else {
+            Ok(vec![])
+        }
     }
 
     /// Compute the expected indentation string for a given line index,

@@ -1070,4 +1070,41 @@ impl Project {
             ),
         )
     }
+
+    /// Format a range within a document (textDocument/rangeFormatting).
+    pub fn format_range(
+        &self,
+        file_name: &str,
+        range: Range,
+        options: &crate::formatting::FormattingOptions,
+    ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
+        let file = self.files.get(file_name)?;
+        Some(crate::formatting::DocumentFormattingProvider::format_range(
+            file.source_text(),
+            range,
+            options,
+        ))
+    }
+
+    /// Format on typing a trigger character (textDocument/onTypeFormatting).
+    ///
+    /// Trigger characters: `;`, `\n`, `}`
+    pub fn format_on_type(
+        &self,
+        file_name: &str,
+        position: Position,
+        ch: &str,
+        options: &crate::formatting::FormattingOptions,
+    ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
+        let file = self.files.get(file_name)?;
+        Some(
+            crate::formatting::DocumentFormattingProvider::format_on_key(
+                file.source_text(),
+                position.line,
+                position.character,
+                ch,
+                options,
+            ),
+        )
+    }
 }
