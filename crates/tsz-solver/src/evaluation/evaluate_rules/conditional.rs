@@ -411,8 +411,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &mut loop_visited,
                     &mut checker,
                 ) {
-                    let substituted_true =
-                        self.substitute_infer(cond.true_type, &loop_bindings);
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
                     // The substituted true branch Trim<T> is an Application that expands
