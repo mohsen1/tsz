@@ -213,42 +213,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => check_type,
             };
 
-            // Handle array extends pattern with infer
-            if let Some(TypeData::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
-                && let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem)
-            {
-                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
-            }
-
-            // Handle tuple extends pattern with infer
-            if let Some(TypeData::Tuple(extends_elements)) =
-                self.interner().lookup(extends_unwrapped)
-            {
-                let extends_elements = self.interner().tuple_list(extends_elements);
-                if extends_elements.len() == 1
-                    && !extends_elements[0].rest
-                    && let Some(TypeData::Infer(info)) =
-                        self.interner().lookup(extends_elements[0].type_id)
-                {
-                    return self.eval_conditional_tuple_infer(
-                        cond,
-                        check_unwrapped,
-                        &extends_elements[0],
-                        info,
-                    );
+            // PERF: Single lookup for array/tuple extends patterns with infer
+            match self.interner().lookup(extends_unwrapped) {
+                Some(TypeData::Array(ext_elem)) => {
+                    if let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem) {
+                        return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                    }
                 }
-            }
-
-            // Handle object extends pattern with infer
-            if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
+                Some(TypeData::Tuple(extends_elements)) => {
+                    let extends_elements = self.interner().tuple_list(extends_elements);
+                    if extends_elements.len() == 1
+                        && !extends_elements[0].rest
+                        && let Some(TypeData::Infer(info)) =
+                            self.interner().lookup(extends_elements[0].type_id)
+                    {
+                        return self.eval_conditional_tuple_infer(
+                            cond,
+                            check_unwrapped,
+                            &extends_elements[0],
+                            info,
+                        );
+                    }
+                }
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                    Some(shape_id)
+                    if let Some(result) =
+                        self.eval_conditional_object_infer(cond, check_unwrapped, shape_id)
+                    {
+                        return result;
+                    }
                 }
-                _ => None,
-            } && let Some(result) =
-                self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
-            {
-                return result;
+                _ => {}
             }
 
             // Step 2: Check for naked type parameter
