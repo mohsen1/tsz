@@ -223,9 +223,17 @@ impl<'a> CheckerState<'a> {
 
             let is_param_decl = self.is_parameter_declaration(decl_idx);
             let referenced = self.ctx.referenced_symbols.borrow().contains(&sym_id);
-            // For parameter properties (constructor(private x: string)),
-            // the property symbol may be "referenced" because the parameter
-            // name is used in the body. But TS6138 checks if this.x is read.
+            // For parameter properties (constructor(private x: string)), the binder
+            // creates a PROPERTY symbol in the class scope and a VARIABLE symbol in
+            // the constructor scope, both sharing the same declaration node. The
+            // deduplication logic (lines 69-82) propagates `referenced` status from
+            // the VARIABLE to the PROPERTY, so `referenced` being true for the
+            // PROPERTY symbol does NOT necessarily mean `this.x` was read — it might
+            // just mean the parameter name was used in the constructor body.
+            //
+            // To correctly detect whether the property was actually read, we check
+            // `referenced_as_property`, which is populated exclusively by
+            // `check_property_accessibility` (property access, destructuring of this).
             let is_parameter_property = (flags & symbol_flags::PROPERTY) != 0
                 && self
                     .ctx
@@ -233,13 +241,19 @@ impl<'a> CheckerState<'a> {
                     .get(decl_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER);
 
-            #[allow(clippy::nonminimal_bool)]
-            if referenced
-                && !is_parameter_property
-                && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
-                && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
-            {
-                continue;
+            // For parameter properties, use the property-specific reference set.
+            if is_parameter_property {
+                if self.ctx.referenced_as_property.borrow().contains(&sym_id) {
+                    continue;
+                }
+            } else {
+                #[allow(clippy::nonminimal_bool)]
+                if referenced
+                    && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
+                    && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
+                {
+                    continue;
+                }
             }
 
             // Skip exported symbols — they may be used externally
