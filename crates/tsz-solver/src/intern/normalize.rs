@@ -1096,6 +1096,10 @@ impl TypeInterner {
         // (UnionReduction.Subtype) is only used in specific contexts like conditional type
         // results. Object/Array/Tuple/Enum types are structurally distinct after dedup, so
         // subtype reduction would incorrectly collapse unions like `{A: number} | {A: number; B: number}`.
+        //
+        // Lazy/Application/Callable types are also non-reducible because `is_subtype_shallow`
+        // returns false for them — they require full type resolution. Including them here
+        // avoids O(N²) wasted work in unions of class types (which are Lazy at this stage).
         {
             let all_non_reducible = flat.iter().all(|&ty| {
                 if self.is_identity_comparable_type(ty) {
@@ -1109,6 +1113,9 @@ impl TypeInterner {
                             | TypeData::Object(_)
                             | TypeData::ObjectWithIndex(_)
                             | TypeData::Enum(_, _)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::Callable(_)
                     )
                 )
             });
