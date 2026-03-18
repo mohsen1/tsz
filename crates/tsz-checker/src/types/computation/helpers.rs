@@ -244,7 +244,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_conditional_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_conditional_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_conditional_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -263,7 +272,7 @@ impl<'a> CheckerState<'a> {
         // but don't check assignability here - that happens at the call site.
         // This allows `cond ? "a" : "b"` to infer as `"a" | "b"` and then
         // the union is checked against the contextual type.
-        let prev_context = self.ctx.contextual_type;
+        let contextual_type = request.contextual_type;
 
         // Preserve literal types in conditional branches so that
         // `const x = cond ? "a" : "b"` infers `"a" | "b"` (tsc behavior).
@@ -292,7 +301,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|n| n.kind == SyntaxKind::FalseKeyword as u16);
 
         let should_suppress_contextual_branch_assignability =
-            prev_context.is_some() && !self.assignment_source_is_return_expression(idx);
+            contextual_type.is_some() && !self.assignment_source_is_return_expression(idx);
         let suppress_contextual_branch_ts2322 =
             |state: &mut Self,
              branch_idx: NodeIndex,
@@ -313,11 +322,9 @@ impl<'a> CheckerState<'a> {
 
         // Compute branch types with the outer contextual type for inference.
         // Use per-branch requests so each branch gets its own narrowed contextual type.
-        let true_ctx = prev_context
+        let true_ctx = contextual_type
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_true));
-        let true_request = true_ctx
-            .map(TypingRequest::with_contextual_type)
-            .unwrap_or(TypingRequest::NONE);
+        let true_request = request.contextual_opt(true_ctx);
         let when_true = if condition_is_false {
             // Dead branch — suppress diagnostics but still compute type.
             // Must save/restore BOTH the diagnostics vec AND the dedup set,
@@ -335,11 +342,9 @@ impl<'a> CheckerState<'a> {
             ty
         };
 
-        let false_ctx = prev_context
+        let false_ctx = contextual_type
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_false));
-        let false_request = false_ctx
-            .map(TypingRequest::with_contextual_type)
-            .unwrap_or(TypingRequest::NONE);
+        let false_request = request.contextual_opt(false_ctx);
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
             let snap = self.ctx.snapshot_diagnostics();
@@ -378,7 +383,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Computes the type of unary expressions like `!x`, `+x`, `-x`, `~x`, `++x`, `--x`, `typeof x`.
     /// Returns boolean for `!`, number for arithmetic operators, string for `typeof`.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_prefix_unary(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_prefix_unary_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_prefix_unary_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_scanner::SyntaxKind;
         use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
@@ -479,7 +493,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
-                    if self.contextual_literal_type(literal_type).is_some() {
+                    if request.contextual_type.is_some_and(|ctx_type| {
+                        self.contextual_type_allows_literal(ctx_type, literal_type)
+                    }) {
                         return literal_type;
                     }
 
@@ -825,7 +841,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_template_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_template_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_template_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::STRING;
         };
@@ -843,6 +868,8 @@ impl<'a> CheckerState<'a> {
             .map(|lit| lit.text.clone())
             .unwrap_or_default();
 
+        let span_request = request.read().normal_origin().contextual_opt(None);
+
         // Type-check each template span's expression and collect types + text parts
         let mut part_types = Vec::new();
         let mut texts = vec![head_text];
@@ -856,7 +883,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Type-check the expression - this will emit TS2304 if name is unresolved
-            let part_type = self.get_type_of_node(span.expression);
+            let part_type = self.get_type_of_node_with_request(span.expression, &span_request);
             part_types.push(part_type);
 
             // Extract the text after this expression (middle or tail)
@@ -874,7 +901,7 @@ impl<'a> CheckerState<'a> {
         // 1. Contextual type is/contains a template literal type or string literal type
         // 2. Inside a const assertion (as const)
         let in_template_context = self.ctx.in_const_assertion
-            || self.ctx.contextual_type.is_some_and(|ct| {
+            || request.contextual_type.is_some_and(|ct| {
                 expression_ops::is_template_literal_contextual_type(self.ctx.types, ct)
             });
 
@@ -1143,20 +1170,15 @@ impl<'a> CheckerState<'a> {
         {
             // Still evaluate the node so side effects (diagnostics on the object) fire,
             // but return `any` for the LHS type so assignability is not checked.
-            let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-            self.ctx.skip_flow_narrowing = true;
-            let _ = self.get_type_of_node(idx);
-            self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+            let _ = self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context());
             return TypeId::ANY;
         }
 
-        let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
         if self.is_valid_assignment_target(idx) {
-            self.ctx.skip_flow_narrowing = true;
+            self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context())
+        } else {
+            self.get_type_of_node(idx)
         }
-        let result = self.get_type_of_node(idx);
-        self.ctx.skip_flow_narrowing = prev_skip_narrowing;
-        result
     }
 
     /// Get the type of a class member.

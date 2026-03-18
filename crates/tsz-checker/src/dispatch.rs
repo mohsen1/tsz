@@ -22,12 +22,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 
     /// Resolve a literal type: preserve if const assertion or contextual typing expects it.
-    fn resolve_literal(&mut self, literal_type: Option<TypeId>, widened: TypeId) -> TypeId {
+    fn resolve_literal(
+        &mut self,
+        request: &TypingRequest,
+        literal_type: Option<TypeId>,
+        widened: TypeId,
+    ) -> TypeId {
         match literal_type {
             Some(lit)
                 if self.checker.ctx.in_const_assertion
                     || self.checker.ctx.preserve_literal_types
-                    || self.checker.contextual_literal_type(lit).is_some() =>
+                    || request.contextual_type.is_some_and(|ctx_type| {
+                        self.checker.contextual_type_allows_literal(ctx_type, lit)
+                    }) =>
             {
                 lit
             }
@@ -196,7 +203,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         Some(declared_return_type)
     }
 
-    fn get_type_of_yield_expression(&mut self, idx: NodeIndex) -> TypeId {
+    fn get_type_of_yield_expression(&mut self, idx: NodeIndex, request: &TypingRequest) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -247,7 +254,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // This allows `yield (num) => ...` to contextually type arrow params.
             // For `yield *expr`, the expression is an iterable of the yield type,
             // so wrap the contextual type in Array<T> to contextually type array elements.
-            let outer_contextual = self.checker.ctx.contextual_type;
+            let outer_contextual = request.contextual_type;
             let mut contextual_yield_star_return = None;
             let yield_request = if let Some(yield_ctx) = self
                 .checker
@@ -315,9 +322,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 };
                 self.checker
                     .clear_type_cache_recursive(yield_expr.expression);
-                crate::context::TypingRequest::with_contextual_type(ctx_type)
+                request.read().normal_origin().contextual(ctx_type)
             } else {
-                crate::context::TypingRequest::NONE
+                request.read().normal_origin().contextual_opt(None)
             };
             let expression_type = self
                 .checker
@@ -545,7 +552,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // and the yield result is consumed (not discarded).
         if self.checker.ctx.no_implicit_any() && !self.expression_result_is_unused(idx) {
             let yield_type = self.checker.ctx.current_yield_type();
-            let contextual = self.checker.ctx.contextual_type;
+            let contextual = request.contextual_type;
             // Suppress TS7057 when:
             // - yield_type is Some(ANY): the yield type itself is any, so TS7055/7025 covers it
             // - contextual type provides a concrete non-any, non-type-parameter type
@@ -758,12 +765,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
     /// Dispatch type computation based on node kind.
     pub fn dispatch_type_computation(&mut self, idx: NodeIndex) -> TypeId {
+        self.dispatch_type_computation_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub fn dispatch_type_computation_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
         match node.kind {
             // Identifiers
-            k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
+            k if k == SyntaxKind::Identifier as u16 => self
+                .checker
+                .get_type_of_identifier_with_request(idx, request),
             k if k == SyntaxKind::RegularExpressionLiteral as u16 => self
                 .checker
                 .resolve_lib_type_by_name("RegExp")
@@ -985,6 +1002,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             // Literals — preserve literal types when contextual typing expects them.
             k if k == SyntaxKind::NumericLiteral as u16 => self.resolve_literal(
+                request,
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::NUMBER,
             ),
@@ -1002,51 +1020,49 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     );
                 }
                 self.resolve_literal(
+                    request,
                     self.checker.literal_type_from_initializer(idx),
                     TypeId::BIGINT,
                 )
             }
             k if k == SyntaxKind::StringLiteral as u16 => self.resolve_literal(
+                request,
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::STRING,
             ),
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(true);
-                self.resolve_literal(Some(literal_type), TypeId::BOOLEAN)
+                self.resolve_literal(request, Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::FalseKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(false);
-                self.resolve_literal(Some(literal_type), TypeId::BOOLEAN)
+                self.resolve_literal(request, Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
             // Binary expressions
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                self.checker.get_type_of_binary_expression(idx)
+                self.checker.get_type_of_binary_expression_with_request(idx, request)
             }
             // Call expressions
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                self.checker.get_type_of_call_expression(idx)
-            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .checker
+                .get_type_of_call_expression_with_request(idx, request),
             // Tagged template expressions (e.g., `tag\`hello ${x}\``)
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.checker.get_type_of_tagged_template_expression(idx)
             }
             // New expressions
-            k if k == syntax_kind_ext::NEW_EXPRESSION => {
-                self.checker.get_type_of_new_expression(idx)
-            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self
+                .checker
+                .get_type_of_new_expression_with_request(idx, request),
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
                     // Wrap check_class_expression in a typing context to prevent it
                     // from leaking contextual_type mutations to the outer scope.
-                    let saved_ctx = self.checker.ctx.contextual_type;
-                    self.checker.run_with_typing_context(
-                        &saved_ctx
-                            .map(TypingRequest::with_contextual_type)
-                            .unwrap_or(TypingRequest::NONE),
-                        |checker| checker.check_class_expression(idx, &class),
-                    );
+                    self.checker.run_with_typing_context(request, |checker| {
+                        checker.check_class_expression(idx, &class)
+                    });
 
                     // When a contextual type has properties (i.e., it's an
                     // interface/object type like `I` in `let c: I = class { ... }`),
@@ -1054,7 +1070,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // have widened literal types for static properties. Invalidate
                     // the cache so the constructor type is recomputed with contextual
                     // typing, preserving literal types when the interface requires them.
-                    if let Some(ctx_type) = saved_ctx {
+                    if let Some(ctx_type) = request.contextual_type {
                         let resolved = self.checker.evaluate_type_for_assignability(ctx_type);
                         if tsz_solver::type_queries::has_properties(
                             self.checker.ctx.types,
@@ -1080,17 +1096,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
             // Property access
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                self.checker.get_type_of_property_access(idx)
-            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .checker
+                .get_type_of_property_access_with_request(idx, request),
             // Element access
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                self.checker.get_type_of_element_access(idx)
-            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self
+                .checker
+                .get_type_of_element_access_with_request(idx, request),
             // Conditional expression (ternary)
-            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                self.checker.get_type_of_conditional_expression(idx)
-            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .checker
+                .get_type_of_conditional_expression_with_request(idx, request),
             // Variable declaration
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 self.checker.get_type_of_variable_declaration(idx)
@@ -1104,27 +1120,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if self.checker.is_js_file() {
                     self.checker.check_js_grammar_function(idx, node);
                 }
-                self.checker.get_type_of_function(idx)
+                self.checker.get_type_of_function_with_request(idx, request)
             }
             // Arrow function
             k if k == syntax_kind_ext::ARROW_FUNCTION => {
                 if self.checker.is_js_file() {
                     self.checker.check_js_grammar_function(idx, node);
                 }
-                self.checker.get_type_of_function(idx)
+                self.checker.get_type_of_function_with_request(idx, request)
             }
             // Array literal
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.checker.get_type_of_array_literal(idx)
-            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
+                .checker
+                .get_type_of_array_literal_with_request(idx, request),
             // Object literal
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                self.checker.get_type_of_object_literal(idx)
-            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .checker
+                .get_type_of_object_literal_with_request(idx, request),
             // Prefix unary expression
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                self.checker.get_type_of_prefix_unary(idx)
-            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self
+                .checker
+                .get_type_of_prefix_unary_with_request(idx, request),
             // Postfix unary expression - ++ and -- require numeric operand and valid l-value
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
@@ -1213,11 +1229,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
             // await expression - unwrap Promise<T> to get T, with contextual typing (Phase 6 - tsz-3)
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
-                self.checker.get_type_of_await_expression(idx)
-            }
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => self
+                .checker
+                .get_type_of_await_expression_with_request(idx, request),
             // yield expression
-            k if k == syntax_kind_ext::YIELD_EXPRESSION => self.get_type_of_yield_expression(idx),
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
+                self.get_type_of_yield_expression(idx, request)
+            }
             // Parenthesized expression - just pass through to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.checker.ctx.arena.get_parenthesized(node) {
@@ -1242,9 +1260,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 .skip_parenthesized_and_assertions(paren.expression),
                         );
                         let request = if needs_context {
-                            TypingRequest::for_assertion(jsdoc_type)
+                            request
+                                .read()
+                                .normal_origin()
+                                .contextual(jsdoc_type)
+                                .assertion()
                         } else {
-                            TypingRequest::NONE
+                            request.read().normal_origin().contextual_opt(None)
                         };
                         let expr_type = self
                             .checker
@@ -1313,7 +1335,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Set contextual type for JSDoc @satisfies, matching the
                         // `satisfies` expression handler behavior.
                         let satisfies_request =
-                            crate::context::TypingRequest::with_contextual_type(satisfies_type);
+                            request.read().normal_origin().contextual(satisfies_type);
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(paren.expression, &satisfies_request);
@@ -1331,7 +1353,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         }
                         expr_type
                     } else {
-                        self.checker.get_type_of_node(paren.expression)
+                        self.checker
+                            .get_type_of_node_with_request(paren.expression, request)
                     }
                 } else {
                     // Missing parenthesized data - propagate error
@@ -1372,13 +1395,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                     // In recovery scenarios we may not have a type node; fall back to the expression type.
                     if assertion.type_node.is_none() {
-                        let expr_type = self.checker.get_type_of_node(assertion.expression);
+                        let expr_type = self
+                            .checker
+                            .get_type_of_node_with_request(assertion.expression, request);
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         expr_type
                     } else if is_const_assertion {
                         // TS1355: Check that the expression is a valid const assertion target.
                         self.check_const_assertion_expression(assertion.expression);
-                        let expr_type = self.checker.get_type_of_node(assertion.expression);
+                        let expr_type = self.checker.get_type_of_node_with_request(
+                            assertion.expression,
+                            &request.read().normal_origin().contextual_opt(None),
+                        );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         use tsz_solver::widening::apply_const_assertion;
                         apply_const_assertion(self.checker.ctx.types, expr_type)
@@ -1405,12 +1433,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // while `as`/angle-bracket assertions mark assertion origin
                             // so function body return types are NOT checked against it.
                             if k == syntax_kind_ext::SATISFIES_EXPRESSION {
-                                TypingRequest::with_contextual_type(asserted_type)
+                                request.read().normal_origin().contextual(asserted_type)
                             } else {
-                                TypingRequest::for_assertion(asserted_type)
+                                request
+                                    .read()
+                                    .normal_origin()
+                                    .contextual(asserted_type)
+                                    .assertion()
                             }
                         } else {
-                            TypingRequest::NONE
+                            request.read().normal_origin().contextual_opt(None)
                         };
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self
@@ -1732,12 +1764,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
             // Template expression (e.g., `hello ${name}`)
-            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
-                self.checker.get_type_of_template_expression(idx)
-            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => self
+                .checker
+                .get_type_of_template_expression_with_request(idx, request),
             // No-substitution template literal - always preserve literal type.
             // Widening happens at binding sites, not at expression evaluation.
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => self.resolve_literal(
+                request,
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::STRING,
             ),
@@ -1798,9 +1831,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     } else {
                         None
                     };
-                    let children_request = children_ctx_type
-                        .map(TypingRequest::with_contextual_type)
-                        .unwrap_or(TypingRequest::NONE);
+                    let children_request = request
+                        .read()
+                        .normal_origin()
+                        .contextual_opt(children_ctx_type);
                     // Collect children types for children prop synthesis.
                     // tsc synthesizes a `children` prop from JSX element body children
                     // and validates it against the component's `children` prop type.
@@ -1886,7 +1920,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_fragment(node) {
                     for &child in &jsx.children.nodes {
-                        self.checker.get_type_of_node(child);
+                        self.checker.get_type_of_node_with_request(child, request);
                     }
                 }
                 // JSX fragments resolve to JSX.Element type
@@ -1895,7 +1929,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 if let Some(jsx_expr) = self.checker.ctx.arena.get_jsx_expression(node) {
                     if jsx_expr.expression.is_some() {
-                        self.checker.get_type_of_node(jsx_expr.expression)
+                        self.checker
+                            .get_type_of_node_with_request(jsx_expr.expression, request)
                     } else {
                         TypeId::ANY
                     }

@@ -117,6 +117,15 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
         self.compute_type_impl(idx, None)
     }
 
+    /// Compute the type of an expression with an optional contextual type, without caching.
+    pub fn compute_type_uncached_with_context(
+        &mut self,
+        idx: NodeIndex,
+        context_type: Option<TypeId>,
+    ) -> TypeId {
+        self.compute_type_impl(idx, context_type)
+    }
+
     /// Compute the type of an expression with contextual typing (no caching).
     ///
     /// This is called when a contextual type is available (e.g., from variable

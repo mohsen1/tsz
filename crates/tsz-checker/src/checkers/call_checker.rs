@@ -1359,6 +1359,7 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
         use tsz_solver::FunctionShape;
@@ -1479,7 +1480,7 @@ impl<'a> CheckerState<'a> {
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
-                    self.ctx.contextual_type,
+                    contextual_type,
                     None,
                 );
 
@@ -1680,7 +1681,7 @@ impl<'a> CheckerState<'a> {
                     resolved_func_type,
                     &sig_arg_types,
                     force_bivariant_callbacks,
-                    self.ctx.contextual_type,
+                    contextual_type,
                     actual_this_type,
                 );
 
@@ -1725,7 +1726,7 @@ impl<'a> CheckerState<'a> {
                         resolved_func_type,
                         &refreshed_arg_types,
                         force_bivariant_callbacks,
-                        self.ctx.contextual_type,
+                        contextual_type,
                         actual_this_type,
                     );
 

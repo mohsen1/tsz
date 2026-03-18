@@ -27,20 +27,24 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use tsz_solver::CallableShape;
 
-        let Some(type_arguments) = type_arguments else {
-            return ctor_type;
-        };
+        let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
+        let missing_type_args_become_any = self.is_js_file() && explicit_type_arg_count == 0;
 
-        if type_arguments.nodes.is_empty() {
+        if type_arguments.is_none() && !missing_type_args_become_any {
             return ctor_type;
         }
 
-        let mut type_args: Vec<TypeId> = Vec::with_capacity(type_arguments.nodes.len());
-        for &arg_idx in &type_arguments.nodes {
-            type_args.push(self.get_type_from_type_node(arg_idx));
+        let mut type_args: Vec<TypeId> = Vec::with_capacity(explicit_type_arg_count);
+        if let Some(type_arguments) = type_arguments {
+            if type_arguments.nodes.is_empty() && !missing_type_args_become_any {
+                return ctor_type;
+            }
+            for &arg_idx in &type_arguments.nodes {
+                type_args.push(self.get_type_from_type_node(arg_idx));
+            }
         }
 
-        if type_args.is_empty() {
+        if type_args.is_empty() && !missing_type_args_become_any {
             return ctor_type;
         }
 
@@ -53,7 +57,7 @@ impl<'a> CheckerState<'a> {
             let mut any_applied = false;
             for member in &members {
                 let applied =
-                    self.apply_type_arguments_to_constructor_type(*member, Some(type_arguments));
+                    self.apply_type_arguments_to_constructor_type(*member, type_arguments);
                 if applied != *member {
                     any_applied = true;
                 }
@@ -92,10 +96,14 @@ impl<'a> CheckerState<'a> {
                 let mut args = type_args.clone();
                 if args.len() < sig.type_params.len() {
                     for param in sig.type_params.iter().skip(args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
+                        let fallback = if missing_type_args_become_any {
+                            TypeId::ANY
+                        } else {
+                            param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN)
+                        };
                         args.push(fallback);
                     }
                 }

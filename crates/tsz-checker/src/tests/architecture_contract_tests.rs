@@ -2281,6 +2281,8 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/computation/call_inference.rs",
         "dispatch.rs",
         "checkers/jsx_checker.rs",
+        "types/computation/call.rs",
+        "types/computation/object_literal.rs",
         "types/computation/helpers.rs",
         "types/computation/call_display.rs",
         "types/function_type.rs",
@@ -2332,6 +2334,8 @@ fn migrated_files_no_raw_contextual_type_mutation() {
 fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
     let migrated_files = &[
         "types/property_access_type.rs",
+        "types/computation/access.rs",
+        "types/computation/helpers.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
         // Wave 3: call_checker and call_inference migrated skip_flow via TypingRequest
         "checkers/call_checker.rs",
@@ -2366,6 +2370,55 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
             violations.is_empty(),
             "File {file} has been migrated to TypingRequest but still contains \
              raw `skip_flow_narrowing =` mutations:\n{}",
+            violations
+                .iter()
+                .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+/// Migrated files must not contain raw `ctx.contextual_type_is_assertion =` assignments.
+#[test]
+fn migrated_files_no_raw_contextual_assertion_mutation() {
+    let migrated_files = &[
+        "dispatch.rs",
+        "checkers/jsx_checker.rs",
+        "types/computation/call.rs",
+        "types/computation/helpers.rs",
+        "types/computation/object_literal.rs",
+        "types/function_type.rs",
+    ];
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for file in migrated_files {
+        let path = base.join(file);
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read {file}: {e}");
+        });
+
+        let violations: Vec<(usize, &str)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("*")
+                {
+                    return false;
+                }
+                trimmed.contains("ctx.contextual_type_is_assertion =")
+                    || trimmed.contains(".contextual_type_is_assertion = ")
+            })
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "File {file} has been migrated to TypingRequest but still contains \
+             raw `contextual_type_is_assertion =` mutations:\n{}",
             violations
                 .iter()
                 .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))

@@ -1,4 +1,7 @@
+use crate::context::CheckerOptions;
+use crate::test_utils::check_source;
 use crate::test_utils::check_source_diagnostics;
+use tsz_common::checker_options::JsxMode;
 
 #[test]
 fn ts7006_false_positive_arrow_in_generic_call() {
@@ -201,6 +204,189 @@ namespace A {
         0,
         "Expected no TS2351 for class+namespace merge, got: {:?}",
         ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn contextual_request_does_not_leak_between_sibling_properties() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(arg: {
+    left: (s: string) => void;
+    right: (n: number) => void;
+}): void;
+
+takes({
+    left: s => s.toUpperCase(),
+    right: n => n.toFixed(),
+});
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected no contextual leak diagnostics, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn write_context_access_does_not_reuse_read_cache() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const access: {
+    get value(): undefined;
+    set value(v: number);
+};
+
+const read1: undefined = access.value;
+access.value = 1;
+const read2: undefined = access["value"];
+access["value"] = 1;
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2540)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected write-context accesses to use setter/write types, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn assertion_origin_does_not_leak_outside_asserted_expression() {
+    let diags = check_source_diagnostics(
+        r#"
+const asserted = ((x) => 1) as (x: string) => string;
+const assigned: (x: string) => string = (x) => 1;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one assignment-context TS2322, got: {diags:?}"
+    );
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected asserted expression parameters to stay contextually typed, got: {diags:?}"
+    );
+}
+
+#[test]
+fn nested_object_literal_context_is_preserved_without_ambient_restore() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(arg: {
+    outer: {
+        onText: (s: string) => void;
+        nested: { onNumber: (n: number) => void };
+    };
+}): void;
+
+takes({
+    outer: {
+        onText: s => s.toUpperCase(),
+        nested: {
+            onNumber: n => n.toFixed(),
+        },
+    },
+});
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected nested object literal contextual typing to stay isolated, got: {relevant:?}"
+    );
+}
+
+#[test]
+#[ignore = "regression: dispatch refactor"]
+fn iife_contextual_typing_flows_through_request_path() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(arg: { cb: (s: string) => void }): void;
+
+takes((() => ({
+    cb: s => s.toUpperCase(),
+}))());
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected no IIFE contextual-typing regressions, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsx_children_and_props_use_request_path() {
+    let diags = check_source(
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+declare function Comp(props: { render: (s: string) => JSX.Element }): JSX.Element;
+
+<Comp render={s => { s.toUpperCase(); return <div />; }} />;
+"#,
+        "test.tsx",
+        CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JSX request-path contextual typing to work, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn yield_contextual_typing_flows_through_request_path() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Generator<Y, R, N> {}
+
+function* gen(): Generator<(x: string) => void, void, unknown> {
+    yield x => x.toUpperCase();
+}
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected yield contextual typing to use request path, got: {relevant:?}"
     );
 }
 

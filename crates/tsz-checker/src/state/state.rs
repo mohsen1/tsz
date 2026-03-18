@@ -329,8 +329,12 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
-    fn should_apply_flow_narrowing_for_identifier(&self, idx: NodeIndex) -> bool {
-        if self.ctx.skip_flow_narrowing {
+    fn should_apply_flow_narrowing_for_identifier(
+        &self,
+        idx: NodeIndex,
+        skip_flow_narrowing: bool,
+    ) -> bool {
+        if skip_flow_narrowing {
             return false;
         }
 
@@ -907,14 +911,26 @@ impl<'a> CheckerState<'a> {
     /// - Circular reference detection prevents infinite recursion
     /// - Fuel management ensures termination even for malformed code
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
-        // Check cache first
-        if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+        self.get_type_of_node_with_request(idx, &crate::context::TypingRequest::NONE)
+    }
+
+    /// Compute the type of a node using an explicit [`TypingRequest`] instead of
+    /// mutating ambient context fields.
+    pub fn get_type_of_node_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
+        let use_node_cache = request.is_empty();
+        let skip_flow_narrowing = request.flow.skip_flow_narrowing();
+
+        if use_node_cache && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
             // PERF FAST PATH: Check the flow_analysis_cache directly with a cheap key
             // before doing the expensive should_apply_flow_narrowing_for_identifier check.
             // If the flow cache already has a result for this (flow_node, symbol, type),
             // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
             // checks, parameter default checks, and all other setup (~300ns savings per call).
-            if !self.ctx.skip_flow_narrowing
+            if !skip_flow_narrowing
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
@@ -971,7 +987,8 @@ impl<'a> CheckerState<'a> {
             // x should have the narrowed type "string".
             //
             // Only apply narrowing if skip_flow_narrowing is false (respects testing/special contexts)
-            let should_narrow = self.should_apply_flow_narrowing_for_identifier(idx);
+            let should_narrow =
+                self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
 
             if should_narrow {
                 // Skip second flow narrowing if check_flow_usage already narrowed
@@ -1010,7 +1027,7 @@ impl<'a> CheckerState<'a> {
             // property/element access nodes may have a different write type
             // than the cached read type. Bypass the cache so
             // get_type_of_property_access can return the write_type.
-            if self.ctx.skip_flow_narrowing
+            if skip_flow_narrowing
                 && self.ctx.arena.get(idx).is_some_and(|node| {
                     use tsz_parser::parser::syntax_kind_ext;
                     node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -1027,14 +1044,18 @@ impl<'a> CheckerState<'a> {
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
-            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+            if use_node_cache {
+                self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+            }
             return TypeId::ERROR;
         }
 
         // Check for circular reference - return ERROR to expose resolution bugs
         if self.ctx.node_resolution_set.contains(&idx) {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
-            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+            if use_node_cache {
+                self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+            }
             return TypeId::ERROR;
         }
 
@@ -1045,9 +1066,11 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Pre-cache ERROR placeholder to break deep recursion chains
         // This ensures that mid-resolution lookups get cached ERROR immediately
         // We'll overwrite this with the real result later (line 650)
-        self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+        if use_node_cache {
+            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+        }
 
-        let result = self.compute_type_of_node(idx);
+        let result = self.compute_type_of_node_with_request(idx, request);
 
         // Pop from resolution stack
         self.ctx.node_resolution_stack.pop();
@@ -1055,9 +1078,12 @@ impl<'a> CheckerState<'a> {
 
         // Cache result - identifiers cache their DECLARED type,
         // but get_type_of_node applies flow narrowing when returning cached identifier types
-        self.ctx.node_types.insert(idx.0, result);
+        if use_node_cache {
+            self.ctx.node_types.insert(idx.0, result);
+        }
 
-        let should_narrow_computed = self.should_apply_flow_narrowing_for_identifier(idx);
+        let should_narrow_computed =
+            self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
 
         if should_narrow_computed {
             // Skip second flow narrowing if check_flow_usage already narrowed
@@ -1151,93 +1177,41 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Compute the type of a node using an explicit [`TypingRequest`] instead of
-    /// mutating ambient context fields.
-    ///
-    /// This is the preferred entry point for new code. It temporarily installs the
-    /// request's fields into `ctx` (compatibility bridge) and delegates to the
-    /// existing `get_type_of_node`. As the migration completes, the bridge will
-    /// be removed and the request will be threaded directly.
-    ///
-    /// # Compatibility bridge (TEMPORARY)
-    ///
-    /// Internally saves/restores `ctx.contextual_type`, `ctx.contextual_type_is_assertion`,
-    /// and `ctx.skip_flow_narrowing`. This shim exists only until the dispatch layer
-    /// reads from a request object natively.
-    pub fn get_type_of_node_with_request(
-        &mut self,
-        idx: NodeIndex,
-        request: &crate::context::TypingRequest,
-    ) -> TypeId {
-        // --- compatibility bridge: install request into ambient ctx ---
-        let prev_contextual = self.ctx.contextual_type;
-        let prev_assertion = self.ctx.contextual_type_is_assertion;
-        let prev_skip_flow = self.ctx.skip_flow_narrowing;
-
-        self.ctx.contextual_type = request.contextual_type;
-        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
-        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
-
-        let result = self.get_type_of_node(idx);
-
-        // --- compatibility bridge: restore ---
-        self.ctx.contextual_type = prev_contextual;
-        self.ctx.contextual_type_is_assertion = prev_assertion;
-        self.ctx.skip_flow_narrowing = prev_skip_flow;
-
-        result
+    pub fn compute_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
+        self.compute_type_of_node_with_request(idx, &crate::context::TypingRequest::NONE)
     }
 
-    /// Like `compute_type_of_node` but under an explicit `TypingRequest`.
-    ///
-    /// Bridges the request into the ambient context fields until the dispatch
-    /// layer reads from request objects natively.
+    /// Compute the type of a node under an explicit [`TypingRequest`].
     pub fn compute_type_of_node_with_request(
         &mut self,
         idx: NodeIndex,
         request: &crate::context::TypingRequest,
     ) -> TypeId {
-        let prev_contextual = self.ctx.contextual_type;
-        let prev_assertion = self.ctx.contextual_type_is_assertion;
-        let prev_skip_flow = self.ctx.skip_flow_narrowing;
+        use crate::ExpressionChecker;
 
-        self.ctx.contextual_type = request.contextual_type;
-        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
-        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
+        let expr_result = {
+            let mut expr_checker = ExpressionChecker::new(&mut self.ctx);
+            expr_checker.compute_type_uncached_with_context(idx, request.contextual_type)
+        };
 
-        let result = self.compute_type_of_node(idx);
+        let result = if expr_result != TypeId::DELEGATE {
+            expr_result
+        } else {
+            self.compute_type_of_node_complex_with_request(idx, request)
+        };
 
-        self.ctx.contextual_type = prev_contextual;
-        self.ctx.contextual_type_is_assertion = prev_assertion;
-        self.ctx.skip_flow_narrowing = prev_skip_flow;
+        self.validate_regex_literal_flags(idx);
 
         result
     }
 
-    /// Like `get_type_of_function` but under an explicit `TypingRequest`.
-    ///
-    /// Bridges the request into the ambient context fields until the dispatch
-    /// layer reads from request objects natively.
+    /// Like `get_type_of_function` but under an explicit [`TypingRequest`].
     pub fn get_type_of_function_with_request(
         &mut self,
         idx: NodeIndex,
         request: &crate::context::TypingRequest,
     ) -> TypeId {
-        let prev_contextual = self.ctx.contextual_type;
-        let prev_assertion = self.ctx.contextual_type_is_assertion;
-        let prev_skip_flow = self.ctx.skip_flow_narrowing;
-
-        self.ctx.contextual_type = request.contextual_type;
-        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
-        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
-
-        let result = self.get_type_of_function(idx);
-
-        self.ctx.contextual_type = prev_contextual;
-        self.ctx.contextual_type_is_assertion = prev_assertion;
-        self.ctx.skip_flow_narrowing = prev_skip_flow;
-
-        result
+        self.get_type_of_function_impl(idx, request)
     }
 
     /// Run an arbitrary closure under an explicit `TypingRequest`.
@@ -1798,39 +1772,25 @@ impl<'a> CheckerState<'a> {
     /// If `ExpressionChecker` returns `TypeId::DELEGATE`, we fall back to the full
     /// `CheckerState` implementation that has access to symbol resolution, contextual
     /// typing, and other complex type checking features.
-    pub(crate) fn compute_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::ExpressionChecker;
-
-        // First, try ExpressionChecker for simple expression types
-        // ExpressionChecker handles expressions that don't need full CheckerState context
-        let expr_result = {
-            let mut expr_checker = ExpressionChecker::new(&mut self.ctx);
-            expr_checker.compute_type_uncached(idx)
-        };
-
-        let result = if expr_result != TypeId::DELEGATE {
-            expr_result
-        } else {
-            // ExpressionChecker returned DELEGATE - use full CheckerState implementation
-            self.compute_type_of_node_complex(idx)
-        };
-
-        // Validate regex literal flags against compilation target (TS1501)
-        self.validate_regex_literal_flags(idx);
-
-        result
-    }
-
     /// Complex type computation that needs full `CheckerState` context.
     ///
     /// This is called when `ExpressionChecker` returns `TypeId::DELEGATE`,
     /// indicating the expression needs symbol resolution, contextual typing,
     /// or other features only available in `CheckerState`.
+    #[allow(dead_code)]
     fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
+        self.compute_type_of_node_complex_with_request(idx, &crate::context::TypingRequest::NONE)
+    }
+
+    fn compute_type_of_node_complex_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
         use crate::dispatch::ExpressionDispatcher;
 
         let mut dispatcher = ExpressionDispatcher::new(self);
-        dispatcher.dispatch_type_computation(idx)
+        dispatcher.dispatch_type_computation_with_request(idx, request)
     }
 
     // Type resolution, type analysis, type environment, and checking methods

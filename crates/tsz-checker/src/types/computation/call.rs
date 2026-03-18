@@ -5,6 +5,7 @@
 //! Identifier resolution is in `identifier.rs` and tagged
 //! template expression handling is in `tagged_template.rs`.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
@@ -72,22 +73,36 @@ impl<'a> CheckerState<'a> {
     /// - Overload resolution
     /// - Argument type checking
     /// - Type argument validation (TS2344)
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_call_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_call_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_call_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         // Check call depth limit to prevent infinite recursion
         if !self.ctx.call_depth.borrow_mut().enter() {
             return TypeId::ERROR;
         }
 
-        let result = self.get_type_of_call_expression_inner(idx);
+        let result = self.get_type_of_call_expression_inner(idx, request);
 
         self.ctx.call_depth.borrow_mut().leave();
         result
     }
 
     /// Inner implementation of call expression type resolution.
-    pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_of_call_expression_inner(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
+        let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -112,10 +127,10 @@ impl<'a> CheckerState<'a> {
 
         // For IIFEs, wrap the contextual type into a callable type so
         // the function expression resolver can extract the return type.
-        let iife_info = self.setup_iife_contextual_type(call.expression);
-        if let Some((wrapper_fn, _original_ctx)) = iife_info {
-            self.ctx.contextual_type = Some(wrapper_fn);
-        }
+        let iife_info = self.setup_iife_contextual_type(call.expression, contextual_type);
+        let callee_request = iife_info
+            .map(|(wrapper_fn, _)| request.read().contextual(wrapper_fn))
+            .unwrap_or(*request);
 
         // Get the type of the callee
         let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
@@ -188,16 +203,18 @@ impl<'a> CheckerState<'a> {
                     let callee_ty = self.get_type_of_symbol(sym_id);
                     // Cache in node_types so flow narrowing can retrieve callee
                     // type predicates during type guard analysis.
-                    self.ctx.node_types.insert(call.expression.0, callee_ty);
+                    if callee_request.is_empty() {
+                        self.ctx.node_types.insert(call.expression.0, callee_ty);
+                    }
                     callee_ty
                 } else {
-                    self.get_type_of_node(call.expression)
+                    self.get_type_of_node_with_request(call.expression, &callee_request)
                 }
             } else {
-                self.get_type_of_node(call.expression)
+                self.get_type_of_node_with_request(call.expression, &callee_request)
             }
         } else {
-            self.get_type_of_node(call.expression)
+            self.get_type_of_node_with_request(call.expression, &callee_request)
         };
 
         trace!(
@@ -542,6 +559,7 @@ impl<'a> CheckerState<'a> {
                 args,
                 signatures,
                 force_bivariant_callbacks,
+                contextual_type,
                 actual_this_type,
             )
         {
@@ -762,7 +780,7 @@ impl<'a> CheckerState<'a> {
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
-                    self.ctx.contextual_type
+                    contextual_type
                 };
                 trace!(
                     type_params = ?shape
@@ -1688,7 +1706,7 @@ impl<'a> CheckerState<'a> {
                         None, // No skipping needed for single-pass
                     );
 
-                    let needs_refresh = self.ctx.contextual_type.is_some()
+                    let needs_refresh = contextual_type.is_some()
                         && args
                             .iter()
                             .copied()
@@ -1699,7 +1717,7 @@ impl<'a> CheckerState<'a> {
                         let return_context_substitution = self
                             .compute_return_context_substitution_from_shape(
                                 &shape,
-                                self.ctx.contextual_type,
+                                contextual_type,
                             );
                         if !return_context_substitution.is_empty() {
                             self.clear_contextual_resolution_cache();
@@ -1756,7 +1774,7 @@ impl<'a> CheckerState<'a> {
                                 callee_type_for_context,
                                 &initial_arg_types,
                                 force_bivariant_callbacks,
-                                self.ctx.contextual_type,
+                                contextual_type,
                                 actual_this_type,
                             )
                             .2
@@ -1939,12 +1957,12 @@ impl<'a> CheckerState<'a> {
             // where `A` has no argument source but can be inferred by matching the
             // return type against the contextual type from the outer call).
             if args.is_empty() || had_return_context_substitution {
-                self.ctx.contextual_type
+                contextual_type
             } else {
                 None
             }
         } else {
-            self.ctx.contextual_type
+            contextual_type
         };
 
         let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
@@ -2022,7 +2040,7 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|arg_idx| self.argument_needs_contextual_type(arg_idx))
         {
-            if let Some(ctx_type) = self.ctx.contextual_type {
+            if let Some(ctx_type) = contextual_type {
                 match &result {
                     CallResult::Success(ret) => {
                         !assign_query::is_fresh_subtype_of(self.ctx.types, *ret, ctx_type)
@@ -2102,7 +2120,7 @@ impl<'a> CheckerState<'a> {
                         callee_type_for_call,
                         &retry_generic_arg_types,
                         force_bivariant_callbacks,
-                        self.ctx.contextual_type,
+                        contextual_type,
                     ),
                     None,
                     None,
@@ -2112,7 +2130,7 @@ impl<'a> CheckerState<'a> {
                     callee_type_for_call,
                     &retry_generic_arg_types,
                     force_bivariant_callbacks,
-                    self.ctx.contextual_type,
+                    contextual_type,
                     actual_this_type,
                 )
             };
@@ -2493,9 +2511,6 @@ impl<'a> CheckerState<'a> {
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,
         };
-        if let Some((_wrapper_fn, original_ctx)) = iife_info {
-            self.ctx.contextual_type = Some(original_ctx);
-        }
         self.handle_call_result(result, call_context)
     }
 

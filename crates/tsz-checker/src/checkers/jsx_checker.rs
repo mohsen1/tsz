@@ -13,6 +13,14 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_jsx_opening_element_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_jsx_opening_element_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
 
@@ -145,6 +153,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.tag_name,
                     false, // intrinsic elements never have raw type params
                     display_target,
+                    request,
                 );
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
@@ -259,6 +268,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.tag_name,
                     raw_has_type_params,
                     display_target,
+                    request,
                 );
             } else if self.is_overloaded_sfc(evaluated) {
                 // JSX overload resolution: try each non-generic call signature against
@@ -301,9 +311,9 @@ impl<'a> CheckerState<'a> {
                 // false TS7006 on callback parameters in JSX attributes.
                 let gen_ctx = self.is_generic_jsx_component(evaluated);
                 let attr_request = if gen_ctx {
-                    TypingRequest::with_contextual_type(TypeId::UNKNOWN)
+                    request.read().normal_origin().contextual(TypeId::UNKNOWN)
                 } else {
-                    TypingRequest::NONE
+                    request.read().normal_origin().contextual_opt(None)
                 };
                 if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
                     && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
@@ -1332,6 +1342,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         raw_props_has_type_params: bool,
         display_target: String,
+        request: &TypingRequest,
     ) {
         // Grammar check: TS17000 for empty expressions in JSX attributes.
         // Matches tsc: only the first empty expression per element is reported.
@@ -1553,7 +1564,7 @@ impl<'a> CheckerState<'a> {
                     // Set contextual type to preserve narrow literal types.
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
-                        &TypingRequest::with_contextual_type(expected_type),
+                        &request.read().normal_origin().contextual(expected_type),
                     );
 
                     if let Some(entry) = provided_attrs.last_mut() {
@@ -1576,9 +1587,9 @@ impl<'a> CheckerState<'a> {
                 let spread_expr_idx = spread_data.expression;
                 // Set contextual type so spread literals preserve narrow types.
                 let spread_request = if !skip_prop_checks {
-                    TypingRequest::with_contextual_type(props_type)
+                    request.read().normal_origin().contextual(props_type)
                 } else {
-                    TypingRequest::NONE
+                    request.read().normal_origin().contextual_opt(None)
                 };
                 let spread_type =
                     self.compute_type_of_node_with_request(spread_expr_idx, &spread_request);
