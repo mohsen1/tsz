@@ -1163,7 +1163,7 @@ impl ParamInfo {
 }
 
 /// Type parameter information
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeParamInfo {
     pub name: Atom,
     pub constraint: Option<TypeId>,
@@ -1178,7 +1178,7 @@ pub struct TypeParamInfo {
 pub struct SymbolRef(pub u32);
 
 /// Conditional type structure
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConditionalType {
     pub check_type: TypeId,
     pub extends_type: TypeId,
@@ -1188,7 +1188,7 @@ pub struct ConditionalType {
 }
 
 /// Mapped type structure
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MappedType {
     pub type_param: TypeParamInfo,
     pub constraint: TypeId,
