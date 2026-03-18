@@ -218,17 +218,17 @@ impl<'a> CodeActionProvider<'a> {
 
             match node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = self.arena.get_method_decl(node) {
-                        if let Some(name) = self.arena.get_identifier_text(method.name) {
-                            names.push(name.to_string());
-                        }
+                    if let Some(method) = self.arena.get_method_decl(node)
+                        && let Some(name) = self.arena.get_identifier_text(method.name)
+                    {
+                        names.push(name.to_string());
                     }
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = self.arena.get_property_decl(node) {
-                        if let Some(name) = self.arena.get_identifier_text(prop.name) {
-                            names.push(name.to_string());
-                        }
+                    if let Some(prop) = self.arena.get_property_decl(node)
+                        && let Some(name) = self.arena.get_identifier_text(prop.name)
+                    {
+                        names.push(name.to_string());
                     }
                 }
                 _ => {}
@@ -261,14 +261,14 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             let mut walker = ScopeWalker::new(self.arena, self.binder);
-            if let Some(symbol_id) = walker.resolve_node(root, idx) {
-                if let Some(symbol) = self.binder.symbols.get(symbol_id) {
-                    for &decl_idx in &symbol.declarations {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                                self.collect_interface_declaration_members(decl_idx, &mut members);
-                            }
-                        }
+            if let Some(symbol_id) = walker.resolve_node(root, idx)
+                && let Some(symbol) = self.binder.symbols.get(symbol_id)
+            {
+                for &decl_idx in &symbol.declarations {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    {
+                        self.collect_interface_declaration_members(decl_idx, &mut members);
                     }
                 }
             }
@@ -299,14 +299,14 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             let mut walker = ScopeWalker::new(self.arena, self.binder);
-            if let Some(symbol_id) = walker.resolve_node(root, idx) {
-                if let Some(symbol) = self.binder.symbols.get(symbol_id) {
-                    for &decl_idx in &symbol.declarations {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                                self.collect_abstract_class_members(decl_idx, &mut members);
-                            }
-                        }
+            if let Some(symbol_id) = walker.resolve_node(root, idx)
+                && let Some(symbol) = self.binder.symbols.get(symbol_id)
+            {
+                for &decl_idx in &symbol.declarations {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    {
+                        self.collect_abstract_class_members(decl_idx, &mut members);
                     }
                 }
             }
@@ -342,30 +342,30 @@ impl<'a> CodeActionProvider<'a> {
 
             match node.kind {
                 k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                    if let Some(method) = self.arena.get_method_decl(node) {
-                        if let Some(name) = self.arena.get_identifier_text(method.name) {
-                            let params_text = self.extract_params_text(idx);
-                            let return_type = self.extract_return_type_text(idx);
-                            members.push(InterfaceMember {
-                                name: name.to_string(),
-                                kind: MemberKind::Method,
-                                params: Some(params_text),
-                                return_type,
-                            });
-                        }
+                    if let Some(method) = self.arena.get_method_decl(node)
+                        && let Some(name) = self.arena.get_identifier_text(method.name)
+                    {
+                        let params_text = self.extract_params_text(idx);
+                        let return_type = self.extract_return_type_text(idx);
+                        members.push(InterfaceMember {
+                            name: name.to_string(),
+                            kind: MemberKind::Method,
+                            params: Some(params_text),
+                            return_type,
+                        });
                     }
                 }
                 k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                    if let Some(prop) = self.arena.get_property_decl(node) {
-                        if let Some(name) = self.arena.get_identifier_text(prop.name) {
-                            let type_text = self.extract_type_annotation_text(idx);
-                            members.push(InterfaceMember {
-                                name: name.to_string(),
-                                kind: MemberKind::Property,
-                                params: None,
-                                return_type: type_text,
-                            });
-                        }
+                    if let Some(prop) = self.arena.get_property_decl(node)
+                        && let Some(name) = self.arena.get_identifier_text(prop.name)
+                    {
+                        let type_text = self.extract_type_annotation_text(idx);
+                        members.push(InterfaceMember {
+                            name: name.to_string(),
+                            kind: MemberKind::Property,
+                            params: None,
+                            return_type: type_text,
+                        });
                     }
                 }
                 _ => {}
@@ -392,21 +392,20 @@ impl<'a> CodeActionProvider<'a> {
 
             // Check if this member has the abstract modifier
             // We look for the `abstract` keyword as a child of the member
-            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                if let Some(method) = self.arena.get_method_decl(node) {
-                    if let Some(name) = self.arena.get_identifier_text(method.name) {
-                        // Check for abstract modifier
-                        if self.has_abstract_modifier(idx) {
-                            let params_text = self.extract_params_text(idx);
-                            let return_type = self.extract_return_type_text(idx);
-                            members.push(InterfaceMember {
-                                name: name.to_string(),
-                                kind: MemberKind::Method,
-                                params: Some(params_text),
-                                return_type,
-                            });
-                        }
-                    }
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method) = self.arena.get_method_decl(node)
+                && let Some(name) = self.arena.get_identifier_text(method.name)
+            {
+                // Check for abstract modifier
+                if self.has_abstract_modifier(idx) {
+                    let params_text = self.extract_params_text(idx);
+                    let return_type = self.extract_return_type_text(idx);
+                    members.push(InterfaceMember {
+                        name: name.to_string(),
+                        kind: MemberKind::Method,
+                        params: Some(params_text),
+                        return_type,
+                    });
                 }
             }
         }

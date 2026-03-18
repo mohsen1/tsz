@@ -40,11 +40,7 @@ pub fn get_import_path_completions(
         .iter()
         .filter(|entry| entry.specifier.starts_with(partial))
         .map(|entry| {
-            let kind = if entry.is_directory {
-                CompletionItemKind::Module
-            } else {
-                CompletionItemKind::Module
-            };
+            let kind = CompletionItemKind::Module;
 
             CompletionItem::new(entry.specifier.clone(), kind)
                 .with_detail(if entry.is_directory {
@@ -130,8 +126,8 @@ fn strip_ts_extension(path: &str) -> String {
     for ext in &[".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"] {
         if let Some(stripped) = path.strip_suffix(ext) {
             // Don't strip .d.ts → just .ts portion
-            if stripped.ends_with(".d") {
-                return stripped[..stripped.len() - 2].to_string();
+            if let Some(base) = stripped.strip_suffix(".d") {
+                return base.to_string();
             }
             // Don't strip index files to just directory path
             return stripped.to_string();

@@ -76,18 +76,13 @@ impl<'a> CodeActionProvider<'a> {
             // Check if the reference is used in a property access: ns.member
             if let Some(ext) = self.arena.get_extended(ref_idx) {
                 let parent = ext.parent;
-                if let Some(parent_node) = self.arena.get(parent) {
-                    if parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                        if let Some(access) = self.arena.get_access_expr(parent_node) {
-                            if let Some(name) =
-                                self.arena.get_identifier_text(access.name_or_argument)
-                            {
-                                if seen.insert(name.to_string()) {
-                                    member_names.push(name.to_string());
-                                }
-                            }
-                        }
-                    }
+                if let Some(parent_node) = self.arena.get(parent)
+                    && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(parent_node)
+                    && let Some(name) = self.arena.get_identifier_text(access.name_or_argument)
+                    && seen.insert(name.to_string())
+                {
+                    member_names.push(name.to_string());
                 }
             }
         }
@@ -121,25 +116,21 @@ impl<'a> CodeActionProvider<'a> {
         for &ref_idx in &ref_nodes {
             if let Some(ext) = self.arena.get_extended(ref_idx) {
                 let parent = ext.parent;
-                if let Some(parent_node) = self.arena.get(parent) {
-                    if parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                        if let Some(access) = self.arena.get_access_expr(parent_node) {
-                            if let Some(name) =
-                                self.arena.get_identifier_text(access.name_or_argument)
-                            {
-                                let access_start = self
-                                    .line_map
-                                    .offset_to_position(parent_node.pos, self.source);
-                                let access_end = self
-                                    .line_map
-                                    .offset_to_position(parent_node.end, self.source);
-                                edits.push(TextEdit {
-                                    range: Range::new(access_start, access_end),
-                                    new_text: name.to_string(),
-                                });
-                            }
-                        }
-                    }
+                if let Some(parent_node) = self.arena.get(parent)
+                    && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(parent_node)
+                    && let Some(name) = self.arena.get_identifier_text(access.name_or_argument)
+                {
+                    let access_start = self
+                        .line_map
+                        .offset_to_position(parent_node.pos, self.source);
+                    let access_end = self
+                        .line_map
+                        .offset_to_position(parent_node.end, self.source);
+                    edits.push(TextEdit {
+                        range: Range::new(access_start, access_end),
+                        new_text: name.to_string(),
+                    });
                 }
             }
         }

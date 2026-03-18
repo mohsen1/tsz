@@ -28,7 +28,7 @@ struct PostfixTemplate {
     /// A short description of what the postfix does.
     detail: &'static str,
     /// A function that generates the replacement text given the expression text.
-    /// Returns (insert_text, is_snippet).
+    /// Returns (`insert_text`, `is_snippet`).
     generate: fn(&str) -> (String, bool),
 }
 

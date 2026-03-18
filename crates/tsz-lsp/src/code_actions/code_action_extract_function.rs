@@ -98,7 +98,7 @@ impl<'a> CodeActionProvider<'a> {
             self.get_indentation_at_position(&container_pos)
         };
 
-        let func_indent = container_indent.clone();
+        let func_indent = container_indent;
         let func_body_indent = format!("{func_indent}  ");
 
         // Re-indent the body: strip the original indentation and apply the new one
@@ -245,12 +245,12 @@ impl<'a> CodeActionProvider<'a> {
         let node = self.arena.get(node_idx)?;
 
         // If this is a block, check its statements
-        if node.kind == syntax_kind_ext::BLOCK {
-            if let Some(block) = self.arena.get_block(node) {
-                let stmts = self.filter_statements_in_range(&block.statements.nodes, start, end);
-                if !stmts.is_empty() {
-                    return Some((node_idx, stmts));
-                }
+        if node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(node)
+        {
+            let stmts = self.filter_statements_in_range(&block.statements.nodes, start, end);
+            if !stmts.is_empty() {
+                return Some((node_idx, stmts));
             }
         }
 
@@ -258,12 +258,12 @@ impl<'a> CodeActionProvider<'a> {
         let children = self.arena.get_children(node_idx);
         // Prefer the tightest (deepest) match
         for child in children {
-            if let Some(child_node) = self.arena.get(child) {
-                if child_node.pos <= start && child_node.end >= end {
-                    if let Some(result) = self.find_block_statements_in_range(child, start, end) {
-                        return Some(result);
-                    }
-                }
+            if let Some(child_node) = self.arena.get(child)
+                && child_node.pos <= start
+                && child_node.end >= end
+                && let Some(result) = self.find_block_statements_in_range(child, start, end)
+            {
+                return Some(result);
             }
         }
 
@@ -304,14 +304,7 @@ impl<'a> CodeActionProvider<'a> {
         };
 
         match node.kind {
-            syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var) = self.arena.get_variable(node) {
-                    for &decl_idx in &var.declarations.nodes {
-                        self.collect_declared_names(decl_idx, out);
-                    }
-                }
-            }
-            syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
+            syntax_kind_ext::VARIABLE_STATEMENT | syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
                 if let Some(var) = self.arena.get_variable(node) {
                     for &decl_idx in &var.declarations.nodes {
                         self.collect_declared_names(decl_idx, out);
@@ -324,17 +317,17 @@ impl<'a> CodeActionProvider<'a> {
                 }
             }
             syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node) {
-                    if let Some(name) = self.arena.get_identifier_text(func.name) {
-                        out.insert(name.to_string(), func.name);
-                    }
+                if let Some(func) = self.arena.get_function(node)
+                    && let Some(name) = self.arena.get_identifier_text(func.name)
+                {
+                    out.insert(name.to_string(), func.name);
                 }
             }
             syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node) {
-                    if let Some(name) = self.arena.get_identifier_text(class.name) {
-                        out.insert(name.to_string(), class.name);
-                    }
+                if let Some(class) = self.arena.get_class(node)
+                    && let Some(name) = self.arena.get_identifier_text(class.name)
+                {
+                    out.insert(name.to_string(), class.name);
                 }
             }
             _ => {
@@ -411,7 +404,7 @@ impl<'a> CodeActionProvider<'a> {
     // Helpers: collect identifier references
     // -------------------------------------------------------------------------
 
-    /// Walk a subtree and collect every identifier reference (name, node_idx).
+    /// Walk a subtree and collect every identifier reference (name, `node_idx`).
     /// Skips identifiers that are declaration names (left side of variable decls,
     /// function names, etc.) -- we only want *uses*.
     fn collect_all_identifier_refs(&self, node_idx: NodeIndex, out: &mut Vec<(String, NodeIndex)>) {
@@ -435,10 +428,10 @@ impl<'a> CodeActionProvider<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             // Check if this identifier is a declaration name by looking at parent
-            if !self.is_declaration_name(node_idx) {
-                if let Some(text) = self.arena.get_identifier_text(node_idx) {
-                    out.push((text.to_string(), node_idx));
-                }
+            if !self.is_declaration_name(node_idx)
+                && let Some(text) = self.arena.get_identifier_text(node_idx)
+            {
+                out.push((text.to_string(), node_idx));
             }
             return;
         }
@@ -487,8 +480,8 @@ impl<'a> CodeActionProvider<'a> {
                     return class.name == ident_idx;
                 }
             }
-            syntax_kind_ext::PARAMETER => {
-                // Parameter names are declarations
+            syntax_kind_ext::PARAMETER | syntax_kind_ext::BINDING_ELEMENT => {
+                // Parameter and binding element names are declarations
                 return true;
             }
             syntax_kind_ext::PROPERTY_ASSIGNMENT => {
@@ -496,14 +489,12 @@ impl<'a> CodeActionProvider<'a> {
                 // shorthand { key } both declares and references. We treat
                 // property assignment names as declarations only when they
                 // have a separate initializer.
-                if let Some(prop) = self.arena.get_property_assignment(parent) {
-                    if prop.initializer.is_some() && prop.name == ident_idx {
-                        return true;
-                    }
+                if let Some(prop) = self.arena.get_property_assignment(parent)
+                    && prop.initializer.is_some()
+                    && prop.name == ident_idx
+                {
+                    return true;
                 }
-            }
-            syntax_kind_ext::BINDING_ELEMENT => {
-                return true;
             }
             _ => {}
         }
@@ -549,7 +540,7 @@ impl<'a> CodeActionProvider<'a> {
         for &stmt_idx in selected_stmts {
             let mut local_decls: FxHashMap<String, NodeIndex> = FxHashMap::default();
             self.collect_declared_names(stmt_idx, &mut local_decls);
-            for (name, _) in &local_decls {
+            for name in local_decls.keys() {
                 if referenced_after.contains(name) && seen.insert(name.clone()) {
                     result.push(name.clone());
                 }
