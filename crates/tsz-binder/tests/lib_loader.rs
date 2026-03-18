@@ -30,6 +30,7 @@ fn test_merge_lib_symbols() {
         "lib.d.ts".to_string(),
         Arc::new(NodeArena::new()),
         Arc::new(lib_binder),
+        tsz_parser::NodeIndex(0),
     ));
 
     let mut user_arena = SymbolArena::new();

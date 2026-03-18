@@ -232,6 +232,7 @@ impl TsProgram {
             file_name,
             Arc::new(parser.into_arena()),
             Arc::new(binder),
+            root_idx,
         ));
 
         self.lib_files.push(lib_file);

@@ -43,7 +43,7 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
 
-    let lib_file = Arc::new(lib_loader::LibFile::new(file_name, arena, binder));
+    let lib_file = Arc::new(lib_loader::LibFile::new(file_name, arena, binder, source_file_idx));
 
     // Store in cache
     {
@@ -788,7 +788,7 @@ impl Parser {
         let binder = Arc::new(lib_binder);
 
         // Create lib_loader::LibFile
-        let lib_file = Arc::new(LibFile::new(file_name, arena, binder));
+        let lib_file = Arc::new(LibFile::new(file_name, arena, binder, source_file_idx));
 
         self.lib_files.push(lib_file);
 
