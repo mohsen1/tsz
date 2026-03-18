@@ -343,6 +343,7 @@ mod context;
 mod core;
 mod filters;
 mod member;
+pub mod postfix;
 mod render;
 mod string_literals;
 mod symbols;
