@@ -297,11 +297,17 @@ pub fn narrow_by_typeof(
 // Nullish Type Helpers
 // =============================================================================
 
+#[inline]
 fn top_level_union_members(
     types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<[TypeId]>> {
-    union_list_id(types, type_id).map(|list_id| types.type_list(list_id))
+    // Inline the union check directly instead of going through the visitor pattern.
+    // This avoids creating a TypeDataDataVisitor and virtual dispatch on the hot path.
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => Some(types.type_list(list_id)),
+        _ => None,
+    }
 }
 
 const fn is_undefined_intrinsic(type_id: TypeId) -> bool {
@@ -317,9 +323,14 @@ fn normalize_nullish(type_id: TypeId) -> TypeId {
 }
 
 /// Check if a type is nullish (null/undefined/void or union containing them).
+#[inline]
 pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_nullable() {
         return true;
+    }
+    // Fast path: non-nullable intrinsics can't be nullish
+    if type_id.is_intrinsic() {
+        return false;
     }
     if let Some(members) = top_level_union_members(types, type_id) {
         return members.iter().any(|&member| is_nullish_type(types, member));
@@ -328,9 +339,14 @@ pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains undefined (or void).
+#[inline]
 pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if is_undefined_intrinsic(type_id) {
         return true;
+    }
+    // Fast path: intrinsic types that aren't undefined/void don't contain undefined
+    if type_id.is_intrinsic() {
+        return false;
     }
     if let Some(members) = top_level_union_members(types, type_id) {
         return members
