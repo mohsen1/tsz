@@ -35,7 +35,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// iterations instead of being limited by `MAX_EVALUATE_DEPTH`.
     pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
         // Setup loop state for tail-recursion elimination
-        let mut current_cond = initial_cond.clone();
+        let mut current_cond = *initial_cond;
         let mut tail_recursion_count = 0;
 
         loop {
@@ -156,7 +156,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
                 ) {
-                    return self.interner().conditional(cond.clone());
+                    return self.interner().conditional(*cond);
                 }
 
                 if check_type == TypeId::ANY {
@@ -346,7 +346,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if !self.type_contains_infer(extends_type)
                 && self.type_is_compound_generic(cond.check_type)
             {
-                return self.interner().conditional(cond.clone());
+                return self.interner().conditional(*cond);
             }
 
             // Step 2a': Deferred conditional as check_type.
@@ -416,7 +416,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(substituted_true)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = (*next_cond).clone();
+                            current_cond = *next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -427,7 +427,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 self.interner().lookup(instantiated)
                             {
                                 let next_cond = self.interner().conditional_type(next_cond_id);
-                                current_cond = (*next_cond).clone();
+                                current_cond = *next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
@@ -503,7 +503,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(cond.false_type)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = (*next_cond).clone();
+                        current_cond = *next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -517,7 +517,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(instantiated)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = (*next_cond).clone();
+                            current_cond = *next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -607,7 +607,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.interner().lookup(result_branch)
                 {
                     let next_cond = self.interner().conditional_type(next_cond_id);
-                    current_cond = (*next_cond).clone();
+                    current_cond = *next_cond;
                     tail_recursion_count += 1;
                     continue;
                 }
@@ -620,7 +620,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(instantiated)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = (*next_cond).clone();
+                        current_cond = *next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -754,7 +754,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -850,7 +850,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -1025,7 +1025,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
@@ -1136,7 +1136,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().lookup(check_unwrapped),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
-            return self.interner().conditional(cond.clone());
+            return self.interner().conditional(*cond);
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {

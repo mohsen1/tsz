@@ -2522,7 +2522,7 @@ mod homomorphic_mapped_type_tests {
             default: None,
             is_const: false,
         };
-        let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+        let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
         let index_access = interner.intern(TypeData::IndexAccess(tp, key_param_id));
 
         let mapped = MappedType {

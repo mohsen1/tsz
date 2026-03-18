@@ -38,7 +38,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && !names.contains(&prop_atom)
         {
             return Some(PropertyAccessResult::PropertyNotFound {
-                type_id: self.interner().mapped(mapped.as_ref().clone()),
+                type_id: self.interner().mapped(*mapped.as_ref()),
                 property_name: prop_atom,
             });
         }
@@ -70,7 +70,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Has string index - property access is valid
             } else {
                 return Some(PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner().mapped(mapped.as_ref().clone()),
+                    type_id: self.interner().mapped(*mapped.as_ref()),
                     property_name: prop_atom,
                 });
             }
@@ -90,7 +90,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if remapped == TypeId::NEVER {
                 // Key is filtered out by `as never`
                 return Some(PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner().mapped(mapped.as_ref().clone()),
+                    type_id: self.interner().mapped(*mapped.as_ref()),
                     property_name: prop_atom,
                 });
             }
@@ -744,7 +744,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .map(|nt| instantiate_type(self.interner(), nt, &substitution));
 
                 let new_mapped = MappedType {
-                    type_param: mapped.type_param.clone(),
+                    type_param: mapped.type_param,
                     constraint: inst_constraint,
                     name_type: inst_name_type,
                     template: inst_template,

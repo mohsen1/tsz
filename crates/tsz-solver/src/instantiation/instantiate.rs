@@ -143,7 +143,7 @@ impl TypeSubstitution {
     ) -> bool {
         type_params.iter().all(|param| {
             match self.map.get(&param.name) {
-                Some(&type_id) => interner.type_param(param.clone()) == type_id,
+                Some(&type_id) => interner.type_param(*param) == type_id,
                 None => true, // unmapped params don't change anything
             }
         })
@@ -327,7 +327,7 @@ impl<'a> TypeInstantiator<'a> {
         let saved_visiting = (!type_params.is_empty()).then(|| {
             let saved = self.visiting.clone();
             for tp in type_params {
-                let tp_id = self.interner.type_param(tp.clone());
+                let tp_id = self.interner.type_param(*tp);
                 self.visiting.remove(&tp_id);
             }
             saved
@@ -420,10 +420,8 @@ impl<'a> TypeInstantiator<'a> {
         let type_params = self.instantiate_type_params(&sig.type_params);
         let local_start = self.local_type_params.len();
         for type_param in &type_params {
-            self.local_type_params.push((
-                type_param.name,
-                self.interner.type_param(type_param.clone()),
-            ));
+            self.local_type_params
+                .push((type_param.name, self.interner.type_param(*type_param)));
         }
         let type_predicate = sig
             .type_predicate
@@ -610,10 +608,8 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
                 let local_start = self.local_type_params.len();
                 for type_param in &instantiated_type_params {
-                    self.local_type_params.push((
-                        type_param.name,
-                        self.interner.type_param(type_param.clone()),
-                    ));
+                    self.local_type_params
+                        .push((type_param.name, self.interner.type_param(*type_param)));
                 }
                 let type_predicate = shape
                     .type_predicate
@@ -680,7 +676,7 @@ impl<'a> TypeInstantiator<'a> {
                     // so it can distribute to both branches
                     // TypeScript treats `boolean` as `true | false` for distributive conditionals
                     if substituted == TypeId::BOOLEAN {
-                        let cond_type = self.interner.conditional(cond.as_ref().clone());
+                        let cond_type = self.interner.conditional(*cond.as_ref());
                         let mut results = Vec::with_capacity(2);
                         for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
                             if self.depth_exceeded {
@@ -715,7 +711,7 @@ impl<'a> TypeInstantiator<'a> {
                             self.depth_exceeded = true;
                             return TypeId::ERROR;
                         }
-                        let cond_type = self.interner.conditional(cond.as_ref().clone());
+                        let cond_type = self.interner.conditional(*cond.as_ref());
                         let mut results = Vec::with_capacity(members.len());
                         for &member in members.iter() {
                             // Check depth before each distribution step
@@ -961,7 +957,7 @@ impl<'a> TypeInstantiator<'a> {
 
                 if unchanged {
                     tracing::trace!("instantiate Mapped: UNCHANGED, returning original");
-                    return self.interner.mapped((*mapped).clone());
+                    return self.interner.mapped(*mapped);
                 }
 
                 let instantiated = MappedType {
@@ -1193,7 +1189,7 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     return substituted;
                 }
-                self.interner.infer(info.clone())
+                self.interner.infer(*info)
             }
         }
     }

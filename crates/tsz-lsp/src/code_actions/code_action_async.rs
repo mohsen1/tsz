@@ -84,12 +84,12 @@ impl<'a> CodeActionProvider<'a> {
         while current.is_some() {
             let node = self.arena.get(current)?;
 
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                if let Some(chain) = self.analyze_then_chain(current) {
-                    // Find the outermost chained call
-                    let outer = self.find_outermost_chain_call(current);
-                    return Some((outer, chain));
-                }
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(chain) = self.analyze_then_chain(current)
+            {
+                // Find the outermost chained call
+                let outer = self.find_outermost_chain_call(current);
+                return Some((outer, chain));
             }
 
             current = self.arena.get_extended(current)?.parent;
@@ -98,7 +98,7 @@ impl<'a> CodeActionProvider<'a> {
         None
     }
 
-    /// Analyze a call expression to see if it's part of a .then() chain.
+    /// Analyze a call expression to see if it's part of a .`then()` chain.
     fn analyze_then_chain(&self, idx: NodeIndex) -> Option<ThenChain> {
         let node = self.arena.get(idx)?;
         let call_data = self.arena.get_call_expr(node)?;

@@ -138,8 +138,8 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         default: Some(TypeId::STRING),
         is_const: false,
     };
-    let t_type = interner.type_param(t_param.clone());
-    let u_type = interner.type_param(u_param.clone());
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {

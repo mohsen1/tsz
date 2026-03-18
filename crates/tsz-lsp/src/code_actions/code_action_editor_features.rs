@@ -47,7 +47,7 @@ pub enum SourceActionKind {
 }
 
 impl SourceActionKind {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::OrganizeImports => "source.organizeImports",
             Self::AddMissingImports => "source.addMissingImports",
@@ -294,18 +294,15 @@ impl<'a> CodeActionProvider<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind == tsz_parser::syntax_kind_ext::IMPORT_DECLARATION {
-                if let Some(import_data) = self.arena.get_import_decl(stmt_node) {
-                    if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                        if let Some(text) = self
-                            .source
-                            .get(spec_node.pos as usize..spec_node.end as usize)
-                        {
-                            let trimmed = text.trim_matches(|c| c == '\'' || c == '"');
-                            specifiers.push(trimmed.to_string());
-                        }
-                    }
-                }
+            if stmt_node.kind == tsz_parser::syntax_kind_ext::IMPORT_DECLARATION
+                && let Some(import_data) = self.arena.get_import_decl(stmt_node)
+                && let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                && let Some(text) = self
+                    .source
+                    .get(spec_node.pos as usize..spec_node.end as usize)
+            {
+                let trimmed = text.trim_matches(|c| c == '\'' || c == '"');
+                specifiers.push(trimmed.to_string());
             }
         }
 
@@ -374,56 +371,54 @@ impl<'a> CodeActionProvider<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind == tsz_parser::syntax_kind_ext::IMPORT_DECLARATION {
-                if let Some(import_data) = self.arena.get_import_decl(stmt_node) {
-                    if let Some(clause_node) = self.arena.get(import_data.import_clause) {
-                        if let Some(clause) = self.arena.get_import_clause(clause_node) {
-                            // Check default import name
-                            if let Some(n) = self.arena.get_identifier_text(clause.name) {
-                                if n == name {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
+            if stmt_node.kind == tsz_parser::syntax_kind_ext::IMPORT_DECLARATION
+                && let Some(import_data) = self.arena.get_import_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(import_data.import_clause)
+                && let Some(clause) = self.arena.get_import_clause(clause_node)
+            {
+                // Check default import name
+                if let Some(n) = self.arena.get_identifier_text(clause.name)
+                    && n == name
+                {
+                    return true;
                 }
             }
 
             // Check top-level declarations
             match stmt_node.kind {
                 k if k == tsz_parser::syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt_node) {
-                        if self.arena.get_identifier_text(func.name) == Some(name) {
-                            return true;
-                        }
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && self.arena.get_identifier_text(func.name) == Some(name)
+                    {
+                        return true;
                     }
                 }
                 k if k == tsz_parser::syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt_node) {
-                        if self.arena.get_identifier_text(class.name) == Some(name) {
-                            return true;
-                        }
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && self.arena.get_identifier_text(class.name) == Some(name)
+                    {
+                        return true;
                     }
                 }
                 k if k == tsz_parser::syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(stmt_node) {
-                        if self.arena.get_identifier_text(iface.name) == Some(name) {
-                            return true;
-                        }
+                    if let Some(iface) = self.arena.get_interface(stmt_node)
+                        && self.arena.get_identifier_text(iface.name) == Some(name)
+                    {
+                        return true;
                     }
                 }
                 k if k == tsz_parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(alias) = self.arena.get_type_alias(stmt_node) {
-                        if self.arena.get_identifier_text(alias.name) == Some(name) {
-                            return true;
-                        }
+                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
+                        && self.arena.get_identifier_text(alias.name) == Some(name)
+                    {
+                        return true;
                     }
                 }
                 k if k == tsz_parser::syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(e) = self.arena.get_enum(stmt_node) {
-                        if self.arena.get_identifier_text(e.name) == Some(name) {
-                            return true;
-                        }
+                    if let Some(e) = self.arena.get_enum(stmt_node)
+                        && self.arena.get_identifier_text(e.name) == Some(name)
+                    {
+                        return true;
                     }
                 }
                 _ => {}
@@ -454,19 +449,18 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             let import_data = self.arena.get_import_decl(stmt_node)?;
-            if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                if let Some(spec_text) = self
+            if let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                && let Some(spec_text) = self
                     .source
                     .get(spec_node.pos as usize..spec_node.end as usize)
-                {
-                    let trimmed = spec_text.trim_matches(|c| c == '\'' || c == '"');
-                    if trimmed == deleted_specifier {
-                        let (range, _) = self.declaration_removal_range(stmt_node);
-                        edits.push(TextEdit {
-                            range,
-                            new_text: String::new(),
-                        });
-                    }
+            {
+                let trimmed = spec_text.trim_matches(|c| c == '\'' || c == '"');
+                if trimmed == deleted_specifier {
+                    let (range, _) = self.declaration_removal_range(stmt_node);
+                    edits.push(TextEdit {
+                        range,
+                        new_text: String::new(),
+                    });
                 }
             }
         }

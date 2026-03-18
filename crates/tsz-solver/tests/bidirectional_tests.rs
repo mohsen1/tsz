@@ -118,7 +118,7 @@ fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
         default: None,
         is_const: false,
     };
-    let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info.clone()));
+    let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info));
 
     let template = interner.function(FunctionShape {
         type_params: vec![],

@@ -30,17 +30,17 @@ impl<'a> CodeActionProvider<'a> {
             let node = self.arena.get(current)?;
 
             // Try && chain pattern: a && a.b && a.b.c
-            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(result) = self.try_convert_and_chain_to_optional(current) {
-                    return Some(result);
-                }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(result) = self.try_convert_and_chain_to_optional(current)
+            {
+                return Some(result);
             }
 
             // Try ternary pattern: a != null ? a.b : undefined
-            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-                if let Some(result) = self.try_convert_ternary_to_optional(current) {
-                    return Some(result);
-                }
+            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                && let Some(result) = self.try_convert_ternary_to_optional(current)
+            {
+                return Some(result);
             }
 
             current = self.arena.get_extended(current)?.parent;
@@ -210,14 +210,13 @@ impl<'a> CodeActionProvider<'a> {
             return;
         };
 
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(node) {
-                if binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
-                    self.flatten_and_chain(binary.left, parts);
-                    self.flatten_and_chain(binary.right, parts);
-                    return;
-                }
-            }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+        {
+            self.flatten_and_chain(binary.left, parts);
+            self.flatten_and_chain(binary.right, parts);
+            return;
         }
 
         parts.push(idx);

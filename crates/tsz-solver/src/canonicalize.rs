@@ -297,7 +297,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     // { [K in T]: K } and { [P in T]: P } hash to the same value.
                     // Since we use De Bruijn indices (BoundParameter) in the body,
                     // this name is never looked up, only used for hashing identity.
-                    let mut c_type_param = mapped.type_param.clone();
+                    let mut c_type_param = mapped.type_param;
                     c_type_param.name = self.interner.intern_string("");
                     // Also canonicalize constraint/default inside TypeParamInfo if present
                     c_type_param.constraint = c_type_param.constraint.map(|c| self.canonicalize(c));

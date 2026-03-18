@@ -245,7 +245,7 @@ impl<'a> CodeActionProvider<'a> {
 
         let edit = TextEdit {
             range: Range::new(start_pos, end_pos),
-            new_text: new_name.clone(),
+            new_text: new_name,
         };
 
         let mut changes = FxHashMap::default();
@@ -325,7 +325,7 @@ fn extract_did_you_mean(msg: &str) -> Option<&str> {
     rest.get(..end)
 }
 
-/// Parse `const x = require('y')` patterns and return (var_name, module_spec).
+/// Parse `const x = require('y')` patterns and return (`var_name`, `module_spec`).
 fn parse_require_pattern(text: &str) -> Option<(String, String)> {
     let text = text.trim();
     // Strip const/let/var

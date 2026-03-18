@@ -235,25 +235,23 @@ impl<'a> CodeActionProvider<'a> {
             return;
         };
 
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(node) {
-                if binary.operator_token == SyntaxKind::PlusToken as u16 {
-                    self.flatten_concat(binary.left, parts);
-                    self.flatten_concat(binary.right, parts);
-                    return;
-                }
-            }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::PlusToken as u16
+        {
+            self.flatten_concat(binary.left, parts);
+            self.flatten_concat(binary.right, parts);
+            return;
         }
 
         // Check if this is a string literal
-        if node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(text) = self
+        if node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(text) = self
                 .source
                 .get((node.pos + 1) as usize..(node.end - 1) as usize)
-            {
-                parts.push(ConcatPart::StringLiteral(text.to_string()));
-                return;
-            }
+        {
+            parts.push(ConcatPart::StringLiteral(text.to_string()));
+            return;
         }
 
         // Otherwise it's an expression

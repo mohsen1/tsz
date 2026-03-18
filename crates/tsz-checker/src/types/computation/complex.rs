@@ -1667,7 +1667,7 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             for tp in &shape.type_params {
                 let name = self.ctx.types.resolve_atom(tp.name);
-                let ty = factory.type_param(tp.clone());
+                let ty = factory.type_param(*tp);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
                 scope_restore.push((name, previous));
             }
@@ -1757,7 +1757,7 @@ impl<'a> CheckerState<'a> {
         {
             let mut type_args = Vec::with_capacity(shape.type_params.len());
             for tp in &shape.type_params {
-                let tp_id = self.ctx.types.factory().type_param(tp.clone());
+                let tp_id = self.ctx.types.factory().type_param(*tp);
                 let mut inferred = None;
                 for (i, param) in shape.params.iter().enumerate() {
                     if param.type_id == tp_id

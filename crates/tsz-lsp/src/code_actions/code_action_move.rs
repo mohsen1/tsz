@@ -263,7 +263,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 }
 
-/// Convert a PascalCase or camelCase name to kebab-case.
+/// Convert a `PascalCase` or camelCase name to kebab-case.
 fn to_kebab_case(name: &str) -> String {
     let mut result = String::new();
     for (i, ch) in name.chars().enumerate() {

@@ -63,10 +63,10 @@ impl<'a> CodeActionProvider<'a> {
 
         // Check for close paren after parameters
         let mut actual_insert = insert_offset;
-        if let Some(rest) = self.source.get(insert_offset as usize..) {
-            if rest.starts_with(')') {
-                actual_insert += 1;
-            }
+        if let Some(rest) = self.source.get(insert_offset as usize..)
+            && rest.starts_with(')')
+        {
+            actual_insert += 1;
         }
 
         let insert_pos = self.line_map.offset_to_position(actual_insert, self.source);

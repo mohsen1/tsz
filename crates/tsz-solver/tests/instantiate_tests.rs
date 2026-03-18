@@ -215,9 +215,9 @@ fn test_instantiate_function_shadowed_type_params() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let func = interner.function(FunctionShape {
-        type_params: vec![t_param.clone()],
+        type_params: vec![t_param],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
             type_id: t_type,
@@ -375,7 +375,7 @@ fn test_instantiate_application_promise() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let promise_base = interner.lazy(DefId(1));
     let promise_t = interner.application(promise_base, vec![t_type]);
@@ -401,8 +401,8 @@ fn test_instantiate_application_map_nested() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
-    let v_type = interner.intern(TypeData::TypeParameter(v_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
+    let v_type = interner.intern(TypeData::TypeParameter(v_param));
     let array_v = interner.array(v_type);
 
     let map_base = interner.lazy(DefId(2));
@@ -500,10 +500,10 @@ fn test_instantiate_mapped_type_shadowed_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let mapped = interner.mapped(MappedType {
-        type_param: t_param.clone(),
+        type_param: t_param,
         constraint: TypeId::STRING,
         name_type: None,
         template: t_type,
@@ -877,7 +877,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(k_param));
 
     // Create template literal `${T}_${K}` as the mapped type's template
     let template = interner.template_literal(vec![
@@ -1364,7 +1364,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     // foo(t: T, u: U) — uses class-level T and U, no own type params
@@ -1480,7 +1480,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     // Method foo3<T>(t: T, u: U): T — shadows class T
@@ -1710,7 +1710,7 @@ fn test_instantiate_mapped_over_tuple_preserves_tuple() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     // template = T[K] (index access)
     let template = interner.index_access(t_type, k_type);
 
@@ -1789,7 +1789,7 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
 
     // template = { value: T[K] }
     let index_access = interner.index_access(t_type, k_type);
@@ -2023,7 +2023,7 @@ fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
 
     let mapped = interner.mapped(MappedType {
@@ -2079,7 +2079,7 @@ fn test_instantiate_homomorphic_mapped_with_any_array_constrained() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
 
     let mapped = interner.mapped(MappedType {
@@ -2143,7 +2143,7 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param_info));
     let template = interner.index_access(t_type, k_type);
 
     let mapped = interner.mapped(MappedType {
