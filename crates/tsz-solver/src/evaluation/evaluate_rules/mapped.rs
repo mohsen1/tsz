@@ -473,7 +473,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.interner().mapped(mapped.clone());
                     }
                     let key_type = TypeId::STRING;
-                    let mut subst = TypeSubstitution::new();
+                    subst.clear();
                     subst.insert(mapped.type_param.name, key_type);
                     let instantiated_template =
                         instantiate_type(self.interner(), mapped.template, &subst);
@@ -511,7 +511,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.interner().mapped(mapped.clone());
                     }
                     let key_type = TypeId::NUMBER;
-                    let mut subst = TypeSubstitution::new();
+                    subst.clear();
                     subst.insert(mapped.type_param.name, key_type);
                     let mut value_type =
                         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
