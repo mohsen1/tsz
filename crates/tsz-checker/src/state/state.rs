@@ -937,6 +937,31 @@ impl<'a> CheckerState<'a> {
                     }
                     return flow_cached;
                 }
+
+                // PERF: Stable flow cache — skip flow analysis for repeated identifier
+                // accesses in straight-line code where no narrowing occurs.
+                // If a prior flow analysis for this symbol returned the declared type
+                // unchanged, and the current flow node can reach that confirmed node
+                // via a straight-line chain (no CONDITION/ASSIGNMENT/BRANCH_LABEL nodes),
+                // we know flow analysis will return the declared type again.
+                let stable_key = (sym_id, cached);
+                let confirmed_flow = self
+                    .ctx
+                    .symbol_flow_confirmed
+                    .borrow()
+                    .get(&stable_key)
+                    .copied();
+                if let Some(confirmed_flow) = confirmed_flow {
+                    if self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id) {
+                        // Update the confirmed flow node to the current one so
+                        // the next access only needs to walk back a few steps.
+                        self.ctx
+                            .symbol_flow_confirmed
+                            .borrow_mut()
+                            .insert(stable_key, flow_node);
+                        return cached;
+                    }
+                }
             }
 
             // CRITICAL FIX: For identifiers, apply flow narrowing to the cached type
@@ -967,8 +992,15 @@ impl<'a> CheckerState<'a> {
                     let widened_cached =
                         tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
                     if widened_cached == narrowed {
+                        // Update stable flow cache: flow returned declared type
+                        self.update_symbol_flow_confirmed(idx, cached, true);
                         return cached;
                     }
+                    // Flow returned a narrowed type — invalidate stable cache
+                    self.update_symbol_flow_confirmed(idx, cached, false);
+                } else {
+                    // Flow returned declared type unchanged — update stable cache
+                    self.update_symbol_flow_confirmed(idx, cached, true);
                 }
                 return narrowed;
             }
@@ -1038,6 +1070,41 @@ impl<'a> CheckerState<'a> {
                 );
                 return result;
             }
+
+            // PERF: Stable flow cache — check if a prior flow analysis for this symbol
+            // confirmed no narrowing (returned the declared type). If so, skip the
+            // expensive FlowAnalyzer creation and flow graph walk.
+            if let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
+                && let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(idx)
+                    .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+            {
+                let stable_key = (sym_id, result);
+                let confirmed_flow = self
+                    .ctx
+                    .symbol_flow_confirmed
+                    .borrow()
+                    .get(&stable_key)
+                    .copied();
+                if let Some(confirmed_flow) = confirmed_flow {
+                    if self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id) {
+                        self.ctx
+                            .symbol_flow_confirmed
+                            .borrow_mut()
+                            .insert(stable_key, flow_node);
+                        // Also populate the flow_analysis_cache for this exact key
+                        // so subsequent cached-path lookups are instant.
+                        self.ctx.flow_analysis_cache.borrow_mut().insert(
+                            (flow_node, sym_id, result),
+                            result,
+                        );
+                        return result;
+                    }
+                }
+            }
+
             let mut narrowed = self.apply_flow_narrowing(idx, result);
             // FIX: Flow narrowing may return the original fresh type from the initializer
             // expression, undoing the freshness stripping that get_type_of_identifier
@@ -1065,6 +1132,12 @@ impl<'a> CheckerState<'a> {
                     narrowed = result;
                 }
             }
+            // Update stable flow cache based on whether narrowing occurred
+            if narrowed == result {
+                self.update_symbol_flow_confirmed(idx, result, true);
+            } else {
+                self.update_symbol_flow_confirmed(idx, result, false);
+            }
             tracing::trace!(
                 idx = idx.0,
                 type_id = result.0,
@@ -1076,6 +1149,159 @@ impl<'a> CheckerState<'a> {
 
         tracing::trace!(idx = idx.0, type_id = result.0, "get_type_of_node");
         result
+    }
+
+    /// Check if `from` can reach `to` via a flow chain that doesn't narrow `sym_id`.
+    /// Returns true if the backward walk from `from` encounters no flow nodes that
+    /// could change the type of `sym_id` (assignments to the symbol, loops, or calls).
+    /// Walks at most 64 steps.
+    ///
+    /// Key insight: ASSIGNMENT nodes for OTHER symbols (e.g., `score += ...` for `score`
+    /// while we track `options`) are safe to walk through. BRANCH_LABEL merge points
+    /// from `??`/`?:` can be traversed by following their CONDITION antecedents.
+    ///
+    /// CONDITION nodes are only safe to traverse when reached FROM a BRANCH_LABEL (merge
+    /// point), indicating they're part of a reconvergence pattern (like `??`). Direct
+    /// CONDITION nodes (not from a merge) indicate entering a narrowing branch (like
+    /// `if (typeof x === "string")`) and must block the walk.
+    fn is_straight_line_flow_to(
+        &self,
+        from: tsz_binder::FlowNodeId,
+        to: tsz_binder::FlowNodeId,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_binder::flow_flags;
+
+        // Hard-stop flags: these always block because they introduce control flow
+        // structures that could change any symbol's type.
+        const HARD_STOP_FLAGS: u32 =
+            flow_flags::LOOP_LABEL | flow_flags::SWITCH_CLAUSE | flow_flags::CALL;
+
+        let mut current = from;
+        // Track whether we reached the current node from a BRANCH_LABEL.
+        // CONDITION nodes are only safe to traverse in this case.
+        let mut from_branch_label = false;
+        for _ in 0..64 {
+            if current == to {
+                return true;
+            }
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                return false;
+            };
+
+            // Loop labels, switch clauses, and calls always block
+            if (flow.flags & HARD_STOP_FLAGS) != 0 {
+                return false;
+            }
+
+            // ASSIGNMENT nodes: only block if they target our symbol
+            if flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                if self.stable_flow_assignment_targets_symbol(flow, sym_id) {
+                    return false;
+                }
+                // Assignment to a different symbol — safe to pass through
+                if flow.antecedent.len() == 1 {
+                    from_branch_label = false;
+                    current = flow.antecedent[0];
+                    continue;
+                }
+                return false;
+            }
+
+            // CONDITION nodes: only safe when reached from a BRANCH_LABEL merge point.
+            // This distinguishes ??/?:  reconvergence (BRANCH_LABEL -> CONDITION -> pre)
+            // from entering narrowing branches (code -> CONDITION -> pre-if).
+            if flow.has_any_flags(flow_flags::CONDITION) {
+                if from_branch_label && flow.antecedent.len() == 1 {
+                    from_branch_label = false;
+                    current = flow.antecedent[0];
+                    continue;
+                }
+                return false;
+            }
+
+            // BRANCH_LABEL merge points: walk through by following first antecedent.
+            // For ??/?: reconvergence, all branches produce the same result for our
+            // non-narrowed symbol, so following any single path is safe.
+            if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
+                if !flow.antecedent.is_empty() {
+                    from_branch_label = true;
+                    current = flow.antecedent[0];
+                    continue;
+                }
+                return false;
+            }
+
+            // ARRAY_MUTATION: pass through (doesn't affect identifier types)
+            if flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
+                if flow.antecedent.len() == 1 {
+                    from_branch_label = false;
+                    current = flow.antecedent[0];
+                    continue;
+                }
+                return false;
+            }
+
+            // Regular flow node — must have exactly one antecedent
+            from_branch_label = false;
+            if flow.antecedent.len() != 1 {
+                return false;
+            }
+            current = flow.antecedent[0];
+        }
+        // Exceeded walk limit — conservatively return false
+        false
+    }
+
+    /// Check if a flow ASSIGNMENT node targets the given symbol.
+    fn stable_flow_assignment_targets_symbol(
+        &self,
+        flow: &tsz_binder::FlowNode,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if flow.node.is_none() {
+            return false;
+        }
+        // For assignments (x = ..., x += ...), the flow node references the LHS.
+        // Check if that identifier's symbol matches our target symbol.
+        if let Some(target_sym) = self
+            .ctx
+            .binder
+            .get_node_symbol(flow.node)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, flow.node))
+        {
+            return target_sym == sym_id;
+        }
+        // Can't determine the target — conservatively assume it targets our symbol
+        true
+    }
+
+    /// Update the stable flow cache for a symbol after flow analysis.
+    /// If `is_stable` is true (flow returned the declared type), record the current
+    /// flow node. If false (narrowing occurred), remove the entry.
+    fn update_symbol_flow_confirmed(
+        &self,
+        idx: NodeIndex,
+        declared_type: TypeId,
+        is_stable: bool,
+    ) {
+        if let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
+            && let Some(sym_id) = self
+                .ctx
+                .binder
+                .get_node_symbol(idx)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        {
+            let key = (sym_id, declared_type);
+            if is_stable {
+                self.ctx
+                    .symbol_flow_confirmed
+                    .borrow_mut()
+                    .insert(key, flow_node);
+            } else {
+                self.ctx.symbol_flow_confirmed.borrow_mut().remove(&key);
+            }
+        }
     }
 
     fn clear_binding_name_symbol_cache_recursive(&mut self, name_idx: NodeIndex) {

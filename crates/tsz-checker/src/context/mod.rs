@@ -319,6 +319,15 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub symbol_last_assignment_pos: RefCell<FxHashMap<SymbolId, u32>>,
 
+    /// Stable flow cache: maps `(SymbolId, DeclaredTypeId)` to the last `FlowNodeId`
+    /// where flow analysis confirmed no narrowing (returned the declared type unchanged).
+    /// When a new flow node for the same symbol can reach the confirmed node via a
+    /// straight-line chain (no CONDITION/ASSIGNMENT/BRANCH_LABEL nodes), flow analysis
+    /// is skipped entirely, returning the declared type directly.
+    /// This eliminates O(N) flow cache misses for N sequential accesses to the same
+    /// identifier (e.g., 34 references to `options` in sequential statements).
+    pub symbol_flow_confirmed: RefCell<FxHashMap<(SymbolId, TypeId), tsz_binder::FlowNodeId>>,
+
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index. Used by flow narrowing to get
     /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
