@@ -557,6 +557,75 @@ impl<'a> TypeHierarchyProvider<'a> {
     fn get_identifier_text(&self, node_idx: NodeIndex) -> Option<String> {
         identifier_text(self.arena, node_idx)
     }
+
+    // -----------------------------------------------------------------------
+    // Public helpers for cross-file hierarchy (called from Project)
+    // -----------------------------------------------------------------------
+
+    /// Public wrapper around `find_type_declaration_by_name` for cross-file lookups.
+    pub fn find_type_declaration_item_by_name(&self, name: &str) -> Option<TypeHierarchyItem> {
+        self.find_type_declaration_by_name(name)
+    }
+
+    /// Collect heritage type names (extends/implements) for the declaration
+    /// at or around `node_idx`. Used by cross-file supertype resolution.
+    pub fn collect_heritage_names(&self, node_idx: NodeIndex) -> Vec<String> {
+        let decl_idx = match self.find_type_declaration_at_or_around(node_idx) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+        self.collect_heritage_type_names(decl_idx)
+    }
+
+    /// Get the name of the type declaration at the given position.
+    /// Used by cross-file subtype resolution to determine what to search for.
+    pub fn get_target_type_name(&self, _root: NodeIndex, position: Position) -> Option<String> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+        let decl_idx = self.find_type_declaration_at_or_around(node_idx)?;
+        self.get_declaration_name(decl_idx)
+    }
+
+    /// Find all class/interface declarations in this file that reference
+    /// `target_name` in their heritage clauses (i.e. subtypes of `target_name`).
+    pub fn find_subtypes_of(&self, target_name: &str) -> Vec<TypeHierarchyItem> {
+        let mut results = Vec::new();
+
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let candidate_idx = NodeIndex(i as u32);
+
+            match node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    if let Some(class) = self.arena.get_class(node)
+                        && self
+                            .heritage_clauses_reference_name(&class.heritage_clauses, target_name)
+                        && let Some(item) = self.make_type_hierarchy_item(candidate_idx)
+                    {
+                        results.push(item);
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = self.arena.get_interface(node)
+                        && self
+                            .heritage_clauses_reference_name(&iface.heritage_clauses, target_name)
+                        && let Some(item) = self.make_type_hierarchy_item(candidate_idx)
+                    {
+                        results.push(item);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        results
+    }
 }
 
 #[cfg(test)]
