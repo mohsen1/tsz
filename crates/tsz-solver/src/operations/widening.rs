@@ -40,28 +40,28 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     }
     // Fast path: non-literal, non-union, non-intersection types don't widen.
     // Object, Function, Callable, Array, Tuple, TypeParameter, etc. are stable.
-    match db.lookup(type_id) {
-        Some(crate::types::TypeData::Literal(_)) => {} // needs widening
-        Some(crate::types::TypeData::Union(_) | crate::types::TypeData::Intersection(_)) => {} // may contain literals
+    if matches!(
+        db.lookup(type_id),
         Some(
             crate::types::TypeData::Function(_)
-            | crate::types::TypeData::Callable(_)
-            | crate::types::TypeData::TypeParameter(_)
-            | crate::types::TypeData::Enum(_, _)
-            | crate::types::TypeData::Mapped(_)
-            | crate::types::TypeData::Conditional(_)
-            | crate::types::TypeData::Application(_)
-            | crate::types::TypeData::Lazy(_)
-            | crate::types::TypeData::IndexAccess(_, _)
-            | crate::types::TypeData::KeyOf(_)
-            | crate::types::TypeData::TemplateLiteral(_)
-            | crate::types::TypeData::ThisType
-            | crate::types::TypeData::Error,
-        ) => return type_id, // doesn't widen
-        // Note: Object, ObjectWithIndex, Array, Tuple may contain literal properties
-        // that need widening, so they must go through the full path.
-        _ => {} // unknown — fall through to full widening
+                | crate::types::TypeData::Callable(_)
+                | crate::types::TypeData::TypeParameter(_)
+                | crate::types::TypeData::Enum(_, _)
+                | crate::types::TypeData::Mapped(_)
+                | crate::types::TypeData::Conditional(_)
+                | crate::types::TypeData::Application(_)
+                | crate::types::TypeData::Lazy(_)
+                | crate::types::TypeData::IndexAccess(_, _)
+                | crate::types::TypeData::KeyOf(_)
+                | crate::types::TypeData::TemplateLiteral(_)
+                | crate::types::TypeData::ThisType
+                | crate::types::TypeData::Error
+        )
+    ) {
+        return type_id;
     }
+    // Note: literals, unions, intersections, objects, arrays, and tuples may
+    // still contain widenable data, so they must go through the full path.
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, true)
