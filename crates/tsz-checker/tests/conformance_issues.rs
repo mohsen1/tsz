@@ -2998,6 +2998,7 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
 }
 
 #[test]
+#[ignore = "requires lib files not available in CI"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type() {
     // Overload resolution for lib typed arrays is now fixed.
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
@@ -3022,6 +3023,7 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 }
 
 #[test]
+#[ignore = "requires lib files not available in CI"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     // Overload resolution for lib typed arrays is now fixed (merged lib contexts variant).
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
