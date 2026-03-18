@@ -332,13 +332,7 @@ impl<'a> CheckerState<'a> {
         // node-type, and flow-analysis-cache state, then restore after inference
         // so that the subsequent check_statement pass recomputes everything with
         // proper narrowing context.
-        let diag_count = self.ctx.diagnostics.len();
-        let emitted_before = self.ctx.emitted_diagnostics.clone();
-        let emitted_ts2454_before = self.ctx.emitted_ts2454_errors.clone();
-        let modules_ts2307_before = self.ctx.modules_with_ts2307_emitted.clone();
-        let cached_before: std::collections::HashSet<u32> =
-            self.ctx.node_types.keys().copied().collect();
-        let flow_cache_before = self.ctx.flow_analysis_cache.borrow().clone();
+        let snap = self.ctx.snapshot_return_type();
 
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
 
@@ -351,12 +345,7 @@ impl<'a> CheckerState<'a> {
         // TypeQuery(SymbolRef), which correctly resolves to the constructor type.
         let result = self.resolve_lazy_class_to_constructor(result);
 
-        self.ctx.diagnostics.truncate(diag_count);
-        self.ctx.emitted_diagnostics = emitted_before;
-        self.ctx.emitted_ts2454_errors = emitted_ts2454_before;
-        self.ctx.modules_with_ts2307_emitted = modules_ts2307_before;
-        self.ctx.node_types.retain(|k, _| cached_before.contains(k));
-        *self.ctx.flow_analysis_cache.borrow_mut() = flow_cache_before;
+        self.ctx.rollback_return_type(&snap);
 
         // Widen inferred return types when there is no contextual return type,
         // unless the caller explicitly requested literal preservation

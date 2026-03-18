@@ -293,7 +293,9 @@ impl<'a> CheckerState<'a> {
         let should_suppress_contextual_branch_assignability =
             prev_context.is_some() && !self.assignment_source_is_return_expression(idx);
         let suppress_contextual_branch_ts2322 =
-            |state: &mut Self, branch_idx: NodeIndex, diag_len_before: usize| {
+            |state: &mut Self,
+             branch_idx: NodeIndex,
+             snap: &crate::context::speculation::DiagnosticSnapshot| {
                 if !should_suppress_contextual_branch_assignability {
                     return;
                 }
@@ -302,13 +304,10 @@ impl<'a> CheckerState<'a> {
                 };
                 let branch_start = branch_node.pos;
                 let branch_end = branch_node.end;
-                let recent = state.ctx.diagnostics.split_off(diag_len_before);
-                for diag in recent {
+                state.ctx.rollback_diagnostics_filtered(snap, |diag| {
                     let in_branch = diag.start >= branch_start && diag.start < branch_end;
-                    if !(in_branch && diag.code == 2322) {
-                        state.ctx.diagnostics.push(diag);
-                    }
-                }
+                    !(in_branch && diag.code == 2322)
+                });
             };
 
         // Compute branch types with the outer contextual type for inference.
@@ -322,16 +321,14 @@ impl<'a> CheckerState<'a> {
             // otherwise entries added to the dedup set would prevent the same
             // diagnostic from being emitted later by the regular checker pass
             // (e.g. TS8010 grammar errors in JS files).
-            let diag_len = self.ctx.diagnostics.len();
-            let dedup_snapshot = self.ctx.emitted_diagnostics.clone();
+            let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node(cond.when_true);
-            self.ctx.diagnostics.truncate(diag_len);
-            self.ctx.emitted_diagnostics = dedup_snapshot;
+            self.ctx.rollback_diagnostics(&snap);
             ty
         } else {
-            let diag_len = self.ctx.diagnostics.len();
+            let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node(cond.when_true);
-            suppress_contextual_branch_ts2322(self, cond.when_true, diag_len);
+            suppress_contextual_branch_ts2322(self, cond.when_true, &snap);
             ty
         };
 
@@ -339,16 +336,14 @@ impl<'a> CheckerState<'a> {
             .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_false));
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
-            let diag_len = self.ctx.diagnostics.len();
-            let dedup_snapshot = self.ctx.emitted_diagnostics.clone();
+            let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node(cond.when_false);
-            self.ctx.diagnostics.truncate(diag_len);
-            self.ctx.emitted_diagnostics = dedup_snapshot;
+            self.ctx.rollback_diagnostics(&snap);
             ty
         } else {
-            let diag_len = self.ctx.diagnostics.len();
+            let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node(cond.when_false);
-            suppress_contextual_branch_ts2322(self, cond.when_false, diag_len);
+            suppress_contextual_branch_ts2322(self, cond.when_false, &snap);
             ty
         };
 

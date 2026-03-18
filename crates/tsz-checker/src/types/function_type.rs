@@ -1543,16 +1543,14 @@ impl<'a> CheckerState<'a> {
                             .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
                             .is_some_and(|cond| {
                                 let prev_ctx = self.ctx.contextual_type;
-                                let diag_len = self.ctx.diagnostics.len();
-                                let emitted_before = self.ctx.emitted_diagnostics.clone();
+                                let snap = self.ctx.snapshot_diagnostics();
                                 self.ctx.contextual_type = Some(expected_return_type);
                                 self.clear_type_cache_recursive(cond.when_true);
                                 self.clear_type_cache_recursive(cond.when_false);
                                 let mut when_true = self.get_type_of_node(cond.when_true);
                                 let mut when_false = self.get_type_of_node(cond.when_false);
                                 self.ctx.contextual_type = prev_ctx;
-                                self.ctx.diagnostics.truncate(diag_len);
-                                self.ctx.emitted_diagnostics = emitted_before;
+                                self.ctx.rollback_diagnostics(&snap);
                                 if is_async_for_context {
                                     when_true =
                                         self.unwrap_promise_type(when_true).unwrap_or(when_true);
@@ -1673,20 +1671,16 @@ impl<'a> CheckerState<'a> {
                                 self.type_has_unresolved_inference_holes(return_type)
                             })
                     });
-                let diag_len = self.ctx.diagnostics.len();
-                let emitted_before = suppress_expression_body_diagnostics
-                    .then(|| self.ctx.emitted_diagnostics.clone());
+                let diag_snap =
+                    suppress_expression_body_diagnostics.then(|| self.ctx.snapshot_diagnostics());
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 self.check_statement(body);
 
-                if suppress_expression_body_diagnostics {
-                    self.ctx.diagnostics.truncate(diag_len);
-                    if let Some(emitted_before) = emitted_before {
-                        self.ctx.emitted_diagnostics = emitted_before;
-                    }
+                if let Some(snap) = &diag_snap {
+                    self.ctx.rollback_diagnostics(snap);
                 }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>

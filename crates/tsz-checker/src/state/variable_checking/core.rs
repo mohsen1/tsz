@@ -661,7 +661,7 @@ impl<'a> CheckerState<'a> {
                                 .map(|node| (node.pos, node.end));
                             [when_true, when_false]
                         });
-                    let diag_len_before_init = checker.ctx.diagnostics.len();
+                    let init_snap = checker.ctx.snapshot_diagnostics();
                     let init_type = checker.get_type_of_node(var_decl.initializer);
                     let init_type_for_relation = checker.resolve_lazy_type(init_type);
                     if let Some(branch_ranges) = conditional_branch_ranges {
@@ -669,16 +669,15 @@ impl<'a> CheckerState<'a> {
                         // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
                         // contextually typing the individual branches. The outer variable
                         // declaration check should report the canonical whole-expression error.
-                        let recent = checker.ctx.diagnostics.split_off(diag_len_before_init);
-                        for diag in recent {
-                            let in_branch = branch_ranges
-                                .iter()
-                                .flatten()
-                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                            if !(in_branch && diag.code == 2322) {
-                                checker.ctx.diagnostics.push(diag);
-                            }
-                        }
+                        checker
+                            .ctx
+                            .rollback_diagnostics_filtered(&init_snap, |diag| {
+                                let in_branch = branch_ranges
+                                    .iter()
+                                    .flatten()
+                                    .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                                !(in_branch && diag.code == 2322)
+                            });
                     }
                     checker.ctx.contextual_type = prev_context;
                     let function_initializer_body_has_error = checker
@@ -695,13 +694,15 @@ impl<'a> CheckerState<'a> {
                             }
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
-                            Some(checker.ctx.diagnostics[diag_len_before_init..].iter().any(
-                                |diag| {
-                                    diag.start >= body_node.pos
-                                        && diag.start < body_node.end
-                                        && matches!(diag.code, 2322 | 2339)
-                                },
-                            ))
+                            Some(
+                                checker.ctx.diagnostics[init_snap.diagnostics_len..]
+                                    .iter()
+                                    .any(|diag| {
+                                        diag.start >= body_node.pos
+                                            && diag.start < body_node.end
+                                            && matches!(diag.code, 2322 | 2339)
+                                    }),
+                            )
                         })
                         .unwrap_or(false);
                     // Check assignability (skip for 'any' since anything is assignable to any,
@@ -1033,8 +1034,7 @@ impl<'a> CheckerState<'a> {
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
             let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
-            let diag_count_before = self.ctx.diagnostics.len();
-            let emitted_before = self.ctx.emitted_diagnostics.clone();
+            let var_decl_snap = self.ctx.snapshot_diagnostics();
             let mut final_type = compute_final_type(self);
             // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
             // This happens when the initializer (directly or indirectly) references the variable,
@@ -1269,8 +1269,7 @@ impl<'a> CheckerState<'a> {
                 && !all_refs_deferred
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    diag_count_before,
-                    &emitted_before,
+                    &var_decl_snap,
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;

@@ -783,9 +783,9 @@ impl<'a> CheckerState<'a> {
                 {
                     let prev_context = self.ctx.contextual_type;
                     self.ctx.contextual_type = None;
-                    let diag_len = self.ctx.diagnostics.len();
+                    let snap = self.ctx.snapshot_diagnostics();
                     let value_type = self.get_type_of_node(prop.initializer);
-                    self.ctx.diagnostics.truncate(diag_len);
+                    self.ctx.rollback_diagnostics(&snap);
                     self.ctx.contextual_type = prev_context;
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
                     continue;
@@ -831,12 +831,11 @@ impl<'a> CheckerState<'a> {
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_prop_type);
 
-                // Suppress TS7006 by temporarily marking that we're in a contextual
-                // inference context (the params WILL get contextual types).
-                let diag_len = self.ctx.diagnostics.len();
+                // Suppress diagnostics from this speculative evaluation
+                // (the params WILL get contextual types in the final pass).
+                let snap = self.ctx.snapshot_diagnostics();
                 let value_type = self.get_type_of_node(prop.initializer);
-                // Remove any diagnostics emitted during this speculative evaluation
-                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.rollback_diagnostics(&snap);
                 self.ctx.contextual_type = prev_context;
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
@@ -881,9 +880,9 @@ impl<'a> CheckerState<'a> {
 
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_prop_type);
-                let diag_len = self.ctx.diagnostics.len();
+                let snap = self.ctx.snapshot_diagnostics();
                 let value_type = self.get_type_of_function(elem_idx);
-                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.rollback_diagnostics(&snap);
                 self.ctx.contextual_type = prev_context;
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
@@ -962,9 +961,9 @@ impl<'a> CheckerState<'a> {
             if params_are_concrete {
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_elem_type);
-                let diag_len = self.ctx.diagnostics.len();
+                let snap = self.ctx.snapshot_diagnostics();
                 let value_type = self.get_type_of_node(elem_idx);
-                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.rollback_diagnostics(&snap);
                 self.ctx.contextual_type = prev_context;
                 elements.push(tsz_solver::TupleElement {
                     type_id: value_type,
