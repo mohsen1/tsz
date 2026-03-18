@@ -668,29 +668,27 @@ impl QueryDatabase for QueryCache<'_> {
 
         // Fast path: leaf types that never change during evaluation.
         // Skip TypeEvaluator creation for types where visit_type_key returns type_id unchanged.
-        if let Some(key_data) = self.interner.lookup(type_id) {
-            match key_data {
-                TypeData::Literal(_)
-                | TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Array(_)
-                | TypeData::Function(_)
-                | TypeData::Callable(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::Enum(_, _)
-                | TypeData::BoundParameter(_)
-                | TypeData::Recursive(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ThisType
-                | TypeData::ModuleNamespace(_)
-                | TypeData::ReadonlyType(_)
-                | TypeData::Error => {
-                    self.eval_cache.borrow_mut().insert(key, type_id);
-                    return type_id;
-                }
-                _ => {}
-            }
+        if let Some(
+            TypeData::Literal(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::Enum(_, _)
+            | TypeData::BoundParameter(_)
+            | TypeData::Recursive(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::ReadonlyType(_)
+            | TypeData::Error,
+        ) = self.interner.lookup(type_id)
+        {
+            self.eval_cache.borrow_mut().insert(key, type_id);
+            return type_id;
         }
 
         let trace_enabled = query_trace::enabled();
