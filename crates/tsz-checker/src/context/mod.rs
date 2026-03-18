@@ -20,6 +20,7 @@ mod def_mapping;
 mod lib_queries;
 mod module_entity;
 mod resolver;
+pub(crate) mod speculation;
 mod strict_mode;
 
 use rustc_hash::{FxHashMap, FxHashSet};

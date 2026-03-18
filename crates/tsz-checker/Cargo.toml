@@ -135,5 +135,9 @@ path = "tests/type_arg_count_mismatch_tests.rs"
 name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
 
+[[test]]
+name = "speculation_rollback_tests"
+path = "tests/speculation_rollback_tests.rs"
+
 [lints]
 workspace = true
