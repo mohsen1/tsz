@@ -250,10 +250,11 @@ impl<'a> CheckerState<'a> {
                     .get(i)
                     .copied()
                     .unwrap_or(tsz_solver::TypeId::UNKNOWN);
-                let expected_param_type = expected_params
-                    .get(i)
-                    .copied()
-                    .unwrap_or_else(|| *expected_params.last().unwrap());
+                let expected_param_type = expected_params.get(i).copied().unwrap_or_else(|| {
+                    *expected_params
+                        .last()
+                        .expect("expected_params should not be empty")
+                });
                 // Parameter types conflict if the actual is NOT assignable to expected.
                 !self.is_assignable_to(actual_param_type, expected_param_type)
             })
