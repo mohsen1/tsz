@@ -175,23 +175,23 @@ pub fn is_readonly_index_signature(
 ) -> bool {
     use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
-    // Handle Mapped types with explicit readonly modifier (e.g., Readonly<T>).
-    // All index access on such types is readonly regardless of string/number kind.
-    if let Some(TypeData::Mapped(mapped_id)) = interner.lookup(type_id) {
-        let mapped = interner.mapped_type(mapped_id);
-        if mapped.readonly_modifier == Some(MappedModifier::Add) {
-            return true;
+    // PERF: Single lookup for Mapped and Union checks
+    match interner.lookup(type_id) {
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = interner.mapped_type(mapped_id);
+            if mapped.readonly_modifier == Some(MappedModifier::Add) {
+                return true;
+            }
         }
-    }
-
-    // Handle Union types - index signature is readonly if ANY member has it readonly
-    if let Some(TypeData::Union(types)) = interner.lookup(type_id) {
+        Some(TypeData::Union(types)) => {
         let type_list = interner.type_list(types);
-        let resolver = IndexSignatureResolver::new(interner);
-        return type_list.iter().any(|&t| {
-            (wants_string && resolver.is_readonly(t, IndexKind::String))
-                || (wants_number && resolver.is_readonly(t, IndexKind::Number))
-        });
+            let resolver = IndexSignatureResolver::new(interner);
+            return type_list.iter().any(|&t| {
+                (wants_string && resolver.is_readonly(t, IndexKind::String))
+                    || (wants_number && resolver.is_readonly(t, IndexKind::Number))
+            });
+        }
+        _ => {}
     }
 
     let resolver = IndexSignatureResolver::new(interner);
