@@ -658,28 +658,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
-        if let Some(TypeData::Conditional(cond_id)) = self.interner().lookup(constraint) {
-            let cond = self.interner().conditional_type(cond_id);
-            return self.evaluate_conditional(cond.as_ref());
-        }
-
-        // If constraint is a literal, return it
-        if let Some(TypeData::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint)
-        {
-            return constraint;
-        }
-
-        // If constraint is KeyOf, evaluate it
-        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
-            return self.evaluate_keyof(operand);
-        }
+        // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
+        let members = match self.interner().lookup(constraint) {
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().conditional_type(cond_id);
+                return self.evaluate_conditional(cond.as_ref());
+            }
+            Some(TypeData::Literal(LiteralValue::String(_))) => {
+                return constraint;
+            }
+            Some(TypeData::KeyOf(operand)) => {
+                return self.evaluate_keyof(operand);
+            }
+            Some(TypeData::Union(members)) => Some(members),
+            _ => None,
+        };
 
         // Union: recursively evaluate each member. This handles the distributed form
         // where `(keyof T & keyof U)` after T is inferred becomes
         // `Union(Intersection("x", keyof U), Intersection("y", keyof U))` due to
         // the interner's intersection-over-union distribution. Each Union member
         // (which may be an Intersection) gets recursively simplified.
-        if let Some(TypeData::Union(members)) = self.interner().lookup(constraint) {
+        if let Some(members) = members {
             let member_list = self.interner().type_list(members);
             let mut evaluated_members = Vec::with_capacity(member_list.len());
             let mut any_changed = false;
