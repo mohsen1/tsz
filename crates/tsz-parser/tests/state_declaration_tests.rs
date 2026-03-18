@@ -490,3 +490,78 @@ fn export_assignment_with_export_declare_modifiers_emits_ts1120() {
     // `export` starts at column 0 of line 2 (byte offset 7)
     assert_eq!(ts1120.start, 7, "TS1120 should start at `export` position");
 }
+
+/// `import\nimport { foo } from './0';` — the first `import` has no clause and a reserved
+/// keyword (`import`) follows on the next line. tsc emits TS1109 "Expression expected" at
+/// the second `import` position (the module specifier path fails to find a string literal)
+/// and the second import statement parses cleanly.
+/// Previously our parser routed this through import-equals because `look_ahead_is_import_equals`
+/// accepted reserved keywords as binding names.
+#[test]
+fn import_followed_by_reserved_keyword_emits_ts1109_not_ts1005() {
+    let (parser, _root) = parse_source("import\nimport { foo } from './0';");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1109),
+        "Expected TS1109 'Expression expected' for missing module specifier, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1434),
+        "Should not emit TS1434 'Unexpected keyword or identifier', got {codes:?}"
+    );
+}
+
+/// `import class` should not be treated as import-equals (class is a reserved word).
+#[test]
+fn import_reserved_keyword_class_not_import_equals() {
+    let (parser, _root) = parse_source("import class {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    // Should NOT go through import-equals path (which would emit '= expected')
+    let has_equals_expected = parser
+        .get_diagnostics()
+        .iter()
+        .any(|d| d.code == 1005 && d.message.contains("'='"));
+    assert!(
+        !has_equals_expected,
+        "Should not emit '= expected' for reserved keyword after import, got {codes:?}"
+    );
+}
+
+/// `import for` should not be treated as import-equals.
+#[test]
+fn import_reserved_keyword_for_not_import_equals() {
+    let (parser, _root) = parse_source("import for (;;) {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    let has_equals_expected = parser
+        .get_diagnostics()
+        .iter()
+        .any(|d| d.code == 1005 && d.message.contains("'='"));
+    assert!(
+        !has_equals_expected,
+        "Should not emit '= expected' for reserved keyword after import, got {codes:?}"
+    );
+}
+
+/// `import type X = require(...)` should still work (type is contextual keyword).
+#[test]
+fn import_type_equals_still_works() {
+    let (parser, _root) = parse_source("import type = require('mod');");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    // This should parse as import-equals declaration, no parser errors
+    assert!(
+        codes.is_empty(),
+        "import type = require('mod') should parse cleanly, got {codes:?}"
+    );
+}
+
+/// `import async = require(...)` should still work (async is contextual keyword).
+#[test]
+fn import_async_equals_still_works() {
+    let (parser, _root) = parse_source("import async = require('mod');");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.is_empty(),
+        "import async = require('mod') should parse cleanly, got {codes:?}"
+    );
+}
