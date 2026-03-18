@@ -628,10 +628,12 @@ impl Server {
             |lib| Arc::clone(&lib.arena),
         );
 
+        let unified_root = lib_files.first().map(|f| f.root_index).unwrap_or(tsz::parser::NodeIndex(0));
         let unified_lib = Arc::new(LibFile::new(
             "unified-libs".to_string(),
             unified_arena,
             Arc::new(unified_binder),
+            unified_root,
         ));
 
         // Cache the result
@@ -729,6 +731,7 @@ impl Server {
                     file_name,
                     Arc::new(parser.into_arena()),
                     Arc::new(binder),
+                    root_idx,
                 ));
 
                 // Cap lib_cache size to prevent unbounded growth

@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tsz_common::diagnostics::Diagnostic;
+use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::state::ParserState;
 
@@ -101,16 +102,24 @@ pub struct LibFile {
     pub arena: Arc<NodeArena>,
     /// The binder state with bound symbols
     pub binder: Arc<BinderState>,
+    /// Root source file node index (needed for re-binding from existing arena)
+    pub root_index: NodeIndex,
 }
 
 impl LibFile {
     /// Create a new `LibFile` from a parsed and bound lib file.
     #[must_use]
-    pub const fn new(file_name: String, arena: Arc<NodeArena>, binder: Arc<BinderState>) -> Self {
+    pub const fn new(
+        file_name: String,
+        arena: Arc<NodeArena>,
+        binder: Arc<BinderState>,
+        root_index: NodeIndex,
+    ) -> Self {
         Self {
             file_name,
             arena,
             binder,
+            root_index,
         }
     }
 
@@ -134,7 +143,7 @@ impl LibFile {
         let arena = Arc::new(parser.into_arena());
         let binder = Arc::new(binder);
 
-        Self::new(file_name, arena, binder)
+        Self::new(file_name, arena, binder, source_file_idx)
     }
 }
 
@@ -169,10 +178,12 @@ pub(crate) fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>>
         None => return lib_files,
     };
     let merged_binder = Arc::new(merged_binder);
+    let merged_root = lib_files.first().map(|f| f.root_index).unwrap_or(NodeIndex(0));
     let merged_file = Arc::new(LibFile::new(
         "merged-libs".to_string(),
         merged_arena,
         merged_binder,
+        merged_root,
     ));
 
     vec![merged_file]
