@@ -9,6 +9,7 @@ mod code_action_extract_function;
 mod code_action_extract_type;
 mod code_action_fix_all;
 mod code_action_fixes;
+mod code_action_implement;
 mod code_action_imports;
 mod code_action_inline;
 mod code_action_namespace;
