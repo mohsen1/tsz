@@ -136,7 +136,7 @@ fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
         default: None,
         is_const: false,
     };
-    let key_param = interner.intern(TypeData::TypeParameter(key_param_info.clone()));
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
     let check_type = interner.index_access(acr, key_param);
 
     let reducer_shape = interner.object(vec![PropertyInfo::new(

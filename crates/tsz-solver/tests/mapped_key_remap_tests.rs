@@ -32,7 +32,7 @@ fn test_mapped_type_as_never_skips_property() {
         default: None,
         is_const: false,
     };
-    let type_param_p = interner.intern(TypeData::TypeParameter(type_param_p_info.clone()));
+    let type_param_p = interner.intern(TypeData::TypeParameter(type_param_p_info));
 
     let type_param_k_info = TypeParamInfo {
         name: interner.intern_string("K"),
@@ -97,7 +97,7 @@ fn test_mapped_type_key_remap_to_never_filters_property() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info));
 
     // Create conditional: K extends 'a' ? never : K
     let conditional = ConditionalType {
@@ -154,7 +154,7 @@ fn test_finite_mapped_property_names_resolve_concrete_filtering_remap() {
         default: None,
         is_const: false,
     };
-    let key_param = interner.intern(TypeData::TypeParameter(key_param_info.clone()));
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
     let uppercase_string =
         interner.string_intrinsic(crate::types::StringIntrinsicKind::Uppercase, TypeId::STRING);
@@ -222,7 +222,7 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
         default: None,
         is_const: false,
     };
-    let key_param = interner.intern(TypeData::TypeParameter(key_param_info.clone()));
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
     let uppercase_string =
         interner.string_intrinsic(crate::types::StringIntrinsicKind::Uppercase, TypeId::STRING);
@@ -304,7 +304,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
         default: None,
         is_const: false,
     };
-    let tag_type = interner.intern(TypeData::TypeParameter(tag_param.clone()));
+    let tag_type = interner.intern(TypeData::TypeParameter(tag_param));
     let string_constraint = interner.intersection(vec![tags, TypeId::STRING]);
 
     let event_pattern = interner.object(vec![PropertyInfo::new(tag_name, tag_type)]);
@@ -390,7 +390,7 @@ fn test_finite_mapped_property_type_specializes_unique_symbol_keys() {
         default: None,
         is_const: false,
     };
-    let key_param = interner.intern(TypeData::TypeParameter(key_param_info.clone()));
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
 
     let template = interner.function(FunctionShape {
         type_params: vec![],

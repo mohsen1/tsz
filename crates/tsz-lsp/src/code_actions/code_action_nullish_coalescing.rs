@@ -29,17 +29,17 @@ impl<'a> CodeActionProvider<'a> {
             let node = self.arena.get(current)?;
 
             // Try ternary pattern: a !== null && a !== undefined ? a : defaultVal
-            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-                if let Some(result) = self.try_convert_ternary_to_nullish(current) {
-                    return Some(result);
-                }
+            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                && let Some(result) = self.try_convert_ternary_to_nullish(current)
+            {
+                return Some(result);
             }
 
             // Try || pattern: a || defaultVal
-            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(result) = self.try_convert_or_to_nullish(current) {
-                    return Some(result);
-                }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(result) = self.try_convert_or_to_nullish(current)
+            {
+                return Some(result);
             }
 
             current = self.arena.get_extended(current)?.parent;

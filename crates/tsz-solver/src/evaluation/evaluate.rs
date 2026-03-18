@@ -792,7 +792,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::TypeParameter(ref info) => {
                 if !seen.contains(&info.name) {
                     seen.insert(info.name);
-                    params.push(info.clone());
+                    params.push(*info);
                 }
             }
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {

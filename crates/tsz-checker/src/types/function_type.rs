@@ -291,7 +291,7 @@ impl<'a> CheckerState<'a> {
                         default: None,
                         is_const: false,
                     };
-                    let ty = factory.type_param(info.clone());
+                    let ty = factory.type_param(info);
                     jsdoc_type_param_types.insert(name.clone(), ty);
                     jsdoc_type_params.push(info);
                     // Register in type_parameter_scope so inline JSDoc casts

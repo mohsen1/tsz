@@ -8950,7 +8950,7 @@ fn test_conditional_deferred_type_parameter() {
         is_distributive: true,
     };
 
-    let cond_type = interner.conditional(cond.clone());
+    let cond_type = interner.conditional(cond);
     let result = evaluate_conditional(&interner, &cond);
 
     // Should return the same conditional (deferred)
@@ -8981,7 +8981,7 @@ fn test_conditional_deferred_type_parameter_with_constraint() {
         is_distributive: true,
     };
 
-    let cond_type = interner.conditional(cond.clone());
+    let cond_type = interner.conditional(cond);
     let result = evaluate_conditional(&interner, &cond);
 
     // Should return the same conditional (deferred), NOT eagerly resolve to NUMBER
@@ -9013,7 +9013,7 @@ fn test_conditional_deferred_type_parameter_constraint_not_satisfying() {
         is_distributive: true,
     };
 
-    let cond_type = interner.conditional(cond.clone());
+    let cond_type = interner.conditional(cond);
     let result = evaluate_conditional(&interner, &cond);
 
     // Should return the same conditional (deferred), NOT eagerly resolve to "no"
@@ -11397,7 +11397,7 @@ fn test_keyof_mapped_type_remapped_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Create conditional: K extends "a" ? "a_key" : K extends "b" ? "b_key" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -12463,7 +12463,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -12528,7 +12528,7 @@ fn test_mapped_type_deferred() {
         optional_modifier: None,
     };
 
-    let mapped_type = interner.mapped(mapped.clone());
+    let mapped_type = interner.mapped(mapped);
     let result = evaluate_mapped(&interner, &mapped);
 
     // Should return the same mapped type (deferred)
@@ -13033,7 +13033,7 @@ fn test_mapped_type_key_remap_uppercase() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Create a conditional that maps "a" -> "A", "b" -> "B"
     let inner_cond = interner.conditional(ConditionalType {
@@ -13093,7 +13093,7 @@ fn test_mapped_type_key_remap_with_prefix() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Create conditional: K extends "name" ? "get_name" : K extends "age" ? "get_age" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13227,7 +13227,7 @@ fn test_mapped_type_key_remap_filter_out_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // K extends "b" ? never : K
     let name_type = interner.conditional(ConditionalType {
@@ -13278,7 +13278,7 @@ fn test_mapped_type_preserves_source_types() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -13329,7 +13329,7 @@ fn test_mapped_type_basic_as_clause() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Create conditional: K extends "a" ? "a_key" : K extends "b" ? "b_key" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13391,7 +13391,7 @@ fn test_mapped_type_as_extract_specific_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // K extends "a" | "c" ? K : never (Extract<K, "a" | "c">)
     let name_type = interner.conditional(ConditionalType {
@@ -13446,7 +13446,7 @@ fn test_mapped_type_as_template_literal() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Simulate template literal with conditional
     let inner_cond = interner.conditional(ConditionalType {
@@ -13519,7 +13519,7 @@ fn test_mapped_type_as_conditional_transformation() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // K extends "id" ? "id_number" : K extends "name" ? "name_string" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13578,7 +13578,7 @@ fn test_mapped_type_as_exclude_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Exclude<K, "b"> = K extends "b" ? never : K
     let name_type = interner.conditional(ConditionalType {
@@ -13628,7 +13628,7 @@ fn test_mapped_type_as_identity() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // as K (identity)
     let mapped = MappedType {
@@ -13705,7 +13705,7 @@ fn test_mapped_type_as_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // as "prefix_only"
     let name_type = interner.conditional(ConditionalType {
@@ -14349,7 +14349,7 @@ fn test_application_ref_expansion_box_string() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14407,8 +14407,8 @@ fn test_application_ref_expansion_reducer_function() {
         default: None,
         is_const: false,
     };
-    let s_type = interner.intern(TypeData::TypeParameter(s_param.clone()));
-    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
+    let s_type = interner.intern(TypeData::TypeParameter(s_param));
+    let a_type = interner.intern(TypeData::TypeParameter(a_param));
 
     // Define: type Reducer<S, A> = (state: S | undefined, action: A) => S
     let state_name = interner.intern_string("state");
@@ -14486,7 +14486,7 @@ fn test_application_ref_expansion_nested() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14509,7 +14509,7 @@ fn test_application_ref_expansion_nested() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(DefId(1), box_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
     env.insert_def_with_params(DefId(2), promise_body, vec![t_param]);
 
     // Evaluate
@@ -14553,8 +14553,8 @@ fn test_application_ref_expansion_with_defaults() {
         default: Some(TypeId::UNDEFINED), // D = undefined
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
-    let d_type = interner.intern(TypeData::TypeParameter(d_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let d_type = interner.intern(TypeData::TypeParameter(d_param));
 
     // Define: type Optional<T, D = undefined> = T | D
     let optional_body = interner.union(vec![t_type, d_type]);
@@ -14617,7 +14617,7 @@ fn test_application_ref_expansion_with_constraints() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type NumericBox<T extends number> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14686,7 +14686,7 @@ fn test_application_ref_expansion_with_never_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14733,7 +14733,7 @@ fn test_application_ref_expansion_with_unknown_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14780,7 +14780,7 @@ fn test_application_ref_expansion_with_any_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14827,7 +14827,7 @@ fn test_application_ref_expansion_with_union_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14905,7 +14905,7 @@ fn test_application_ref_expansion_recursive() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Create Lazy(DefId) for List type alias (self-reference)
     let list_def_id = DefId(1);
@@ -14968,7 +14968,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15019,7 +15019,7 @@ fn test_application_ref_expansion_multi_param() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
 
     // Define type parameter V
     let v_name = interner.intern_string("V");
@@ -15029,7 +15029,7 @@ fn test_application_ref_expansion_multi_param() {
         default: None,
         is_const: false,
     };
-    let v_type = interner.intern(TypeData::TypeParameter(v_param.clone()));
+    let v_type = interner.intern(TypeData::TypeParameter(v_param));
 
     // Define: type Map<K, V> = { key: K, value: V }
     let key_name = interner.intern_string("key");
@@ -15084,7 +15084,7 @@ fn test_application_ref_expansion_with_conditional_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // For simplicity, we'll use a basic conditional that we can verify:
     // type IsString<T> = T extends string ? string : number
@@ -15149,7 +15149,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15211,7 +15211,7 @@ fn test_application_ref_expansion_with_array_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type ArrayOf<T> = T[]
     let array_body = interner.array(t_type);
@@ -15257,7 +15257,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type ReadonlyBox<T> = { readonly value: T }
     let value_name = interner.intern_string("value");
@@ -15315,7 +15315,7 @@ fn test_application_ref_expansion_with_optional_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type OptionalBox<T> = { value?: T }
     let value_name = interner.intern_string("value");
@@ -15373,7 +15373,7 @@ fn test_application_ref_expansion_with_method() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define method type: () => T
     let method_type = interner.function(FunctionShape {
@@ -15442,7 +15442,7 @@ fn test_application_ref_expansion_with_rest_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type VarArgs<T> = (...args: T[]) => void
     let args_name = interner.intern_string("args");
@@ -15513,7 +15513,7 @@ fn test_application_ref_expansion_with_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Dict<T> = { [key: string]: T }
     let dict_body = interner.object_with_index(ObjectShape {
@@ -15581,7 +15581,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type NumericDict<T> = { [index: number]: T }
     let numeric_dict_body = interner.object_with_index(ObjectShape {
@@ -15649,7 +15649,7 @@ fn test_application_ref_expansion_with_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15699,7 +15699,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15746,7 +15746,7 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Pair<T> = { first: T; second: T }
     let first_name = interner.intern_string("first");
@@ -15800,7 +15800,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15857,8 +15857,8 @@ fn test_application_ref_expansion_with_union_body() {
         default: None,
         is_const: false,
     };
-    let l_type = interner.intern(TypeData::TypeParameter(l_param.clone()));
-    let r_type = interner.intern(TypeData::TypeParameter(r_param.clone()));
+    let l_type = interner.intern(TypeData::TypeParameter(l_param));
+    let r_type = interner.intern(TypeData::TypeParameter(r_param));
 
     // Define: type Either<L, R> = L | R
     let either_body = interner.union(vec![l_type, r_type]);
@@ -15912,8 +15912,8 @@ fn test_application_ref_expansion_with_intersection_body() {
         default: None,
         is_const: false,
     };
-    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
-    let b_type = interner.intern(TypeData::TypeParameter(b_param.clone()));
+    let a_type = interner.intern(TypeData::TypeParameter(a_param));
+    let b_type = interner.intern(TypeData::TypeParameter(b_param));
 
     // Define: type Both<A, B> = A & B
     let both_body = interner.intersection(vec![a_type, b_type]);
@@ -15965,7 +15965,7 @@ fn test_application_ref_expansion_with_this_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type BoundMethod<T> = (this: T) => void
     let bound_method_body = interner.function(FunctionShape {
@@ -16031,7 +16031,7 @@ fn test_application_ref_expansion_with_optional_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type OptionalFn<T> = (x?: T) => T
     let x_name = interner.intern_string("x");
@@ -16099,7 +16099,7 @@ fn test_application_ref_expansion_with_readonly_array_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type ReadonlyArrayOf<T> = readonly T[]
     let t_array = interner.array(t_type);
@@ -16147,7 +16147,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Config<T> = { readonly id: string; value?: T }
     let id_name = interner.intern_string("id");
@@ -16230,8 +16230,8 @@ fn test_application_ref_expansion_with_callable_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
-    let r_type = interner.intern(TypeData::TypeParameter(r_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let r_type = interner.intern(TypeData::TypeParameter(r_param));
 
     // Define: type Callback<T, R> = { (arg: T): R }
     let arg_name = interner.intern_string("arg");
@@ -16309,7 +16309,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Constructor<T> = { new (): T }
     let construct_sig = CallSignature {
@@ -16389,7 +16389,7 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define inner object: { value: T }
     let value_name = interner.intern_string("value");
@@ -23276,7 +23276,7 @@ fn test_noinfer_default_parameter() {
         is_const: false,
     };
 
-    let t_param = interner.intern(TypeData::TypeParameter(t_with_default.clone()));
+    let t_param = interner.intern(TypeData::TypeParameter(t_with_default));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_with_default],
@@ -26591,7 +26591,7 @@ fn test_recursive_type_linked_list() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Create Ref(1) for List type alias
     let list_ref = interner.lazy(DefId(1));
@@ -26956,7 +26956,7 @@ fn test_mutually_recursive_types_request_response() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let request_ref = interner.lazy(DefId(1));
     let response_ref = interner.lazy(DefId(2));
@@ -26981,7 +26981,7 @@ fn test_mutually_recursive_types_request_response() {
 
     // Set up resolver
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(DefId(1), request_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(1), request_body, vec![t_param]);
     env.insert_def_with_params(DefId(2), response_body, vec![t_param]);
 
     // Evaluate Request<string>
@@ -29307,7 +29307,7 @@ fn test_mapped_type_uppercase_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Map "a" -> "A", "b" -> "B" via nested conditionals
     let inner_cond = interner.conditional(ConditionalType {
@@ -29366,7 +29366,7 @@ fn test_mapped_type_template_literal_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Map via nested conditionals
     let inner_cond = interner.conditional(ConditionalType {
@@ -31282,7 +31282,7 @@ fn test_pick_basic() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Template: T[P] - index access
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
@@ -31330,7 +31330,7 @@ fn test_pick_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31384,7 +31384,7 @@ fn test_pick_preserves_optional() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31446,7 +31446,7 @@ fn test_omit_basic() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31501,7 +31501,7 @@ fn test_omit_union_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31548,7 +31548,7 @@ fn test_omit_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31597,7 +31597,7 @@ fn test_pick_with_conditional_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31752,7 +31752,7 @@ fn test_omit_all_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31793,7 +31793,7 @@ fn test_pick_no_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31835,7 +31835,7 @@ fn test_pick_with_readonly() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31895,7 +31895,7 @@ fn test_omit_preserves_readonly() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -31978,7 +31978,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
@@ -36210,7 +36210,7 @@ fn test_return_type_mapped_type_method() {
         default: None,
         is_const: false,
     };
-    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
 
     // T[K] - index access
     let index_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
@@ -42015,7 +42015,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Template: source[P]
     let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
@@ -42087,7 +42087,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
     // Template: source[P] (uses the concrete object, not type param)
     let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
@@ -42136,7 +42136,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
     let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
 
     let mapped = MappedType {
@@ -42173,7 +42173,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Partial<T> = { [K in keyof T]?: T[K] }
     let k_name = interner.intern_string("K");
@@ -42183,7 +42183,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
     let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
 
@@ -42252,7 +42252,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Define: type Partial<T> = { [K in keyof T]?: T[K] }
     let k_name = interner.intern_string("K");
@@ -42262,7 +42262,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
     let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
 

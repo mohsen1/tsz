@@ -897,7 +897,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .iter()
                 .zip(target_instantiated.type_params.iter())
             {
-                let source_type_param_type = self.interner.type_param(source_tp.clone());
+                let source_type_param_type = self.interner.type_param(*source_tp);
                 target_to_source_substitution.insert(target_tp.name, source_type_param_type);
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
@@ -937,8 +937,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .iter()
                     .zip(target_instantiated.type_params.iter())
                 {
-                    let source_tp_type = self.interner.type_param(source_tp.clone());
-                    let target_tp_type = self.interner.type_param(target_tp.clone());
+                    let source_tp_type = self.interner.type_param(*source_tp);
+                    let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
                         self.type_param_equivalences
                             .push((source_tp_type, target_tp_type));
@@ -1013,7 +1013,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let source_tp_ids: Vec<TypeId> = source_instantiated
                 .type_params
                 .iter()
-                .map(|tp| self.interner.type_param(tp.clone()))
+                .map(|tp| self.interner.type_param(*tp))
                 .collect();
             let target_refs_source_params = target_instantiated.params.iter().any(|p| {
                 source_tp_ids.contains(&p.type_id)
@@ -1068,7 +1068,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let target_tp_ids: Vec<TypeId> = target_instantiated
                 .type_params
                 .iter()
-                .map(|tp| self.interner.type_param(tp.clone()))
+                .map(|tp| self.interner.type_param(*tp))
                 .collect();
             let source_refs_target_params = source_instantiated.params.iter().any(|p| {
                 target_tp_ids.contains(&p.type_id)

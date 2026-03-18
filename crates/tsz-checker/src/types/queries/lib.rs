@@ -146,10 +146,8 @@ impl<'a> CheckerState<'a> {
                             first_params = Some(params.clone());
                             // Compute TypeIds for these canonical params
                             let factory = self.ctx.types.factory();
-                            canonical_param_type_ids = params
-                                .iter()
-                                .map(|p| factory.type_param(p.clone()))
-                                .collect();
+                            canonical_param_type_ids =
+                                params.iter().map(|p| factory.type_param(*p)).collect();
 
                             // Cache type parameters for Application expansion.
                             // Use file binder's sym_id (after lib merge) so the def_id
