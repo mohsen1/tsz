@@ -1,5 +1,6 @@
 //! Generic-call inference and round-2 contextual typing helpers.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common::CallResult;
@@ -1152,7 +1153,6 @@ impl<'a> CheckerState<'a> {
             self.contextual_type_option_for_expression(expected_type)
         };
 
-        let prev_context = self.ctx.contextual_type;
         if let Some(node) = self.ctx.arena.get(arg_idx)
             && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
@@ -1217,12 +1217,6 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        if apply_contextual {
-            self.ctx.contextual_type = expected_context_type;
-        } else {
-            self.ctx.contextual_type = None;
-        }
-
         let skip_flow = if apply_contextual {
             false
         } else if let Some(node) = self.ctx.arena.get(arg_idx) {
@@ -1265,10 +1259,16 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
-        let prev_skip_flow = self.ctx.skip_flow_narrowing;
-        if skip_flow {
-            self.ctx.skip_flow_narrowing = true;
-        }
+        let request = if apply_contextual {
+            match expected_context_type {
+                Some(ty) => TypingRequest::with_contextual_type(ty),
+                None => TypingRequest::NONE,
+            }
+        } else if skip_flow {
+            TypingRequest::for_write_context()
+        } else {
+            TypingRequest::NONE
+        };
 
         // Snapshot diagnostic + closure state when in speculative round2.
         // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
@@ -1279,11 +1279,7 @@ impl<'a> CheckerState<'a> {
         let speculation_snap = suppress_diagnostics.then(|| self.ctx.snapshot_diagnostics());
         let implicit_any_closure_snapshot =
             suppress_diagnostics.then(|| self.ctx.implicit_any_checked_closures.clone());
-        let arg_type = self.get_type_of_node(arg_idx);
-
-        if skip_flow {
-            self.ctx.skip_flow_narrowing = prev_skip_flow;
-        }
+        let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
 
         if check_excess_properties
             && let Some(expected) = expected_type
@@ -1389,7 +1385,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.ctx.contextual_type = prev_context;
         if pushed_this_type {
             self.ctx.this_type_stack.pop();
         }

@@ -1,5 +1,6 @@
 //! Expression type computation dispatcher.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
 use crate::query_boundaries::type_checking_utilities as query_utils;
@@ -1037,13 +1038,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
-                    // TEMPORARY: Save/restore contextual type around check_class_expression
-                    // because it mutates ctx.contextual_type as a side effect during member
-                    // checking. This will be removed when check_class_expression is migrated
-                    // to accept a TypingRequest. (ambient-context-transport cleanup)
+                    // Wrap check_class_expression in a typing context to prevent it
+                    // from leaking contextual_type mutations to the outer scope.
                     let saved_ctx = self.checker.ctx.contextual_type;
-                    self.checker.check_class_expression(idx, &class);
-                    self.checker.ctx.contextual_type = saved_ctx;
+                    self.checker.run_with_typing_context(
+                        &saved_ctx
+                            .map(TypingRequest::with_contextual_type)
+                            .unwrap_or(TypingRequest::NONE),
+                        |checker| checker.check_class_expression(idx, &class),
+                    );
 
                     // When a contextual type has properties (i.e., it's an
                     // interface/object type like `I` in `let c: I = class { ... }`),
@@ -1232,22 +1235,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // mirroring `as` expression behavior. This allows arrow
                         // functions and object literals inside JSDoc @type casts
                         // to receive contextual typing (prevents false TS7006).
-                        let prev_contextual_type = self.checker.ctx.contextual_type;
-                        let prev_contextual_is_assertion =
-                            self.checker.ctx.contextual_type_is_assertion;
-                        if self.checker.argument_needs_contextual_type(
+                        let needs_context = self.checker.argument_needs_contextual_type(
                             self.checker
                                 .ctx
                                 .arena
                                 .skip_parenthesized_and_assertions(paren.expression),
-                        ) {
-                            self.checker.ctx.contextual_type = Some(jsdoc_type);
-                            self.checker.ctx.contextual_type_is_assertion = true;
-                        }
-                        let expr_type = self.checker.get_type_of_node(paren.expression);
-                        self.checker.ctx.contextual_type = prev_contextual_type;
-                        self.checker.ctx.contextual_type_is_assertion =
-                            prev_contextual_is_assertion;
+                        );
+                        let request = if needs_context {
+                            TypingRequest::for_assertion(jsdoc_type)
+                        } else {
+                            TypingRequest::NONE
+                        };
+                        let expr_type = self
+                            .checker
+                            .get_type_of_node_with_request(paren.expression, &request);
                         // TS2352: Check if conversion may be a mistake (same as `as` expressions)
                         self.checker.ensure_relation_input_ready(expr_type);
                         self.checker.ensure_relation_input_ready(jsdoc_type);
@@ -1392,32 +1393,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // object literals, arrays, etc.). Applying the asserted type
                         // to arbitrary expressions like `target ?? component` can
                         // manufacture spurious TS2322s inside an `as` assertion.
-                        let prev_contextual_type = self.checker.ctx.contextual_type;
-                        let prev_contextual_is_assertion =
-                            self.checker.ctx.contextual_type_is_assertion;
-                        if !is_const_assertion
+                        let needs_context = !is_const_assertion
                             && self.checker.argument_needs_contextual_type(
                                 self.checker
                                     .ctx
                                     .arena
                                     .skip_parenthesized_and_assertions(assertion.expression),
-                            )
-                        {
-                            self.checker.ctx.contextual_type = Some(asserted_type);
-                            // Mark that this contextual type comes from a type
-                            // assertion so that function body return types are
-                            // NOT checked against the contextual return type.
-                            // Only TS2352 should fire at the assertion site.
-                            if k != syntax_kind_ext::SATISFIES_EXPRESSION {
-                                self.checker.ctx.contextual_type_is_assertion = true;
+                            );
+                        let request = if needs_context {
+                            // `satisfies` uses normal contextual typing (not assertion),
+                            // while `as`/angle-bracket assertions mark assertion origin
+                            // so function body return types are NOT checked against it.
+                            if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                                TypingRequest::with_contextual_type(asserted_type)
+                            } else {
+                                TypingRequest::for_assertion(asserted_type)
                             }
-                        }
+                        } else {
+                            TypingRequest::NONE
+                        };
                         // Always type-check the expression for side effects / diagnostics.
-                        let expr_type = self.checker.get_type_of_node(assertion.expression);
-                        // Restore contextual type
-                        self.checker.ctx.contextual_type = prev_contextual_type;
-                        self.checker.ctx.contextual_type_is_assertion =
-                            prev_contextual_is_assertion;
+                        let expr_type = self
+                            .checker
+                            .get_type_of_node_with_request(assertion.expression, &request);
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // TS8037: Type satisfaction expressions can only be used in TypeScript files
@@ -1800,10 +1798,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     } else {
                         None
                     };
-                    let prev_contextual = self.checker.ctx.contextual_type;
-                    if children_ctx_type.is_some() {
-                        self.checker.ctx.contextual_type = children_ctx_type;
-                    }
+                    let children_request = children_ctx_type
+                        .map(TypingRequest::with_contextual_type)
+                        .unwrap_or(TypingRequest::NONE);
                     // Collect children types for children prop synthesis.
                     // tsc synthesizes a `children` prop from JSX element body children
                     // and validates it against the component's `children` prop type.
@@ -1835,7 +1832,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 continue;
                             }
                         }
-                        let child_type = self.checker.get_type_of_node(child);
+                        let child_type = self
+                            .checker
+                            .get_type_of_node_with_request(child, &children_request);
                         if let Some(child_node) = self.checker.ctx.arena.get(child)
                             && child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
                         {
@@ -1844,7 +1843,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         }
                         child_types.push(child_type);
                     }
-                    self.checker.ctx.contextual_type = prev_contextual;
                     // Store children info for use in check_jsx_attributes_against_props.
                     // Synthesize the children type:
                     // - 0 children → None (no children prop synthesized)

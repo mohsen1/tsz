@@ -1188,6 +1188,94 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Like `compute_type_of_node` but under an explicit `TypingRequest`.
+    ///
+    /// Bridges the request into the ambient context fields until the dispatch
+    /// layer reads from request objects natively.
+    pub fn compute_type_of_node_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
+        let prev_contextual = self.ctx.contextual_type;
+        let prev_assertion = self.ctx.contextual_type_is_assertion;
+        let prev_skip_flow = self.ctx.skip_flow_narrowing;
+
+        self.ctx.contextual_type = request.contextual_type;
+        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
+        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
+
+        let result = self.compute_type_of_node(idx);
+
+        self.ctx.contextual_type = prev_contextual;
+        self.ctx.contextual_type_is_assertion = prev_assertion;
+        self.ctx.skip_flow_narrowing = prev_skip_flow;
+
+        result
+    }
+
+    /// Like `get_type_of_function` but under an explicit `TypingRequest`.
+    ///
+    /// Bridges the request into the ambient context fields until the dispatch
+    /// layer reads from request objects natively.
+    pub fn get_type_of_function_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
+        let prev_contextual = self.ctx.contextual_type;
+        let prev_assertion = self.ctx.contextual_type_is_assertion;
+        let prev_skip_flow = self.ctx.skip_flow_narrowing;
+
+        self.ctx.contextual_type = request.contextual_type;
+        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
+        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
+
+        let result = self.get_type_of_function(idx);
+
+        self.ctx.contextual_type = prev_contextual;
+        self.ctx.contextual_type_is_assertion = prev_assertion;
+        self.ctx.skip_flow_narrowing = prev_skip_flow;
+
+        result
+    }
+
+    /// Run an arbitrary closure under an explicit `TypingRequest`.
+    ///
+    /// Saves the current ambient context (`contextual_type`, `contextual_type_is_assertion`,
+    /// `skip_flow_narrowing`), installs the request's values, runs the closure, then
+    /// restores the saved state. Use this when multiple calls or non-standard entry points
+    /// (e.g. `check_statement`, loops of `get_type_of_node`) need a temporary typing context.
+    ///
+    /// # Compatibility bridge (TEMPORARY)
+    ///
+    /// Like the `*_with_request` methods, this is a shim that translates the request into
+    /// ambient ctx fields until all callers are fully migrated.
+    pub fn run_with_typing_context<F, R>(
+        &mut self,
+        request: &crate::context::TypingRequest,
+        f: F,
+    ) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let prev_contextual = self.ctx.contextual_type;
+        let prev_assertion = self.ctx.contextual_type_is_assertion;
+        let prev_skip_flow = self.ctx.skip_flow_narrowing;
+
+        self.ctx.contextual_type = request.contextual_type;
+        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
+        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
+
+        let result = f(self);
+
+        self.ctx.contextual_type = prev_contextual;
+        self.ctx.contextual_type_is_assertion = prev_assertion;
+        self.ctx.skip_flow_narrowing = prev_skip_flow;
+
+        result
+    }
+
     /// Check if `from` can reach `to` via a flow chain that doesn't narrow `sym_id`.
     /// Returns true if the backward walk from `from` encounters no flow nodes that
     /// could change the type of `sym_id` (assignments to the symbol, loops, or calls).

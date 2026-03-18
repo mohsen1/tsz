@@ -1,5 +1,6 @@
 //! Element access, super keyword, await type computation, and optional chain detection.
 
+use crate::context::TypingRequest;
 use crate::state::{CheckerState, EnumKind};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -1607,8 +1608,7 @@ impl<'a> CheckerState<'a> {
         // `Promise<__infer_0> <: Promise<Obj>` (same base) to infer T = Obj.
         // Without Promise<T>, we'd only have PromiseLike<Obj> which has a different
         // base and can't be directly unified through type argument matching.
-        let prev_context = self.ctx.contextual_type;
-        if let Some(contextual) = prev_context {
+        let request = if let Some(contextual) = self.ctx.contextual_type {
             // Skip transformation for error types, any, unknown, or never
             if contextual != TypeId::ANY
                 && contextual != TypeId::UNKNOWN
@@ -1622,15 +1622,16 @@ impl<'a> CheckerState<'a> {
                     members.push(pt);
                 }
                 let union_context = self.ctx.types.factory().union(members);
-                self.ctx.contextual_type = Some(union_context);
+                TypingRequest::with_contextual_type(union_context)
+            } else {
+                TypingRequest::NONE
             }
-        }
+        } else {
+            TypingRequest::NONE
+        };
 
         // Get the type of the await operand with transformed contextual type
-        let expr_type = self.get_type_of_node(unary.expression);
-
-        // Restore the original contextual type
-        self.ctx.contextual_type = prev_context;
+        let expr_type = self.get_type_of_node_with_request(unary.expression, &request);
 
         // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
         // TypeScript's await recursively unwraps nested Promises.

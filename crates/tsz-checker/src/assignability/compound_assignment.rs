@@ -1,5 +1,6 @@
 //! Compound assignment expression checking (+=, -=, *=, &&=, ??=, etc.).
 
+use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -83,22 +84,21 @@ impl<'a> CheckerState<'a> {
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
-        let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY
+        let request = if left_type != TypeId::ANY
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)
         {
-            self.ctx.contextual_type = Some(left_type);
-        }
+            TypingRequest::with_contextual_type(left_type)
+        } else {
+            TypingRequest::NONE
+        };
 
-        let right_raw = self.get_type_of_node(right_idx);
+        let right_raw = self.get_type_of_node_with_request(right_idx, &request);
         let right_type = self.resolve_type_query_type(right_raw);
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // No need to manually track freshness removal here.
-
-        self.ctx.contextual_type = prev_context;
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);

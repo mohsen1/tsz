@@ -2,6 +2,7 @@
 use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
+use crate::context::TypingRequest;
 use crate::diagnostics::format_message;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
@@ -1436,7 +1437,6 @@ impl<'a> CheckerState<'a> {
                             // For contextual-return-only closures, read the raw body type
                             // and let the later assignability check report on the whole
                             // expression instead of a nested contextualized subexpression.
-                            let prev_ctx = self.ctx.contextual_type;
                             let can_apply_contextual_body =
                                 !self.type_has_unresolved_inference_holes(expected_return_type);
                             let literal_sensitive_return =
@@ -1481,15 +1481,17 @@ impl<'a> CheckerState<'a> {
                                             && expression_needs_contextual_return_type(
                                                 self, body,
                                             ))));
-                            self.ctx.contextual_type =
-                                keep_contextual_body.then_some(expected_return_type);
+                            let body_request = if keep_contextual_body {
+                                TypingRequest::with_contextual_type(expected_return_type)
+                            } else {
+                                TypingRequest::NONE
+                            };
                             let prev_preserve_literals = self.ctx.preserve_literal_types;
                             if keep_contextual_body {
                                 self.ctx.preserve_literal_types = true;
                             }
                             self.clear_type_cache_recursive(body);
-                            let t = self.get_type_of_node(body);
-                            self.ctx.contextual_type = prev_ctx;
+                            let t = self.get_type_of_node_with_request(body, &body_request);
                             self.ctx.preserve_literal_types = prev_preserve_literals;
                             t
                         });
@@ -1542,14 +1544,15 @@ impl<'a> CheckerState<'a> {
                             .get(body)
                             .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
                             .is_some_and(|cond| {
-                                let prev_ctx = self.ctx.contextual_type;
                                 let snap = self.ctx.snapshot_diagnostics();
-                                self.ctx.contextual_type = Some(expected_return_type);
+                                let return_req =
+                                    TypingRequest::with_contextual_type(expected_return_type);
                                 self.clear_type_cache_recursive(cond.when_true);
                                 self.clear_type_cache_recursive(cond.when_false);
-                                let mut when_true = self.get_type_of_node(cond.when_true);
-                                let mut when_false = self.get_type_of_node(cond.when_false);
-                                self.ctx.contextual_type = prev_ctx;
+                                let mut when_true =
+                                    self.get_type_of_node_with_request(cond.when_true, &return_req);
+                                let mut when_false = self
+                                    .get_type_of_node_with_request(cond.when_false, &return_req);
                                 self.ctx.rollback_diagnostics(&snap);
                                 if is_async_for_context {
                                     when_true =
@@ -1637,8 +1640,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.switch_depth = 0;
                 // Note: function_depth was already incremented at body entry
                 // Propagate contextual return type for expression-bodied arrows.
-                let prev_ctx_for_body = self.ctx.contextual_type;
-                if let Some(body_node) = self.ctx.arena.get(body)
+                // Compute the effective body context as a local variable instead of
+                // modifying the ambient ctx.contextual_type.
+                let outer_ctx = self.ctx.contextual_type;
+                let effective_body_ctx = if let Some(body_node) = self.ctx.arena.get(body)
                     && body_node.kind != syntax_kind_ext::BLOCK
                     && !has_type_annotation
                 {
@@ -1646,7 +1651,7 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
                         .or_else(|| {
-                            self.ctx.contextual_type.and_then(|ty| {
+                            outer_ctx.and_then(|ty| {
                                 tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
                             })
                         });
@@ -1659,15 +1664,19 @@ impl<'a> CheckerState<'a> {
                     if body_return_context.is_some()
                         && !suppress_contextual_return_for_conditional_body
                     {
-                        self.ctx.contextual_type = body_return_context;
+                        body_return_context
+                    } else {
+                        outer_ctx
                     }
-                }
+                } else {
+                    outer_ctx
+                };
                 let suppress_expression_body_diagnostics =
                     self.ctx.arena.get(body).is_some_and(|body_node| {
                         body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
                             && !has_type_annotation
                             && jsdoc_return_context.is_none()
-                            && self.ctx.contextual_type.is_some_and(|return_type| {
+                            && effective_body_ctx.is_some_and(|return_type| {
                                 self.type_has_unresolved_inference_holes(return_type)
                             })
                     });
@@ -1677,7 +1686,12 @@ impl<'a> CheckerState<'a> {
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
-                self.check_statement(body);
+                let body_request = effective_body_ctx
+                    .map(TypingRequest::with_contextual_type)
+                    .unwrap_or(TypingRequest::NONE);
+                self.run_with_typing_context(&body_request, |checker| {
+                    checker.check_statement(body);
+                });
 
                 if let Some(snap) = &diag_snap {
                     self.ctx.rollback_diagnostics(snap);
@@ -1757,7 +1771,6 @@ impl<'a> CheckerState<'a> {
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
                 self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
-                self.ctx.contextual_type = prev_ctx_for_body;
                 // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;

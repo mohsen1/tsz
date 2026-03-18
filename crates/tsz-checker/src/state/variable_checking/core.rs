@@ -2,6 +2,7 @@
 //!
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -605,8 +606,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         declared_type
                     };
-                    // Set contextual type for the initializer (but not for 'any')
-                    let prev_context = checker.ctx.contextual_type;
+                    // Build a TypingRequest for the initializer (but not for 'any')
                     let initializer_is_function = checker
                         .ctx
                         .arena
@@ -631,17 +631,19 @@ impl<'a> CheckerState<'a> {
                         && checker.suppress_initializer_contextual_type_for_generic_call(
                             var_decl.initializer,
                         );
-                    if evaluated_type != TypeId::ANY
+                    let request = if evaluated_type != TypeId::ANY
                         && !jsdoc_blocks_callable_context
                         && !suppress_initializer_context
                     {
-                        checker.ctx.contextual_type = Some(evaluated_type);
                         // Clear cached type to force recomputation with contextual type
                         // This is necessary because the expression (especially arrow functions)
                         // might have been previously typed without contextual information
                         // (e.g., during symbol binding or early AST traversal)
                         checker.clear_type_cache_recursive(var_decl.initializer);
-                    }
+                        TypingRequest::with_contextual_type(evaluated_type)
+                    } else {
+                        TypingRequest::NONE
+                    };
                     let conditional_branch_ranges = checker
                         .ctx
                         .arena
@@ -662,7 +664,8 @@ impl<'a> CheckerState<'a> {
                             [when_true, when_false]
                         });
                     let init_snap = checker.ctx.snapshot_diagnostics();
-                    let init_type = checker.get_type_of_node(var_decl.initializer);
+                    let init_type =
+                        checker.get_type_of_node_with_request(var_decl.initializer, &request);
                     let init_type_for_relation = checker.resolve_lazy_type(init_type);
                     if let Some(branch_ranges) = conditional_branch_ranges {
                         // Preserve non-assignability diagnostics from the branch expressions
@@ -679,7 +682,6 @@ impl<'a> CheckerState<'a> {
                                 !(in_branch && diag.code == 2322)
                             });
                     }
-                    checker.ctx.contextual_type = prev_context;
                     let function_initializer_body_has_error = checker
                         .ctx
                         .arena
@@ -839,11 +841,10 @@ impl<'a> CheckerState<'a> {
                 // This mirrors the `satisfies Expr` TypeScript syntax behavior.
                 let satisfies_info = checker.jsdoc_satisfies_annotation_with_pos(decl_idx);
                 if let Some((sat_type, keyword_pos)) = satisfies_info {
-                    let prev_context = checker.ctx.contextual_type;
-                    checker.ctx.contextual_type = Some(sat_type);
+                    let request = TypingRequest::with_contextual_type(sat_type);
                     checker.clear_type_cache_recursive(var_decl.initializer);
-                    let init_type = checker.get_type_of_node(var_decl.initializer);
-                    checker.ctx.contextual_type = prev_context;
+                    let init_type =
+                        checker.get_type_of_node_with_request(var_decl.initializer, &request);
                     // Check satisfies assignability
                     checker.ensure_relation_input_ready(init_type);
                     checker.ensure_relation_input_ready(sat_type);
@@ -874,7 +875,6 @@ impl<'a> CheckerState<'a> {
                 // so array literals produce positional (tuple) types instead of widened
                 // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
                 // a=number, b=string (tuple), not a=string|number (array).
-                let prev_contextual = checker.ctx.contextual_type;
                 let contextual_init = checker
                     .ctx
                     .arena
@@ -891,16 +891,18 @@ impl<'a> CheckerState<'a> {
                                     | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                             )
                         });
-                if is_destructuring
+                let request = if is_destructuring
                     && supports_pattern_context
                     && let Some(ctx_type) =
                         checker.build_contextual_type_from_pattern(var_decl.name)
                 {
-                    checker.ctx.contextual_type = Some(ctx_type);
                     checker.clear_type_cache_recursive(var_decl.initializer);
-                }
-                let mut init_type = checker.get_type_of_node(var_decl.initializer);
-                checker.ctx.contextual_type = prev_contextual;
+                    TypingRequest::with_contextual_type(ctx_type)
+                } else {
+                    TypingRequest::NONE
+                };
+                let mut init_type =
+                    checker.get_type_of_node_with_request(var_decl.initializer, &request);
                 // TypeScript treats unannotated empty-array declaration initializers
                 // (`let/var/const x = []`) as evolving-any arrays for subsequent writes.
                 // Keep expression-level `[]` behavior unchanged by only applying this to
