@@ -163,8 +163,19 @@ impl<'a> CheckerState<'a> {
     ///
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_element_access_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_element_access_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::query_boundaries::common::PropertyAccessResult;
+        let skip_flow_narrowing = request.flow.skip_flow_narrowing();
+        let read_request = request.read().normal_origin().contextual_opt(None);
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -183,7 +194,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the object
-        let object_type = self.get_type_of_node(access.expression);
+        let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
         let object_type = self.evaluate_application_type(object_type);
 
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
@@ -238,7 +249,11 @@ impl<'a> CheckerState<'a> {
             if property_type == TypeId::ERROR {
                 return TypeId::ERROR;
             }
-            return self.apply_flow_narrowing(idx, property_type);
+            return if skip_flow_narrowing {
+                property_type
+            } else {
+                self.apply_flow_narrowing(idx, property_type)
+            };
         }
 
         // Don't report errors for any/error types - check BEFORE accessibility
@@ -284,12 +299,12 @@ impl<'a> CheckerState<'a> {
 
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
-        let index_type = self.get_type_of_node(access.name_or_argument);
+        let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
         self.ctx.preserve_literal_types = prev_preserve;
 
         // Preserve the write target when the index expression already errored.
         if index_type == TypeId::ERROR {
-            if self.ctx.skip_flow_narrowing
+            if skip_flow_narrowing
                 && let Some(recovered_type) = self
                     .recover_assignment_target_type_for_errored_element_index(
                         object_type_for_access,
@@ -331,7 +346,7 @@ impl<'a> CheckerState<'a> {
         let is_generic_receiver =
             tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 || tsz_solver::visitor::is_this_type(self.ctx.types, pre_resolution_object_type);
-        if self.ctx.skip_flow_narrowing
+        if skip_flow_narrowing
             && is_generic_receiver
             && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
         {
@@ -438,7 +453,7 @@ impl<'a> CheckerState<'a> {
             // they return the symbol's read type, which doesn't account for
             // divergent getter/setter types. The full property access path
             // below correctly uses write_type for setter parameters.
-            if !self.ctx.skip_flow_narrowing {
+            if !skip_flow_narrowing {
                 if let Some(expr_node) = self.ctx.arena.get(access.expression)
                     && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
                 {
@@ -495,7 +510,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if !self.ctx.skip_flow_narrowing
+        if !skip_flow_narrowing
             && self.is_expando_element_access_read(access.expression, access.name_or_argument)
         {
             return TypeId::ANY;
@@ -526,6 +541,7 @@ impl<'a> CheckerState<'a> {
                     let keys_result = self.get_element_access_type_for_literal_keys(
                         object_type_for_access,
                         &string_keys,
+                        skip_flow_narrowing,
                     );
                     if let Some(result) = keys_result.result_type {
                         types.push(result);
@@ -548,6 +564,7 @@ impl<'a> CheckerState<'a> {
                     match self.get_element_access_type_for_literal_number_keys(
                         object_type_for_access,
                         &number_keys,
+                        skip_flow_narrowing,
                     ) {
                         Some(result) => types.push(result),
                         None => {
@@ -570,7 +587,7 @@ impl<'a> CheckerState<'a> {
                 } else if !types.is_empty() {
                     // In write context, intersect the results from string and number
                     // keys — the assigned value must satisfy all possible key types.
-                    result_type = Some(if self.ctx.skip_flow_narrowing {
+                    result_type = Some(if skip_flow_narrowing {
                         let intersection =
                             tsz_solver::utils::intersection_or_single(self.ctx.types, types);
                         self.evaluate_type_with_env(intersection)
@@ -596,7 +613,7 @@ impl<'a> CheckerState<'a> {
                 } => {
                     use_index_signature_check = false;
                     // In write context (assignment target), prefer the setter type.
-                    let effective = if self.ctx.skip_flow_narrowing {
+                    let effective = if skip_flow_narrowing {
                         write_type.unwrap_or(type_id)
                     } else {
                         type_id
@@ -710,7 +727,7 @@ impl<'a> CheckerState<'a> {
                 } => {
                     use_index_signature_check = false;
                     // In write context (assignment target), prefer the setter type.
-                    let effective = if self.ctx.skip_flow_narrowing {
+                    let effective = if skip_flow_narrowing {
                         write_type.unwrap_or(type_id)
                     } else {
                         type_id
@@ -756,7 +773,7 @@ impl<'a> CheckerState<'a> {
             } = result
             {
                 use_index_signature_check = false;
-                let effective = if self.ctx.skip_flow_narrowing {
+                let effective = if skip_flow_narrowing {
                     write_type.unwrap_or(type_id)
                 } else {
                     type_id
@@ -784,7 +801,7 @@ impl<'a> CheckerState<'a> {
             } = result
             {
                 use_index_signature_check = false;
-                let effective = if self.ctx.skip_flow_narrowing {
+                let effective = if skip_flow_narrowing {
                     write_type.unwrap_or(type_id)
                 } else {
                     type_id
@@ -898,7 +915,7 @@ impl<'a> CheckerState<'a> {
         if used_generic_element_resolution
             && literal_index.is_none()
             && self.ctx.no_unchecked_indexed_access()
-            && !self.ctx.skip_flow_narrowing
+            && !skip_flow_narrowing
             && result_type != TypeId::ERROR
             && result_type != TypeId::ANY
             && result_type != TypeId::UNKNOWN
@@ -1062,7 +1079,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .namespace_module_names
                 .contains_key(&object_type_for_access);
-            let is_expando_write = self.ctx.skip_flow_narrowing
+            let is_expando_write = skip_flow_narrowing
                 && !is_namespace_object
                 && (tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
                     || (self.ctx.is_js_file()
@@ -1078,7 +1095,7 @@ impl<'a> CheckerState<'a> {
             // (d) the object has ANY unique-symbol expando properties recorded by the
             // binder. This avoids depending on exact SymbolId matching (which can
             // fail due to lib-merge rewriting the binder's symbol arena).
-            let is_expando_symbol_read = !self.ctx.skip_flow_narrowing
+            let is_expando_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
                 && tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
                 && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
@@ -1090,7 +1107,7 @@ impl<'a> CheckerState<'a> {
                     idx,
                     access.name_or_argument,
                 );
-                if self.ctx.skip_flow_narrowing {
+                if skip_flow_narrowing {
                     return TypeId::ERROR;
                 }
             }
@@ -1108,7 +1125,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.apply_flow_narrowing(idx, result_type)
+        if skip_flow_narrowing {
+            result_type
+        } else {
+            self.apply_flow_narrowing(idx, result_type)
+        }
     }
 
     fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {
@@ -1569,7 +1590,16 @@ impl<'a> CheckerState<'a> {
     ///     return obj;
     /// }
     /// ```
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_await_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_await_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_await_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -1608,7 +1638,7 @@ impl<'a> CheckerState<'a> {
         // `Promise<__infer_0> <: Promise<Obj>` (same base) to infer T = Obj.
         // Without Promise<T>, we'd only have PromiseLike<Obj> which has a different
         // base and can't be directly unified through type argument matching.
-        let request = if let Some(contextual) = self.ctx.contextual_type {
+        let operand_request = if let Some(contextual) = request.contextual_type {
             // Skip transformation for error types, any, unknown, or never
             if contextual != TypeId::ANY
                 && contextual != TypeId::UNKNOWN
@@ -1622,16 +1652,16 @@ impl<'a> CheckerState<'a> {
                     members.push(pt);
                 }
                 let union_context = self.ctx.types.factory().union(members);
-                TypingRequest::with_contextual_type(union_context)
+                request.read().contextual(union_context)
             } else {
-                TypingRequest::NONE
+                request.read().contextual_opt(None)
             }
         } else {
-            TypingRequest::NONE
+            request.read().contextual_opt(None)
         };
 
         // Get the type of the await operand with transformed contextual type
-        let expr_type = self.get_type_of_node_with_request(unary.expression, &request);
+        let expr_type = self.get_type_of_node_with_request(unary.expression, &operand_request);
 
         // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
         // TypeScript's await recursively unwraps nested Promises.

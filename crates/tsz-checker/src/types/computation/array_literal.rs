@@ -149,8 +149,18 @@ impl<'a> CheckerState<'a> {
     /// - Tuple contexts (e.g., `[string, number]`)
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_array_literal_with_request(idx, &crate::context::TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_array_literal_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &crate::context::TypingRequest,
+    ) -> TypeId {
         let factory = self.ctx.types.factory();
+        let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -173,7 +183,7 @@ impl<'a> CheckerState<'a> {
                 return factory.array(TypeId::NEVER);
             }
 
-            if let Some(contextual) = self.ctx.contextual_type {
+            if let Some(contextual) = contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
@@ -220,8 +230,8 @@ impl<'a> CheckerState<'a> {
         // array literals. The original Application retains the type args so the solver's
         // get_array_element_type can use the app.args[0] heuristic to extract the element
         // type (e.g., readonly [K, V] from Iterable<readonly [K, V]>).
-        let original_contextual_type = self.ctx.contextual_type;
-        let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
+        let original_contextual_type = contextual_type;
+        let resolved_contextual_type = contextual_type.map(|ctx_type| {
             let ctx_type = self.evaluate_contextual_type(ctx_type);
             // Strip null/undefined before evaluation — matches tsc's getNonNullableType
             // in getApparentTypeOfContextualType. Without this, `Iterable<T> | null`

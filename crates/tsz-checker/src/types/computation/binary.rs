@@ -271,7 +271,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
     /// assignment, nullish coalescing, and comma operators.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_binary_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_binary_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
         use tsz_solver::BinaryOpEvaluator;
@@ -466,7 +475,7 @@ impl<'a> CheckerState<'a> {
                     // The left operand gets no contextual type.
                     let left_type =
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
-                    let right_type = self.get_type_of_node(right_idx);
+                    let right_type = self.get_type_of_node_with_request(right_idx, request);
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
@@ -477,7 +486,7 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
                     let left_type = self.get_type_of_node(left_idx);
-                    let outer_context = self.ctx.contextual_type;
+                    let outer_context = request.contextual_type;
                     // Right operand: prefer the whole-expression contextual type
                     // inherited from the parent (e.g. assignment target). Fall back
                     // to the left operand with nullish removed when there is no outer
@@ -502,12 +511,12 @@ impl<'a> CheckerState<'a> {
                             && non_nullish != TypeId::NEVER
                             && non_nullish != TypeId::UNKNOWN
                         {
-                            TypingRequest::with_contextual_type(non_nullish)
+                            request.read().normal_origin().contextual(non_nullish)
                         } else {
                             TypingRequest::NONE
                         }
                     } else {
-                        TypingRequest::NONE
+                        request.read()
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
 
@@ -580,7 +589,7 @@ impl<'a> CheckerState<'a> {
                 if op_kind == SyntaxKind::CommaToken as u16 {
                     let left_type =
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
-                    let right_type = self.get_type_of_node(right_idx);
+                    let right_type = self.get_type_of_node_with_request(right_idx, request);
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
@@ -753,7 +762,7 @@ impl<'a> CheckerState<'a> {
                     left_type,
                     right_type,
                     "&&",
-                    self.ctx.contextual_type,
+                    request.contextual_type,
                 ) {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,

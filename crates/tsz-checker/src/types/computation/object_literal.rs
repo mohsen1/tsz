@@ -4,6 +4,7 @@
 //! shorthand properties, method shorthands, getters/setters, spread properties,
 //! duplicate property detection, and contextual type inference.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -23,11 +24,21 @@ impl<'a> CheckerState<'a> {
     /// - Duplicate property detection
     /// - Contextual type inference
     /// - Implicit any reporting (TS7008)
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_object_literal(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_object_literal_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_object_literal_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
         use tsz_solver::PropertyInfo;
+        let mut contextual_type = request.contextual_type;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -39,8 +50,8 @@ impl<'a> CheckerState<'a> {
 
         tracing::trace!(
             idx = idx.0,
-            contextual_type = ?self.ctx.contextual_type.map(|t| t.0),
-            contextual_type_display = ?self.ctx.contextual_type.map(|t| self.format_type(t)),
+            contextual_type = ?contextual_type.map(|t| t.0),
+            contextual_type_display = ?contextual_type.map(|t| self.format_type(t)),
             "get_type_of_object_literal: entry"
         );
 
@@ -77,7 +88,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
-        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = self.ctx.contextual_type {
+        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
             use tsz_solver::ContextualTypeContext;
             let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -162,16 +173,17 @@ impl<'a> CheckerState<'a> {
         // matching member(s) so other properties get precise contextual types.
         // Save original for TS7006 checks (must use pre-narrowed union to detect
         // primitive members like `string` in `string | FullRule`).
-        let original_contextual_type = self.ctx.contextual_type;
-        if let Some(ctx_type) = self.ctx.contextual_type {
+        let original_contextual_type = contextual_type;
+        if let Some(ctx_type) = contextual_type {
             let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
                 ctx_type,
                 &obj.elements.nodes,
             );
             if narrowed != ctx_type {
-                self.ctx.contextual_type = Some(narrowed);
+                contextual_type = Some(narrowed);
             }
         }
+        let base_request = request.contextual_opt(contextual_type);
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -203,14 +215,14 @@ impl<'a> CheckerState<'a> {
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
-                    let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                    let property_context_type = if let Some(ctx_type) = contextual_type {
                         self.contextual_object_literal_property_type(ctx_type, &name)
                     } else {
                         None
                     };
                     let initializer_context_type = if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
-                            self.ctx.contextual_type,
+                            contextual_type,
                             &name,
                             property_context_type,
                             prop.initializer,
@@ -219,7 +231,7 @@ impl<'a> CheckerState<'a> {
                         jsdoc_declared_type
                     };
                     let property_context_type = if property_context_type.is_none()
-                        && let Some(ctx_type) = self.ctx.contextual_type
+                        && let Some(ctx_type) = contextual_type
                         && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                         && matches!(
                             init_node.kind,
@@ -237,8 +249,7 @@ impl<'a> CheckerState<'a> {
                     // When a JSDoc @type is present, use it as the contextual type
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
-                    let prev_context = self.ctx.contextual_type;
-                    let had_object_context = prev_context.is_some();
+                    let had_object_context = contextual_type.is_some();
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -269,26 +280,27 @@ impl<'a> CheckerState<'a> {
                             property_context_type
                         },
                     );
-                    self.ctx.contextual_type = self
-                        .contextual_type_option_for_expression(resolved_prop_ctx)
-                        .or_else(|| {
-                            // When the outer contextual type is UNKNOWN (e.g., from a
-                            // generic JSX component's spread attribute), preserve UNKNOWN
-                            // as the contextual type for function-like initializers. This
-                            // prevents false TS7006 emissions on callback parameters
-                            // inside object literals spread into generic JSX components.
-                            if prev_context == Some(TypeId::UNKNOWN)
-                                && let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                                && matches!(
-                                    init_node.kind,
-                                    syntax_kind_ext::ARROW_FUNCTION
-                                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                                )
-                            {
-                                return Some(TypeId::UNKNOWN);
-                            }
-                            None
-                        });
+                    let property_request = base_request.contextual_opt(
+                        self.contextual_type_option_for_expression(resolved_prop_ctx)
+                            .or_else(|| {
+                                // When the outer contextual type is UNKNOWN (e.g., from a
+                                // generic JSX component's spread attribute), preserve UNKNOWN
+                                // as the contextual type for function-like initializers. This
+                                // prevents false TS7006 emissions on callback parameters
+                                // inside object literals spread into generic JSX components.
+                                if contextual_type == Some(TypeId::UNKNOWN)
+                                    && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                                    && matches!(
+                                        init_node.kind,
+                                        syntax_kind_ext::ARROW_FUNCTION
+                                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    )
+                                {
+                                    return Some(TypeId::UNKNOWN);
+                                }
+                                None
+                            }),
+                    );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
@@ -298,7 +310,7 @@ impl<'a> CheckerState<'a> {
                     } else if self.ctx.in_destructuring_target {
                         self.destructuring_target_type_from_initializer(prop.initializer)
                     } else {
-                        self.get_type_of_node(prop.initializer)
+                        self.get_type_of_node_with_request(prop.initializer, &property_request)
                     };
 
                     // TS2779: The left-hand side of an assignment expression may not be
@@ -315,9 +327,6 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
                         );
                     }
-
-                    // Restore context
-                    self.ctx.contextual_type = prev_context;
 
                     // When a JSDoc @type annotation is present, check assignability
                     // of the initializer against the declared type, and use the
@@ -557,7 +566,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                    let index_ctx_type = if let Some(ctx_type) = contextual_type {
                         let property_context_type = self.contextual_object_literal_property_type(
                             ctx_type,
                             resolved_computed_name.as_deref().unwrap_or("__@computed"),
@@ -580,11 +589,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type =
-                        self.contextual_type_option_for_expression(index_ctx_type);
-                    let value_type = self.get_type_of_node(prop.initializer);
-                    self.ctx.contextual_type = prev_context;
+                    let property_request = base_request
+                        .contextual_opt(self.contextual_type_option_for_expression(index_ctx_type));
+                    let value_type =
+                        self.get_type_of_node_with_request(prop.initializer, &property_request);
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(value_type);
@@ -605,7 +613,7 @@ impl<'a> CheckerState<'a> {
                     let shorthand_name_idx = shorthand.name;
 
                     // Get contextual type for this property
-                    let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                    let property_context_type = if let Some(ctx_type) = contextual_type {
                         self.contextual_object_literal_property_type(ctx_type, &name)
                     } else {
                         None
@@ -613,11 +621,11 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
                     // Set contextual type for shorthand property value
-                    let prev_context = self.ctx.contextual_type;
-                    let had_object_context = prev_context.is_some();
-                    self.ctx.contextual_type = self.contextual_type_option_for_expression(
-                        jsdoc_declared_type.or(property_context_type),
-                    );
+                    let had_object_context = contextual_type.is_some();
+                    let shorthand_request =
+                        base_request.contextual_opt(self.contextual_type_option_for_expression(
+                            jsdoc_declared_type.or(property_context_type),
+                        ));
                     let shorthand_sym = if self.ctx.in_destructuring_target {
                         self.ctx
                             .binder
@@ -720,11 +728,8 @@ impl<'a> CheckerState<'a> {
                         // if the variable is used before assignment.
                         // Using elem_idx (SHORTHAND_PROPERTY_ASSIGNMENT) would return TypeId::ERROR
                         // since that node kind has no dispatch handler, silently suppressing TS2454.
-                        self.get_type_of_node(shorthand_name_idx)
+                        self.get_type_of_node_with_request(shorthand_name_idx, &shorthand_request)
                     };
-
-                    // Restore context
-                    self.ctx.contextual_type = prev_context;
 
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
                         let has_uninitialized_value_decl = shorthand_sym.is_some_and(|sym_id| {
@@ -868,25 +873,21 @@ impl<'a> CheckerState<'a> {
                 let name_opt = self.get_property_name_resolved(method.name);
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
-                    let prev_context = self.ctx.contextual_type;
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
-                    if let Some(ctx_type) = prev_context {
-                        let method_context_type =
-                            self.contextual_object_literal_property_type(ctx_type, &name);
-                        self.ctx.contextual_type = self.contextual_type_option_for_expression(
+                    let method_context_type = contextual_type.and_then(|ctx_type| {
+                        self.contextual_object_literal_property_type(ctx_type, &name)
+                    });
+                    let method_request =
+                        base_request.contextual_opt(self.contextual_type_option_for_expression(
                             jsdoc_declared_type.or(method_context_type),
-                        );
-                    } else if jsdoc_declared_type.is_some() {
-                        self.ctx.contextual_type =
-                            self.contextual_type_option_for_expression(jsdoc_declared_type);
-                    }
+                        ));
 
                     // If no explicit ThisType marker exists, use the object literal's
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
                     if marker_this_type.is_none() && self.current_this_type().is_none() {
-                        if let Some(ctx_type) = prev_context {
+                        if let Some(ctx_type) = contextual_type {
                             let ctx_type = self.evaluate_contextual_type(ctx_type);
                             self.ctx.this_type_stack.push(ctx_type);
                             pushed_contextual_this = true;
@@ -1109,14 +1110,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let method_type = self.get_type_of_function(elem_idx);
+                    let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
 
                     if pushed_contextual_this || pushed_synthetic_this {
                         self.ctx.this_type_stack.pop();
                     }
 
-                    // Restore context
-                    self.ctx.contextual_type = prev_context;
                     let method_type = jsdoc_declared_type.unwrap_or(method_type);
 
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -1204,22 +1203,18 @@ impl<'a> CheckerState<'a> {
                             explicit_property_names.insert(atom);
                         }
                     }
-                    let prev_context = self.ctx.contextual_type;
-                    if let Some(ctx_type) = prev_context {
-                        let computed_context_type = self
-                            .contextual_object_literal_property_type(
-                                ctx_type,
-                                resolved_computed_name.as_deref().unwrap_or("__@computed"),
-                            )
-                            .or_else(|| self.contextual_object_literal_property_type(ctx_type, "*"))
-                            .or_else(|| {
-                                self.fallback_contextual_callable_property_type(ctx_type, 6)
-                            });
-                        self.ctx.contextual_type =
-                            self.contextual_type_option_for_expression(computed_context_type);
-                    }
-                    let method_type = self.get_type_of_function(elem_idx);
-                    self.ctx.contextual_type = prev_context;
+                    let computed_context_type = contextual_type.and_then(|ctx_type| {
+                        self.contextual_object_literal_property_type(
+                            ctx_type,
+                            resolved_computed_name.as_deref().unwrap_or("__@computed"),
+                        )
+                        .or_else(|| self.contextual_object_literal_property_type(ctx_type, "*"))
+                        .or_else(|| self.fallback_contextual_callable_property_type(ctx_type, 6))
+                    });
+                    let method_request = base_request.contextual_opt(
+                        self.contextual_type_option_for_expression(computed_context_type),
+                    );
+                    let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(method_type);
@@ -1677,12 +1672,13 @@ impl<'a> CheckerState<'a> {
                                 || node.kind == syntax_kind_ext::NEW_EXPRESSION
                                 || node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                         });
-                    let prev_ctx_for_spread = self.ctx.contextual_type;
-                    if spread_is_call_like {
-                        self.ctx.contextual_type = None;
-                    }
-                    let spread_type = self.get_type_of_node(spread_expr);
-                    self.ctx.contextual_type = prev_ctx_for_spread;
+                    let spread_request = if spread_is_call_like {
+                        base_request.contextual_opt(None)
+                    } else {
+                        base_request
+                    };
+                    let spread_type =
+                        self.get_type_of_node_with_request(spread_expr, &spread_request);
                     // TS2698: Spread types may only be created from object types.
                     // Skip when TS2701 was already emitted (invalid rest target) —
                     // the expression isn't a valid spread source because it's not

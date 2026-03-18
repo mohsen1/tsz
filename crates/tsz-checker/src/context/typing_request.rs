@@ -162,6 +162,13 @@ impl TypingRequest {
         self
     }
 
+    /// Builder: set or clear the contextual type.
+    #[inline]
+    pub const fn contextual_opt(mut self, ty: Option<TypeId>) -> Self {
+        self.contextual_type = ty;
+        self
+    }
+
     /// Builder: mark as assertion origin.
     #[inline]
     pub const fn assertion(mut self) -> Self {
@@ -169,10 +176,24 @@ impl TypingRequest {
         self
     }
 
+    /// Builder: reset to normal contextual origin.
+    #[inline]
+    pub const fn normal_origin(mut self) -> Self {
+        self.origin = ContextualOrigin::Normal;
+        self
+    }
+
     /// Builder: set write (skip-flow) intent.
     #[inline]
     pub const fn write(mut self) -> Self {
         self.flow = FlowIntent::Write;
+        self
+    }
+
+    /// Builder: set read intent.
+    #[inline]
+    pub const fn read(mut self) -> Self {
+        self.flow = FlowIntent::Read;
         self
     }
 

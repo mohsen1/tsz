@@ -5,6 +5,7 @@
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
 use crate::FlowAnalyzer;
+use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -63,6 +64,14 @@ impl<'a> CheckerState<'a> {
     ///   - Unresolved names (with "cannot find name" error)
     /// - Returns ANY for unresolved imports (TS2307 already emitted)
     pub(crate) fn get_type_of_identifier(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_identifier_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_identifier_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -915,7 +924,7 @@ impl<'a> CheckerState<'a> {
             // CRITICAL: Array element narrowing produces a genuinely different type that we must use.
             // Check if flow_type is a meaningful narrowing (not ANY/ERROR and different from declared_type).
             // If so, use it. Otherwise, preserve declared_type if it has special modifiers.
-            let result_type = if self.ctx.contextual_type.is_none()
+            let result_type = if request.contextual_type.is_none()
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {

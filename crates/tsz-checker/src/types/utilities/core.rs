@@ -1191,6 +1191,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         keys: &[tsz_common::interner::Atom],
+        is_write_context: bool,
     ) -> LiteralKeysResult {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -1200,12 +1201,6 @@ impl<'a> CheckerState<'a> {
                 missing_keys: Vec::new(),
             };
         }
-
-        // When skip_flow_narrowing is true, we're computing the type of an assignment
-        // target. For union-keyed index access (e.g., obj[k] where k: 'a' | 'b'),
-        // the write type is the intersection of property types — the assigned value
-        // must be compatible with whichever key is used at runtime.
-        let is_write_context = self.ctx.skip_flow_narrowing;
 
         // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
         let resolved_type = self.resolve_type_for_property_access(object_type);
@@ -1312,12 +1307,12 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         keys: &[f64],
+        is_write_context: bool,
     ) -> Option<TypeId> {
         if keys.is_empty() {
             return None;
         }
 
-        let is_write_context = self.ctx.skip_flow_narrowing;
         let mut types = Vec::with_capacity(keys.len());
         for &value in keys {
             if let Some(index) = self.get_numeric_index_from_number(value) {

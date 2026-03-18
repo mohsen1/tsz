@@ -3,6 +3,7 @@
 //! Contextual sensitivity analysis is in `contextual.rs`.
 //! Union/intersection/keyof/class helpers are in `type_operators.rs`.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
@@ -294,10 +295,21 @@ impl<'a> CheckerState<'a> {
         Some(constructor_type)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_new_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_new_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::diagnostics::diagnostic_codes;
         use crate::query_boundaries::common::CallResult;
         use tsz_parser::parser::syntax_kind_ext;
+        let contextual_type = request.contextual_type;
+        let read_request = request.read().normal_origin().contextual_opt(None);
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
             return TypeId::ERROR; // Missing new expression data - propagate error
@@ -369,13 +381,13 @@ impl<'a> CheckerState<'a> {
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                     self.get_type_of_symbol(sym_id)
                 } else {
-                    self.get_type_of_node(new_expr.expression)
+                    self.get_type_of_node_with_request(new_expr.expression, &read_request)
                 }
             } else {
-                self.get_type_of_node(new_expr.expression)
+                self.get_type_of_node_with_request(new_expr.expression, &read_request)
             }
         } else {
-            self.get_type_of_node(new_expr.expression)
+            self.get_type_of_node_with_request(new_expr.expression, &read_request)
         };
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
@@ -730,8 +742,7 @@ impl<'a> CheckerState<'a> {
                         }
                     };
                     let mut substitution = {
-                        let round2_contextual_type = if let Some(contextual) =
-                            self.ctx.contextual_type
+                        let round2_contextual_type = if let Some(contextual) = contextual_type
                             && contextual != TypeId::ANY
                             && contextual != TypeId::UNKNOWN
                             && contextual != TypeId::NEVER
@@ -748,10 +759,10 @@ impl<'a> CheckerState<'a> {
                                 }
                                 Some(self.ctx.types.factory().union(members))
                             } else {
-                                self.ctx.contextual_type
+                                contextual_type
                             }
                         } else {
-                            self.ctx.contextual_type
+                            contextual_type
                         };
                         let env = self.ctx.type_env.borrow();
                         call_checker::compute_contextual_types_with_context(
@@ -763,7 +774,7 @@ impl<'a> CheckerState<'a> {
                             round2_contextual_type,
                         )
                     };
-                    if let Some(contextual) = self.ctx.contextual_type {
+                    if let Some(contextual) = contextual_type {
                         use tsz_binder::SymbolId;
 
                         if let (Some((src_base, src_args)), Some((dst_base, dst_args))) = (
@@ -816,7 +827,7 @@ impl<'a> CheckerState<'a> {
                             ctx_helper.get_parameter_type_for_call(i, arg_count)
                         {
                             let promise_executor_context = if i == 0 {
-                                if let Some(contextual) = self.ctx.contextual_type
+                                if let Some(contextual) = contextual_type
                                     && self.is_promise_type(contextual)
                                     && let Some(inner) =
                                         self.promise_like_return_type_argument(contextual)
@@ -857,7 +868,7 @@ impl<'a> CheckerState<'a> {
                                 None
                             };
                             let mut round2_substitution = substitution.clone();
-                            if let Some(contextual) = self.ctx.contextual_type
+                            if let Some(contextual) = contextual_type
                                 && self.is_promise_type(contextual)
                                 && let Some(inner) =
                                     self.promise_like_return_type_argument(contextual)
@@ -993,7 +1004,7 @@ impl<'a> CheckerState<'a> {
             constructor_type,
             &arg_types,
             false,
-            self.ctx.contextual_type,
+            contextual_type,
         );
 
         match result {

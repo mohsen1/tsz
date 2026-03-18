@@ -1198,7 +1198,11 @@ impl<'a> CheckerState<'a> {
 
         if !string_keys.is_empty() {
             let keys_result =
-                self.get_element_access_type_for_literal_keys(literal_parent_type, string_keys);
+                self.get_element_access_type_for_literal_keys(
+                    literal_parent_type,
+                    string_keys,
+                    false,
+                );
             if let Some(result_type) = keys_result.result_type {
                 key_types.push(result_type);
             }
@@ -1211,7 +1215,11 @@ impl<'a> CheckerState<'a> {
 
         if !number_keys.is_empty()
             && let Some(result_type) = self
-                .get_element_access_type_for_literal_number_keys(literal_parent_type, number_keys)
+                .get_element_access_type_for_literal_number_keys(
+                    literal_parent_type,
+                    number_keys,
+                    false,
+                )
         {
             key_types.push(result_type);
         }

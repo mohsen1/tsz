@@ -1,6 +1,7 @@
 //! Property access type resolution, global augmentation property lookup,
 //! and expando function pattern detection.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
@@ -71,7 +72,16 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of property access expression.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_property_access_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_property_access_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
             self.ctx.depth_exceeded.set(true);
             return TypeId::ERROR; // Max instantiation depth exceeded - propagate error
@@ -80,7 +90,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() + 1);
-        let result = self.get_type_of_property_access_inner(idx);
+        let result = self.get_type_of_property_access_inner(idx, request);
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
@@ -105,8 +115,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Inner implementation of property access type resolution.
-    fn get_type_of_property_access_inner(&mut self, idx: NodeIndex) -> TypeId {
+    fn get_type_of_property_access_inner(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::query_boundaries::common::PropertyAccessResult;
+        let skip_flow_narrowing = request.flow.skip_flow_narrowing();
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -289,14 +304,12 @@ impl<'a> CheckerState<'a> {
         // probing the property on the non-flow object type is often enough. If the
         // property is found without flow narrowing, keep that cheaper object type and
         // avoid an additional flow walk on the object expression.
-        let skip_result_flow_for_result = !self.ctx.skip_flow_narrowing
-            && self.should_skip_property_result_flow_narrowing_for_result(idx);
-        let skip_result_flow = !self.ctx.skip_flow_narrowing
+        let skip_result_flow_for_result =
+            !skip_flow_narrowing && self.should_skip_property_result_flow_narrowing_for_result(idx);
+        let skip_result_flow = !skip_flow_narrowing
             && (skip_result_flow_for_result
                 || self.should_skip_property_result_flow_narrowing(idx));
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
-
-        use crate::context::TypingRequest;
 
         let original_object_type = if skip_optional_base_flow {
             self.get_type_of_node_with_request(
@@ -378,7 +391,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             } else if self.ctx.arena.get_access_expr(expr_node).is_some() {
-                let inner_type = self.get_type_of_property_access(access.expression);
+                let inner_type = self.get_type_of_property_access_with_request(
+                    access.expression,
+                    &TypingRequest::NONE,
+                );
                 if inner_type != TypeId::UNKNOWN && inner_type != TypeId::ERROR {
                     object_type = self.evaluate_application_type(inner_type);
                 }
@@ -491,7 +507,7 @@ impl<'a> CheckerState<'a> {
                             .borrow_mut()
                             .insert((object_type, prop_atom), result_type);
                     }
-                    return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                    return if !skip_flow_narrowing && skip_result_flow_for_result {
                         result_type
                     } else {
                         self.apply_flow_narrowing(idx, result_type)
@@ -531,7 +547,7 @@ impl<'a> CheckerState<'a> {
                                 .property_cache
                                 .borrow_mut()
                                 .insert((resolved_base, prop_atom), Some(type_id));
-                            let mut result_type = if self.ctx.skip_flow_narrowing {
+                            let mut result_type = if skip_flow_narrowing {
                                 write_type.unwrap_or(type_id)
                             } else {
                                 type_id
@@ -541,7 +557,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
-                            return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                            return if !skip_flow_narrowing && skip_result_flow_for_result {
                                 result_type
                             } else {
                                 self.apply_flow_narrowing(idx, result_type)
@@ -767,7 +783,7 @@ impl<'a> CheckerState<'a> {
             // resolve_namespace_value_member returns the symbol's read type, which
             // doesn't account for divergent getter/setter types. The full property
             // access path below correctly uses write_type for setter parameters.
-            if !self.ctx.skip_flow_narrowing
+            if !skip_flow_narrowing
                 && !enum_instance_like_access
                 && !hidden_qualified_namespace_member
                 && let Some(member_type) =
@@ -950,7 +966,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if self.ctx.skip_flow_narrowing
+                    if skip_flow_narrowing
                         && from_index_signature
                         && crate::query_boundaries::state::checking::is_type_parameter_like(
                             self.ctx.types,
@@ -993,12 +1009,12 @@ impl<'a> CheckerState<'a> {
                     }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
-                    let effective_type = if self.ctx.skip_flow_narrowing {
+                    let effective_type = if skip_flow_narrowing {
                         write_type.unwrap_or(prop_type)
                     } else {
                         prop_type
                     };
-                    if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                    if !skip_flow_narrowing && skip_result_flow_for_result {
                         effective_type
                     } else {
                         self.apply_flow_narrowing(idx, effective_type)
