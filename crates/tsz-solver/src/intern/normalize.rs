@@ -649,6 +649,7 @@ impl TypeInterner {
     /// Uses `TypeId` identity for nested components instead of recursive checking.
     /// This is safe for use during normalization because it only uses `lookup()` and
     /// never calls `intern()` or `evaluate()`.
+    #[inline]
     fn is_subtype_shallow(&self, source: TypeId, target: TypeId) -> bool {
         self.is_subtype_shallow_depth(source, target, 3)
     }
@@ -1134,32 +1135,35 @@ impl TypeInterner {
             return;
         }
 
-        // Mark redundant elements, then compact in one pass.
-        let mut keep = vec![true; len];
-        for i in 0..len {
-            if !keep[i] {
-                continue;
-            }
-            for j in 0..len {
-                if i == j || !keep[j] {
+        // For small unions (common case), delegate to the u64-bitset implementation.
+        // For larger unions (rare, when partition fails), fall back to Vec<bool>.
+        if len <= 64 {
+            self.reduce_union_subtypes_quadratic(flat);
+        } else {
+            let mut keep = vec![true; len];
+            for i in 0..len {
+                if !keep[i] {
                     continue;
                 }
-                // If i is a subtype of j, i is redundant in a union
-                if self.is_subtype_shallow(flat[i], flat[j]) {
-                    keep[i] = false;
-                    break;
+                for j in 0..len {
+                    if i == j || !keep[j] {
+                        continue;
+                    }
+                    if self.is_subtype_shallow(flat[i], flat[j]) {
+                        keep[i] = false;
+                        break;
+                    }
                 }
             }
-        }
-        // Compact: retain only non-redundant elements
-        let mut write = 0;
-        for read in 0..len {
-            if keep[read] {
-                flat[write] = flat[read];
-                write += 1;
+            let mut write = 0;
+            for read in 0..len {
+                if keep[read] {
+                    flat[write] = flat[read];
+                    write += 1;
+                }
             }
+            flat.truncate(write);
         }
-        flat.truncate(write);
     }
 
     /// Try to reduce a large union by partitioning members by a discriminant property.
@@ -1253,7 +1257,8 @@ impl TypeInterner {
         // Safe because callers guard len (partitions are always small subsets of
         // the already-guarded union, and the direct caller caps at 25 members).
         debug_assert!(len <= 64, "reduce_union_subtypes_quadratic: len={len} > 64");
-        let mut keep: u64 = (1u64 << len) - 1; // all bits set
+        // Initialize bitset with first `len` bits set. Guard against shift overflow at len==64.
+        let mut keep: u64 = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;

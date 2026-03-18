@@ -783,6 +783,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    #[inline]
     pub(crate) fn type_contains_placeholder(
         &self,
         ty: TypeId,
@@ -791,6 +792,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> bool {
         if var_map.contains_key(&ty) {
             return true;
+        }
+        // Fast path: intrinsic types (primitives, never, any, etc.) never contain placeholders
+        if ty.is_intrinsic() {
+            return false;
         }
         if !visited.insert(ty) {
             return false;

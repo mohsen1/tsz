@@ -38,6 +38,12 @@ impl TypeSubstitution {
         }
     }
 
+    /// Clear the substitution for reuse, preserving allocated capacity.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+
     /// Create a substitution from type parameters and arguments.
     ///
     /// `type_params` - The declared type parameters (e.g., `<T, U>`)

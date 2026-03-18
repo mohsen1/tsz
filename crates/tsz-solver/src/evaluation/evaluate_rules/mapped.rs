@@ -217,13 +217,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
+        // Also capture resolved_source once to avoid double evaluate(source) calls.
         let mut source_prop_map = FxHashMap::default();
+        let mut resolved_source_id = None;
         if let Some(source) = source_object {
             // Evaluate the source to resolve Application types (e.g., Partial<X> is
             // Application(Partial, [X]) which evaluates to { prop?: ... }). Without
             // this, collect_properties can't extract properties from unevaluated
             // Applications, causing optional/readonly modifiers to be lost.
             let resolved_source = self.evaluate(source);
+            resolved_source_id = Some(resolved_source);
 
             // tsc rule: homomorphic mapped types over `any` produce `any`.
             // E.g., `{ -readonly [P in keyof T]: Awaited<T[P]> }` with T=any → any.
@@ -234,6 +237,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             match collect_properties(resolved_source, self.interner(), self.resolver()) {
                 PropertyCollectionResult::Properties { properties, .. } => {
+                    source_prop_map.reserve(properties.len());
                     for prop in properties {
                         source_prop_map
                             .insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
@@ -250,27 +254,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // lists properties in the same order as Foo). Our key extraction sorts by Atom ID
         // which can differ from declaration order. We fix this by re-sorting the output
         // properties to match the source's declaration order.
+        // PERF: Reuse resolved_source_id from above to avoid re-evaluating source.
         let source_decl_order: Vec<Atom> = if is_homomorphic {
-            if let Some(source) = source_object {
-                let resolved = self.evaluate(source);
+            if let Some(resolved) = resolved_source_id {
                 let order: Vec<Atom> = match self.interner().lookup(resolved) {
                     Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                         let shape = self.interner().object_shape(shape_id);
-                        // Properties are stored sorted by Atom for hashing, but we
-                        // need declaration order. Sort by declaration_order to
-                        // restore the original source order.
                         let mut props: Vec<&PropertyInfo> = shape.properties.iter().collect();
                         props.sort_by_key(|p| p.declaration_order);
                         props.iter().map(|p| p.name).collect()
                     }
                     _ => Vec::new(),
                 };
-                tracing::trace!(
-                    source_id = source.0,
-                    resolved_id = resolved.0,
-                    decl_order = ?order.iter().map(|a| self.interner().resolve_atom_ref(*a)).collect::<Vec<_>>(),
-                    "evaluate_mapped: source declaration order"
-                );
                 order
             } else {
                 Vec::new()
@@ -346,7 +341,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Build the resulting object properties
-        let mut properties = Vec::new();
+        let mut properties = Vec::with_capacity(key_set.string_literals.len());
+        // PERF: Reuse a single TypeSubstitution across all keys to avoid
+        // re-allocating the inner FxHashMap on every iteration.
+        let mut subst = TypeSubstitution::new();
 
         for key_name in key_set.string_literals {
             // Check if depth was exceeded during previous iterations
@@ -364,12 +362,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
             // Extract property name(s) from remapped key.
             // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
-            let remapped_names: Vec<Atom> =
+            let remapped_names: smallvec::SmallVec<[Atom; 1]> =
                 if let Some(name) = crate::visitor::literal_string(self.interner(), remapped) {
-                    vec![name]
+                    smallvec::smallvec![name]
                 } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
                     let members = self.interner().type_list(list_id);
-                    let names: Vec<Atom> = members
+                    let names: smallvec::SmallVec<[Atom; 1]> = members
                         .iter()
                         .filter_map(|&m| crate::visitor::literal_string(self.interner(), m))
                         .collect();
@@ -381,7 +379,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.interner().mapped(mapped.clone());
                 };
 
-            let mut subst = TypeSubstitution::new();
+            subst.clear();
             subst.insert(mapped.type_param.name, key_literal);
 
             // Substitute into the template

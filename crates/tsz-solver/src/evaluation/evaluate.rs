@@ -393,13 +393,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// 2. Get the type parameters for the base symbol
     /// 3. If we have type params, instantiate the resolved type with args
     /// 4. Recursively evaluate the result
-    fn evaluate_application(&mut self, app_id: TypeApplicationId) -> TypeId {
+    fn evaluate_application(
+        &mut self,
+        app_id: TypeApplicationId,
+        original_type_id: TypeId,
+    ) -> TypeId {
         let app = self.interner.type_application(app_id);
 
         // Look up the base type
         let base_key = match self.interner.lookup(app.base) {
             Some(k) => k,
-            None => return self.interner.application(app.base, app.args.clone()),
+            // The application was already interned — return its original TypeId
+            // instead of cloning args to re-intern the same thing.
+            None => return original_type_id,
         };
 
         // Task B: Resolve TypeQuery bases to DefId for expansion
@@ -566,8 +572,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
-                    let app_type = self.interner.application(app.base, app.args.clone());
-
                     // Instantiate the resolved type with the type arguments.
                     // Then rebind polymorphic `this` to the concrete application
                     // so interface bodies like `constraint: Constraint<this>`
@@ -579,8 +583,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &expanded_args,
                     );
                     if crate::contains_this_type(self.interner, instantiated) {
-                        instantiated =
-                            crate::substitute_this_type(self.interner, instantiated, app_type);
+                        // Use original_type_id as the app_type — it's the same
+                        // Application(base, args) that was already interned.
+                        instantiated = crate::substitute_this_type(
+                            self.interner,
+                            instantiated,
+                            original_type_id,
+                        );
                     }
                     // Recursively evaluate the result
                     let evaluated = self.evaluate(instantiated);
@@ -594,7 +603,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     evaluated
                 } else {
-                    self.interner.application(app.base, app.args.clone())
+                    original_type_id
                 }
             } else if let Some(resolved) = resolved {
                 // Fallback: try to extract type params from the resolved type's properties
@@ -617,7 +626,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return cached;
                     }
 
-                    let app_type = self.interner.application(app.base, app.args.clone());
                     let mut instantiated = instantiate_generic(
                         self.interner,
                         resolved,
@@ -625,8 +633,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &expanded_args,
                     );
                     if crate::contains_this_type(self.interner, instantiated) {
-                        instantiated =
-                            crate::substitute_this_type(self.interner, instantiated, app_type);
+                        instantiated = crate::substitute_this_type(
+                            self.interner,
+                            instantiated,
+                            original_type_id,
+                        );
                     }
                     let evaluated = self.evaluate(instantiated);
                     if let Some(db) = self.query_db {
@@ -639,10 +650,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     evaluated
                 } else {
-                    self.interner.application(app.base, app.args.clone())
+                    original_type_id
                 }
             } else {
-                self.interner.application(app.base, app.args.clone())
+                original_type_id
             };
 
             // Decrement per-DefId depth after evaluation
@@ -653,7 +664,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             result
         } else {
             // If we can't expand, return the original application
-            self.interner.application(app.base, app.args.clone())
+            original_type_id
         }
     }
 
@@ -1204,7 +1215,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Mapped(mapped_id) => self.visit_mapped(*mapped_id),
             TypeData::KeyOf(operand) => self.visit_keyof(*operand),
             TypeData::TypeQuery(symbol) => self.visit_type_query(symbol.0, type_id),
-            TypeData::Application(app_id) => self.visit_application(*app_id),
+            TypeData::Application(app_id) => self.visit_application(*app_id, type_id),
             TypeData::TemplateLiteral(spans) => self.visit_template_literal(*spans),
             TypeData::Lazy(def_id) => self.visit_lazy(*def_id, type_id),
             TypeData::StringIntrinsic { kind, type_arg } => {
@@ -1275,8 +1286,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Visit a generic type application: Base<Args>
-    fn visit_application(&mut self, app_id: TypeApplicationId) -> TypeId {
-        self.evaluate_application(app_id)
+    fn visit_application(&mut self, app_id: TypeApplicationId, original_type_id: TypeId) -> TypeId {
+        self.evaluate_application(app_id, original_type_id)
     }
 
     /// Visit a template literal type: `hello${T}world`
