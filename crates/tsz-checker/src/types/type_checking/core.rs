@@ -1464,10 +1464,8 @@ impl<'a> CheckerState<'a> {
 
         self.check_type_node(alias.type_node);
 
-        if inserted_for_circular_check {
-            if let Some(sid) = alias_sym_id {
-                self.ctx.symbol_resolution_set.remove(&sid);
-            }
+        if inserted_for_circular_check && let Some(sid) = alias_sym_id {
+            self.ctx.symbol_resolution_set.remove(&sid);
         }
         // Pre-compute flow-narrowed types for `typeof expr` in the type alias body.
         // This allows `typeof c` inside a type alias to pick up narrowing from

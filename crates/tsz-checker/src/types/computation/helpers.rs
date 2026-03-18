@@ -1135,21 +1135,19 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(node)
-        {
-            if let Some(obj_sym) =
+            && let Some(obj_sym) =
                 self.resolve_identifier_symbol_without_tracking(access.expression)
-                && let Some(symbol) = self.ctx.binder.get_symbol(obj_sym)
-                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
-            {
-                // Still evaluate the node so side effects (diagnostics on the object) fire,
-                // but return `any` for the LHS type so assignability is not checked.
-                let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-                self.ctx.skip_flow_narrowing = true;
-                let _ = self.get_type_of_node(idx);
-                self.ctx.skip_flow_narrowing = prev_skip_narrowing;
-                return TypeId::ANY;
-            }
+            && let Some(symbol) = self.ctx.binder.get_symbol(obj_sym)
+            && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        {
+            // Still evaluate the node so side effects (diagnostics on the object) fire,
+            // but return `any` for the LHS type so assignability is not checked.
+            let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
+            self.ctx.skip_flow_narrowing = true;
+            let _ = self.get_type_of_node(idx);
+            self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+            return TypeId::ANY;
         }
 
         let prev_skip_narrowing = self.ctx.skip_flow_narrowing;

@@ -2153,15 +2153,15 @@ impl<'a> CheckerState<'a> {
             } else {
                 true
             };
-            if is_sound_union {
-                if let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
+            if is_sound_union
+                && let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
                     self.ctx.types,
                     callee_type_for_call,
-                ) {
-                    self.ctx
-                        .call_type_predicates
-                        .insert(idx.0, (extracted.predicate, extracted.params));
-                }
+                )
+            {
+                self.ctx
+                    .call_type_predicates
+                    .insert(idx.0, (extracted.predicate, extracted.params));
             }
         }
 

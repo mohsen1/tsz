@@ -1372,12 +1372,6 @@ impl<'a> CheckerState<'a> {
                         };
 
                         aug_member_order += 1;
-                        eprintln!(
-                            "[aug_member] name={:?}, type_id={:?}, type_data={:?}",
-                            id_data.escaped_text,
-                            type_id,
-                            self.ctx.types.lookup(type_id)
-                        );
                         members.push(PropertyInfo {
                             name: self.ctx.types.intern_string(&id_data.escaped_text),
                             type_id,
@@ -1690,18 +1684,8 @@ impl<'a> CheckerState<'a> {
                 return base_type;
             }
         }
-
-        eprintln!(
-            "[apply_aug] module_spec={:?}, interface_name={:?}, base_type={:?}",
-            module_spec, interface_name, base_type
-        );
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
-
-        eprintln!(
-            "[apply_aug] augmentation_members count: {}",
-            augmentation_members.len()
-        );
         if augmentation_members.is_empty() {
             self.ctx
                 .module_augmentation_application_set
@@ -1824,19 +1808,8 @@ impl<'a> CheckerState<'a> {
         let mut matching_sym_ids = Vec::new();
 
         // Check current binder
-        eprintln!(
-            "[augmentation] update_augmentation_local_symbol_types: module_spec={:?}, interface_name={:?}",
-            module_spec, interface_name
-        );
-        eprintln!(
-            "[augmentation] current binder augmentation_target_modules count: {}",
-            self.ctx.binder.augmentation_target_modules.len()
-        );
+
         for (&aug_sym_id, aug_module) in &self.ctx.binder.augmentation_target_modules {
-            eprintln!(
-                "[augmentation]   checking sym_id={}, aug_module={:?}",
-                aug_sym_id.0, aug_module
-            );
             if aug_module == module_spec
                 && let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
                 && aug_sym.escaped_name == interface_name
@@ -1847,13 +1820,9 @@ impl<'a> CheckerState<'a> {
 
         // Check all_binders (cross-file augmentations)
         if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-            eprintln!("[augmentation] checking {} all_binders", all_binders.len());
+            // Check all cross-file augmentation binders
             for binder in all_binders.iter() {
                 for (&aug_sym_id, aug_module) in &binder.augmentation_target_modules {
-                    eprintln!(
-                        "[augmentation]   all_binder sym_id={}, aug_module={:?}",
-                        aug_sym_id.0, aug_module
-                    );
                     if aug_module == module_spec
                         && let Some(aug_sym) = binder.get_symbol(aug_sym_id)
                         && aug_sym.escaped_name == interface_name
@@ -1874,10 +1843,6 @@ impl<'a> CheckerState<'a> {
         let def_ids: Vec<_> = matching_sym_ids
             .iter()
             .map(|&aug_sym_id| {
-                eprintln!(
-                    "[augmentation] updating sym_id={} to merged_type={:?}",
-                    aug_sym_id.0, merged_type
-                );
                 self.ctx.symbol_types.insert(aug_sym_id, merged_type);
                 self.ctx
                     .symbol_instance_types

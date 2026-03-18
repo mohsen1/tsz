@@ -419,7 +419,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let diag =
-                    self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
+                    self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
                 self.ctx.push_diagnostic(diag);
             }
             None => {

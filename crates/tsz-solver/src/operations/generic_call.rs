@@ -1392,10 +1392,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     infer_ctx.table.union_value(root, info);
                     resolved
                 } else {
-                    eprintln!(
-                        "[GENERIC_CALL] resolving var {:?} with resolve_with_constraints_by",
-                        var
-                    );
                     match infer_ctx.resolve_with_constraints_by(var, |source, target| {
                         self.checker.is_assignable_to_strict(source, target)
                     }) {

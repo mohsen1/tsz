@@ -951,16 +951,16 @@ impl<'a> CheckerState<'a> {
                     .borrow()
                     .get(&stable_key)
                     .copied();
-                if let Some(confirmed_flow) = confirmed_flow {
-                    if self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id) {
-                        // Update the confirmed flow node to the current one so
-                        // the next access only needs to walk back a few steps.
-                        self.ctx
-                            .symbol_flow_confirmed
-                            .borrow_mut()
-                            .insert(stable_key, flow_node);
-                        return cached;
-                    }
+                if let Some(confirmed_flow) = confirmed_flow
+                    && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
+                {
+                    // Update the confirmed flow node to the current one so
+                    // the next access only needs to walk back a few steps.
+                    self.ctx
+                        .symbol_flow_confirmed
+                        .borrow_mut()
+                        .insert(stable_key, flow_node);
+                    return cached;
                 }
             }
 
@@ -1088,20 +1088,20 @@ impl<'a> CheckerState<'a> {
                     .borrow()
                     .get(&stable_key)
                     .copied();
-                if let Some(confirmed_flow) = confirmed_flow {
-                    if self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id) {
-                        self.ctx
-                            .symbol_flow_confirmed
-                            .borrow_mut()
-                            .insert(stable_key, flow_node);
-                        // Also populate the flow_analysis_cache for this exact key
-                        // so subsequent cached-path lookups are instant.
-                        self.ctx
-                            .flow_analysis_cache
-                            .borrow_mut()
-                            .insert((flow_node, sym_id, result), result);
-                        return result;
-                    }
+                if let Some(confirmed_flow) = confirmed_flow
+                    && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
+                {
+                    self.ctx
+                        .symbol_flow_confirmed
+                        .borrow_mut()
+                        .insert(stable_key, flow_node);
+                    // Also populate the flow_analysis_cache for this exact key
+                    // so subsequent cached-path lookups are instant.
+                    self.ctx
+                        .flow_analysis_cache
+                        .borrow_mut()
+                        .insert((flow_node, sym_id, result), result);
+                    return result;
                 }
             }
 
@@ -1157,10 +1157,10 @@ impl<'a> CheckerState<'a> {
     /// Walks at most 64 steps.
     ///
     /// Key insight: ASSIGNMENT nodes for OTHER symbols (e.g., `score += ...` for `score`
-    /// while we track `options`) are safe to walk through. BRANCH_LABEL merge points
+    /// while we track `options`) are safe to walk through. `BRANCH_LABEL` merge points
     /// from `??`/`?:` can be traversed by following their CONDITION antecedents.
     ///
-    /// CONDITION nodes are only safe to traverse when reached FROM a BRANCH_LABEL (merge
+    /// CONDITION nodes are only safe to traverse when reached FROM a `BRANCH_LABEL` (merge
     /// point), indicating they're part of a reconvergence pattern (like `??`). Direct
     /// CONDITION nodes (not from a merge) indicate entering a narrowing branch (like
     /// `if (typeof x === "string")`) and must block the walk.

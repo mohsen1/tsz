@@ -927,17 +927,15 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+            && sigs.iter().any(|s| !s.type_params.is_empty())
         {
-            if sigs.iter().any(|s| !s.type_params.is_empty()) {
-                return true;
-            }
+            return true;
         }
         if let Some(sigs) =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+            && sigs.iter().any(|s| !s.type_params.is_empty())
         {
-            if sigs.iter().any(|s| !s.type_params.is_empty()) {
-                return true;
-            }
+            return true;
         }
         false
     }

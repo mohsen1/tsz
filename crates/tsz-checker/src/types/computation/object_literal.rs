@@ -277,16 +277,15 @@ impl<'a> CheckerState<'a> {
                             // as the contextual type for function-like initializers. This
                             // prevents false TS7006 emissions on callback parameters
                             // inside object literals spread into generic JSX components.
-                            if prev_context == Some(TypeId::UNKNOWN) {
-                                if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
-                                    if matches!(
-                                        init_node.kind,
-                                        syntax_kind_ext::ARROW_FUNCTION
-                                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                                    ) {
-                                        return Some(TypeId::UNKNOWN);
-                                    }
-                                }
+                            if prev_context == Some(TypeId::UNKNOWN)
+                                && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                                && matches!(
+                                    init_node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            {
+                                return Some(TypeId::UNKNOWN);
                             }
                             None
                         });
@@ -1008,17 +1007,13 @@ impl<'a> CheckerState<'a> {
                                                             // Skip explicit `this` parameter
                                                             if let Some(name_node) =
                                                                 self.ctx.arena.get(param.name)
-                                                            {
-                                                                if let Some(ident) = self
+                                                                && let Some(ident) = self
                                                                     .ctx
                                                                     .arena
                                                                     .get_identifier(name_node)
-                                                                {
-                                                                    if ident.escaped_text == "this"
-                                                                    {
-                                                                        return None;
-                                                                    }
-                                                                }
+                                                                && ident.escaped_text == "this"
+                                                            {
+                                                                return None;
                                                             }
                                                             Some(tsz_solver::ParamInfo {
                                                                 name: self

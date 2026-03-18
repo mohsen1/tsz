@@ -125,13 +125,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // unrelated target types causes false conflicts (e.g., `"message"`
             // vs `Action1<...>` when K appears in both `type: K` and
             // `listener: (ev: WindowEventMap[K]) => any`).
-            if let Some(info) = type_param_info(self.interner, s_effective) {
-                if tracked_type_params.contains(&info.name) {
-                    contextual_candidates
-                        .entry(info.name)
-                        .or_default()
-                        .push(t_effective);
-                }
+            if let Some(info) = type_param_info(self.interner, s_effective)
+                && tracked_type_params.contains(&info.name)
+            {
+                contextual_candidates
+                    .entry(info.name)
+                    .or_default()
+                    .push(t_effective);
             }
         }
 

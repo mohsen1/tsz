@@ -322,7 +322,7 @@ pub struct CheckerContext<'a> {
     /// Stable flow cache: maps `(SymbolId, DeclaredTypeId)` to the last `FlowNodeId`
     /// where flow analysis confirmed no narrowing (returned the declared type unchanged).
     /// When a new flow node for the same symbol can reach the confirmed node via a
-    /// straight-line chain (no CONDITION/ASSIGNMENT/BRANCH_LABEL nodes), flow analysis
+    /// straight-line chain (no `CONDITION/ASSIGNMENT/BRANCH_LABEL` nodes), flow analysis
     /// is skipped entirely, returning the declared type directly.
     /// This eliminates O(N) flow cache misses for N sequential accesses to the same
     /// identifier (e.g., 34 references to `options` in sequential statements).

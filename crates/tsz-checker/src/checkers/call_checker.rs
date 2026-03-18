@@ -1572,7 +1572,7 @@ impl<'a> CheckerState<'a> {
                         // object-literal args). Without this restore, the instantiated
                         // retry silently suppresses TS7006 for those closures.
                         self.ctx.implicit_any_checked_closures =
-                            implicit_any_checked_closures_checkpoint.clone();
+                            implicit_any_checked_closures_checkpoint;
                         refresh_all_args(self);
 
                         let prev_callable_type = self.ctx.current_callable_type;
@@ -1675,7 +1675,7 @@ impl<'a> CheckerState<'a> {
         // When a signature returns TypeParameterConstraintViolation and there are more
         // overloads to try, store it as a fallback and continue. Used for Object.freeze
         // where overload 0 (T extends Function) is violated but overload 1 works.
-        let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
+        let _constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();

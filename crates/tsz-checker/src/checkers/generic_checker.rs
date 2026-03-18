@@ -622,17 +622,17 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                                 // Base is not callable and constraint is callable → TS2344.
-                                if let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                                    if !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                    && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                         arg_idx,
                                         constraint_resolved,
-                                    ) {
-                                        self.error_type_constraint_not_satisfied(
-                                            type_arg,
-                                            constraint_resolved,
-                                            arg_idx,
-                                        );
-                                    }
+                                    )
+                                {
+                                    self.error_type_constraint_not_satisfied(
+                                        type_arg,
+                                        constraint_resolved,
+                                        arg_idx,
+                                    );
                                 }
                                 continue;
                             }

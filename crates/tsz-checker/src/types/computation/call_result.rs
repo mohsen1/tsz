@@ -420,33 +420,34 @@ impl<'a> CheckerState<'a> {
                     // Check stored return-type errors that were pruned by the
                     // arg collection filter. If found, restore the diagnostic
                     // and suppress the outer TS2345.
-                    if !elaborated && !suppress_inner_elaboration {
-                        if let Some(body_span) = self.callback_body_span(arg_idx) {
-                            let (body_start, body_end) = body_span;
-                            let stored: Vec<_> = self
-                                .ctx
-                                .callback_return_type_errors
-                                .iter()
-                                .filter(|d| d.start >= body_start && d.start < body_end)
-                                .cloned()
-                                .collect();
-                            if !stored.is_empty() {
-                                self.ctx.diagnostics.extend(stored);
-                                elaborated = true;
-                            }
+                    if !elaborated
+                        && !suppress_inner_elaboration
+                        && let Some(body_span) = self.callback_body_span(arg_idx)
+                    {
+                        let (body_start, body_end) = body_span;
+                        let stored: Vec<_> = self
+                            .ctx
+                            .callback_return_type_errors
+                            .iter()
+                            .filter(|d| d.start >= body_start && d.start < body_end)
+                            .cloned()
+                            .collect();
+                        if !stored.is_empty() {
+                            self.ctx.diagnostics.extend(stored);
+                            elaborated = true;
                         }
                     }
                     // When suppressing inner elaboration, remove any TS2322 inside the
                     // callback body that was left from the arg collection pass, so the
                     // outer TS2345 is the only diagnostic at the argument site.
-                    if suppress_inner_elaboration {
-                        if let Some((body_start, body_end)) = self.callback_body_span(arg_idx) {
-                            self.ctx.diagnostics.retain(|d| {
-                                !(d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                                    && d.start >= body_start
-                                    && d.start < body_end)
-                            });
-                        }
+                    if suppress_inner_elaboration
+                        && let Some((body_start, body_end)) = self.callback_body_span(arg_idx)
+                    {
+                        self.ctx.diagnostics.retain(|d| {
+                            !(d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                && d.start >= body_start
+                                && d.start < body_end)
+                        });
                     }
                     if !elaborated
                         && allow_contextual_mismatch_deferral
