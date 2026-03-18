@@ -69,7 +69,7 @@ impl<'a> CodeActionProvider<'a> {
         // insertion edit for the accessor body.
         let rename_edit = TextEdit {
             range: Range::new(info.name_start, info.name_end),
-            new_text: backing_field.clone(),
+            new_text: backing_field,
         };
 
         let insert_pos = info.insert_position;

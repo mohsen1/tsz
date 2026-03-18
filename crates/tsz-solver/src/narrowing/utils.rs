@@ -6,7 +6,7 @@
 use super::{DiscriminantInfo, NarrowingContext};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
-use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints, union_list_id};
+use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints};
 use crate::{QueryDatabase, TypeDatabase};
 use tsz_common::interner::Atom;
 

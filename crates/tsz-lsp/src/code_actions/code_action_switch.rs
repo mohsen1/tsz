@@ -147,15 +147,14 @@ impl<'a> CodeActionProvider<'a> {
             if node.pos > case_block_node.end {
                 break;
             }
-            if node.kind == syntax_kind_ext::CASE_CLAUSE {
-                if let Some(case) = self.arena.get_case_clause(node) {
-                    if let Some(text) = self.source.get(
-                        self.arena.get(case.expression).map_or(0, |n| n.pos) as usize
-                            ..self.arena.get(case.expression).map_or(0, |n| n.end) as usize,
-                    ) {
-                        values.push(text.trim().to_string());
-                    }
-                }
+            if node.kind == syntax_kind_ext::CASE_CLAUSE
+                && let Some(case) = self.arena.get_case_clause(node)
+                && let Some(text) = self.source.get(
+                    self.arena.get(case.expression).map_or(0, |n| n.pos) as usize
+                        ..self.arena.get(case.expression).map_or(0, |n| n.end) as usize,
+                )
+            {
+                values.push(text.trim().to_string());
             }
         }
 
@@ -187,20 +186,19 @@ impl<'a> CodeActionProvider<'a> {
             let Some(decl_node) = self.arena.get(decl_idx) else {
                 continue;
             };
-            if decl_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                if let Some(enum_data) = self.arena.get_enum(decl_node) {
-                    let enum_name = self
-                        .arena
-                        .get_identifier_text(enum_data.name)
-                        .unwrap_or("E");
-                    for &member_idx in &enum_data.members.nodes {
-                        if let Some(member_node) = self.arena.get(member_idx) {
-                            if let Some(member) = self.arena.get_enum_member(member_node) {
-                                if let Some(name) = self.arena.get_identifier_text(member.name) {
-                                    members.push(format!("{enum_name}.{name}"));
-                                }
-                            }
-                        }
+            if decl_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                && let Some(enum_data) = self.arena.get_enum(decl_node)
+            {
+                let enum_name = self
+                    .arena
+                    .get_identifier_text(enum_data.name)
+                    .unwrap_or("E");
+                for &member_idx in &enum_data.members.nodes {
+                    if let Some(member_node) = self.arena.get(member_idx)
+                        && let Some(member) = self.arena.get_enum_member(member_node)
+                        && let Some(name) = self.arena.get_identifier_text(member.name)
+                    {
+                        members.push(format!("{enum_name}.{name}"));
                     }
                 }
             }

@@ -1593,7 +1593,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|n| self.ctx.arena.get_literal(n))
                     .map(|lit| lit.text.clone())
                     .unwrap_or_default();
-                let mut result = head_text.to_string();
+                let mut result = head_text;
                 // For each span, try to evaluate the expression to a string literal
                 for &span_idx in &template.template_spans.nodes {
                     let span_node = self.ctx.arena.get(span_idx)?;

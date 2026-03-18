@@ -421,7 +421,7 @@ impl WorkspaceDiagnosticReport {
     }
 
     /// Create an empty report (no diagnostics for any file).
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self { items: Vec::new() }
     }
 }

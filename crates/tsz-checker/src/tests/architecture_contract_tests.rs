@@ -2348,7 +2348,7 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
     }
 }
 
-/// The TypingRequest type must exist and have the expected fields.
+/// The `TypingRequest` type must exist and have the expected fields.
 #[test]
 fn typing_request_api_exists() {
     use crate::context::{ContextualOrigin, FlowIntent, TypingRequest};
@@ -2371,8 +2371,8 @@ fn typing_request_api_exists() {
     assert!(write.flow.skip_flow_narrowing());
 }
 
-/// Verify that the statement_callback_bridge save/restore for check_statement
-/// is properly scoped (contextual type set only during check_statement, not leaked).
+/// Verify that the `statement_callback_bridge` save/restore for `check_statement`
+/// is properly scoped (contextual type set only during `check_statement`, not leaked).
 #[test]
 fn statement_callback_bridge_contextual_type_scoping() {
     // This is a source-level check: the export clause handler must restore

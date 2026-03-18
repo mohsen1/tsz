@@ -50,10 +50,10 @@ pub(crate) struct FullSnapshot {
     pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
 }
 
-/// Cache snapshot for return-type inference, which also corrupts node_types
-/// and flow_analysis_cache.
+/// Cache snapshot for return-type inference, which also corrupts `node_types`
+/// and `flow_analysis_cache`.
 pub(crate) struct CacheSnapshot {
-    /// Set of node_types keys that existed before speculation.
+    /// Set of `node_types` keys that existed before speculation.
     pub node_type_keys: std::collections::HashSet<u32>,
     /// Clone of the flow analysis cache.
     pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
@@ -74,7 +74,7 @@ impl CheckerContext<'_> {
     ///
     /// Captures `diagnostics.len()` and clones `emitted_diagnostics`. Suitable
     /// for speculative sites that only produce diagnostics (JSX overloads,
-    /// call_helpers property inference, elaboration probes).
+    /// `call_helpers` property inference, elaboration probes).
     pub(crate) fn snapshot_diagnostics(&self) -> DiagnosticSnapshot {
         DiagnosticSnapshot {
             diagnostics_len: self.diagnostics.len(),
@@ -96,7 +96,7 @@ impl CheckerContext<'_> {
         }
     }
 
-    /// Complete snapshot including node_types and flow_analysis_cache.
+    /// Complete snapshot including `node_types` and `flow_analysis_cache`.
     ///
     /// Used by return-type inference which evaluates the function body
     /// speculatively (without narrowing context) and must not pollute caches.
@@ -175,6 +175,7 @@ impl CheckerContext<'_> {
     /// Used when a speculative path succeeds and its diagnostics should be
     /// kept. Only the dedup set needs reconciliation — diagnostics are already
     /// in the vector.
+    #[allow(dead_code)]
     pub(crate) fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         // Diagnostics already in the vector; just rebuild dedup for new entries.
         for diag in self.diagnostics[snap.diagnostics_len..].iter() {
@@ -185,6 +186,7 @@ impl CheckerContext<'_> {
 
     /// Extract speculative diagnostics without modifying the context.
     /// Returns diagnostics added since the snapshot.
+    #[allow(dead_code)]
     pub(crate) fn speculative_diagnostics_since(&self, snap: &DiagnosticSnapshot) -> &[Diagnostic] {
         &self.diagnostics[snap.diagnostics_len..]
     }
@@ -236,11 +238,13 @@ impl CheckerContext<'_> {
 /// // ... speculative work ...
 /// guard.commit(ctx); // or just drop to roll back
 /// ```
+#[allow(dead_code)]
 pub(crate) struct DiagnosticSpeculationGuard {
     snapshot: DiagnosticSnapshot,
     committed: bool,
 }
 
+#[allow(dead_code)]
 impl DiagnosticSpeculationGuard {
     pub(crate) fn new(ctx: &CheckerContext) -> Self {
         Self {
@@ -249,8 +253,8 @@ impl DiagnosticSpeculationGuard {
         }
     }
 
-    /// The diagnostic checkpoint (diagnostics.len() at snapshot time).
-    pub(crate) fn checkpoint(&self) -> usize {
+    /// The diagnostic checkpoint (`diagnostics.len()` at snapshot time).
+    pub(crate) const fn checkpoint(&self) -> usize {
         self.snapshot.diagnostics_len
     }
 
@@ -275,14 +279,14 @@ impl DiagnosticSpeculationGuard {
     pub(crate) fn rollback_filtered(
         self,
         ctx: &mut CheckerContext,
-        mut keep: impl FnMut(&Diagnostic) -> bool,
+        keep: impl FnMut(&Diagnostic) -> bool,
     ) {
         ctx.rollback_diagnostics_filtered(&self.snapshot, keep);
         // guard will drop harmlessly (can't double-rollback without ctx)
     }
 
     /// Access the underlying snapshot for manual operations.
-    pub(crate) fn snapshot(&self) -> &DiagnosticSnapshot {
+    pub(crate) const fn snapshot(&self) -> &DiagnosticSnapshot {
         &self.snapshot
     }
 

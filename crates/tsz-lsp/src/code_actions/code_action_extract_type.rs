@@ -66,22 +66,21 @@ impl<'a> CodeActionProvider<'a> {
 
         let declaration = format!("{indent}type {type_name} = {selected_text};\n");
 
-        let mut edits = Vec::new();
-
-        // Insert the type alias declaration
-        edits.push(TextEdit {
-            range: Range {
-                start: insert_pos,
-                end: insert_pos,
+        let edits = vec![
+            // Insert the type alias declaration
+            TextEdit {
+                range: Range {
+                    start: insert_pos,
+                    end: insert_pos,
+                },
+                new_text: declaration,
             },
-            new_text: declaration,
-        });
-
-        // Replace the type with the alias name
-        edits.push(TextEdit {
-            range: replacement_range,
-            new_text: type_name.clone(),
-        });
+            // Replace the type with the alias name
+            TextEdit {
+                range: replacement_range,
+                new_text: type_name.clone(),
+            },
+        ];
 
         // Create the workspace edit
         let mut changes = FxHashMap::default();

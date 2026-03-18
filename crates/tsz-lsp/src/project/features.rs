@@ -596,26 +596,25 @@ impl Project {
             if let (Some(file_name), Some(action_type)) = (
                 data.get("fileName").and_then(|v| v.as_str()),
                 data.get("actionType").and_then(|v| v.as_str()),
-            ) {
-                if let Some(file) = self.files.get(file_name) {
-                    let provider = CodeActionProvider::new(
-                        file.arena(),
-                        file.binder(),
-                        file.line_map(),
-                        file.file_name().to_string(),
-                        file.source_text(),
-                    );
+            ) && let Some(file) = self.files.get(file_name)
+            {
+                let provider = CodeActionProvider::new(
+                    file.arena(),
+                    file.binder(),
+                    file.line_map(),
+                    file.file_name().to_string(),
+                    file.source_text(),
+                );
 
-                    // Resolve the specific action type
-                    match action_type {
-                        "organizeImports" => {
-                            if let Some(edit) = provider.resolve_organize_imports(file.root()) {
-                                action.edit = Some(edit);
-                            }
+                // Resolve the specific action type
+                match action_type {
+                    "organizeImports" => {
+                        if let Some(edit) = provider.resolve_organize_imports(file.root()) {
+                            action.edit = Some(edit);
                         }
-                        _ => {
-                            // Unknown action type, return as-is
-                        }
+                    }
+                    _ => {
+                        // Unknown action type, return as-is
                     }
                 }
             }
