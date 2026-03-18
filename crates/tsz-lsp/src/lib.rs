@@ -68,7 +68,10 @@ pub use code_actions::{
     ImportCandidate, ImportCandidateKind,
 };
 pub use completions::{CompletionItem, CompletionItemData, CompletionItemKind, Completions};
-pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
+pub use diagnostics::{
+    DiagnosticSeverity, DocumentDiagnosticReportKind, FullDocumentDiagnosticReport, LspDiagnostic,
+    UnchangedDocumentDiagnosticReport, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportItem,
+};
 pub use editor_ranges::folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
     DocumentFormattingProvider, FormattingOptions, TextEdit as FormattingTextEdit,
@@ -79,9 +82,13 @@ pub use highlighting::semantic_tokens::{
 pub use highlighting::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightProvider};
 pub use hover::{HoverInfo, HoverProvider};
 pub use jsdoc::jsdoc_for_node;
+pub use navigation::declaration::GoToDeclarationProvider;
 pub use navigation::definition::GoToDefinition;
 pub use navigation::references::{FindReferences, ReferenceInfo, RenameLocation};
-pub use navigation::{definition, implementation, references, type_definition};
+pub use navigation::source_definition::GoToSourceDefinitionProvider;
+pub use navigation::{
+    declaration, definition, implementation, references, source_definition, type_definition,
+};
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,

@@ -1317,6 +1317,14 @@ impl<'a> CodeActionProvider<'a> {
         })
     }
 
+    /// Resolve a deferred organize-imports action by computing the edit.
+    ///
+    /// This is used by `codeAction/resolve` when the action was returned
+    /// with `data` but no `edit`.
+    pub fn resolve_organize_imports(&self, root: NodeIndex) -> Option<WorkspaceEdit> {
+        self.organize_imports(root).and_then(|action| action.edit)
+    }
+
     fn is_import_declaration(&self, node_idx: NodeIndex) -> bool {
         self.arena
             .get(node_idx)
