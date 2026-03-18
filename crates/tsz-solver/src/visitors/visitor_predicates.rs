@@ -361,7 +361,12 @@ pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains the `this` type anywhere.
+#[inline]
 pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types never contain ThisType
+    if type_id.is_intrinsic() {
+        return false;
+    }
     contains_type_matching(types, type_id, |key| matches!(key, TypeData::ThisType))
 }
 
