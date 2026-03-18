@@ -339,6 +339,93 @@ pub fn format_ts_error_code(code: u32) -> String {
     format!("TS{code}")
 }
 
+// ---------------------------------------------------------------------------
+// Workspace diagnostics (pull model)
+// ---------------------------------------------------------------------------
+
+/// The result kind for a workspace diagnostic report item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocumentDiagnosticReportKind {
+    /// Full set of diagnostics for the document.
+    Full,
+    /// Diagnostics unchanged since last request (use `result_id` to verify).
+    Unchanged,
+}
+
+/// A full diagnostic report for a single document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FullDocumentDiagnosticReport {
+    /// Discriminator — always `Full`.
+    pub kind: DocumentDiagnosticReportKind,
+    /// An optional result ID to support incremental updates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_id: Option<String>,
+    /// The actual diagnostics.
+    pub items: Vec<LspDiagnostic>,
+}
+
+/// An unchanged diagnostic report for a single document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnchangedDocumentDiagnosticReport {
+    /// Discriminator — always `Unchanged`.
+    pub kind: DocumentDiagnosticReportKind,
+    /// The result ID from the previous request.
+    pub result_id: String,
+}
+
+/// A workspace diagnostic report item — either full or unchanged per document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDiagnosticReportItem {
+    /// The URI of the document.
+    pub uri: String,
+    /// An optional version number of the document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i32>,
+    /// Discriminator — `Full` or `Unchanged`.
+    pub kind: DocumentDiagnosticReportKind,
+    /// Present when `kind == Full`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_id: Option<String>,
+    /// Present when `kind == Full`. The diagnostics for this document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<LspDiagnostic>>,
+}
+
+/// The full workspace diagnostic report returned by `workspace/diagnostic`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDiagnosticReport {
+    pub items: Vec<WorkspaceDiagnosticReportItem>,
+}
+
+impl WorkspaceDiagnosticReport {
+    /// Create a workspace diagnostic report from a map of file → diagnostics.
+    pub fn from_file_diagnostics(
+        file_diagnostics: impl IntoIterator<Item = (String, Vec<LspDiagnostic>)>,
+    ) -> Self {
+        let items = file_diagnostics
+            .into_iter()
+            .map(|(uri, diagnostics)| WorkspaceDiagnosticReportItem {
+                uri,
+                version: None,
+                kind: DocumentDiagnosticReportKind::Full,
+                result_id: None,
+                items: Some(diagnostics),
+            })
+            .collect();
+        Self { items }
+    }
+
+    /// Create an empty report (no diagnostics for any file).
+    pub fn empty() -> Self {
+        Self { items: Vec::new() }
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/diagnostics_tests.rs"]
 mod diagnostics_tests;

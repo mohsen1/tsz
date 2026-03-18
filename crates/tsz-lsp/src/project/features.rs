@@ -11,7 +11,7 @@ use web_time::Instant;
 use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
 use crate::completions::{CompletionItem, CompletionItemData};
-use crate::diagnostics::LspDiagnostic;
+use crate::diagnostics::{LspDiagnostic, WorkspaceDiagnosticReport};
 use crate::editor_decorations::code_lens::CodeLens;
 use crate::hover::HoverInfo;
 use crate::navigation::definition::GoToDefinition;
@@ -414,6 +414,24 @@ impl Project {
         }
 
         result
+    }
+
+    /// Get workspace diagnostics for all open files (pull model).
+    ///
+    /// Returns a `WorkspaceDiagnosticReport` containing diagnostics for every
+    /// file in the project. This implements the LSP `workspace/diagnostic`
+    /// request which allows clients to pull diagnostics on demand.
+    pub fn get_workspace_diagnostics(&mut self) -> WorkspaceDiagnosticReport {
+        let file_names: Vec<String> = self.files.keys().cloned().collect();
+        let mut items = Vec::with_capacity(file_names.len());
+
+        for file_name in file_names {
+            if let Some(diagnostics) = self.get_diagnostics(&file_name) {
+                items.push((file_name, diagnostics));
+            }
+        }
+
+        WorkspaceDiagnosticReport::from_file_diagnostics(items)
     }
 
     /// Get code lenses for a file (project-aware).
