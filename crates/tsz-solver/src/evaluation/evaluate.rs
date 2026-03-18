@@ -298,10 +298,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
+    #[inline]
     pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {
         // Fast path for intrinsics
         if type_id.is_intrinsic() {
             return type_id;
+        }
+
+        // Fast path: check local cache BEFORE depth checks.
+        // Most evaluate() calls are for already-evaluated types (cache hits),
+        // so checking the cache first avoids unnecessary guard operations.
+        if let Some(&cached) = self.cache.get(&type_id) {
+            return cached;
         }
 
         // Check if depth was already exceeded in a previous call
