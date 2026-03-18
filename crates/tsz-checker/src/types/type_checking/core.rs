@@ -24,13 +24,11 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let prev_context = self.ctx.contextual_type;
+        let request = crate::context::TypingRequest::with_contextual_type(expected_type);
 
         for branch_idx in [cond.when_true, cond.when_false] {
-            self.ctx.contextual_type = Some(expected_type);
             self.clear_type_cache_recursive(branch_idx);
-            let mut branch_type = self.get_type_of_node(branch_idx);
-            self.ctx.contextual_type = prev_context;
+            let mut branch_type = self.get_type_of_node_with_request(branch_idx, &request);
 
             if unwrap_async_branch_promises {
                 branch_type = self.unwrap_promise_type(branch_type).unwrap_or(branch_type);
@@ -1157,10 +1155,9 @@ impl<'a> CheckerState<'a> {
         // This must happen unconditionally (not gated on assignability checks)
         // because the initializer's type is computed and cached on first access.
         if element_data.initializer.is_some() && element_type != TypeId::ANY {
-            let prev_context = self.ctx.contextual_type;
-            self.ctx.contextual_type = Some(element_type);
-            let default_value_type = self.get_type_of_node(element_data.initializer);
-            self.ctx.contextual_type = prev_context;
+            let request = crate::context::TypingRequest::with_contextual_type(element_type);
+            let default_value_type =
+                self.get_type_of_node_with_request(element_data.initializer, &request);
 
             // TypeScript checks default value assignability for binding elements
             // regardless of whether the property type includes undefined.

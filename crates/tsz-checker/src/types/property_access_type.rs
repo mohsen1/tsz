@@ -295,17 +295,19 @@ impl<'a> CheckerState<'a> {
             && (skip_result_flow_for_result
                 || self.should_skip_property_result_flow_narrowing(idx));
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
-        let prev_skip = self.ctx.skip_flow_narrowing;
+
+        use crate::context::TypingRequest;
 
         let original_object_type = if skip_optional_base_flow {
-            self.ctx.skip_flow_narrowing = true;
-            let object_type_no_flow = self.get_type_of_node(access.expression);
-            self.ctx.skip_flow_narrowing = prev_skip;
-            object_type_no_flow
+            self.get_type_of_node_with_request(
+                access.expression,
+                &TypingRequest::for_write_context(),
+            )
         } else if skip_result_flow {
-            self.ctx.skip_flow_narrowing = true;
-            let object_type_no_flow = self.get_type_of_node(access.expression);
-            self.ctx.skip_flow_narrowing = prev_skip;
+            let object_type_no_flow = self.get_type_of_node_with_request(
+                access.expression,
+                &TypingRequest::for_write_context(),
+            );
 
             let can_use_no_flow = if let Some(probe_atom) = property_name_for_probe {
                 let property_name_arc = self.ctx.types.resolve_atom_ref(probe_atom);
@@ -325,16 +327,10 @@ impl<'a> CheckerState<'a> {
             if can_use_no_flow {
                 object_type_no_flow
             } else {
-                self.ctx.skip_flow_narrowing = false;
-                let object_type_with_flow = self.get_type_of_node(access.expression);
-                self.ctx.skip_flow_narrowing = prev_skip;
-                object_type_with_flow
+                self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
             }
         } else {
-            self.ctx.skip_flow_narrowing = false;
-            let object_type_with_flow = self.get_type_of_node(access.expression);
-            self.ctx.skip_flow_narrowing = prev_skip;
-            object_type_with_flow
+            self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
         };
 
         // Compute a display type for error messages that preserves literal types.
