@@ -233,6 +233,10 @@ fn test_ts2322_return_wrong_array_element() {
 
 #[test]
 fn test_promise_is_assignable_to_promise_like_with_real_libs() {
+    let libs = load_lib_files_for_test();
+    if libs.is_empty() {
+        return; // lib files not available
+    }
     let source = r#"
 declare const p: Promise<number>;
 const q: PromiseLike<number> = p;
