@@ -654,6 +654,45 @@ impl QueryDatabase for QueryCache<'_> {
         type_id: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
+        // Fast path: intrinsic types never need evaluation
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        let key = (type_id, no_unchecked_indexed_access);
+        let cached = self.eval_cache.borrow().get(&key).copied();
+
+        if let Some(result) = cached {
+            return result;
+        }
+
+        // Fast path: leaf types that never change during evaluation.
+        // Skip TypeEvaluator creation for types where visit_type_key returns type_id unchanged.
+        if let Some(key_data) = self.interner.lookup(type_id) {
+            match key_data {
+                TypeData::Literal(_)
+                | TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Array(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::Enum(_, _)
+                | TypeData::BoundParameter(_)
+                | TypeData::Recursive(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ThisType
+                | TypeData::ModuleNamespace(_)
+                | TypeData::ReadonlyType(_)
+                | TypeData::Error => {
+                    self.eval_cache.borrow_mut().insert(key, type_id);
+                    return type_id;
+                }
+                _ => {}
+            }
+        }
+
         let trace_enabled = query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
             let query_id = query_trace::next_query_id();
@@ -665,15 +704,6 @@ impl QueryDatabase for QueryCache<'_> {
             );
             query_id
         });
-        let key = (type_id, no_unchecked_indexed_access);
-        let cached = self.eval_cache.borrow().get(&key).copied();
-
-        if let Some(result) = cached {
-            if let Some(query_id) = trace_query_id {
-                query_trace::unary_end(query_id, "evaluate_type_with_options", result, true);
-            }
-            return result;
-        }
 
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
