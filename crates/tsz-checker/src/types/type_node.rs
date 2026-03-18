@@ -454,19 +454,48 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .nodes
             .iter()
             .copied()
-            .any(|elem_idx| self.type_node_references_resolving_alias(elem_idx, true))
+            .any(|elem_idx| self.type_node_references_resolving_alias(elem_idx, true, false))
     }
 
+    /// Check whether a type node references a type alias currently being resolved,
+    /// in a way that creates a true circularity for TS4110.
+    ///
+    /// In TSC, TS4110 fires only when resolving a tuple element requires evaluating
+    /// the alias itself (via `pushTypeResolution`/`popTypeResolution`).  A bare
+    /// `TypeReference` to the alias (e.g. `type T = [string, T]`) does NOT trigger
+    /// TS4110 because type references produce deferred (lazy) types.  Only when the
+    /// alias appears inside a computation context that forces immediate evaluation --
+    /// such as indexed access (`T[0]`) -- does the circularity fire.
+    ///
+    /// `inside_computation` tracks whether we are inside a node that requires
+    /// immediate type evaluation (indexed access type, conditional type, etc.).
     fn type_node_references_resolving_alias(
         &self,
         node_idx: NodeIndex,
         stop_at_nested_tuple: bool,
+        inside_computation: bool,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
 
         if stop_at_nested_tuple && node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return false;
+        }
+
+        // Array types, function types, and other type constructs create deferred type
+        // references that break circularity.  In TSC, these are "deferred type reference
+        // nodes" and self-references through them do NOT trigger TS4110.  For example,
+        // `type T = ["or", T[]]` is valid because `T[]` is deferred.
+        if matches!(
+            node.kind,
+            k if k == syntax_kind_ext::ARRAY_TYPE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+                || k == syntax_kind_ext::TYPE_LITERAL
+                || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::TYPE_QUERY
+        ) {
             return false;
         }
 
@@ -491,12 +520,42 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
             {
-                return true;
+                // A TypeReference with type arguments (e.g. `C1<T>`) creates a new
+                // instantiation boundary -- not circular even inside computation.
+                if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                    let has_args = self
+                        .ctx
+                        .arena
+                        .get_type_ref(node)
+                        .is_some_and(|tr| tr.type_arguments.is_some());
+                    if has_args {
+                        return false;
+                    }
+                }
+                // Only flag as circular if we are inside a computation context
+                // (indexed access, conditional type).  A bare TypeReference to the
+                // alias is deferred in TSC and does not cause circularity.
+                return inside_computation;
+            }
+
+            // A TypeReference to a different type is a deferred boundary -- do not
+            // recurse into its type arguments.
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                return false;
             }
         }
 
+        // Indexed access types and conditional types are "computation" contexts:
+        // resolving them forces immediate evaluation of the alias.
+        let enters_computation = matches!(
+            node.kind,
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                || k == syntax_kind_ext::CONDITIONAL_TYPE
+        );
+        let child_inside = inside_computation || enters_computation;
+
         for child_idx in self.ctx.arena.get_children(node_idx) {
-            if self.type_node_references_resolving_alias(child_idx, false) {
+            if self.type_node_references_resolving_alias(child_idx, false, child_inside) {
                 return true;
             }
         }
