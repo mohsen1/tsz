@@ -244,7 +244,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_conditional_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
-    pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_of_conditional_expression(
+        &mut self,
+        idx: NodeIndex,
+        request: TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -263,7 +267,7 @@ impl<'a> CheckerState<'a> {
         // but don't check assignability here - that happens at the call site.
         // This allows `cond ? "a" : "b"` to infer as `"a" | "b"` and then
         // the union is checked against the contextual type.
-        let prev_context = self.ctx.contextual_type;
+        let prev_context = request.contextual_type;
 
         // Preserve literal types in conditional branches so that
         // `const x = cond ? "a" : "b"` infers `"a" | "b"` (tsc behavior).
@@ -825,7 +829,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_template_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
-    pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_of_template_expression(
+        &mut self,
+        idx: NodeIndex,
+        request: TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::STRING;
         };
@@ -874,7 +882,7 @@ impl<'a> CheckerState<'a> {
         // 1. Contextual type is/contains a template literal type or string literal type
         // 2. Inside a const assertion (as const)
         let in_template_context = self.ctx.in_const_assertion
-            || self.ctx.contextual_type.is_some_and(|ct| {
+            || request.contextual_type.is_some_and(|ct| {
                 expression_ops::is_template_literal_contextual_type(self.ctx.types, ct)
             });
 
@@ -1143,20 +1151,16 @@ impl<'a> CheckerState<'a> {
         {
             // Still evaluate the node so side effects (diagnostics on the object) fire,
             // but return `any` for the LHS type so assignability is not checked.
-            let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-            self.ctx.skip_flow_narrowing = true;
-            let _ = self.get_type_of_node(idx);
-            self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+            let _ = self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context());
             return TypeId::ANY;
         }
 
-        let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-        if self.is_valid_assignment_target(idx) {
-            self.ctx.skip_flow_narrowing = true;
-        }
-        let result = self.get_type_of_node(idx);
-        self.ctx.skip_flow_narrowing = prev_skip_narrowing;
-        result
+        let request = if self.is_valid_assignment_target(idx) {
+            TypingRequest::for_write_context()
+        } else {
+            TypingRequest::NONE
+        };
+        self.get_type_of_node_with_request(idx, &request)
     }
 
     /// Get the type of a class member.

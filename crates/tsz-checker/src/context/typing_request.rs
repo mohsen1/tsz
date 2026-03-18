@@ -155,6 +155,15 @@ impl TypingRequest {
         }
     }
 
+    /// Request with an optional contextual type.
+    #[inline]
+    pub const fn from_contextual_type(ty: Option<TypeId>) -> Self {
+        match ty {
+            Some(ty) => Self::with_contextual_type(ty),
+            None => Self::NONE,
+        }
+    }
+
     /// Builder: set the contextual type.
     #[inline]
     pub const fn contextual(mut self, ty: TypeId) -> Self {
@@ -173,6 +182,34 @@ impl TypingRequest {
     #[inline]
     pub const fn write(mut self) -> Self {
         self.flow = FlowIntent::Write;
+        self
+    }
+
+    /// Builder: set the contextual type when present, otherwise leave unchanged.
+    #[inline]
+    pub const fn contextual_opt(mut self, ty: Option<TypeId>) -> Self {
+        self.contextual_type = ty;
+        self
+    }
+
+    /// Builder: replace the flow intent.
+    #[inline]
+    pub const fn with_flow(mut self, flow: FlowIntent) -> Self {
+        self.flow = flow;
+        self
+    }
+
+    /// Builder: replace the contextual origin.
+    #[inline]
+    pub const fn with_origin(mut self, origin: ContextualOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Returns the request without any contextual type.
+    #[inline]
+    pub const fn without_contextual(mut self) -> Self {
+        self.contextual_type = None;
         self
     }
 

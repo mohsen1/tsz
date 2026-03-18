@@ -13,6 +13,14 @@ use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_function_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_function_impl(
+        &mut self,
+        idx: NodeIndex,
+        request: TypingRequest,
+    ) -> TypeId {
         use tsz_solver::{FunctionShape, ParamInfo};
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -150,7 +158,7 @@ impl<'a> CheckerState<'a> {
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
         let mut has_jsdoc_type_function = false;
-        let mut ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
+        let mut ctx_helper = if let Some(ctx_type) = request.contextual_type {
             tracing::debug!(
                 "function_type: contextual_type = {:?}, is_closure = {}",
                 ctx_type,
@@ -1064,7 +1072,7 @@ impl<'a> CheckerState<'a> {
                 // Parameter types are still contextually typed, but the body's
                 // return value should NOT be checked against the asserted return
                 // type — only TS2352 fires at the assertion site.
-                let return_context = if self.ctx.contextual_type_is_assertion {
+                let return_context = if request.origin.is_assertion() {
                     jsdoc_return_context
                 } else {
                     jsdoc_return_context.or_else(|| {
@@ -1072,7 +1080,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(tsz_solver::ContextualTypeContext::get_return_type)
                             .or_else(|| {
-                                self.ctx.contextual_type.and_then(|ty| {
+                                request.contextual_type.and_then(|ty| {
                                     tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
                                 })
                             })
@@ -1642,7 +1650,7 @@ impl<'a> CheckerState<'a> {
                 // Propagate contextual return type for expression-bodied arrows.
                 // Compute the effective body context as a local variable instead of
                 // modifying the ambient ctx.contextual_type.
-                let outer_ctx = self.ctx.contextual_type;
+                let outer_ctx = request.contextual_type;
                 let effective_body_ctx = if let Some(body_node) = self.ctx.arena.get(body)
                     && body_node.kind != syntax_kind_ext::BLOCK
                     && !has_type_annotation
@@ -1689,9 +1697,8 @@ impl<'a> CheckerState<'a> {
                 let body_request = effective_body_ctx
                     .map(TypingRequest::with_contextual_type)
                     .unwrap_or(TypingRequest::NONE);
-                self.run_with_typing_context(&body_request, |checker| {
-                    checker.check_statement(body);
-                });
+                let _ = body_request;
+                self.check_statement(body);
 
                 if let Some(snap) = &diag_snap {
                     self.ctx.rollback_diagnostics(snap);

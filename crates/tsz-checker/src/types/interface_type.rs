@@ -770,7 +770,19 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
-                    construct_signatures: base_shape.construct_signatures.clone(),
+                        construct_signatures: base_shape
+                            .construct_signatures
+                            .iter()
+                            .map(|sig| {
+                                let mut sig = sig.clone();
+                                sig.return_type = self.apply_module_augmentations(
+                                    module_spec,
+                                    interface_name,
+                                    sig.return_type,
+                                );
+                                sig
+                            })
+                            .collect(),
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
@@ -1740,6 +1752,19 @@ impl<'a> CheckerState<'a> {
                 let prototype_name = self.ctx.types.intern_string("prototype");
                 let mut merged_properties =
                     self.merge_properties(&augmentation_members, &base_shape.properties);
+                let merged_construct_signatures = base_shape
+                    .construct_signatures
+                    .iter()
+                    .map(|sig| {
+                        let mut sig = sig.clone();
+                        sig.return_type = self.apply_module_augmentations(
+                            module_spec,
+                            interface_name,
+                            sig.return_type,
+                        );
+                        sig
+                    })
+                    .collect();
                 if !base_shape.construct_signatures.is_empty()
                     && let Some(prototype_prop) = merged_properties
                         .iter_mut()
@@ -1755,7 +1780,7 @@ impl<'a> CheckerState<'a> {
                 }
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
-                    construct_signatures: base_shape.construct_signatures.clone(),
+                    construct_signatures: merged_construct_signatures,
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),

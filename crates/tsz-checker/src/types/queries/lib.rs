@@ -765,7 +765,23 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        self.get_validated_member_type(resolved_member_id, property_name)
+        let mut member_type = self.get_validated_member_type(resolved_member_id, property_name)?;
+
+        if let Some(parent_symbol) = self
+            .get_cross_file_symbol(parent_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+            && parent_symbol.flags
+                & (symbol_flags::MODULE | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
+                != 0
+        {
+            member_type = self.apply_module_augmentations(
+                parent_symbol.escaped_name.as_str(),
+                property_name,
+                member_type,
+            );
+        }
+
+        Some(member_type)
     }
 
     /// Check if a resolved member symbol is a runtime value and return its type.

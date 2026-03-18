@@ -52,8 +52,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn setup_iife_contextual_type(
         &mut self,
         callee_expression: NodeIndex,
+        contextual_type: Option<TypeId>,
     ) -> Option<(TypeId, TypeId)> {
-        let ctx_type = self.ctx.contextual_type?;
+        let ctx_type = contextual_type?;
 
         // Unwrap parenthesized expressions to find the actual callee.
         // Handles both `function*(){}()` and `(function*(){})()`.

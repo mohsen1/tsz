@@ -5,6 +5,7 @@
 //! to keep module sizes manageable.
 
 use crate::query_boundaries::common as query_common;
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -149,7 +150,11 @@ impl<'a> CheckerState<'a> {
     /// - Tuple contexts (e.g., `[string, number]`)
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
-    pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_of_array_literal(
+        &mut self,
+        idx: NodeIndex,
+        request: TypingRequest,
+    ) -> TypeId {
         let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -173,7 +178,7 @@ impl<'a> CheckerState<'a> {
                 return factory.array(TypeId::NEVER);
             }
 
-            if let Some(contextual) = self.ctx.contextual_type {
+            if let Some(contextual) = request.contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
@@ -220,8 +225,8 @@ impl<'a> CheckerState<'a> {
         // array literals. The original Application retains the type args so the solver's
         // get_array_element_type can use the app.args[0] heuristic to extract the element
         // type (e.g., readonly [K, V] from Iterable<readonly [K, V]>).
-        let original_contextual_type = self.ctx.contextual_type;
-        let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
+        let original_contextual_type = request.contextual_type;
+        let resolved_contextual_type = request.contextual_type.map(|ctx_type| {
             let ctx_type = self.evaluate_contextual_type(ctx_type);
             // Strip null/undefined before evaluation — matches tsc's getNonNullableType
             // in getApparentTypeOfContextualType. Without this, `Iterable<T> | null`
@@ -380,13 +385,13 @@ impl<'a> CheckerState<'a> {
                 // When the contextual union is ambiguous (multiple applicable element types),
                 // clear the contextual type for each element so closures don't inherit
                 // the array's union contextual type and inadvertently get typed parameters.
-                crate::context::TypingRequest::NONE
+                TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some() {
                     let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
                     match helper.get_tuple_element_type_with_count(index, elem_count) {
-                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
-                        None => crate::context::TypingRequest::NONE,
+                        Some(ty) => TypingRequest::with_contextual_type(ty),
+                        None => TypingRequest::NONE,
                     }
                 } else {
                     let elem_ctx_type = helper
@@ -405,12 +410,12 @@ impl<'a> CheckerState<'a> {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
                     match elem_ctx_type {
-                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
-                        None => crate::context::TypingRequest::NONE,
+                        Some(ty) => TypingRequest::with_contextual_type(ty),
+                        None => TypingRequest::NONE,
                     }
                 }
             } else {
-                crate::context::TypingRequest::NONE
+                TypingRequest::NONE
             };
 
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
