@@ -246,17 +246,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // This allows `yield (num) => ...` to contextually type arrow params.
             // For `yield *expr`, the expression is an iterable of the yield type,
             // so wrap the contextual type in Array<T> to contextually type array elements.
-            let prev_contextual = self.checker.ctx.contextual_type;
+            let outer_contextual = self.checker.ctx.contextual_type;
             let mut contextual_yield_star_return = None;
-            if let Some(yield_ctx) = self
+            let yield_request = if let Some(yield_ctx) = self
                 .checker
                 .ctx
                 .current_yield_type()
                 .or_else(|| self.get_expected_yield_type(idx))
             {
-                if yield_expr.asterisk_token {
-                    let contextual_operand_type = self
-                        .checker
+                let ctx_type = if yield_expr.asterisk_token {
+                    self.checker
                         .ctx
                         .arena
                         .get(yield_expr.expression)
@@ -274,7 +273,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 return None;
                             }
                             let expected_generator = self.get_expected_generator_type(idx)?;
-                            let result_ctx = prev_contextual.unwrap_or(TypeId::UNKNOWN);
+                            let result_ctx = outer_contextual.unwrap_or(TypeId::UNKNOWN);
                             contextual_yield_star_return = Some(result_ctx);
                             let generator_ctx = tsz_solver::ContextualTypeContext::with_expected(
                                 self.checker.ctx.types,
@@ -309,16 +308,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // yield *[x => ...] needs Array<TYield> as contextual type
                             // so each array element gets TYield as its contextual type
                             self.checker.ctx.types.factory().array(yield_ctx)
-                        });
-                    self.checker.ctx.contextual_type = Some(contextual_operand_type);
+                        })
                 } else {
-                    self.checker.ctx.contextual_type = Some(yield_ctx);
-                }
+                    yield_ctx
+                };
                 self.checker
                     .clear_type_cache_recursive(yield_expr.expression);
-            }
-            let expression_type = self.checker.get_type_of_node(yield_expr.expression);
-            self.checker.ctx.contextual_type = prev_contextual;
+                crate::context::TypingRequest::with_contextual_type(ctx_type)
+            } else {
+                crate::context::TypingRequest::NONE
+            };
+            let expression_type = self
+                .checker
+                .get_type_of_node_with_request(yield_expr.expression, &yield_request);
             if yield_expr.asterisk_token {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if is_async_generator {
@@ -1035,10 +1037,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
-                    // Save contextual type: check_class_expression may alter it
-                    // while checking members, but it is needed later by
-                    // get_class_constructor_type to preserve literal types in
-                    // static properties that match a contextual interface.
+                    // TEMPORARY: Save/restore contextual type around check_class_expression
+                    // because it mutates ctx.contextual_type as a side effect during member
+                    // checking. This will be removed when check_class_expression is migrated
+                    // to accept a TypingRequest. (ambient-context-transport cleanup)
                     let saved_ctx = self.checker.ctx.contextual_type;
                     self.checker.check_class_expression(idx, &class);
                     self.checker.ctx.contextual_type = saved_ctx;
@@ -1309,10 +1311,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     {
                         // Set contextual type for JSDoc @satisfies, matching the
                         // `satisfies` expression handler behavior.
-                        let prev_contextual_type = self.checker.ctx.contextual_type;
-                        self.checker.ctx.contextual_type = Some(satisfies_type);
-                        let expr_type = self.checker.get_type_of_node(paren.expression);
-                        self.checker.ctx.contextual_type = prev_contextual_type;
+                        let satisfies_request =
+                            crate::context::TypingRequest::with_contextual_type(satisfies_type);
+                        let expr_type = self
+                            .checker
+                            .get_type_of_node_with_request(paren.expression, &satisfies_request);
                         // Ensure types are fully resolved (evaluate applications like
                         // Record<K,V>, Partial<T>, etc.) before assignability checks.
                         self.checker.ensure_relation_input_ready(expr_type);

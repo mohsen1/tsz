@@ -19,11 +19,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId {
-        let prev = self.ctx.skip_flow_narrowing;
-        self.ctx.skip_flow_narrowing = true;
-        let ty = CheckerState::get_type_of_node(self, idx);
-        self.ctx.skip_flow_narrowing = prev;
-        ty
+        self.get_type_of_node_with_request(idx, &crate::context::TypingRequest::for_write_context())
     }
 
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
@@ -925,30 +921,42 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check the wrapped declaration
             if export_decl.export_clause.is_some() {
                 let clause_idx = export_decl.export_clause;
-                let mut expected_type = None;
-                let mut prev_context = None;
-                if export_decl.is_default_export {
-                    expected_type = self.jsdoc_type_annotation_for_node(export_idx);
-                    if let Some(et) = expected_type {
-                        prev_context = self.ctx.contextual_type;
-                        self.ctx.contextual_type = Some(et);
+                let expected_type = if export_decl.is_default_export {
+                    self.jsdoc_type_annotation_for_node(export_idx)
+                } else {
+                    None
+                };
+
+                // TEMPORARY: check_statement still reads ctx.contextual_type,
+                // so install/restore around that call when we have an expected type.
+                if let Some(et) = expected_type {
+                    let prev = self.ctx.contextual_type;
+                    self.ctx.contextual_type = Some(et);
+                    let skip_clause_expression_check = export_decl.module_specifier.is_some()
+                        && self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                    if !skip_clause_expression_check {
+                        self.check_statement(clause_idx);
+                    }
+                    self.ctx.contextual_type = prev;
+                } else {
+                    let skip_clause_expression_check = export_decl.module_specifier.is_some()
+                        && self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                    if !skip_clause_expression_check {
+                        self.check_statement(clause_idx);
                     }
                 }
 
-                let skip_clause_expression_check = export_decl.module_specifier.is_some()
-                    && self
-                        .ctx
-                        .arena
-                        .get(clause_idx)
-                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
-
-                if !skip_clause_expression_check {
-                    self.check_statement(clause_idx);
-                }
-
                 if let Some(et) = expected_type {
-                    let actual_type = self.get_type_of_node(clause_idx);
-                    self.ctx.contextual_type = prev_context;
+                    let request = crate::context::TypingRequest::with_contextual_type(et);
+                    let actual_type = self.get_type_of_node_with_request(clause_idx, &request);
                     self.check_assignable_or_report(actual_type, et, clause_idx);
                     if let Some(expr_node) = self.ctx.arena.get(clause_idx)
                         && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -1440,11 +1448,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // In tsc, `getContextualType` returns the switch discriminant type for case
         // clause expressions. This enables excess property checking (TS2353) when
         // the case expression is an object literal.
-        let prev_contextual = self.ctx.contextual_type;
-        self.ctx.contextual_type = Some(switch_type);
-        let case_type = self.get_type_of_node(case_expr);
-        self.ctx.contextual_type = prev_contextual;
-        case_type
+        let request = crate::context::TypingRequest::with_contextual_type(switch_type);
+        self.get_type_of_node_with_request(case_expr, &request)
     }
 
     fn check_switch_case_comparable(
