@@ -195,6 +195,23 @@ impl<'a> CodeActionProvider<'a> {
                     diag,
                     &context.import_candidates,
                 ));
+
+                // New diagnostic-driven quick fixes
+                if let Some(action) = self.add_missing_await_quickfix(diag) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.convert_require_to_import_quickfix(diag) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.add_override_modifier_quickfix(diag) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.fix_spelling_quickfix(diag) {
+                    actions.push(action);
+                }
+                if let Some(action) = self.prefix_unused_with_underscore_quickfix(diag) {
+                    actions.push(action);
+                }
             }
         }
 
@@ -203,8 +220,12 @@ impl<'a> CodeActionProvider<'a> {
             .only
             .as_ref()
             .is_none_or(|kinds| kinds.contains(&CodeActionKind::SourceOrganizeImports));
-        if request_organize && let Some(action) = self.organize_imports(root) {
-            actions.push(action);
+        if request_organize {
+            if let Some(action) = self.organize_imports(root) {
+                actions.push(action);
+            }
+            // Additional source actions
+            actions.extend(self.source_actions(root));
         }
 
         // Refactorings
@@ -247,6 +268,65 @@ impl<'a> CodeActionProvider<'a> {
                 actions.push(action);
             }
             if let Some(action) = self.sort_import_specifiers(root, range) {
+                actions.push(action);
+            }
+
+            // Template string conversions
+            if let Some(action) = self.convert_to_template_string(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.convert_to_string_concatenation(root, range) {
+                actions.push(action);
+            }
+
+            // Arrow function braces
+            if let Some(action) = self.add_braces_to_arrow_function(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.remove_braces_from_arrow_function(root, range) {
+                actions.push(action);
+            }
+
+            // Optional chaining
+            if let Some(action) = self.convert_to_optional_chaining(root, range) {
+                actions.push(action);
+            }
+
+            // Nullish coalescing
+            if let Some(action) = self.convert_to_nullish_coalescing(root, range) {
+                actions.push(action);
+            }
+
+            // Move to new file
+            if let Some(action) = self.move_to_new_file(root, range) {
+                actions.push(action);
+            }
+
+            // Extract interface from class
+            if let Some(action) = self.extract_interface_from_class(root, range) {
+                actions.push(action);
+            }
+
+            // Convert parameters to destructured object
+            if let Some(action) = self.convert_params_to_destructured(root, range) {
+                actions.push(action);
+            }
+
+            // Add return type
+            if let Some(action) = self.add_return_type(root, range) {
+                actions.push(action);
+            }
+
+            // Convert to async/await
+            if let Some(action) = self.convert_to_async_await(root, range) {
+                actions.push(action);
+            }
+
+            // Convert between named and default exports
+            if let Some(action) = self.convert_to_default_export(root, range) {
+                actions.push(action);
+            }
+            if let Some(action) = self.convert_to_named_export(root, range) {
                 actions.push(action);
             }
         }
