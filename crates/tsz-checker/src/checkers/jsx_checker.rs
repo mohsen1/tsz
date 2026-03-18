@@ -3,6 +3,7 @@
 //!
 //! This implements Rule #36: JSX type checking with case-sensitive tag lookup.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -299,10 +300,11 @@ impl<'a> CheckerState<'a> {
                 // For generic components, set UNKNOWN contextual type to prevent
                 // false TS7006 on callback parameters in JSX attributes.
                 let gen_ctx = self.is_generic_jsx_component(evaluated);
-                let prev_ctx = self.ctx.contextual_type;
-                if gen_ctx {
-                    self.ctx.contextual_type = Some(TypeId::UNKNOWN);
-                }
+                let attr_request = if gen_ctx {
+                    TypingRequest::with_contextual_type(TypeId::UNKNOWN)
+                } else {
+                    TypingRequest::NONE
+                };
                 if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
                     && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
                 {
@@ -312,18 +314,23 @@ impl<'a> CheckerState<'a> {
                                 if let Some(spread_data) =
                                     self.ctx.arena.get_jsx_spread_attribute(attr_node)
                                 {
-                                    self.compute_type_of_node(spread_data.expression);
+                                    self.compute_type_of_node_with_request(
+                                        spread_data.expression,
+                                        &attr_request,
+                                    );
                                 }
                             } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                                 && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
                                 && !attr_data.initializer.is_none()
                             {
-                                self.compute_type_of_node(attr_data.initializer);
+                                self.compute_type_of_node_with_request(
+                                    attr_data.initializer,
+                                    &attr_request,
+                                );
                             }
                         }
                     }
                 }
-                self.ctx.contextual_type = prev_ctx;
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -1544,10 +1551,10 @@ impl<'a> CheckerState<'a> {
 
                 if !overwritten {
                     // Set contextual type to preserve narrow literal types.
-                    let prev_contextual_type = self.ctx.contextual_type;
-                    self.ctx.contextual_type = Some(expected_type);
-                    let actual_type = self.compute_type_of_node(value_node_idx);
-                    self.ctx.contextual_type = prev_contextual_type;
+                    let actual_type = self.compute_type_of_node_with_request(
+                        value_node_idx,
+                        &TypingRequest::with_contextual_type(expected_type),
+                    );
 
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = actual_type;
@@ -1568,12 +1575,13 @@ impl<'a> CheckerState<'a> {
                 };
                 let spread_expr_idx = spread_data.expression;
                 // Set contextual type so spread literals preserve narrow types.
-                let prev_contextual_type = self.ctx.contextual_type;
-                if !skip_prop_checks {
-                    self.ctx.contextual_type = Some(props_type);
-                }
-                let spread_type = self.compute_type_of_node(spread_expr_idx);
-                self.ctx.contextual_type = prev_contextual_type;
+                let spread_request = if !skip_prop_checks {
+                    TypingRequest::with_contextual_type(props_type)
+                } else {
+                    TypingRequest::NONE
+                };
+                let spread_type =
+                    self.compute_type_of_node_with_request(spread_expr_idx, &spread_request);
                 let spread_type = self.resolve_type_for_property_access(spread_type);
 
                 // any/error/unknown spread covers all properties.

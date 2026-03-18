@@ -4,6 +4,7 @@
 //! return expressions, analyzing control flow (fall-through detection),
 //! and checking for explicit `any` assertion returns.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -544,7 +545,6 @@ impl<'a> CheckerState<'a> {
             return TypeId::VOID;
         }
 
-        let prev_context = self.ctx.contextual_type;
         let prev_preserve_literals = self.ctx.preserve_literal_types;
 
         // When the return expression is a function/arrow, do NOT set
@@ -565,9 +565,10 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
             )
         });
-        if let Some(ctx_type) = return_context {
-            self.ctx.contextual_type = Some(ctx_type);
-        }
+        let request = match return_context {
+            Some(ctx_type) => TypingRequest::with_contextual_type(ctx_type),
+            None => TypingRequest::NONE,
+        };
         if is_function_expr {
             // Function expressions compute their own return types via
             // infer_return_type_from_body.  Clear preserve_literal_types so
@@ -577,8 +578,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.preserve_literal_types = true;
         }
-        let return_type = self.get_type_of_node(expr_idx);
-        self.ctx.contextual_type = prev_context;
+        let return_type = self.get_type_of_node_with_request(expr_idx, &request);
         self.ctx.preserve_literal_types = prev_preserve_literals;
         return_type
     }

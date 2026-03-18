@@ -2273,6 +2273,19 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/computation/binary.rs",
         "types/computation/access.rs",
         "types/computation/tagged_template.rs",
+        // Wave 3 migrations:
+        "types/computation/call_helpers.rs",
+        "checkers/parameter_checker.rs",
+        "types/utilities/return_type.rs",
+        "checkers/call_checker.rs",
+        "types/computation/call_inference.rs",
+        "dispatch.rs",
+        "checkers/jsx_checker.rs",
+        "types/computation/helpers.rs",
+        "types/computation/call_display.rs",
+        "types/function_type.rs",
+        "types/class_type/constructor.rs",
+        "state/state_checking_members/statement_callback_bridge.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2320,6 +2333,9 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
     let migrated_files = &[
         "types/property_access_type.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
+        // Wave 3: call_checker and call_inference migrated skip_flow via TypingRequest
+        "checkers/call_checker.rs",
+        "types/computation/call_inference.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

@@ -929,9 +929,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                 // TEMPORARY: check_statement still reads ctx.contextual_type,
                 // so install/restore around that call when we have an expected type.
-                if let Some(et) = expected_type {
-                    let prev = self.ctx.contextual_type;
-                    self.ctx.contextual_type = Some(et);
+                {
+                    let clause_request = expected_type
+                        .map(crate::context::TypingRequest::with_contextual_type)
+                        .unwrap_or(crate::context::TypingRequest::NONE);
                     let skip_clause_expression_check = export_decl.module_specifier.is_some()
                         && self
                             .ctx
@@ -939,18 +940,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             .get(clause_idx)
                             .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                     if !skip_clause_expression_check {
-                        self.check_statement(clause_idx);
-                    }
-                    self.ctx.contextual_type = prev;
-                } else {
-                    let skip_clause_expression_check = export_decl.module_specifier.is_some()
-                        && self
-                            .ctx
-                            .arena
-                            .get(clause_idx)
-                            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
-                    if !skip_clause_expression_check {
-                        self.check_statement(clause_idx);
+                        self.run_with_typing_context(&clause_request, |checker| {
+                            checker.check_statement(clause_idx);
+                        });
                     }
                 }
 

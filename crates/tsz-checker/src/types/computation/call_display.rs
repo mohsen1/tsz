@@ -8,6 +8,7 @@
 //! - `propagate_generic_constructor_display_defs` — DefId propagation after generic inference
 //! - `object_literal_has_computed_property_names` — computed property name detection
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -45,12 +46,13 @@ impl<'a> CheckerState<'a> {
     /// contextual type into a callable type so the function expression resolver can extract
     /// the return type (and for generators, the yield type).
     ///
-    /// Returns `Some(original_ctx_type)` if wrapping was performed (caller should restore
-    /// the contextual type after call resolution), or `None` if no wrapping was needed.
+    /// Returns `Some((wrapper_fn, original_ctx_type))` if wrapping is needed, or `None`
+    /// if the callee is not a function expression. The caller is responsible for installing
+    /// the wrapper via the TypingRequest API and restoring the original after resolution.
     pub(crate) fn setup_iife_contextual_type(
         &mut self,
         callee_expression: NodeIndex,
-    ) -> Option<TypeId> {
+    ) -> Option<(TypeId, TypeId)> {
         let ctx_type = self.ctx.contextual_type?;
 
         // Unwrap parenthesized expressions to find the actual callee.
@@ -85,8 +87,7 @@ impl<'a> CheckerState<'a> {
                 .types
                 .factory()
                 .function(FunctionShape::new(vec![], ctx_type));
-            self.ctx.contextual_type = Some(wrapper_fn);
-            Some(ctx_type) // save original to restore later
+            Some((wrapper_fn, ctx_type))
         } else {
             None
         }
@@ -132,13 +133,12 @@ impl<'a> CheckerState<'a> {
                 // Re-evaluate context-sensitive arguments under the final instantiated
                 // parameter type. Generic round-2 collection can still leave behind
                 // provisional diagnostics from a less-specific contextual pass.
-                let prev_context = self.ctx.contextual_type;
-                self.ctx.contextual_type =
-                    self.contextual_type_option_for_expression(expected_type);
+                let ctx_type = self.contextual_type_option_for_expression(expected_type);
+                let request = ctx_type
+                    .map(TypingRequest::with_contextual_type)
+                    .unwrap_or(TypingRequest::NONE);
                 self.clear_type_cache_recursive(arg_idx);
-                let refreshed = self.get_type_of_node(arg_idx);
-                self.ctx.contextual_type = prev_context;
-                refreshed
+                self.get_type_of_node_with_request(arg_idx, &request)
             }
             _ => cached_arg_type,
         }
