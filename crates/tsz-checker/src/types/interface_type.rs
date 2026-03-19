@@ -594,13 +594,16 @@ impl<'a> CheckerState<'a> {
                     let substitution =
                         TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
-                    let requires_self = current_sym.is_some_and(|current_sym| {
-                        has_structural_self_arg
-                            || self.type_requires_structure_of_symbol_for_base_type(
-                                base_type,
-                                current_sym,
-                            )
-                    });
+                    let is_builtin_array_heritage =
+                        matches!(base_symbol.escaped_name.as_str(), "Array" | "ReadonlyArray");
+                    let requires_self = !is_builtin_array_heritage
+                        && current_sym.is_some_and(|current_sym| {
+                            has_structural_self_arg
+                                || self.type_requires_structure_of_symbol_for_base_type(
+                                    base_type,
+                                    current_sym,
+                                )
+                        });
 
                     if let Some(current_sym) = current_sym
                         && requires_self

@@ -4953,6 +4953,34 @@ class Foo extends NextType<Foo> {
 }
 
 #[test]
+fn test_interface_extends_readonly_array_through_conditional_alias_has_no_ts2310() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Primitive = string | number | boolean | bigint | symbol | null | undefined;
+
+type DeepReadonly<T> = T extends ((...args: any[]) => any) | Primitive
+  ? T
+  : T extends _DeepReadonlyArray<infer U>
+  ? _DeepReadonlyArray<U>
+  : T extends _DeepReadonlyObject<infer V>
+  ? _DeepReadonlyObject<V>
+  : T;
+
+interface _DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+
+type _DeepReadonlyObject<T> = {
+  readonly [P in keyof T]: DeepReadonly<T[P]>;
+};
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2310),
+        "ReadonlyArray heritage should not report TS2310 through conditional element aliases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
         r"
