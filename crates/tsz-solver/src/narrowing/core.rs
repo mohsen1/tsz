@@ -390,13 +390,12 @@ impl<'a> NarrowingContext<'a> {
                                 resolver.resolve_lazy(def_id, self.db.as_type_database());
                             let type_params = resolver.get_lazy_type_params(def_id);
                             if let (Some(body), Some(params)) = (resolved_body, type_params) {
-                                type_id =
-                                    crate::instantiation::instantiate::instantiate_generic(
-                                        self.db.as_type_database(),
-                                        body,
-                                        &params,
-                                        &app.args,
-                                    );
+                                type_id = crate::instantiation::instantiate::instantiate_generic(
+                                    self.db.as_type_database(),
+                                    body,
+                                    &params,
+                                    &app.args,
+                                );
                                 continue;
                             }
                         }
@@ -456,12 +455,8 @@ impl<'a> NarrowingContext<'a> {
                         self.resolve_type(idx)
                     };
                     if resolved_obj != obj || resolved_idx != idx {
-                        let evaluated =
-                            self.db.evaluate_index_access(resolved_obj, resolved_idx);
-                        if !matches!(
-                            self.db.lookup(evaluated),
-                            Some(TypeData::IndexAccess(_, _))
-                        ) {
+                        let evaluated = self.db.evaluate_index_access(resolved_obj, resolved_idx);
+                        if !matches!(self.db.lookup(evaluated), Some(TypeData::IndexAccess(_, _))) {
                             type_id = evaluated;
                             continue;
                         }

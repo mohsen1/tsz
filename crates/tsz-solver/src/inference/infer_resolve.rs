@@ -38,10 +38,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         if contra_types.len() <= 1 {
-            return contra_types
-                .first()
-                .copied()
-                .unwrap_or(TypeId::UNKNOWN);
+            return contra_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
         // Tournament: find the most-specific candidate in O(N).
