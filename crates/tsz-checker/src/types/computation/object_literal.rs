@@ -10,198 +10,9 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
+use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    const fn implicit_any_like_diagnostic_code(code: u32) -> bool {
-        matches!(
-            code,
-            crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
-                | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
-                | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
-                | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
-        )
-    }
-
-    pub(crate) fn function_like_param_spans_for_node(&self, idx: NodeIndex) -> Vec<(u32, u32)> {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return Vec::new();
-        };
-
-        let params = if let Some(func) = self.ctx.arena.get_function(node) {
-            Some(func.parameters.nodes.as_slice())
-        } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-            Some(method.parameters.nodes.as_slice())
-        } else {
-            self.ctx
-                .arena
-                .get_accessor(node)
-                .map(|accessor| accessor.parameters.nodes.as_slice())
-        };
-
-        params
-            .into_iter()
-            .flatten()
-            .filter_map(|&param_idx| {
-                self.ctx
-                    .arena
-                    .get(param_idx)
-                    .map(|param| (param.pos, param.end))
-            })
-            .collect()
-    }
-
-    fn request_has_concrete_contextual_type(&self, request: &TypingRequest) -> bool {
-        request.contextual_type.is_some_and(|type_id| {
-            type_id != TypeId::UNKNOWN
-                && type_id != TypeId::ERROR
-                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
-                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
-        })
-    }
-
-    fn clear_stale_function_like_implicit_any_diagnostics(
-        &mut self,
-        spans: &[(u32, u32)],
-        refresh_diag_start: usize,
-    ) {
-        if spans.is_empty() {
-            return;
-        }
-
-        let refreshed_still_has_implicit_any = self.ctx.diagnostics[refresh_diag_start..]
-            .iter()
-            .any(|diag| {
-                Self::implicit_any_like_diagnostic_code(diag.code)
-                    && spans
-                        .iter()
-                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
-            });
-
-        if refreshed_still_has_implicit_any {
-            return;
-        }
-
-        self.ctx.diagnostics.retain(|diag| {
-            !Self::implicit_any_like_diagnostic_code(diag.code)
-                || !spans
-                    .iter()
-                    .any(|(start, end)| diag.start >= *start && diag.start < *end)
-        });
-    }
-
-    fn contextual_object_receiver_this_type(
-        &mut self,
-        contextual_type: Option<TypeId>,
-        marker_this_type: Option<TypeId>,
-    ) -> Option<TypeId> {
-        marker_this_type.or_else(|| contextual_type.map(|ty| self.evaluate_contextual_type(ty)))
-    }
-
-    fn substitute_contextual_this_type(
-        &self,
-        type_id: Option<TypeId>,
-        receiver_this_type: Option<TypeId>,
-    ) -> Option<TypeId> {
-        type_id.map(|type_id| {
-            if let Some(receiver_this_type) = receiver_this_type
-                && tsz_solver::contains_this_type(self.ctx.types, type_id)
-            {
-                tsz_solver::substitute_this_type(self.ctx.types, type_id, receiver_this_type)
-            } else {
-                type_id
-            }
-        })
-    }
-
-    pub(crate) fn contextual_lookup_type(&mut self, contextual_type: TypeId) -> TypeId {
-        self.resolve_type_for_property_access(self.evaluate_contextual_type(contextual_type))
-    }
-
-    fn contextual_object_property_type_for_lookup(
-        &mut self,
-        contextual_type: TypeId,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        let direct = self.contextual_object_literal_property_type(contextual_type, property_name);
-        if direct.is_some() {
-            return direct;
-        }
-
-        let lookup_type = self.contextual_lookup_type(contextual_type);
-        if lookup_type != contextual_type {
-            self.contextual_object_literal_property_type(lookup_type, property_name)
-        } else {
-            None
-        }
-    }
-
-    fn contextual_callable_property_fallback_for_lookup(
-        &mut self,
-        contextual_type: TypeId,
-        property_context_type: Option<TypeId>,
-    ) -> Option<TypeId> {
-        let fallback =
-            self.contextual_callable_property_fallback_type(contextual_type, property_context_type);
-        if fallback.is_some() {
-            return fallback;
-        }
-
-        let lookup_type = self.contextual_lookup_type(contextual_type);
-        if lookup_type != contextual_type {
-            self.contextual_callable_property_fallback_type(lookup_type, property_context_type)
-        } else {
-            None
-        }
-    }
-
-    fn contextual_method_context_type_for_lookup(
-        &mut self,
-        contextual_type: TypeId,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        let allows_callable_fallback =
-            self.named_contextual_property_allows_callable_fallback(contextual_type, property_name);
-        let direct = match self.resolve_property_access_with_env(contextual_type, property_name) {
-            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
-                self.precise_callable_context_type(type_id)
-            }
-            _ => None,
-        }
-        .or_else(|| self.contextual_object_property_type_for_lookup(contextual_type, property_name))
-        .or_else(|| {
-            allows_callable_fallback
-                .then(|| {
-                    self.contextual_callable_property_fallback_for_lookup(contextual_type, None)
-                })
-                .flatten()
-        });
-
-        if direct.is_some() {
-            return direct;
-        }
-
-        let lookup_type = self.contextual_lookup_type(contextual_type);
-        if lookup_type != contextual_type {
-            let allows_lookup_callable_fallback =
-                self.named_contextual_property_allows_callable_fallback(lookup_type, property_name);
-            match self.resolve_property_access_with_env(lookup_type, property_name) {
-                tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id, ..
-                } => self.precise_callable_context_type(type_id),
-                _ => None,
-            }
-            .or_else(|| self.contextual_object_literal_property_type(lookup_type, property_name))
-            .or_else(|| {
-                allows_lookup_callable_fallback
-                    .then(|| self.contextual_callable_property_fallback_type(lookup_type, None))
-                    .flatten()
-            })
-        } else {
-            None
-        }
-    }
-
     /// Get the type of an object literal expression.
     ///
     /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.
@@ -1138,220 +949,15 @@ impl<'a> CheckerState<'a> {
                             self.ctx.this_type_stack.push(ctx_type);
                             pushed_contextual_this = true;
                         } else {
-                            // For non-contextual object literals, model `this` as the
-                            // object-under-construction so assignments like `this.a = ...`
-                            // in method `a()` validate against the method property type.
-                            // Include placeholders for ALL methods (not just the current
-                            // one) so mutually-recursive methods can resolve `this.other()`.
-                            let mut this_props: Vec<PropertyInfo> =
-                                properties.values().cloned().collect();
-                            // When inside a const assertion (`as const`), the
-                            // final object will have all properties marked
-                            // readonly.  The synthetic `this` type for methods
-                            // is created before `apply_const_assertion` runs,
-                            // so we must propagate the readonly modifier here
-                            // to emit TS2540 instead of TS2322.
-                            if self.ctx.in_const_assertion {
-                                for prop in &mut this_props {
-                                    prop.readonly = true;
-                                }
-                            }
-                            let current_method_name_atom = self.ctx.types.intern_string(&name);
-                            for (&method_name_atom, &other_elem_idx) in &obj_all_method_names {
-                                if !this_props.iter().any(|p| p.name == method_name_atom) {
-                                    let placeholder_method_type = if method_name_atom
-                                        == current_method_name_atom
-                                    {
-                                        // Push method's type parameters to scope so that
-                                        // parameter type annotations like `x: T` can resolve
-                                        // `T` without emitting false TS2304.
-                                        let (_, tp_updates) =
-                                            self.push_type_parameters(&method.type_parameters);
-                                        let params = method
-                                            .parameters
-                                            .nodes
-                                            .iter()
-                                            .filter_map(|&param_idx| {
-                                                let param =
-                                                    self.ctx.arena.get(param_idx).and_then(
-                                                        |param_node| {
-                                                            self.ctx.arena.get_parameter(param_node)
-                                                        },
-                                                    )?;
-                                                Some(tsz_solver::ParamInfo {
-                                                    name: self
-                                                        .ctx
-                                                        .arena
-                                                        .get(param.name)
-                                                        .and_then(|name_node| {
-                                                            self.ctx.arena.get_identifier(name_node)
-                                                        })
-                                                        .map(|ident| {
-                                                            self.ctx
-                                                                .types
-                                                                .intern_string(&ident.escaped_text)
-                                                        }),
-                                                    type_id: if param.type_annotation.is_some() {
-                                                        self.get_type_from_type_node(
-                                                            param.type_annotation,
-                                                        )
-                                                    } else {
-                                                        TypeId::ANY
-                                                    },
-                                                    optional: param.question_token
-                                                        || param.initializer.is_some(),
-                                                    rest: param.dot_dot_dot_token,
-                                                })
-                                            })
-                                            .collect();
-                                        let placeholder =
-                                            self.ctx.types.factory().callable(CallableShape {
-                                                call_signatures: vec![CallSignature {
-                                                    type_params: Vec::new(),
-                                                    params,
-                                                    this_type: None,
-                                                    return_type: TypeId::VOID,
-                                                    type_predicate: None,
-                                                    is_method: true,
-                                                }],
-                                                construct_signatures: Vec::new(),
-                                                properties: Vec::new(),
-                                                string_index: None,
-                                                number_index: None,
-                                                symbol: None,
-                                                is_abstract: false,
-                                            });
-                                        self.pop_type_parameters(tp_updates);
-                                        placeholder
-                                    } else {
-                                        // Build a placeholder using the other method's
-                                        // annotated parameter and return types. This allows
-                                        // `this.otherMethod(arg)` calls in method bodies to
-                                        // be type-checked against the real signature even
-                                        // before the other method has been fully processed.
-                                        // Without this, the placeholder would use `any` for
-                                        // all parameters, silencing TS2345 errors like
-                                        // passing `this` where a specific type is expected.
-                                        let (other_params, other_return_type) = self
-                                            .ctx
-                                            .arena
-                                            .get(other_elem_idx)
-                                            .and_then(|n| self.ctx.arena.get_method_decl(n))
-                                            .map(|other_method| {
-                                                let params: Vec<tsz_solver::ParamInfo> =
-                                                    other_method
-                                                        .parameters
-                                                        .nodes
-                                                        .iter()
-                                                        .filter_map(|&param_idx| {
-                                                            let param = self
-                                                                .ctx
-                                                                .arena
-                                                                .get(param_idx)
-                                                                .and_then(|pn| {
-                                                                    self.ctx.arena.get_parameter(pn)
-                                                                })?;
-                                                            // Skip explicit `this` parameter
-                                                            if let Some(name_node) =
-                                                                self.ctx.arena.get(param.name)
-                                                                && let Some(ident) = self
-                                                                    .ctx
-                                                                    .arena
-                                                                    .get_identifier(name_node)
-                                                                && ident.escaped_text == "this"
-                                                            {
-                                                                return None;
-                                                            }
-                                                            Some(tsz_solver::ParamInfo {
-                                                                name: self
-                                                                    .ctx
-                                                                    .arena
-                                                                    .get(param.name)
-                                                                    .and_then(|name_node| {
-                                                                        self.ctx
-                                                                            .arena
-                                                                            .get_identifier(
-                                                                                name_node,
-                                                                            )
-                                                                    })
-                                                                    .map(|ident| {
-                                                                        self.ctx
-                                                                            .types
-                                                                            .intern_string(
-                                                                                &ident.escaped_text,
-                                                                            )
-                                                                    }),
-                                                                type_id: if param
-                                                                    .type_annotation
-                                                                    .is_some()
-                                                                {
-                                                                    self.get_type_from_type_node(
-                                                                        param.type_annotation,
-                                                                    )
-                                                                } else {
-                                                                    TypeId::ANY
-                                                                },
-                                                                optional: param.question_token
-                                                                    || param.initializer.is_some(),
-                                                                rest: param.dot_dot_dot_token,
-                                                            })
-                                                        })
-                                                        .collect();
-                                                let return_type =
-                                                    if other_method.type_annotation.is_some() {
-                                                        self.get_type_from_type_node(
-                                                            other_method.type_annotation,
-                                                        )
-                                                    } else {
-                                                        TypeId::ANY
-                                                    };
-                                                (params, return_type)
-                                            })
-                                            .unwrap_or_else(|| {
-                                                (
-                                                    vec![tsz_solver::ParamInfo {
-                                                        name: None,
-                                                        type_id: TypeId::ANY,
-                                                        optional: false,
-                                                        rest: true,
-                                                    }],
-                                                    TypeId::ANY,
-                                                )
-                                            });
-                                        self.ctx.types.factory().callable(CallableShape {
-                                            call_signatures: vec![CallSignature {
-                                                type_params: Vec::new(),
-                                                params: other_params,
-                                                this_type: None,
-                                                return_type: other_return_type,
-                                                type_predicate: None,
-                                                is_method: true,
-                                            }],
-                                            construct_signatures: Vec::new(),
-                                            properties: Vec::new(),
-                                            string_index: None,
-                                            number_index: None,
-                                            symbol: None,
-                                            is_abstract: false,
-                                        })
-                                    };
-                                    this_props.push(PropertyInfo {
-                                        name: method_name_atom,
-                                        type_id: placeholder_method_type,
-                                        write_type: placeholder_method_type,
-                                        optional: false,
-                                        readonly: self.ctx.in_const_assertion,
-                                        is_method: true,
-                                        is_class_prototype: false,
-                                        visibility: Visibility::Public,
-                                        parent_id: None,
-                                        declaration_order: 0,
-                                    });
-                                }
-                            }
-                            self.ctx
-                                .this_type_stack
-                                .push(self.ctx.types.factory().object(this_props));
+                            let synthetic_this_type = self
+                                .build_object_literal_method_synthetic_this_type(
+                                    &properties,
+                                    &obj_all_method_names,
+                                    elem_idx,
+                                    &name,
+                                    None,
+                                );
+                            self.ctx.this_type_stack.push(synthetic_this_type);
                             pushed_synthetic_this = true;
                         }
                     }
@@ -1417,9 +1023,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    let method_diag_snap = self.ctx.snapshot_diagnostics();
                     let refresh_diag_start = self.ctx.diagnostics.len();
-                    let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
-                    if self.request_has_concrete_contextual_type(&method_request) {
+                    let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
+                    let has_concrete_method_context =
+                        self.request_has_concrete_contextual_type(&method_request);
+                    if has_concrete_method_context {
                         let spans = self.function_like_param_spans_for_node(elem_idx);
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
@@ -1427,8 +1036,106 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    let this_property_accesses =
+                        self.collect_return_expression_this_property_accesses(method.body);
+                    let method_return_this_circularity = pushed_synthetic_this
+                        && jsdoc_declared_type.is_none()
+                        && method.type_annotation.is_none()
+                        && !has_concrete_method_context
+                        && !this_property_accesses.is_empty()
+                        && self.ctx.arena.get(method.body).is_some_and(|body_node| {
+                            self.ctx.diagnostics[method_diag_snap.diagnostics_len..]
+                                .iter()
+                                .any(|diag| {
+                                    diag.start >= body_node.pos
+                                        && diag.start < body_node.end
+                                        && matches!(diag.code, 2339 | 2464)
+                                })
+                        });
+
                     if pushed_contextual_this || pushed_synthetic_this {
                         self.ctx.this_type_stack.pop();
+                    }
+
+                    if method_return_this_circularity {
+                        self.ctx.rollback_diagnostics(&method_diag_snap);
+                        self.clear_type_cache_recursive(elem_idx);
+                        let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
+                            self.ctx.types,
+                            method_type,
+                        )
+                        .map(|return_type| {
+                            let refined_return_type = if matches!(return_type, TypeId::ERROR | TypeId::VOID) {
+                                TypeId::ANY
+                            } else {
+                                tsz_solver::operations::widening::widen_type(
+                                    self.ctx.types,
+                                    return_type,
+                                )
+                            };
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                method_type,
+                                refined_return_type,
+                            )
+                        })
+                        .unwrap_or(method_type);
+                        let refined_this_type = self
+                            .build_object_literal_method_synthetic_this_type(
+                                &properties,
+                                &obj_all_method_names,
+                                elem_idx,
+                                &name,
+                                Some(refined_method_type),
+                            );
+                        let refined_this_display = Self::widen_primitive_literal_type_display(
+                            &self.format_type(tsz_solver::operations::widening::widen_type(
+                                self.ctx.types,
+                                tsz_solver::relations::freshness::widen_freshness(
+                                    self.ctx.types,
+                                    refined_this_type,
+                                ),
+                            )),
+                        );
+                        self.ctx.this_type_stack.push(refined_this_type);
+                        let rerun_diag_snap = self.ctx.snapshot_diagnostics();
+                        let rerun_refresh_diag_start = self.ctx.diagnostics.len();
+                        let _ = self.get_type_of_function_impl(elem_idx, &method_request);
+                        if has_concrete_method_context {
+                            let spans = self.function_like_param_spans_for_node(elem_idx);
+                            self.clear_stale_function_like_implicit_any_diagnostics(
+                                &spans,
+                                rerun_refresh_diag_start,
+                            );
+                        }
+                        self.ctx.this_type_stack.pop();
+                        let this_property_positions: std::collections::HashSet<u32> =
+                            this_property_accesses
+                                .iter()
+                                .filter_map(|(idx, _)| {
+                                    self.ctx.arena.get(*idx).map(|node| node.pos)
+                                })
+                                .collect();
+                        self.ctx
+                            .rollback_diagnostics_filtered(&rerun_diag_snap, |diag| {
+                                let is_replaced_this_property_error = diag.code == 2339
+                                    && this_property_positions.contains(&diag.start);
+                                !is_replaced_this_property_error
+                            });
+                        for (property_idx, property_name) in &this_property_accesses {
+                            self.error_property_not_exist_with_apparent_type(
+                                property_name,
+                                &refined_this_display,
+                                *property_idx,
+                            );
+                        }
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            method.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        method_type = refined_method_type;
                     }
 
                     let method_type = jsdoc_declared_type.unwrap_or(method_type);
@@ -2187,118 +1894,16 @@ impl<'a> CheckerState<'a> {
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
-        // Union spread distribution: if we encountered union spreads, produce a
-        // union of object types (one per combination of union members).
-        let object_type = if has_union_spread && !union_spread_branches.is_empty() {
-            // Apply any non-spread properties that were added after the union
-            // spread(s) to each branch. Properties in `properties` override
-            // branch properties (later properties win in object literals).
-            let mut post_spread_props: Vec<PropertyInfo> = properties.into_values().collect();
-            post_spread_props.sort_by_key(|p| p.declaration_order);
-
-            let mut union_members: Vec<TypeId> = Vec::new();
-            for mut branch in union_spread_branches {
-                for prop in &post_spread_props {
-                    branch.insert(prop.name, prop.clone());
-                }
-                let mut branch_props: Vec<PropertyInfo> = branch.into_values().collect();
-                branch_props.sort_by_key(|p| p.declaration_order);
-                let obj = self.ctx.types.factory().object(branch_props);
-                union_members.push(obj);
-            }
-            self.ctx.types.factory().union(union_members)
-        } else {
-            let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
-            properties.sort_by_key(|p| p.declaration_order);
-            // Object literals with spreads are not fresh (no excess property checking)
-
-            if string_index_types.is_empty() && number_index_types.is_empty() {
-                if has_spread {
-                    self.ctx.types.factory().object(properties)
-                } else {
-                    let type_id = self.ctx.types.factory().object_fresh(properties.clone());
-                    // Store display properties for freshness model.
-                    // Build display properties with original literal types from AST.
-                    if !display_type_overrides.is_empty() {
-                        let mut display_props: Vec<tsz_solver::PropertyInfo> = properties
-                            .iter()
-                            .map(|prop| {
-                                if let Some(&display_type) = display_type_overrides.get(&prop.name)
-                                {
-                                    tsz_solver::PropertyInfo {
-                                        type_id: display_type,
-                                        ..prop.clone()
-                                    }
-                                } else {
-                                    prop.clone()
-                                }
-                            })
-                            .collect();
-                        display_props.sort_by_key(|a| a.name);
-                        // Store display properties keyed by TypeId (not ObjectShapeId)
-                        // to avoid polluting shared shapes after freshness widening.
-                        self.ctx
-                            .types
-                            .store_display_properties(type_id, display_props);
-                    }
-                    type_id
-                }
-            } else {
-                use tsz_solver::{IndexSignature, ObjectShape};
-                if !string_index_types.is_empty() {
-                    // A computed string-key member makes the object open to arbitrary
-                    // string property access. Match tsc by widening the string index
-                    // over all string-named members, not just the computed one.
-                    string_index_types.extend(properties.iter().map(|prop| prop.type_id));
-                }
-
-                let string_index = if !string_index_types.is_empty() {
-                    Some(IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type: self.ctx.types.factory().union(string_index_types),
-                        readonly: false,
-                        param_name: None,
-                    })
-                } else {
-                    None
-                };
-
-                let number_index = if !number_index_types.is_empty() {
-                    Some(IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type: self.ctx.types.factory().union(number_index_types),
-                        readonly: false,
-                        param_name: None,
-                    })
-                } else {
-                    None
-                };
-
-                let mut shape = ObjectShape {
-                    properties,
-                    string_index,
-                    number_index,
-                    ..ObjectShape::default()
-                };
-                if !has_spread {
-                    shape.mark_fresh_literal();
-                }
-
-                self.ctx.types.factory().object_with_index(shape)
-            }
-        };
-
-        // Freshness tracked on TypeId via ObjectFlags (fixes "Zombie Freshness" bug).
-
-        // Spread generic types create intersection: `{ ...rest, b: a }` where `rest: T`
-        // produces `T & { b: string }` to preserve type parameter for instantiation.
-        let object_type = if !generic_spread_types.is_empty() {
-            let mut members = generic_spread_types;
-            members.push(object_type);
-            self.ctx.types.factory().intersection(members)
-        } else {
-            object_type
-        };
+        let object_type = self.finalize_object_literal_type(
+            properties,
+            display_type_overrides,
+            string_index_types,
+            number_index_types,
+            has_spread,
+            has_union_spread,
+            union_spread_branches,
+            generic_spread_types,
+        );
 
         // Pop this type from stack if we pushed it earlier
         if marker_this_type.is_some() {
@@ -2306,26 +1911,5 @@ impl<'a> CheckerState<'a> {
         }
 
         object_type
-    }
-
-    /// Collect properties from a spread expression in an object literal.
-    ///
-    /// Given the type of the spread expression, extracts all properties that would
-    /// be spread into the object literal.
-    pub(crate) fn collect_object_spread_properties(
-        &mut self,
-        type_id: TypeId,
-    ) -> Vec<tsz_solver::PropertyInfo> {
-        let resolved = self.resolve_type_for_property_access(type_id);
-        let resolved = self.resolve_lazy_type(resolved);
-        self.ctx
-            .types
-            .collect_object_spread_properties(resolved)
-            .into_iter()
-            .map(|mut prop| {
-                prop.parent_id = None;
-                prop
-            })
-            .collect()
     }
 }

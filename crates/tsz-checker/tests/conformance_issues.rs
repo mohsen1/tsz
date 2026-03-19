@@ -6992,7 +6992,6 @@ const obj: {field: Rule} = {
 /// TS7022 should fire for direct self-referencing object literals under noImplicitAny.
 /// From: recursiveObjectLiteral.ts
 #[test]
-#[ignore = "regression: TS7022 circular initializer detection broken by subsequent refactors"]
 fn test_ts7022_recursive_object_literal() {
     let opts = CheckerOptions {
         no_implicit_any: true,
@@ -7280,6 +7279,75 @@ var f1 = function () {
     assert!(
         !has_error(&diagnostics, 7023),
         "Should NOT emit TS7023 when noImplicitAny is off.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7023_object_literal_method_this_property_uses_inferred_method_type() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+var obj = {
+    f() {
+        return this.spaaace;
+    }
+};
+"#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 7023),
+        "Should emit TS7023 for object literal methods whose return expressions read `this` through the under-construction object type.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| { diag.code == 2339 && diag.message_text.contains("{ f(): any; }") }),
+        "Expected the `this` property-access error to see the inferred `any` return type for the method.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7023_object_literal_computed_name_this_reference_keeps_inferred_return_shape() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+export const thing = {
+    doit() {
+        return {
+            [this.a]: "",
+        }
+    }
+};
+"#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 7023),
+        "Should emit TS7023 for object literal methods whose computed return shapes reference `this` while the object is still being inferred.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2339
+                && diag
+                    .message_text
+                    .contains("{ doit(): { [x: number]: string; }; }")
+        }),
+        "Expected the `this` property-access error to retain the inferred return shape for `doit`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

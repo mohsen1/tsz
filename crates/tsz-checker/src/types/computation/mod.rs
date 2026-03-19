@@ -28,6 +28,8 @@ pub(crate) mod contextual;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod object_literal;
+pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;
+pub(crate) mod object_literal_support;
 pub(crate) mod tagged_template;
 pub(crate) mod type_operators;

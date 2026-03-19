@@ -858,6 +858,173 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect `this.foo` property accesses that occur within return expressions,
+    /// excluding nested deferred boundaries.
+    pub(crate) fn collect_return_expression_this_property_accesses(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Vec<(NodeIndex, String)> {
+        let mut refs = Vec::new();
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return refs;
+        };
+
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            if let Some(block) = self.ctx.arena.get_block(body_node) {
+                for &stmt_idx in &block.statements.nodes {
+                    self.collect_this_property_accesses_in_return_statement(stmt_idx, &mut refs);
+                }
+            }
+        } else {
+            self.collect_this_property_accesses_in_expression(body_idx, &mut refs);
+        }
+
+        refs
+    }
+
+    fn collect_this_property_accesses_in_return_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        refs: &mut Vec<(NodeIndex, String)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node)
+                    && ret.expression.is_some()
+                {
+                    self.collect_this_property_accesses_in_expression(ret.expression, refs);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_this_property_accesses_in_return_statement(stmt, refs);
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        if_stmt.then_statement,
+                        refs,
+                    );
+                    if if_stmt.else_statement.is_some() {
+                        self.collect_this_property_accesses_in_return_statement(
+                            if_stmt.else_statement,
+                            refs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_stmt.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_this_property_accesses_in_return_statement(stmt, refs);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.ctx.arena.get_try(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        try_stmt.try_block,
+                        refs,
+                    );
+                    if try_stmt.catch_clause.is_some() {
+                        self.collect_this_property_accesses_in_return_statement(
+                            try_stmt.catch_clause,
+                            refs,
+                        );
+                    }
+                    if try_stmt.finally_block.is_some() {
+                        self.collect_this_property_accesses_in_return_statement(
+                            try_stmt.finally_block,
+                            refs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        catch_clause.block,
+                        refs,
+                    );
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_stmt) = self.ctx.arena.get_loop(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        loop_stmt.statement,
+                        refs,
+                    );
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_stmt) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        loop_stmt.statement,
+                        refs,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_this_property_accesses_in_return_statement(
+                        labeled.statement,
+                        refs,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_this_property_accesses_in_expression(
+        &self,
+        node_idx: NodeIndex,
+        refs: &mut Vec<(NodeIndex, String)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && let Some(receiver_node) = self.ctx.arena.get(access.expression)
+            && receiver_node.kind == SyntaxKind::ThisKeyword as u16
+            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            refs.push((access.name_or_argument, ident.escaped_text.clone()));
+        }
+
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::CLASS_EXPRESSION => return,
+            _ => {}
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_this_property_accesses_in_expression(child_idx, refs);
+        }
+    }
+
     // Section 41: Function Implementation Checking
     // --------------------------------------------
 
