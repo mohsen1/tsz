@@ -7,6 +7,7 @@ use super::*;
 pub(super) struct PropertyCompletion {
     pub type_id: TypeId,
     pub is_method: bool,
+    pub is_optional: bool,
 }
 
 impl<'a> Completions<'a> {
@@ -261,7 +262,14 @@ impl<'a> Completions<'a> {
                     continue;
                 }
                 let name = interner.resolve_atom(prop.name);
-                self.add_property_completion(props, interner, name, prop.type_id, prop.is_method);
+                self.add_property_completion_ex(
+                    props,
+                    interner,
+                    name,
+                    prop.type_id,
+                    prop.is_method,
+                    prop.optional,
+                );
             }
             return;
         }
@@ -1068,13 +1076,32 @@ impl<'a> Completions<'a> {
         type_id: TypeId,
         is_method: bool,
     ) {
+        self.add_property_completion_ex(props, interner, name, type_id, is_method, false);
+    }
+
+    fn add_property_completion_ex(
+        &self,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        interner: &TypeInterner,
+        name: String,
+        type_id: TypeId,
+        is_method: bool,
+        is_optional: bool,
+    ) {
         if let Some(existing) = props.get_mut(&name) {
             if existing.type_id != type_id {
                 existing.type_id = interner.union(vec![existing.type_id, type_id]);
             }
             existing.is_method |= is_method;
         } else {
-            props.insert(name, PropertyCompletion { type_id, is_method });
+            props.insert(
+                name,
+                PropertyCompletion {
+                    type_id,
+                    is_method,
+                    is_optional,
+                },
+            );
         }
     }
 
@@ -1136,7 +1163,12 @@ impl<'a> Completions<'a> {
 
             let mut item = CompletionItem::new(label, kind);
             item = item.with_detail(checker.format_type(info.type_id));
-            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            if info.is_optional {
+                item.sort_text = Some(sort_priority::OPTIONAL_MEMBER.to_string());
+                item.kind_modifiers = Some("optional".to_string());
+            } else {
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+            }
 
             // Add snippet insert text for method completions in object literals
             if info.is_method {
