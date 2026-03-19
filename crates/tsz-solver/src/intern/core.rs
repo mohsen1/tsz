@@ -637,7 +637,7 @@ impl TypeInterner {
     }
 
     /// Get a conditional type by value (no Arc clone overhead).
-    /// Preferred over `conditional_type()` since ConditionalType is Copy.
+    /// Preferred over `conditional_type()` since `ConditionalType` is Copy.
     #[inline]
     pub fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
         self.conditional_types
@@ -652,7 +652,7 @@ impl TypeInterner {
     }
 
     /// Get a mapped type by value (no Arc clone overhead).
-    /// Preferred over `mapped_type()` since MappedType is Copy.
+    /// Preferred over `mapped_type()` since `MappedType` is Copy.
     #[inline]
     pub fn get_mapped(&self, id: MappedTypeId) -> MappedType {
         self.mapped_types.get_copy(id.0).unwrap_or(MappedType {
