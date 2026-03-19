@@ -365,164 +365,143 @@ impl<'a> NarrowingContext<'a> {
         while fuel > 0 {
             fuel -= 1;
 
-            // 1. Handle Lazy types (DefId-based, not SymbolRef)
-            // If we have a TypeResolver, try to resolve Lazy types through it first
-            if let Some(def_id) = lazy_def_id(self.db, type_id) {
-                if let Some(resolver) = self.resolver
-                    && let Some(resolved) =
-                        resolver.resolve_lazy(def_id, self.db.as_type_database())
-                {
-                    type_id = resolved;
+            // Single lookup per iteration — dispatch based on TypeData variant
+            let data = self.db.lookup(type_id);
+            match data {
+                // 1. Lazy types (DefId-based)
+                Some(TypeData::Lazy(def_id)) => {
+                    if let Some(resolver) = self.resolver
+                        && let Some(resolved) =
+                            resolver.resolve_lazy(def_id, self.db.as_type_database())
+                    {
+                        type_id = resolved;
+                        continue;
+                    }
+                    type_id = self.db.evaluate_type(type_id);
                     continue;
                 }
-                // Fallback to database evaluation if no resolver or resolution failed
-                type_id = self.db.evaluate_type(type_id);
-                continue;
-            }
 
-            // 2. Handle Application types (Generics)
-            // CRITICAL: When a resolver is available (from the checker's TypeEnvironment),
-            // use it to resolve the Application's base type and instantiate with args.
-            // Without the resolver, generic type aliases like `Box<number>` can't resolve
-            // their DefId-based base types, causing narrowing to fail on discriminated
-            // unions wrapped in generics.
-            if let Some(TypeData::Application(app_id)) = self.db.lookup(type_id) {
-                if let Some(resolver) = self.resolver {
-                    let app = self.db.type_application(app_id);
-                    // Try to resolve the base type's DefId and instantiate manually
-                    if let Some(def_id) = lazy_def_id(self.db, app.base) {
-                        let resolved_body =
-                            resolver.resolve_lazy(def_id, self.db.as_type_database());
-                        let type_params = resolver.get_lazy_type_params(def_id);
-                        if let (Some(body), Some(params)) = (resolved_body, type_params) {
-                            let instantiated =
-                                crate::instantiation::instantiate::instantiate_generic(
-                                    self.db.as_type_database(),
-                                    body,
-                                    &params,
-                                    &app.args,
-                                );
-                            type_id = instantiated;
-                            continue;
-                        }
-                    }
-                }
-                // Fallback: use db.evaluate_type (works when resolver isn't needed)
-                let evaluated = self.db.evaluate_type(type_id);
-                type_id = evaluated;
-                continue;
-            }
-
-            // 3. Handle TemplateLiteral types that can be fully evaluated to string literals.
-            // Template literal spans may contain Lazy(DefId) types (e.g., `${EnumType.Member}`)
-            // that must be resolved before evaluation. We resolve all lazy spans first,
-            // rebuild the template literal, then let the evaluator handle it.
-            if let Some(TypeData::TemplateLiteral(spans_id)) = self.db.lookup(type_id) {
-                use crate::types::TemplateSpan;
-                let spans = self.db.template_list(spans_id);
-                let mut new_spans = Vec::with_capacity(spans.len());
-                let mut changed = false;
-                for span in spans.iter() {
-                    match span {
-                        TemplateSpan::Type(inner_id) => {
-                            let resolved = self.resolve_type(*inner_id);
-                            if resolved != *inner_id {
-                                changed = true;
+                // 2. Application types (Generics)
+                Some(TypeData::Application(app_id)) => {
+                    if let Some(resolver) = self.resolver {
+                        let app = self.db.type_application(app_id);
+                        if let Some(def_id) = lazy_def_id(self.db, app.base) {
+                            let resolved_body =
+                                resolver.resolve_lazy(def_id, self.db.as_type_database());
+                            let type_params = resolver.get_lazy_type_params(def_id);
+                            if let (Some(body), Some(params)) = (resolved_body, type_params) {
+                                type_id =
+                                    crate::instantiation::instantiate::instantiate_generic(
+                                        self.db.as_type_database(),
+                                        body,
+                                        &params,
+                                        &app.args,
+                                    );
+                                continue;
                             }
-                            new_spans.push(TemplateSpan::Type(resolved));
                         }
-                        other => new_spans.push(other.clone()),
                     }
-                }
-                let eval_input = if changed {
-                    self.db.template_literal(new_spans)
-                } else {
-                    type_id
-                };
-                let evaluated = self.db.evaluate_type(eval_input);
-                if evaluated != type_id {
-                    type_id = evaluated;
+                    type_id = self.db.evaluate_type(type_id);
                     continue;
                 }
-            }
 
-            // 4. Handle KeyOf types (keyof T)
-            // Resolve the inner type so that `keyof Lazy(A)` becomes `keyof Object(A)`,
-            // allowing subsequent evaluation to produce concrete key types.
-            if let Some(TypeData::KeyOf(inner)) = self.db.lookup(type_id) {
-                let resolved_inner = self.resolve_type(inner);
-                if resolved_inner != inner {
-                    let new_keyof = self.db.keyof(resolved_inner);
-                    let evaluated = self.db.evaluate_type(new_keyof);
-                    type_id = evaluated;
-                    continue;
-                }
-                break;
-            }
-
-            // 5. Handle IndexAccess types (T[K])
-            // Evaluate indexed access types so they can be properly narrowed.
-            // Without this, `A[K]` (e.g., `number | null`) stays opaque and
-            // narrowing operations like `!== null` have no effect.
-            // First resolve the object and index components (which may be Lazy),
-            // then evaluate. If the index is a TypeParameter, substitute its
-            // constraint (e.g., K extends keyof A → use `keyof A`) so that
-            // `A[K]` can be resolved to the union of property types.
-            if let Some(TypeData::IndexAccess(obj, idx)) = self.db.lookup(type_id) {
-                let resolved_obj = self.resolve_type(obj);
-                // If the index is a type parameter, use its constraint for evaluation.
-                // This allows A[K] where K extends keyof A to resolve to A[keyof A].
-                let resolved_idx = if let Some(info) = type_param_info(self.db, idx) {
-                    info.constraint.map(|c| self.resolve_type(c)).unwrap_or(idx)
-                } else {
-                    self.resolve_type(idx)
-                };
-                if resolved_obj != obj || resolved_idx != idx {
-                    let evaluated = self.db.evaluate_index_access(resolved_obj, resolved_idx);
-                    if !matches!(self.db.lookup(evaluated), Some(TypeData::IndexAccess(_, _))) {
+                // 3. TemplateLiteral types
+                Some(TypeData::TemplateLiteral(spans_id)) => {
+                    use crate::types::TemplateSpan;
+                    let spans = self.db.template_list(spans_id);
+                    let mut new_spans = Vec::with_capacity(spans.len());
+                    let mut changed = false;
+                    for span in spans.iter() {
+                        match span {
+                            TemplateSpan::Type(inner_id) => {
+                                let resolved = self.resolve_type(*inner_id);
+                                if resolved != *inner_id {
+                                    changed = true;
+                                }
+                                new_spans.push(TemplateSpan::Type(resolved));
+                            }
+                            other => new_spans.push(other.clone()),
+                        }
+                    }
+                    let eval_input = if changed {
+                        self.db.template_literal(new_spans)
+                    } else {
+                        type_id
+                    };
+                    let evaluated = self.db.evaluate_type(eval_input);
+                    if evaluated != type_id {
                         type_id = evaluated;
                         continue;
                     }
+                    break;
                 }
-                let evaluated = self.db.evaluate_type(type_id);
-                if evaluated != type_id {
-                    type_id = evaluated;
-                    continue;
-                }
-                break;
-            }
 
-            // 6. Handle NoInfer<T> — transparent wrapper, unwrap to inner type
-            if let Some(TypeData::NoInfer(inner)) = self.db.lookup(type_id) {
-                type_id = inner;
-                continue;
-            }
-
-            // 7. Handle Intersection types containing Lazy members.
-            // When a type alias wraps `UnionAlias & SomeType`, the intersection
-            // members may include Lazy(DefId) references that haven't been resolved
-            // yet. Resolving them and re-interning triggers distribution:
-            // `(A | B) & C` → `(A & C) | (B & C)`, which enables discriminant narrowing.
-            if let Some(TypeData::Intersection(members_id)) = self.db.lookup(type_id) {
-                let members = self.db.type_list(members_id);
-                let mut changed = false;
-                let mut resolved_members = Vec::with_capacity(members.len());
-                for &m in members.iter() {
-                    let r = self.resolve_type(m);
-                    if r != m {
-                        changed = true;
+                // 4. KeyOf types
+                Some(TypeData::KeyOf(inner)) => {
+                    let resolved_inner = self.resolve_type(inner);
+                    if resolved_inner != inner {
+                        let new_keyof = self.db.keyof(resolved_inner);
+                        type_id = self.db.evaluate_type(new_keyof);
+                        continue;
                     }
-                    resolved_members.push(r);
+                    break;
                 }
-                if changed {
-                    // Re-intern triggers distribution if a member resolved to a union
-                    type_id = self.db.intersection(resolved_members);
+
+                // 5. IndexAccess types
+                Some(TypeData::IndexAccess(obj, idx)) => {
+                    let resolved_obj = self.resolve_type(obj);
+                    let resolved_idx = if let Some(info) = type_param_info(self.db, idx) {
+                        info.constraint.map(|c| self.resolve_type(c)).unwrap_or(idx)
+                    } else {
+                        self.resolve_type(idx)
+                    };
+                    if resolved_obj != obj || resolved_idx != idx {
+                        let evaluated =
+                            self.db.evaluate_index_access(resolved_obj, resolved_idx);
+                        if !matches!(
+                            self.db.lookup(evaluated),
+                            Some(TypeData::IndexAccess(_, _))
+                        ) {
+                            type_id = evaluated;
+                            continue;
+                        }
+                    }
+                    let evaluated = self.db.evaluate_type(type_id);
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    break;
+                }
+
+                // 6. NoInfer — transparent wrapper
+                Some(TypeData::NoInfer(inner)) => {
+                    type_id = inner;
                     continue;
                 }
-            }
 
-            // It's a structural type (Object, Union, Intersection, Primitive)
-            break;
+                // 7. Intersection types with potentially Lazy members
+                Some(TypeData::Intersection(members_id)) => {
+                    let members = self.db.type_list(members_id);
+                    let mut changed = false;
+                    let mut resolved_members = Vec::with_capacity(members.len());
+                    for &m in members.iter() {
+                        let r = self.resolve_type(m);
+                        if r != m {
+                            changed = true;
+                        }
+                        resolved_members.push(r);
+                    }
+                    if changed {
+                        type_id = self.db.intersection(resolved_members);
+                        continue;
+                    }
+                    break;
+                }
+
+                // Structural types (Object, Union, Primitive, etc.) — done
+                _ => break,
+            }
         }
 
         type_id
