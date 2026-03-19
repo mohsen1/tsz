@@ -237,3 +237,162 @@ fn test_build_info_save_creates_parent_dir_and_preserves_optional_fields() {
     assert_eq!(loaded.options.declaration, Some(true));
     assert_eq!(loaded.options.strict, Some(true));
 }
+
+#[test]
+fn test_change_tracker_marks_dependents_of_changed_files_as_affected() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let changed = temp.path().join("changed.ts");
+    let dependent = temp.path().join("dependent.ts");
+    std::fs::write(&changed, "export const value = 2;").unwrap();
+    std::fs::write(&dependent, "import { value } from './changed';\n").unwrap();
+
+    let dependent_version = compute_file_version(&dependent).unwrap();
+    let mut build_info = BuildInfo::new();
+    build_info.set_file_info(
+        &changed.to_string_lossy(),
+        FileInfo {
+            version: "stale-version".to_string(),
+            signature: None,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        },
+    );
+    build_info.set_file_info(
+        &dependent.to_string_lossy(),
+        FileInfo {
+            version: dependent_version,
+            signature: None,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        },
+    );
+    build_info.set_dependencies(
+        &dependent.to_string_lossy(),
+        vec![changed.to_string_lossy().into_owned()],
+    );
+
+    let mut tracker = ChangeTracker::new();
+    tracker
+        .compute_changes(&build_info, &[changed.clone(), dependent.clone()])
+        .unwrap();
+
+    assert!(tracker.changed_files().contains(&changed));
+    assert!(tracker.affected_files().contains(&changed));
+    assert!(tracker.affected_files().contains(&dependent));
+    assert!(tracker.has_changes());
+}
+
+#[test]
+fn test_change_tracker_marks_dependents_of_deleted_files_as_affected() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let deleted = temp.path().join("deleted.ts");
+    let dependent = temp.path().join("dependent.ts");
+    std::fs::write(&dependent, "import './deleted';\n").unwrap();
+
+    let dependent_version = compute_file_version(&dependent).unwrap();
+    let mut build_info = BuildInfo::new();
+    build_info.set_file_info(
+        &deleted.to_string_lossy(),
+        FileInfo {
+            version: "old-version".to_string(),
+            signature: None,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        },
+    );
+    build_info.set_file_info(
+        &dependent.to_string_lossy(),
+        FileInfo {
+            version: dependent_version,
+            signature: None,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        },
+    );
+    build_info.set_dependencies(
+        &dependent.to_string_lossy(),
+        vec![deleted.to_string_lossy().into_owned()],
+    );
+
+    let mut tracker = ChangeTracker::new();
+    tracker
+        .compute_changes(&build_info, std::slice::from_ref(&dependent))
+        .unwrap();
+
+    assert!(tracker.deleted_files().contains(&deleted));
+    assert!(tracker.affected_files().contains(&dependent));
+    assert!(!tracker.changed_files().contains(&dependent));
+    assert!(tracker.has_changes());
+}
+
+#[test]
+fn test_compute_changes_with_base_ignores_files_outside_base_dir() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let base = temp.path().join("project");
+    let inside = base.join("src/index.ts");
+    let outside = temp.path().join("external.ts");
+    std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
+    std::fs::write(&inside, "export const inside = 1;\n").unwrap();
+    std::fs::write(&outside, "export const outside = 1;\n").unwrap();
+
+    let mut build_info = BuildInfo::new();
+    build_info.set_file_info(
+        "src/index.ts",
+        FileInfo {
+            version: "stale-version".to_string(),
+            signature: None,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        },
+    );
+
+    let mut tracker = ChangeTracker::new();
+    tracker
+        .compute_changes_with_base(&build_info, &[inside.clone(), outside.clone()], &base)
+        .unwrap();
+
+    assert!(tracker.changed_files().contains(&inside));
+    assert!(tracker.affected_files().contains(&inside));
+    assert!(!tracker.new_files().contains(&outside));
+    assert!(!tracker.changed_files().contains(&outside));
+}
+
+#[test]
+fn test_build_info_builder_normalizes_relative_paths_and_preserves_options() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let base_dir = temp.path().join("project");
+    let file = base_dir.join("src/nested/main.ts");
+    let dep = base_dir.join("src/shared/dep.ts");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(dep.parent().unwrap()).unwrap();
+    std::fs::write(&file, "export const main = 1;\n").unwrap();
+    std::fs::write(&dep, "export const dep = 1;\n").unwrap();
+
+    let mut builder = BuildInfoBuilder::new(base_dir.clone());
+    builder
+        .set_root_files(vec!["src/nested/main.ts".to_string()])
+        .set_options(BuildInfoOptions {
+            target: Some("es2020".to_string()),
+            module: Some("esnext".to_string()),
+            declaration: Some(false),
+            strict: Some(true),
+        })
+        .add_file(&file, &["main".to_string()])
+        .unwrap()
+        .set_file_dependencies(&file, vec![dep.clone()]);
+
+    let build_info = builder.build();
+
+    assert!(build_info.file_infos.contains_key("src/nested/main.ts"));
+    assert_eq!(
+        build_info
+            .dependencies
+            .get("src/nested/main.ts")
+            .map(Vec::as_slice),
+        Some(&["src/shared/dep.ts".to_string()][..])
+    );
+    assert_eq!(build_info.options.target.as_deref(), Some("es2020"));
+    assert_eq!(build_info.options.module.as_deref(), Some("esnext"));
+    assert_eq!(build_info.options.declaration, Some(false));
+    assert_eq!(build_info.options.strict, Some(true));
+}
