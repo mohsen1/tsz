@@ -708,6 +708,23 @@ impl<'a> TypePrinter<'a> {
 
         let has_index = shape.string_index.is_some() || shape.number_index.is_some();
 
+        if shape.properties.is_empty()
+            && !has_index
+            && let Some(sym_id) = shape.symbol
+            && let Some(ast_members) = self.synthesized_empty_shape_members(sym_id)
+        {
+            if let Some(indent) = self.indent_level {
+                let member_indent = "    ".repeat((indent + 1) as usize);
+                let closing_indent = "    ".repeat(indent as usize);
+                let lines: Vec<String> = ast_members
+                    .iter()
+                    .map(|member| format!("{member_indent}{member};"))
+                    .collect();
+                return format!("{{\n{}\n{}}}", lines.join("\n"), closing_indent);
+            }
+            return format!("{{ {} }}", ast_members.join("; "));
+        }
+
         if shape.properties.is_empty() && !has_index {
             return "{}".to_string();
         }
@@ -787,7 +804,8 @@ impl<'a> TypePrinter<'a> {
                 line.push_str(&member_indent);
 
                 if property.is_method
-                    && let Some(method_str) = nested.print_property_as_method(property)
+                    && let Some(method_str) =
+                        nested.print_property_as_method(property, shape.symbol)
                 {
                     line.push_str(&method_str);
                     line.push(';');
@@ -890,7 +908,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Try to emit as method syntax if the property is a method
                 if property.is_method
-                    && let Some(method_str) = self.print_property_as_method(property)
+                    && let Some(method_str) = self.print_property_as_method(property, shape.symbol)
                 {
                     member.push_str(&method_str);
                     members.push(member);
@@ -938,7 +956,12 @@ impl<'a> TypePrinter<'a> {
     fn print_property_as_method(
         &self,
         property: &tsz_solver::types::PropertyInfo,
+        container_symbol: Option<SymbolId>,
     ) -> Option<String> {
+        if self.computed_method_requires_property_syntax(property, container_symbol) {
+            return None;
+        }
+
         let name = self.resolve_atom(property.name);
         let printed_name = if needs_property_name_quoting(&name) {
             quote_property_name(&name)
@@ -981,6 +1004,184 @@ impl<'a> TypePrinter<'a> {
             sig.type_predicate.as_ref(),
             sig.return_type,
         ))
+    }
+
+    fn computed_method_requires_property_syntax(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+        container_symbol: Option<SymbolId>,
+    ) -> bool {
+        if !property.is_method {
+            return false;
+        }
+
+        let name = self.resolve_atom(property.name);
+        if !(name.starts_with('[') && name.ends_with(']')) {
+            return false;
+        }
+
+        let parent_symbol = property.parent_id.or(container_symbol);
+        let Some(name_idx) = self.find_member_name_node(parent_symbol, property.name) else {
+            return false;
+        };
+        let Some(node_arena) = self.node_arena else {
+            return false;
+        };
+        let Some(name_node) = node_arena.get(name_idx) else {
+            return false;
+        };
+        let Some(computed) = node_arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(type_cache) = self.type_cache else {
+            return false;
+        };
+        let Some(key_type) = type_cache
+            .node_types
+            .get(&computed.expression.0)
+            .copied()
+            .or_else(|| type_cache.node_types.get(&name_idx.0).copied())
+        else {
+            return false;
+        };
+
+        !tsz_solver::type_queries::is_type_usable_as_property_name(self.interner, key_type)
+    }
+
+    fn synthesized_empty_shape_members(&self, sym_id: SymbolId) -> Option<Vec<String>> {
+        let symbol_arena = self.symbol_arena?;
+        let node_arena = self.node_arena?;
+        let symbol = symbol_arena.get(sym_id)?;
+
+        symbol.declarations.iter().copied().find_map(|decl_idx| {
+            let decl_node = node_arena.get(decl_idx)?;
+            let class_data = node_arena.get_class(decl_node)?;
+
+            let members: Vec<String> = class_data
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .filter_map(|member_idx| self.synthesized_class_member_text(sym_id, member_idx))
+                .collect();
+
+            (!members.is_empty()).then_some(members)
+        })
+    }
+
+    fn synthesized_class_member_text(
+        &self,
+        sym_id: SymbolId,
+        member_idx: tsz_parser::NodeIndex,
+    ) -> Option<String> {
+        let node_arena = self.node_arena?;
+        let member_node = node_arena.get(member_idx)?;
+        let method = node_arena.get_method_decl(member_node)?;
+        let name_idx = method.name;
+        let name = self.render_name_node(node_arena, name_idx)?;
+        let method_type = self.synthesized_method_type(member_idx, method)?;
+
+        let mut property = tsz_solver::types::PropertyInfo::method(
+            self.interner.intern_string(&name),
+            method_type,
+        );
+        property.optional = method.question_token;
+        property.parent_id = Some(sym_id);
+
+        if self.computed_method_requires_property_syntax(&property, Some(sym_id)) {
+            return Some(format!(
+                "{}{}: {}",
+                name,
+                if property.optional { "?" } else { "" },
+                self.print_type(property.type_id)
+            ));
+        }
+
+        self.print_property_as_method(&property, Some(sym_id))
+            .or_else(|| {
+                Some(format!(
+                    "{}{}: {}",
+                    name,
+                    if property.optional { "?" } else { "" },
+                    self.print_type(property.type_id)
+                ))
+            })
+    }
+
+    fn synthesized_method_type(
+        &self,
+        member_idx: tsz_parser::NodeIndex,
+        method: &tsz_parser::parser::node::MethodDeclData,
+    ) -> Option<TypeId> {
+        let cache = self.type_cache?;
+        let candidate = cache
+            .node_types
+            .get(&member_idx.0)
+            .copied()
+            .or_else(|| cache.node_types.get(&method.name.0).copied())
+            .unwrap_or(TypeId::ANY);
+
+        if visitor::function_shape_id(self.interner, candidate).is_some()
+            || visitor::callable_shape_id(self.interner, candidate).is_some()
+        {
+            return Some(candidate);
+        }
+
+        let return_type = self.widen_synthesized_method_return_type(candidate);
+        let params = self.synthesized_method_params(&method.parameters);
+        Some(
+            self.interner
+                .function(tsz_solver::types::FunctionShape::new(params, return_type)),
+        )
+    }
+
+    fn synthesized_method_params(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Vec<tsz_solver::types::ParamInfo> {
+        let Some(node_arena) = self.node_arena else {
+            return Vec::new();
+        };
+        let cache = self.type_cache;
+
+        params
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|param_idx| {
+                let param_node = node_arena.get(param_idx)?;
+                let param = node_arena.get_parameter(param_node)?;
+                let name = node_arena
+                    .get_identifier_text(param.name)
+                    .map(|text| self.interner.intern_string(text));
+                let type_id = cache
+                    .and_then(|cache| {
+                        cache
+                            .node_types
+                            .get(&param_idx.0)
+                            .copied()
+                            .or_else(|| cache.node_types.get(&param.name.0).copied())
+                    })
+                    .unwrap_or(TypeId::ANY);
+
+                Some(tsz_solver::types::ParamInfo {
+                    name,
+                    type_id,
+                    optional: param.question_token,
+                    rest: param.dot_dot_dot_token,
+                })
+            })
+            .collect()
+    }
+
+    fn widen_synthesized_method_return_type(&self, type_id: TypeId) -> TypeId {
+        match visitor::literal_value(self.interner, type_id) {
+            Some(tsz_solver::types::LiteralValue::String(_)) => TypeId::STRING,
+            Some(tsz_solver::types::LiteralValue::Number(_)) => TypeId::NUMBER,
+            Some(tsz_solver::types::LiteralValue::Boolean(_)) => TypeId::BOOLEAN,
+            Some(tsz_solver::types::LiteralValue::BigInt(_)) => TypeId::BIGINT,
+            None => type_id,
+        }
     }
 
     fn print_property_as_accessors(
@@ -1081,15 +1282,135 @@ impl<'a> TypePrinter<'a> {
         })
     }
 
+    fn find_member_name_node(
+        &self,
+        parent_id: Option<SymbolId>,
+        property_name: Atom,
+    ) -> Option<tsz_parser::NodeIndex> {
+        let parent_id = parent_id?;
+        let symbol_arena = self.symbol_arena?;
+        let node_arena = self.node_arena?;
+        let parent_symbol = symbol_arena.get(parent_id)?;
+
+        parent_symbol
+            .declarations
+            .iter()
+            .copied()
+            .find_map(|decl_idx| {
+                let decl_node = node_arena.get(decl_idx)?;
+
+                if let Some(class_data) = node_arena.get_class(decl_node) {
+                    return class_data
+                        .members
+                        .nodes
+                        .iter()
+                        .copied()
+                        .find_map(|member_idx| {
+                            self.member_name_matches_atom(node_arena, member_idx, property_name)
+                        });
+                }
+
+                if let Some(iface) = node_arena.get_interface(decl_node) {
+                    return iface.members.nodes.iter().copied().find_map(|member_idx| {
+                        self.member_name_matches_atom(node_arena, member_idx, property_name)
+                    });
+                }
+
+                None
+            })
+    }
+
+    fn member_name_matches_atom(
+        &self,
+        node_arena: &NodeArena,
+        member_idx: tsz_parser::NodeIndex,
+        property_name: Atom,
+    ) -> Option<tsz_parser::NodeIndex> {
+        let member_node = node_arena.get(member_idx)?;
+
+        let name_idx = if let Some(method) = node_arena.get_method_decl(member_node) {
+            Some(method.name)
+        } else if let Some(accessor) = node_arena.get_accessor(member_node) {
+            Some(accessor.name)
+        } else {
+            node_arena
+                .get_property_decl(member_node)
+                .map(|prop| prop.name)
+        }?;
+
+        self.node_name_matches_atom(node_arena, name_idx, property_name)
+            .then_some(name_idx)
+    }
+
     fn node_name_matches_atom(
         &self,
         node_arena: &NodeArena,
         name_idx: tsz_parser::NodeIndex,
         property_name: Atom,
     ) -> bool {
-        node_arena.get_identifier_at(name_idx).is_some_and(|ident| {
-            node_arena.resolve_identifier_text(ident) == self.resolve_atom(property_name)
-        })
+        self.render_name_node(node_arena, name_idx)
+            .is_some_and(|rendered| rendered == self.resolve_atom(property_name))
+    }
+
+    fn render_name_node(
+        &self,
+        node_arena: &NodeArena,
+        name_idx: tsz_parser::NodeIndex,
+    ) -> Option<String> {
+        let name_node = node_arena.get(name_idx)?;
+
+        if let Some(ident) = node_arena.get_identifier(name_node) {
+            return Some(node_arena.resolve_identifier_text(ident).to_string());
+        }
+
+        if let Some(computed) = node_arena.get_computed_property(name_node) {
+            let expr = self.render_name_expression(node_arena, computed.expression)?;
+            return Some(format!("[{expr}]"));
+        }
+
+        if let Some(lit) = node_arena.get_literal(name_node) {
+            return Some(lit.text.clone());
+        }
+
+        match name_node.kind {
+            k if k == SyntaxKind::ThisKeyword as u16 => Some("this".to_string()),
+            k if k == SyntaxKind::SuperKeyword as u16 => Some("super".to_string()),
+            _ => None,
+        }
+    }
+
+    fn render_name_expression(
+        &self,
+        node_arena: &NodeArena,
+        expr_idx: tsz_parser::NodeIndex,
+    ) -> Option<String> {
+        let expr_node = node_arena.get(expr_idx)?;
+
+        if let Some(ident) = node_arena.get_identifier(expr_node) {
+            return Some(node_arena.resolve_identifier_text(ident).to_string());
+        }
+
+        if let Some(access) = node_arena.get_access_expr(expr_node) {
+            let base = self.render_name_expression(node_arena, access.expression)?;
+            let member = self.render_name_expression(node_arena, access.name_or_argument)?;
+            return Some(format!("{base}.{member}"));
+        }
+
+        if let Some(qname) = node_arena.get_qualified_name(expr_node) {
+            let left = self.render_name_expression(node_arena, qname.left)?;
+            let right = self.render_name_expression(node_arena, qname.right)?;
+            return Some(format!("{left}.{right}"));
+        }
+
+        if let Some(lit) = node_arena.get_literal(expr_node) {
+            return Some(lit.text.clone());
+        }
+
+        match expr_node.kind {
+            k if k == SyntaxKind::ThisKeyword as u16 => Some("this".to_string()),
+            k if k == SyntaxKind::SuperKeyword as u16 => Some("super".to_string()),
+            _ => None,
+        }
     }
 
     fn print_method_signature(
@@ -1157,9 +1478,9 @@ impl<'a> TypePrinter<'a> {
 
         let mut parts = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
-            let s = self.print_type(type_id);
+            let s = self.composition_member_text(type_id);
             // Parenthesize function/constructor types in union position
-            if visitor::function_shape_id(self.interner, type_id).is_some() {
+            if self.type_needs_parentheses_in_composition(type_id) {
                 parts.push(format!("({s})"));
             } else {
                 parts.push(s);
@@ -1178,9 +1499,9 @@ impl<'a> TypePrinter<'a> {
 
         let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
-            let s = self.print_type(type_id);
+            let s = self.composition_member_text(type_id);
             // Parenthesize function/constructor types in intersection position
-            if visitor::function_shape_id(self.interner, type_id).is_some() {
+            if self.type_needs_parentheses_in_composition(type_id) {
                 members.push((self.intersection_member_priority(type_id), format!("({s})")));
             } else {
                 members.push((self.intersection_member_priority(type_id), s));
@@ -1326,7 +1647,10 @@ impl<'a> TypePrinter<'a> {
             && callable.string_index.is_none()
             && callable.number_index.is_none()
         {
-            return self.print_construct_signature_arrow(&callable.construct_signatures[0]);
+            return self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
         }
 
         // Collect all signatures (call + construct)
@@ -1348,7 +1672,7 @@ impl<'a> TypePrinter<'a> {
 
             // Try to emit as method syntax if the property is a method
             if prop.is_method
-                && let Some(method_str) = self.print_property_as_method(prop)
+                && let Some(method_str) = self.print_property_as_method(prop, callable.symbol)
             {
                 parts.push(method_str);
                 continue;
@@ -1530,7 +1854,11 @@ impl<'a> TypePrinter<'a> {
         )
     }
 
-    fn print_construct_signature_arrow(&self, sig: &tsz_solver::types::CallSignature) -> String {
+    fn print_construct_signature_arrow(
+        &self,
+        sig: &tsz_solver::types::CallSignature,
+        is_abstract: bool,
+    ) -> String {
         let type_params_str = if !sig.type_params.is_empty() {
             let params: Vec<String> = sig
                 .type_params
@@ -1569,12 +1897,62 @@ impl<'a> TypePrinter<'a> {
             nested.print_type(sig.return_type)
         };
 
+        let prefix = if is_abstract { "abstract new " } else { "new " };
         format!(
-            "abstract new {}({}) => {}",
+            "{prefix}{}({}) => {}",
             type_params_str,
             params.join(", "),
             return_str
         )
+    }
+
+    fn type_needs_parentheses_in_composition(&self, type_id: TypeId) -> bool {
+        if visitor::function_shape_id(self.interner, type_id).is_some() {
+            return true;
+        }
+
+        let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) else {
+            return false;
+        };
+        let callable = self.interner.callable_shape(callable_id);
+        let has_properties = callable.properties.iter().any(|prop| {
+            let name = self.resolve_atom(prop.name);
+            name != "prototype" && !name.starts_with("__private_brand_")
+        });
+
+        callable.symbol.is_none()
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+            && (callable.call_signatures.len() == 1
+                || (callable.call_signatures.is_empty()
+                    && callable.construct_signatures.len() == 1))
+    }
+
+    fn composition_member_text(&self, type_id: TypeId) -> String {
+        let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) else {
+            return self.print_type(type_id);
+        };
+        let callable = self.interner.callable_shape(callable_id);
+        let has_properties = callable.properties.iter().any(|prop| {
+            let name = self.resolve_atom(prop.name);
+            name != "prototype" && !name.starts_with("__private_brand_")
+        });
+
+        if callable.symbol.is_none()
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+        {
+            return self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+        }
+
+        self.print_type(type_id)
     }
 
     /// Print a type predicate (e.g., `x is string`, `asserts x is string`, `this is Foo`)

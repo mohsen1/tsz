@@ -102,6 +102,63 @@ fn find_class_symbol(
         .unwrap_or_else(|| panic!("missing symbol for class {name}"))
 }
 
+fn find_first_class_method_name(
+    parser: &ParserState,
+    class_name: &str,
+    class_kind: u16,
+) -> NodeIndex {
+    let class_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == class_kind)
+                .then_some(NodeIndex(idx as u32))
+                .and_then(|idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_class(node))
+                        .filter(|class| {
+                            parser.arena.get_identifier_text(class.name) == Some(class_name)
+                        })
+                        .map(|_| idx)
+                })
+        })
+        .unwrap_or_else(|| panic!("missing class node for {class_name}"));
+
+    let class = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .unwrap_or_else(|| panic!("missing class data for {class_name}"));
+
+    class
+        .members
+        .nodes
+        .iter()
+        .copied()
+        .find_map(|member_idx| {
+            parser
+                .arena
+                .get(member_idx)
+                .and_then(|node| parser.arena.get_method_decl(node))
+                .map(|method| method.name)
+        })
+        .unwrap_or_else(|| panic!("missing method on class {class_name}"))
+}
+
+fn find_first_class_node(parser: &ParserState, class_kind: u16) -> NodeIndex {
+    parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| (node.kind == class_kind).then_some(NodeIndex(idx as u32)))
+        .unwrap_or_else(|| panic!("missing class node of kind {class_kind}"))
+}
+
 #[test]
 fn test_same_file_symbol_module_path_is_none() {
     let source = r#"
@@ -270,6 +327,223 @@ export function wrapClass(param: any) {
     assert!(
         printed.contains("foo(): any;"),
         "Expected named class expression methods to be preserved structurally: {printed}"
+    );
+}
+
+#[test]
+fn test_non_unique_symbol_computed_method_uses_property_syntax_in_structural_type() {
+    let source = r#"
+export const a: symbol = Symbol();
+export class A {
+    [a](): number {
+        return 1;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "A",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let method_name_idx = find_first_class_method_name(
+        &parser,
+        "A",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let computed_expr_idx = parser
+        .arena
+        .get(method_name_idx)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("expected computed method name");
+
+    let interner = TypeInterner::new();
+    let method_type = interner.function(FunctionShape::new(Vec::new(), TypeId::NUMBER));
+    let mut method = PropertyInfo::method(interner.intern_string("[a]"), method_type);
+    method.is_class_prototype = true;
+    method.parent_id = Some(class_sym);
+    method.declaration_order = 1;
+
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![method],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr_idx.0, TypeId::SYMBOL);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(instance_type);
+
+    assert!(
+        printed.contains("[a]: () => number;"),
+        "Expected non-unique symbol keyed method to emit as property signature: {printed}"
+    );
+    assert!(
+        !printed.contains("[a](): number;"),
+        "Did not expect non-unique symbol keyed method syntax: {printed}"
+    );
+}
+
+#[test]
+fn test_unique_symbol_computed_method_keeps_method_syntax_in_structural_type() {
+    let source = r#"
+export declare const iterator: unique symbol;
+export class A {
+    [iterator](): number {
+        return 1;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "A",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let method_name_idx = find_first_class_method_name(
+        &parser,
+        "A",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let computed_expr_idx = parser
+        .arena
+        .get(method_name_idx)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("expected computed method name");
+
+    let interner = TypeInterner::new();
+    let unique_symbol_type = interner.unique_symbol(SymbolRef(class_sym.0));
+    let method_type = interner.function(FunctionShape::new(Vec::new(), TypeId::NUMBER));
+    let mut method = PropertyInfo::method(interner.intern_string("[iterator]"), method_type);
+    method.is_class_prototype = true;
+    method.parent_id = Some(class_sym);
+    method.declaration_order = 1;
+
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![method],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr_idx.0, unique_symbol_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(instance_type);
+
+    assert!(
+        printed.contains("[iterator](): number;"),
+        "Expected unique symbol keyed method to keep method syntax: {printed}"
+    );
+    assert!(
+        !printed.contains("[iterator]: () => number;"),
+        "Did not expect unique symbol keyed property syntax: {printed}"
+    );
+}
+
+#[test]
+fn test_empty_anonymous_class_shape_recovers_method_from_ast() {
+    let source = r#"
+declare const a: symbol;
+const Value = class {
+    [a](): number {
+        return 1;
+    }
+};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_first_class_node(
+        &parser,
+        tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION,
+    );
+    let class_sym = binder
+        .get_node_symbol(class_idx)
+        .expect("missing anonymous class symbol");
+    let class = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class data");
+    let method_idx = class.members.nodes[0];
+    let method_name_idx = parser
+        .arena
+        .get(method_idx)
+        .and_then(|node| parser.arena.get_method_decl(node))
+        .map(|method| method.name)
+        .expect("missing method name");
+    let computed_expr_idx = parser
+        .arena
+        .get(method_name_idx)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("expected computed method name");
+
+    let interner = TypeInterner::new();
+    let method_type = interner.function(FunctionShape::new(Vec::new(), TypeId::NUMBER));
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            Vec::new(),
+            interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::default(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: Some(class_sym),
+            }),
+        )],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(class_sym),
+        is_abstract: false,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, method_type);
+    type_cache
+        .node_types
+        .insert(computed_expr_idx.0, TypeId::SYMBOL);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(ctor_type);
+
+    assert!(
+        printed.contains("new (): {"),
+        "Expected anonymous class constructor type: {printed}"
+    );
+    assert!(
+        printed.contains("[a]: () => number;"),
+        "Expected anonymous class members to be recovered from AST when cached shape is empty: {printed}"
     );
 }
 
