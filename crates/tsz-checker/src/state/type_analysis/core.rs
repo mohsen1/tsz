@@ -317,6 +317,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing qualified name data - propagate error
         };
 
+        let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right) {
+            if let Some(id) = self.ctx.arena.get_identifier(right_node) {
+                id.escaped_text.clone()
+            } else {
+                return TypeId::ERROR; // Missing identifier data - propagate error
+            }
+        } else {
+            return TypeId::ERROR; // Missing right node - propagate error
+        };
+
         // Resolve the left side (could be Identifier or another QualifiedName)
         let left_type = if let Some(left_node) = self.ctx.arena.get(qn.left) {
             let left_name = self.entity_name_text(qn.left).unwrap_or_default();
@@ -454,17 +464,6 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Propagate error from left side
         }
 
-        // Get the right side name (B in A.B)
-        let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right) {
-            if let Some(id) = self.ctx.arena.get_identifier(right_node) {
-                id.escaped_text.clone()
-            } else {
-                return TypeId::ERROR; // Missing identifier data - propagate error
-            }
-        } else {
-            return TypeId::ERROR; // Missing right node - propagate error
-        };
-
         // Collect lib binders for cross-arena symbol lookup (fixes TS2694 false positives)
         let lib_binders = self.get_lib_binders();
 
@@ -520,6 +519,13 @@ impl<'a> CheckerState<'a> {
                                     });
                             }
                         }
+                    }
+                    if result.is_none() {
+                        result = self.resolve_named_class_expression_namespace_member(
+                            qn.left,
+                            sym_id,
+                            &right_name,
+                        );
                     }
                     result
                 } else {
@@ -580,7 +586,10 @@ impl<'a> CheckerState<'a> {
                 let left_name_str = self
                     .entity_name_text(qn.left)
                     .unwrap_or_else(|| symbol.escaped_name.clone());
-                if self.outer_namespace_has_member(qn.left, &left_name_str, &right_name) {
+                if self
+                    .resolve_outer_namespace_member(qn.left, &left_name_str, &right_name)
+                    .is_some()
+                {
                     // The member exists on an outer namespace — don't emit TS2694.
                     // Return ERROR type since we can't resolve through the local interface,
                     // but avoid the misleading diagnostic.
@@ -687,21 +696,47 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
-    /// Check if an outer scope has a namespace with the given name that exports the member.
-    /// Used to avoid false TS2694 when a local interface shadows an outer namespace.
-    fn outer_namespace_has_member(
+    /// When a named class expression shadows an outer namespace of the same name,
+    /// qualified type names like `C.Member` still resolve through the namespace.
+    fn resolve_named_class_expression_namespace_member(
+        &self,
+        node: NodeIndex,
+        sym_id: SymbolId,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return None;
+        }
+
+        let decl_kind = self
+            .ctx
+            .arena
+            .get(symbol.value_declaration)
+            .map(|decl| decl.kind)?;
+        if decl_kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+
+        self.resolve_outer_namespace_member(node, symbol.escaped_name.as_str(), member_name)
+    }
+
+    /// Resolve a member from an outer namespace with the same name.
+    /// Used to avoid false TS2694 when a local declaration shadows an outer namespace.
+    fn resolve_outer_namespace_member(
         &self,
         node: NodeIndex,
         namespace_name: &str,
         member_name: &str,
-    ) -> bool {
+    ) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
         // Walk up scopes from the enclosing scope's parent
         let Some(scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, node) else {
-            return false;
+            return self.resolve_namespace_member_from_all_binders(namespace_name, member_name);
         };
         let Some(current_scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
-            return false;
+            return self.resolve_namespace_member_from_all_binders(namespace_name, member_name);
         };
         let mut walk_id = current_scope.parent;
 
@@ -712,9 +747,9 @@ impl<'a> CheckerState<'a> {
             {
                 // Found a namespace - check if it has the member
                 if let Some(exports) = sym.exports.as_ref()
-                    && exports.has(member_name)
+                    && let Some(member_id) = exports.get(member_name)
                 {
-                    return true;
+                    return Some(member_id);
                 }
             }
             if walk_id == scope.parent {
@@ -722,7 +757,8 @@ impl<'a> CheckerState<'a> {
             }
             walk_id = scope.parent;
         }
-        false
+
+        self.resolve_namespace_member_from_all_binders(namespace_name, member_name)
     }
 
     /// Build a fully qualified name from a symbol by walking its parent chain.
