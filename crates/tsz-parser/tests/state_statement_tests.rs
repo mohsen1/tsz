@@ -222,13 +222,15 @@ fn class_field_initializer_does_not_asi_before_computed_member() {
 
 #[test]
 fn class_field_initializer_comma_continuation_prefers_semicolon_error() {
-    let source = "class Game {\n    private position = new DisplayPosition([), 3, 3, 0], NoMove, 0);\n}";
+    let source =
+        "class Game {\n    private position = new DisplayPosition([), 3, 3, 0], NoMove, 0);\n}";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
     let first_comma = source.find(", 3").expect("first comma") as u32;
 
     assert!(
-        diags.iter()
+        diags
+            .iter()
             .any(|diag| diag.code == diagnostic_codes::EXPECTED
                 && diag.start == first_comma
                 && diag.message == "';' expected."),

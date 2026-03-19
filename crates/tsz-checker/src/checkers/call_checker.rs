@@ -63,7 +63,10 @@ impl<'a> CheckerState<'a> {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
     }
 
-    pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(&self, type_id: TypeId) -> bool {
+    pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(
+        &self,
+        type_id: TypeId,
+    ) -> bool {
         type_id == TypeId::UNKNOWN
             || type_id == TypeId::ERROR
             || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
@@ -92,7 +95,9 @@ impl<'a> CheckerState<'a> {
                 {
                     current = parent_idx;
                 }
-                k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
                     return self
                         .ctx
                         .arena
@@ -1391,7 +1396,7 @@ impl<'a> CheckerState<'a> {
                     is_contextually_sensitive(self, arg_idx)
                         || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                             && self.ctx.generic_excess_skip.is_some())
-            });
+                });
             if is_sensitive_contextual_arg {
                 let arg_node = arg_node.expect("sensitive contextual arg should exist");
                 let object_literal_function_param_spans =

@@ -1337,11 +1337,9 @@ impl<'a> CheckerState<'a> {
                                     if is_type_parameter_type(self.ctx.types, expected_param) {
                                         return false;
                                     }
-                                    if self
-                                        .contextual_type_is_unresolved_for_argument_refresh(
-                                            expected_param,
-                                        )
-                                    {
+                                    if self.contextual_type_is_unresolved_for_argument_refresh(
+                                        expected_param,
+                                    ) {
                                         return false;
                                     }
                                     let before = self.ctx.diagnostics.len();
