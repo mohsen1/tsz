@@ -37,18 +37,32 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        let mut most_specific = Vec::new();
-        for &candidate in &contra_types {
-            if contra_types
-                .iter()
-                .all(|&other| candidate == other || self.is_subtype(candidate, other))
-            {
-                most_specific.push(candidate);
+        if contra_types.len() <= 1 {
+            return contra_types
+                .first()
+                .copied()
+                .unwrap_or(TypeId::UNKNOWN);
+        }
+
+        // Tournament: find the most-specific candidate in O(N).
+        // The most-specific type must be a subtype of all others.
+        // Walk the list, keeping the current "winner" — replace it whenever
+        // a new candidate is a subtype of it.
+        let mut winner = contra_types[0];
+        for &candidate in &contra_types[1..] {
+            if self.is_subtype(candidate, winner) {
+                winner = candidate;
             }
         }
 
-        if let [best] = most_specific.as_slice() {
-            *best
+        // Verify the winner is actually a subtype of ALL candidates (O(N)).
+        // If verification fails, there's no single most-specific type.
+        let verified = contra_types
+            .iter()
+            .all(|&other| winner == other || self.is_subtype(winner, other));
+
+        if verified {
+            winner
         } else {
             self.interner.intersection(contra_types)
         }
