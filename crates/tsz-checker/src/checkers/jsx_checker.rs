@@ -1930,9 +1930,8 @@ impl<'a> CheckerState<'a> {
                     self.resolve_property_access_with_env(props_type, "children"),
                     PropertyAccessResult::Success { .. }
                 );
-                let intrinsic_has_children = self
-                    .get_intrinsic_attributes_type()
-                    .is_some_and(|ia_type| {
+                let intrinsic_has_children =
+                    self.get_intrinsic_attributes_type().is_some_and(|ia_type| {
                         let resolved_ia = self.resolve_type_for_property_access(ia_type);
                         matches!(
                             self.resolve_property_access_with_env(resolved_ia, "children"),
@@ -1995,7 +1994,8 @@ impl<'a> CheckerState<'a> {
         provided_attrs: &[(String, TypeId)],
     ) {
         let mut ordered_attrs: Vec<(String, TypeId)> = Vec::with_capacity(provided_attrs.len());
-        if let Some((_, children_type)) = provided_attrs.iter().find(|(name, _)| name == "children") {
+        if let Some((_, children_type)) = provided_attrs.iter().find(|(name, _)| name == "children")
+        {
             ordered_attrs.push(("children".to_string(), *children_type));
         }
         ordered_attrs.extend(

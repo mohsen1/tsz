@@ -300,7 +300,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
             }
             SubtypeFailureReason::NoUnionMemberMatches {
-                target_union_members, ..
+                target_union_members,
+                ..
             } => SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
                 target_union_members,
@@ -1312,8 +1313,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if let Some(normalized_reason) = normalized_result
                     && !Self::uses_generic_failure_surface(&normalized_reason)
                 {
-                    structural_result =
-                        Some(Self::remap_failure_surface(normalized_reason, source, target));
+                    structural_result = Some(Self::remap_failure_surface(
+                        normalized_reason,
+                        source,
+                        target,
+                    ));
                 }
             }
         }
