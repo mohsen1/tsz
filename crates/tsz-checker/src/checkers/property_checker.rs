@@ -78,6 +78,20 @@ impl<'a> CheckerState<'a> {
 
         let (class_idx, is_static) = class_result.expect("early return above handles None case");
 
+        if self.is_super_expression(object_expr)
+            && is_static
+            && (self.find_enclosing_static_block(object_expr).is_some()
+                || self.find_enclosing_static_block(error_node).is_some())
+            && self.super_static_block_reads_base_expando(class_idx, property_name)
+        {
+            self.error_at_node(
+                error_node,
+                &format!("Property '{property_name}' is used before being assigned."),
+                diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+            );
+            return false;
+        }
+
         // Mark the class member symbol as referenced for unused-variable tracking.
         // Property accesses like `this.x` go through the solver's property resolution
         // pipeline, which never marks binder symbols. Without this, private members
@@ -233,6 +247,68 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn super_static_block_reads_base_expando(
+        &self,
+        class_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        if self
+            .is_method_member_in_class_hierarchy(class_idx, property_name, true)
+            .is_some()
+        {
+            return false;
+        }
+
+        let base_name = self.get_class_name_from_decl(class_idx);
+        if base_name.is_empty() {
+            return false;
+        }
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        source_file.statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                return false;
+            };
+            let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                return false;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                return false;
+            }
+
+            let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
+                return false;
+            };
+            let Some(access) = self.ctx.arena.get_access_expr(lhs_node) else {
+                return false;
+            };
+            let Some(base_node) = self.ctx.arena.get(access.expression) else {
+                return false;
+            };
+            let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
+                return false;
+            };
+            if base_ident.escaped_text != base_name {
+                return false;
+            }
+
+            self.ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .is_some_and(|name_ident| name_ident.escaped_text == property_name)
+        })
     }
 
     /// Check whether protected access is allowed from the given class context.
