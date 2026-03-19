@@ -1975,6 +1975,7 @@ impl<'a> CheckerState<'a> {
                 if expected != TypeId::ANY
                     && expected != TypeId::UNKNOWN
                     && !is_type_parameter_type(self.ctx.types, expected)
+                    && !self.contextual_type_is_unresolved_for_argument_refresh(expected)
                 {
                     self.check_object_literal_excess_properties(actual, expected, arg_idx);
                 }

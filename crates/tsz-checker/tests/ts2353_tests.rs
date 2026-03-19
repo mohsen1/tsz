@@ -268,6 +268,68 @@ d1.pos.b;
     );
 }
 
+#[test]
+fn nested_generic_callee_does_not_preinstantiate_from_outer_call_target() {
+    let source = r#"
+interface Effect<out A> {
+  readonly EffectTypeId: {
+    readonly _A: (_: never) => A;
+  };
+}
+
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+
+declare const repeat: {
+  <A>(
+    options: {
+      until?: (_: A) => boolean;
+    },
+  ): (self: Effect<A>) => Effect<A>;
+};
+
+pipe(
+  {} as Effect<boolean>,
+  repeat({
+    until: (x) => {
+      return x;
+    },
+  }),
+);
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353 || d.0 == 7006 || d.0 == 2345),
+        "Nested generic callee should infer from its own signature before outer call compatibility, got: {diags:?}"
+    );
+    assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
+}
+
+#[test]
+fn promise_resolve_argument_skips_epc_for_infer_placeholder_target() {
+    let source = r#"
+interface PromiseLike<T> {}
+interface Obj { key: "value"; }
+declare function withResolver<T>(
+  cb: (resolve: (value: T | PromiseLike<T>) => void) => void,
+): PromiseLike<T>;
+declare function expectObj(value: PromiseLike<Obj>): void;
+
+expectObj(
+  withResolver(resolve => {
+    resolve({ key: "value" });
+  }),
+);
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Promise resolve arguments should not run EPC against __infer targets, got: {diags:?}"
+    );
+    assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
+}
+
 // --- Type alias name display in diagnostics ---
 
 #[test]

@@ -108,7 +108,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
-        self.instantiate_callable_result_from_request(result, request)
+        self.instantiate_callable_result_from_request(idx, result, request)
     }
 
     fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {

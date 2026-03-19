@@ -1158,7 +1158,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.apply_flow_narrowing(idx, result_type)
         };
-        self.instantiate_callable_result_from_request(result_type, request)
+        self.instantiate_callable_result_from_request(idx, result_type, request)
     }
 
     fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {

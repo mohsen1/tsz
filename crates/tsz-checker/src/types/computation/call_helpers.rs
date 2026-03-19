@@ -1337,6 +1337,13 @@ impl<'a> CheckerState<'a> {
                                     if is_type_parameter_type(self.ctx.types, expected_param) {
                                         return false;
                                     }
+                                    if self
+                                        .contextual_type_is_unresolved_for_argument_refresh(
+                                            expected_param,
+                                        )
+                                    {
+                                        return false;
+                                    }
                                     let before = self.ctx.diagnostics.len();
                                     self.check_object_literal_excess_properties(
                                         arg_type,
@@ -1391,7 +1398,10 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
-                        if !is_type_parameter_type(self.ctx.types, evaluated_param) {
+                        if !is_type_parameter_type(self.ctx.types, evaluated_param)
+                            && !self
+                                .contextual_type_is_unresolved_for_argument_refresh(evaluated_param)
+                        {
                             let arg_type = self.refreshed_generic_call_arg_type_with_context(
                                 arg_idx,
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
