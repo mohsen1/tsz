@@ -1292,14 +1292,6 @@ impl<'a> CheckerState<'a> {
             let is_promise_executor = self.is_promise_executor_function(idx);
             let is_accessor_node = node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR;
-            if is_closure
-                && !has_type_annotation
-                && !has_jsdoc_return
-                && self.ctx.is_checking_statements
-                && !self.contextual_return_suppresses_circularity(return_context_for_circularity)
-            {
-                self.record_pending_circular_return_sites(idx, body);
-            }
             // For closures (function expressions / arrow functions), defer TS7010/TS7011
             // during the build_type_environment phase.  During that phase, contextual
             // types are not yet available (they're set during check_variable_declaration).

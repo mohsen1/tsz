@@ -538,6 +538,10 @@ pub struct CheckerContext<'a> {
     /// symbol currently being resolved. Used to centralize TS7022/TS7023/TS7024
     /// emission and suppress downstream relation noise from the circularity.
     pub pending_circular_return_sites: FxHashMap<SymbolId, Vec<NodeIndex>>,
+    /// Extra tracking depth for method/accessor return-site circularity when a
+    /// construct consults those bodies immediately during type computation
+    /// (currently the `for...of` iterator protocol path).
+    pub non_closure_circular_return_tracking_depth: usize,
     /// Variables that have already had TS7034 emitted.
     /// Used to emit TS7005 on subsequent usages.
     pub reported_implicit_any_vars: FxHashSet<SymbolId>,

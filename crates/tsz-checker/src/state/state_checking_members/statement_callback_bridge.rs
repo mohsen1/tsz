@@ -1434,6 +1434,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_for_in_expression_destructuring(self, initializer);
     }
 
+    fn begin_for_of_self_reference_tracking(&mut self, decl_list_idx: NodeIndex) -> usize {
+        CheckerState::begin_for_of_self_reference_tracking(self, decl_list_idx)
+    }
+
+    fn end_for_of_self_reference_tracking(&mut self, tracked_symbol_count: usize) {
+        CheckerState::end_for_of_self_reference_tracking(self, tracked_symbol_count);
+    }
+
     fn check_for_of_self_reference_circularity(
         &mut self,
         decl_list_idx: NodeIndex,

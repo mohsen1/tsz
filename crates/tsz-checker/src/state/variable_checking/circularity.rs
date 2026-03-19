@@ -7,18 +7,38 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn consume_circular_return_sites_for_initializer(
+    pub(super) fn take_pending_circular_return_sites(
         &mut self,
         sym_id: SymbolId,
-        init_idx: NodeIndex,
     ) -> Vec<NodeIndex> {
         self.ctx
             .pending_circular_return_sites
             .remove(&sym_id)
             .unwrap_or_default()
+    }
+
+    pub(super) fn consume_circular_return_sites_for_initializer(
+        &mut self,
+        sym_id: SymbolId,
+        init_idx: NodeIndex,
+    ) -> Vec<NodeIndex> {
+        self.take_pending_circular_return_sites(sym_id)
             .into_iter()
             .filter(|&site_idx| {
                 site_idx == init_idx || self.is_descendant_of_node(site_idx, init_idx)
+            })
+            .collect()
+    }
+
+    pub(super) fn retain_immediate_initializer_circular_return_sites(
+        &self,
+        init_idx: NodeIndex,
+        sites: Vec<NodeIndex>,
+    ) -> Vec<NodeIndex> {
+        sites
+            .into_iter()
+            .filter(|&site_idx| {
+                self.circular_return_site_requires_initializer_inference(site_idx, init_idx)
             })
             .collect()
     }
@@ -125,6 +145,45 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::FUNCTION_IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_A,
             &[],
         );
+    }
+
+    fn circular_return_site_requires_initializer_inference(
+        &self,
+        site_idx: NodeIndex,
+        init_idx: NodeIndex,
+    ) -> bool {
+        if site_idx == init_idx {
+            return true;
+        }
+
+        let mut current = site_idx;
+        loop {
+            if current == init_idx {
+                return false;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::CALL_EXPRESSION
+                    | syntax_kind_ext::NEW_EXPRESSION
+                    | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            ) {
+                return true;
+            }
+
+            current = parent_idx;
+        }
     }
 
     /// Check if the initializer has any self-references to `sym_id` that are NOT

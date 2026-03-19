@@ -323,7 +323,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn infer_return_type_from_body(
         &mut self,
-        _function_idx: NodeIndex,
+        function_idx: NodeIndex,
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
@@ -334,6 +334,26 @@ impl<'a> CheckerState<'a> {
         // so that the subsequent check_statement pass recomputes everything with
         // proper narrowing context.
         let snap = self.ctx.snapshot_return_type();
+
+        if self.ctx.is_checking_statements
+            && !function_idx.is_none()
+            && !self.contextual_return_suppresses_circularity(return_context)
+            && let Some(function_node) = self.ctx.arena.get(function_idx)
+        {
+            let should_record = matches!(
+                function_node.kind,
+                syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+            ) || (self.ctx.non_closure_circular_return_tracking_depth > 0
+                && matches!(
+                    function_node.kind,
+                    syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR
+                ));
+            if should_record {
+                self.record_pending_circular_return_sites(function_idx, body_idx);
+            }
+        }
 
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
 

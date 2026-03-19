@@ -205,6 +205,15 @@ pub trait StatementCheckCallbacks {
     /// TS2491: Check if a for-in expression initializer is an array/object literal.
     fn check_for_in_expression_destructuring(&mut self, initializer: NodeIndex);
 
+    /// Begin tracking loop-variable circular return sites while computing a
+    /// `for...of` iterable expression. Returns the number of tracked symbols.
+    fn begin_for_of_self_reference_tracking(&mut self, _decl_list_idx: NodeIndex) -> usize {
+        0
+    }
+
+    /// End `for...of` loop-variable circular return-site tracking.
+    fn end_for_of_self_reference_tracking(&mut self, _tracked_symbol_count: usize) {}
+
     /// TS7022: Detect self-referencing for-of loop variables under noImplicitAny.
     fn check_for_of_self_reference_circularity(
         &mut self,
@@ -647,6 +656,13 @@ impl StatementChecker {
                         }
                     };
 
+                    let tracked_for_of_symbols =
+                        if is_for_of && is_var_decl_list && !has_grammar_error {
+                            state.begin_for_of_self_reference_tracking(initializer)
+                        } else {
+                            0
+                        };
+
                     // Determine the element type for the loop variable (for-of) or key type (for-in).
                     // When there are grammar errors, skip semantic checks (TS2407 etc.)
                     // but still evaluate the expression to catch TS2304 "cannot find name".
@@ -680,19 +696,19 @@ impl StatementChecker {
                         }
                     };
 
+                    if tracked_for_of_symbols > 0 {
+                        state.end_for_of_self_reference_tracking(tracked_for_of_symbols);
+                    }
+
                     if is_var_decl_list {
                         // TS2491: for-in cannot use destructuring patterns
                         if !is_for_of {
                             state.check_for_in_destructuring_pattern(initializer);
                         }
-                        // TS7022: Detect self-referencing for-of variables.
-                        // `for (var v of v)` where `v` has no type annotation and the
-                        // iterable expression references the declared variable produces
-                        // a circular dependency.  The element type resolves to `any` or
-                        // `error`, and TS7022 should be emitted under noImplicitAny.
-                        if is_for_of
-                            && (loop_var_type == TypeId::ANY || loop_var_type == TypeId::ERROR)
-                        {
+                        // TS7022/TS7023: Detect self-referencing for-of variables.
+                        // This covers both direct `for (var v of v)` cycles and
+                        // iterator-protocol methods whose return expressions read `v`.
+                        if is_for_of {
                             state.check_for_of_self_reference_circularity(initializer, expression);
                         }
                         state.assign_for_in_of_initializer_types(

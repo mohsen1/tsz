@@ -1139,7 +1139,12 @@ impl<'a> CheckerState<'a> {
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
             {
-                self.consume_circular_return_sites_for_initializer(sym_id, var_decl.initializer)
+                let consumed = self
+                    .consume_circular_return_sites_for_initializer(sym_id, var_decl.initializer);
+                self.retain_immediate_initializer_circular_return_sites(
+                    var_decl.initializer,
+                    consumed,
+                )
             } else {
                 Vec::new()
             };
@@ -1360,7 +1365,6 @@ impl<'a> CheckerState<'a> {
                 && var_decl.initializer.is_some()
                 && has_recorded_circular_return
                 && !is_direct_deferred_initializer
-                && !all_refs_deferred
             {
                 self.suppress_circular_initializer_relation_diagnostics(
                     &var_decl_snap,
