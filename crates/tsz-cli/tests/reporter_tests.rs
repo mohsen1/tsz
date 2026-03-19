@@ -2,7 +2,7 @@ use super::reporter::Reporter;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::diagnostics::{Diagnostic, DiagnosticCategory};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -332,5 +332,194 @@ fn pretty_mode_has_blank_line_between_header_and_snippet() {
         lines[1].is_empty(),
         "expected blank line between header and source, got: '{}'",
         lines[1]
+    );
+}
+
+#[test]
+fn plain_mode_renders_related_information_as_indented_message_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path.join("test.ts");
+    write_file(&file_path, "foo();\n");
+
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        0,
+        3,
+        "Cannot find name 'foo'.".to_string(),
+        2304,
+    )
+    .with_related(
+        file_path.to_string_lossy().into_owned(),
+        0,
+        3,
+        "The missing symbol is referenced here.",
+    );
+
+    let mut reporter = Reporter::new(false);
+    let output = reporter.render(&[diagnostic]);
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_eq!(lines.len(), 2, "expected primary + related line: {output}");
+    assert_eq!(lines[1], "  The missing symbol is referenced here.");
+    assert!(
+        !lines[1].contains("test.ts"),
+        "plain related info should not repeat locations: {output}"
+    );
+    assert!(
+        !lines[1].contains("TS"),
+        "plain related info should not show diagnostic codes: {output}"
+    );
+}
+
+#[test]
+fn plain_mode_uses_parent_segments_for_files_outside_cwd() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path.join("workspace/src");
+    let file_path = temp.path.join("workspace/shared/test.ts");
+    write_file(&file_path, "value;\n");
+
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        0,
+        5,
+        "Cannot find name 'value'.".to_string(),
+        2304,
+    );
+
+    let mut reporter = Reporter::new(false);
+    reporter.set_cwd(&cwd);
+    let output = reporter.render(&[diagnostic]);
+
+    assert!(
+        output.starts_with("../shared/test.ts(1,1): error TS2304:"),
+        "expected relative parent path, got: {output}"
+    );
+}
+
+#[test]
+fn pretty_mode_renders_related_location_snippet_and_message() {
+    let temp = TempDir::new().expect("temp dir");
+    let main_path = temp.path.join("main.ts");
+    let decl_path = temp.path.join("decl.ts");
+    write_file(&main_path, "foo();\n");
+    write_file(&decl_path, "declare function foo(): void;\n");
+
+    let related_start = "declare function ".len() as u32;
+    let diagnostic = Diagnostic::error(
+        main_path.to_string_lossy().into_owned(),
+        0,
+        3,
+        "Cannot find name 'foo'.".to_string(),
+        2304,
+    )
+    .with_related(
+        decl_path.to_string_lossy().into_owned(),
+        related_start,
+        3,
+        "The symbol is declared here.",
+    );
+
+    let mut reporter = Reporter::new(false);
+    reporter.set_pretty(true);
+    reporter.set_cwd(&temp.path);
+    let output = reporter.render(&[diagnostic]);
+
+    assert!(
+        output.contains("decl.ts:1:18"),
+        "missing related location: {output}"
+    );
+    assert!(
+        output.contains("1 declare function foo(): void;"),
+        "missing related source snippet: {output}"
+    );
+    assert!(
+        output.contains("~~~"),
+        "missing related underline: {output}"
+    );
+    assert!(
+        output.contains("    The symbol is declared here."),
+        "missing related message: {output}"
+    );
+}
+
+#[test]
+fn pretty_mode_summary_multiple_files_groups_only_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let alpha_path = temp.path.join("alpha.ts");
+    let beta_path = temp.path.join("beta.ts");
+    write_file(&alpha_path, "a();\nb();\n");
+    write_file(&beta_path, "c();\n");
+
+    let diagnostics = vec![
+        Diagnostic::error(
+            alpha_path.to_string_lossy().into_owned(),
+            0,
+            1,
+            "Cannot find name 'a'.".to_string(),
+            2304,
+        ),
+        Diagnostic::error(
+            alpha_path.to_string_lossy().into_owned(),
+            5,
+            1,
+            "Cannot find name 'b'.".to_string(),
+            2304,
+        ),
+        Diagnostic::error(
+            beta_path.to_string_lossy().into_owned(),
+            0,
+            1,
+            "Cannot find name 'c'.".to_string(),
+            2304,
+        ),
+        Diagnostic {
+            category: DiagnosticCategory::Warning,
+            code: 9999,
+            file: beta_path.to_string_lossy().into_owned(),
+            start: 0,
+            length: 1,
+            message_text: "This warning should not affect the summary.".to_string(),
+            related_information: Vec::new(),
+        },
+    ];
+
+    let mut reporter = Reporter::new(false);
+    reporter.set_pretty(true);
+    reporter.set_cwd(&temp.path);
+    let output = reporter.render(&diagnostics);
+
+    assert!(
+        output.contains("Found 3 errors in 2 files."),
+        "missing multi-file summary: {output}"
+    );
+    assert!(output.contains("Errors  Files"), "missing summary table: {output}");
+    assert!(output.contains("alpha.ts:1"), "missing alpha entry: {output}");
+    assert!(output.contains("beta.ts:1"), "missing beta entry: {output}");
+}
+
+#[test]
+fn pretty_mode_omits_summary_when_only_warnings_are_present() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path.join("warn.ts");
+    write_file(&file_path, "warn();\n");
+
+    let diagnostic = Diagnostic {
+        category: DiagnosticCategory::Warning,
+        code: 9999,
+        file: file_path.to_string_lossy().into_owned(),
+        start: 0,
+        length: 4,
+        message_text: "A warning message.".to_string(),
+        related_information: Vec::new(),
+    };
+
+    let mut reporter = Reporter::new(false);
+    reporter.set_pretty(true);
+    let output = reporter.render(&[diagnostic]);
+
+    assert!(!output.contains("Found "), "warnings should not add a summary: {output}");
+    assert!(
+        !output.contains("Errors  Files"),
+        "warnings should not add an error table: {output}"
     );
 }
