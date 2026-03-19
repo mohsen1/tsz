@@ -595,12 +595,16 @@ impl<'a> DeclarationEmitter<'a> {
     /// Emit a `<T1, T2, ...>` type argument list.
     pub(crate) fn emit_type_arguments(&mut self, type_args: &tsz_parser::parser::NodeList) {
         self.write("<");
-        let mut first = true;
-        for &arg_idx in &type_args.nodes {
-            if !first {
+        for (index, &arg_idx) in type_args.nodes.iter().enumerate() {
+            if index > 0 {
                 self.write(", ");
             }
-            first = false;
+            if self.first_type_argument_needs_parentheses(arg_idx, index == 0) {
+                self.write("(");
+                self.emit_type(arg_idx);
+                self.write(")");
+                continue;
+            }
             self.emit_type(arg_idx);
         }
         self.write(">");
