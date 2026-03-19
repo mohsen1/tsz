@@ -415,8 +415,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(substituted_true)
                         {
-                            let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = *next_cond;
+                            let next_cond = self.interner().get_conditional(next_cond_id);
+                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -426,8 +426,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             if let Some(TypeData::Conditional(next_cond_id)) =
                                 self.interner().lookup(instantiated)
                             {
-                                let next_cond = self.interner().conditional_type(next_cond_id);
-                                current_cond = *next_cond;
+                                let next_cond = self.interner().get_conditional(next_cond_id);
+                                current_cond = next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
@@ -502,8 +502,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(cond.false_type)
                     {
-                        let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = *next_cond;
+                        let next_cond = self.interner().get_conditional(next_cond_id);
+                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -516,8 +516,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(instantiated)
                         {
-                            let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = *next_cond;
+                            let next_cond = self.interner().get_conditional(next_cond_id);
+                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -606,8 +606,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Conditional(next_cond_id)) =
                     self.interner().lookup(result_branch)
                 {
-                    let next_cond = self.interner().conditional_type(next_cond_id);
-                    current_cond = *next_cond;
+                    let next_cond = self.interner().get_conditional(next_cond_id);
+                    current_cond = next_cond;
                     tail_recursion_count += 1;
                     continue;
                 }
@@ -619,8 +619,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(instantiated)
                     {
-                        let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = *next_cond;
+                        let next_cond = self.interner().get_conditional(next_cond_id);
+                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
