@@ -22,7 +22,8 @@ impl CheckerState<'_> {
 
         let mut current = node_idx;
         for _ in 0..12 {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
                 break;
             };
             if parent_idx.is_none() {
@@ -45,21 +46,26 @@ impl CheckerState<'_> {
                 let Some(source_file) = self.ctx.arena.source_files.first() else {
                     return template_types;
                 };
-                let Some(jsdoc) =
-                    self.try_leading_jsdoc(&source_file.comments, parent_node.pos, &source_file.text)
-                else {
+                let Some(jsdoc) = self.try_leading_jsdoc(
+                    &source_file.comments,
+                    parent_node.pos,
+                    &source_file.text,
+                ) else {
                     return template_types;
                 };
 
                 for name in Self::jsdoc_template_type_params(&jsdoc) {
                     let atom = self.ctx.types.intern_string(&name);
                     template_types.entry(name).or_insert_with(|| {
-                        self.ctx.types.factory().type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        })
+                        self.ctx
+                            .types
+                            .factory()
+                            .type_param(tsz_solver::TypeParamInfo {
+                                name: atom,
+                                constraint: None,
+                                default: None,
+                                is_const: false,
+                            })
                     });
                 }
                 return template_types;

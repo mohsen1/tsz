@@ -189,22 +189,20 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|type_expr| type_expr.trim().ends_with('='))
                         || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, &pname);
                     if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(ctor_idx)
-                        && let Some(jsdoc_type) = self.resolve_jsdoc_param_type_with_pos(
-                            &jsdoc,
-                            &pname,
-                            Some(comment_start),
-                        ).or_else(|| {
-                            Self::extract_jsdoc_param_type_string(&jsdoc, &pname).and_then(
-                                |type_expr| {
-                                    let normalized = type_expr
-                                        .trim()
-                                        .trim_end_matches('=')
-                                        .trim_start_matches("...")
-                                        .trim();
-                                    enclosing_class_template_types.get(normalized).copied()
-                                },
-                            )
-                        })
+                        && let Some(jsdoc_type) = self
+                            .resolve_jsdoc_param_type_with_pos(&jsdoc, &pname, Some(comment_start))
+                            .or_else(|| {
+                                Self::extract_jsdoc_param_type_string(&jsdoc, &pname).and_then(
+                                    |type_expr| {
+                                        let normalized = type_expr
+                                            .trim()
+                                            .trim_end_matches('=')
+                                            .trim_start_matches("...")
+                                            .trim();
+                                        enclosing_class_template_types.get(normalized).copied()
+                                    },
+                                )
+                            })
                     {
                         params[i].type_id = jsdoc_type;
                         params[i].optional =
