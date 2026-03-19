@@ -231,7 +231,10 @@ impl<'a> CheckerState<'a> {
             for (_name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
                 if let Some(ref cb) = typedef_info.callback {
                     // Check callback param types for unresolvable references (TS2304)
-                    for (_param_name, type_expr) in &cb.params {
+                    for param in &cb.params {
+                        let Some(type_expr) = param.type_expr.as_deref() else {
+                            continue;
+                        };
                         let expr = type_expr.trim();
                         let expr = expr.strip_prefix("...").unwrap_or(expr);
                         if expr.is_empty() {

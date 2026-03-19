@@ -6,6 +6,7 @@
 //! - JSDoc comment position/content lookup
 //! - Pure text-level JSDoc parsing helpers (param names, type expressions, etc.)
 
+use super::jsdoc::JsdocParamTagInfo;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -727,31 +728,11 @@ impl<'a> CheckerState<'a> {
             let effective = Self::skip_backtick_quoted(trimmed);
 
             if let Some(rest) = effective.strip_prefix("@param") {
-                let rest = rest.trim();
-                if rest.starts_with('{') {
-                    // @param {type} name — extract type and name after the closing brace
-                    if let Some(close) = rest.find('}') {
-                        let type_expr = &rest[1..close];
-                        let after = rest[close + 1..].trim();
-                        let name_token = after.split_whitespace().next().unwrap_or("");
-                        // [name] or [name=default] means optional
-                        let is_bracket_optional = name_token.starts_with('[');
-                        let name = name_token.trim_start_matches('[');
-                        let name = name.split('=').next().unwrap_or(name);
-                        let name = name.trim_end_matches(']');
-                        // {Type=} means optional
-                        let is_type_optional = type_expr.ends_with('=');
-                        if name == param_name && !is_bracket_optional && !is_type_optional {
-                            return true;
-                        }
-                    }
-                } else {
-                    // @param name (no type) — always required
-                    let name = rest.split_whitespace().next().unwrap_or("");
-                    let name = name.trim_matches('`');
-                    if name == param_name {
-                        return true;
-                    }
+                if let Some(param) = Self::parse_jsdoc_param_tag(rest)
+                    && param.name == param_name
+                    && !param.optional
+                {
+                    return true;
                 }
             }
         }
@@ -974,7 +955,17 @@ impl<'a> CheckerState<'a> {
         parent_name: &str,
         is_array: bool,
     ) -> Option<tsz_solver::TypeId> {
-        let nested = Self::extract_jsdoc_nested_param_properties(jsdoc, parent_name);
+        let entries = Self::collect_jsdoc_nested_param_entries(jsdoc);
+        self.build_nested_param_object_type_from_entries(&entries, parent_name, is_array)
+    }
+
+    pub(crate) fn build_nested_param_object_type_from_entries(
+        &mut self,
+        entries: &[(String, String, bool)],
+        parent_name: &str,
+        is_array: bool,
+    ) -> Option<tsz_solver::TypeId> {
+        let nested = Self::extract_jsdoc_nested_param_properties_from_entries(entries, parent_name);
         if nested.is_empty() {
             return None;
         }
@@ -1004,7 +995,11 @@ impl<'a> CheckerState<'a> {
                     format!("{parent_name}.{prop_name}")
                 };
                 // Recursively build the nested object type
-                self.build_nested_param_object_type(jsdoc, &sub_parent, is_sub_array_object)
+                self.build_nested_param_object_type_from_entries(
+                    entries,
+                    &sub_parent,
+                    is_sub_array_object,
+                )
                     .or_else(|| self.jsdoc_type_from_expression(eff_type))
             } else {
                 self.jsdoc_type_from_expression(eff_type)
@@ -1052,13 +1047,17 @@ impl<'a> CheckerState<'a> {
     /// - `@param {string} opts[].x` → ("x", "string", false) (array element property)
     ///
     /// Only extracts immediate child properties (one level of nesting).
+    #[cfg(test)]
     fn extract_jsdoc_nested_param_properties(
         jsdoc: &str,
         parent_name: &str,
     ) -> Vec<(String, String, bool)> {
+        let entries = Self::collect_jsdoc_nested_param_entries(jsdoc);
+        Self::extract_jsdoc_nested_param_properties_from_entries(&entries, parent_name)
+    }
+
+    fn collect_jsdoc_nested_param_entries(jsdoc: &str) -> Vec<(String, String, bool)> {
         let mut result = Vec::new();
-        let dot_prefix = format!("{parent_name}.");
-        let array_dot_prefix = format!("{parent_name}[].");
 
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
@@ -1088,15 +1087,34 @@ impl<'a> CheckerState<'a> {
                 (name_part, false)
             };
 
-            // Check if this is a direct child property of the parent
-            // e.g., "opts.x" for parent "opts", or "opts[].x" for array parent
-            let prop_name = if let Some(prop) = bare_name.strip_prefix(&dot_prefix) {
-                // Skip deeper nesting like opts.what.bad (contains another dot)
+            if !bare_name.contains('.') && !bare_name.contains("[]") {
+                continue;
+            }
+
+            result.push((
+                bare_name.to_string(),
+                type_expr.trim().to_string(),
+                is_bracket_optional,
+            ));
+        }
+        result
+    }
+
+    fn extract_jsdoc_nested_param_properties_from_entries(
+        entries: &[(String, String, bool)],
+        parent_name: &str,
+    ) -> Vec<(String, String, bool)> {
+        let mut result = Vec::new();
+        let dot_prefix = format!("{parent_name}.");
+        let array_dot_prefix = format!("{parent_name}[].");
+
+        for (full_name, type_expr, is_bracket_optional) in entries {
+            let prop_name = if let Some(prop) = full_name.strip_prefix(&dot_prefix) {
                 if prop.contains('.') || prop.contains("[]") {
                     continue;
                 }
                 prop
-            } else if let Some(prop) = bare_name.strip_prefix(&array_dot_prefix) {
+            } else if let Some(prop) = full_name.strip_prefix(&array_dot_prefix) {
                 if prop.contains('.') || prop.contains("[]") {
                     continue;
                 }
@@ -1111,10 +1129,11 @@ impl<'a> CheckerState<'a> {
 
             result.push((
                 prop_name.to_string(),
-                type_expr.trim().to_string(),
-                is_bracket_optional,
+                type_expr.clone(),
+                *is_bracket_optional,
             ));
         }
+
         result
     }
 
@@ -1213,40 +1232,60 @@ impl<'a> CheckerState<'a> {
     /// - `{type} opts[].x` → "opts" (array dotted → skipped)
     /// - `name {type}` → "name"
     fn extract_param_name_from_tag(tag_body: &str) -> Option<String> {
+        let parsed = Self::parse_jsdoc_param_tag(tag_body)?;
+        if parsed.name.contains('.') || parsed.name.contains("[]") {
+            return None;
+        }
+        let decoded = Self::decode_unicode_escapes(&parsed.name);
+        if decoded.is_empty() {
+            return Some(String::new()); // Empty name — still a @param tag
+        }
+        Some(decoded)
+    }
+
+    pub(crate) fn parse_jsdoc_param_tag(tag_body: &str) -> Option<JsdocParamTagInfo> {
         let rest = tag_body.trim();
         if rest.is_empty() {
             return None;
         }
 
-        let name_str = if rest.starts_with('{') {
-            // Standard syntax: {type} name
-            let (_, after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
-            after_type.split_whitespace().next().unwrap_or("")
+        let (type_expr, name_token) = if rest.starts_with('{') {
+            let (expr, after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
+            (
+                Some(expr.trim().to_string()),
+                after_type.split_whitespace().next().unwrap_or(""),
+            )
         } else {
-            // Alternate syntax: name {type} or just name
-            rest.split_whitespace().next().unwrap_or("")
+            let first = rest.split_whitespace().next().unwrap_or("");
+            let inline_type = rest.find('{').and_then(|idx| {
+                Self::parse_jsdoc_curly_type_expr(&rest[idx..]).map(|(expr, _)| expr.trim().to_string())
+            });
+            (inline_type, first)
         };
 
-        // Clean up the name: remove [], =default, backticks
-        let mut name = name_str.trim_start_matches('[');
+        let bracket_optional = name_token.starts_with('[');
+        let mut name = name_token.trim_start_matches('[');
         name = name.split('=').next().unwrap_or(name);
         name = name.trim_end_matches(']');
         name = name.trim_matches('`');
-
-        // Skip dotted names like opts.x or opts[].x — these are nested property
-        // docs for destructured parameters, not standalone params
-        if name.contains('.') || name.contains("[]") {
+        let name = Self::decode_unicode_escapes(name.trim_start_matches("..."));
+        if name.is_empty() {
             return None;
         }
 
-        // Skip rest parameter prefix
-        let name = name.trim_start_matches("...");
+        let type_optional = type_expr
+            .as_deref()
+            .is_some_and(|expr| expr.trim_end().ends_with('='));
+        let rest = type_expr
+            .as_deref()
+            .is_some_and(|expr| expr.trim_start().starts_with("..."));
 
-        let decoded = Self::decode_unicode_escapes(name);
-        if decoded.is_empty() {
-            return Some(String::new()); // Empty name — still a @param tag
-        }
-        Some(decoded)
+        Some(JsdocParamTagInfo {
+            name,
+            type_expr,
+            optional: bracket_optional || type_optional,
+            rest,
+        })
     }
 
     /// Skip leading backtick-quoted sections in a `JSDoc` line.

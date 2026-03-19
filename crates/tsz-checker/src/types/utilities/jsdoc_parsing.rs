@@ -4,7 +4,9 @@
 //! that perform string-level parsing of JSDoc type expressions. Extracted from
 //! `jsdoc.rs` to keep that module under the 2 000 LOC target.
 
-use super::jsdoc::{JsdocCallbackInfo, JsdocTypedefInfo};
+use super::jsdoc::{
+    JsdocCallbackInfo, JsdocPropertyTagInfo, JsdocTemplateParamInfo, JsdocTypedefInfo,
+};
 use crate::state::CheckerState;
 
 impl<'a> CheckerState<'a> {
@@ -413,8 +415,13 @@ impl<'a> CheckerState<'a> {
         let mut current_info = JsdocTypedefInfo {
             base_type: None,
             properties: Vec::new(),
+            template_params: Vec::new(),
             callback: None,
         };
+        let template_params: Vec<JsdocTemplateParamInfo> = Self::jsdoc_template_constraints(jsdoc)
+            .into_iter()
+            .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
+            .collect();
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
             if line.is_empty() || !line.starts_with('@') {
@@ -432,6 +439,7 @@ impl<'a> CheckerState<'a> {
                         current_info = JsdocTypedefInfo {
                             base_type: None,
                             properties: Vec::new(),
+                            template_params: Vec::new(),
                             callback: None,
                         };
                     }
@@ -440,6 +448,7 @@ impl<'a> CheckerState<'a> {
                         JsdocTypedefInfo {
                             base_type: Some(import_type),
                             properties: Vec::new(),
+                            template_params: Vec::new(),
                             callback: None,
                         },
                     ));
@@ -453,12 +462,14 @@ impl<'a> CheckerState<'a> {
                         current_info = JsdocTypedefInfo {
                             base_type: None,
                             properties: Vec::new(),
+                            template_params: Vec::new(),
                             callback: None,
                         };
                     }
                     current_name = Some(name);
                     current_info.base_type = base_type;
                     current_info.properties.clear();
+                    current_info.template_params = template_params.clone();
                     current_info.callback = None;
                 }
                 continue;
@@ -477,6 +488,7 @@ impl<'a> CheckerState<'a> {
                     current_info = JsdocTypedefInfo {
                         base_type: None,
                         properties: Vec::new(),
+                        template_params: template_params.clone(),
                         callback: Some(JsdocCallbackInfo {
                             params: Vec::new(),
                             return_type: None,
@@ -488,18 +500,10 @@ impl<'a> CheckerState<'a> {
             }
             if current_info.callback.is_some() {
                 if let Some(rest) = line.strip_prefix("@param") {
-                    let rest = rest.trim();
-                    if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}')
+                    if let Some(param_info) = Self::parse_jsdoc_param_tag(rest)
+                        && let Some(ref mut cb) = current_info.callback
                     {
-                        let type_expr = rest[1..1 + end].trim().to_string();
-                        let after = rest[2 + end..].trim();
-                        let name = after.split_whitespace().next().unwrap_or("").to_string();
-                        if !name.is_empty()
-                            && let Some(ref mut cb) = current_info.callback
-                        {
-                            cb.params.push((name, type_expr));
-                        }
+                        cb.params.push(param_info);
                     }
                     continue;
                 }
@@ -522,10 +526,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line)
+            if let Some(prop) = Self::parse_jsdoc_property_type(line)
                 && current_name.is_some()
             {
-                current_info.properties.push((name, prop_type));
+                current_info.properties.push(prop);
             }
         }
         if let Some(previous_name) = current_name.take() {
@@ -636,7 +640,7 @@ impl<'a> CheckerState<'a> {
         Some((name.to_string(), base_type))
     }
 
-    pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<(String, String)> {
+    pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<JsdocPropertyTagInfo> {
         let mut rest = line.trim();
         if !rest.starts_with("@property") {
             return None;
@@ -650,22 +654,28 @@ impl<'a> CheckerState<'a> {
         } else {
             "any".to_string()
         };
-        let name = rest
+        let raw_name = rest
             .split_whitespace()
+            .next()?;
+        let optional = raw_name.starts_with('[') || prop_type.trim_end().ends_with('=');
+        let name = raw_name
+            .trim_end_matches(',')
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split('=')
             .next()
-            .map(|name| {
-                name.trim_end_matches(',')
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split('=')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string()
-            })
-            .filter(|name| !name.is_empty())?;
-        Some((name, prop_type))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return None;
+        }
+        Some(JsdocPropertyTagInfo {
+            name,
+            type_expr: prop_type,
+            optional,
+        })
     }
 
     pub(crate) fn parse_jsdoc_curly_type_expr(line: &str) -> Option<(&str, &str)> {
