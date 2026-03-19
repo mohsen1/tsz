@@ -66,6 +66,48 @@ fn constructor_accessibility_assignment_error_targets_lhs() {
 }
 
 #[test]
+fn variable_declaration_initializer_ts2322_anchors_decl_name() {
+    let source = r#"
+let value: string = 42;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    let value_start = source.find("value").expect("expected declaration name") as u32;
+    assert_eq!(
+        diag.start, value_start,
+        "TS2322 should anchor at the variable declaration name"
+    );
+    assert_eq!(diag.length, 5, "TS2322 should cover only the declaration name");
+}
+
+#[test]
+fn nested_object_literal_excess_property_anchors_offending_property() {
+    let source = r#"
+type Inner = { ok: number };
+type Outer = { inner: Inner };
+const value: Outer = { inner: { ok: 1, nope: 2 } };
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2353)
+        .expect("expected TS2353");
+
+    let nope_start = source.find("nope").expect("expected excess property") as u32;
+    assert_eq!(
+        diag.start, nope_start,
+        "TS2353 should anchor at the offending nested property name"
+    );
+    assert_eq!(diag.length, 4, "TS2353 should cover only the offending property");
+}
+
+#[test]
 fn non_distributive_conditional_with_any_evaluates_to_true_branch() {
     // `[any] extends [number] ? 1 : 0` should evaluate to `1` (non-distributive).
     // `any extends number ? 1 : 0` should evaluate to `0 | 1` (distributive, picks both).

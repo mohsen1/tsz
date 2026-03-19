@@ -15,6 +15,7 @@ mod call_errors;
 mod core;
 mod core_formatting;
 mod emitters;
+mod fingerprint_policy;
 mod generics;
 mod name_resolution;
 mod operator_errors;

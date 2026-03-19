@@ -2,6 +2,7 @@
 //! and templated diagnostic emitters.
 
 use crate::diagnostics::{Diagnostic, format_message};
+use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
@@ -12,6 +13,19 @@ impl<'a> CheckerState<'a> {
             let length = end.saturating_sub(start);
             // Use the error() function which has deduplication by (start, code)
             self.error(start, length, message.to_string(), code);
+        }
+    }
+
+    /// Report an error using a shared diagnostic anchor policy.
+    pub(crate) fn error_at_anchor(
+        &mut self,
+        node_idx: NodeIndex,
+        anchor_kind: DiagnosticAnchorKind,
+        message: &str,
+        code: u32,
+    ) {
+        if let Some(anchor) = self.resolve_diagnostic_anchor(node_idx, anchor_kind) {
+            self.error(anchor.start, anchor.length, message.to_string(), code);
         }
     }
 
