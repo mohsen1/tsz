@@ -13,7 +13,7 @@ use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
-use crate::types::{IntrinsicKind, TypeData, TypeId};
+use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{application_id, enum_components, lazy_def_id};
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -264,16 +264,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // comparisons that should not be treated as cycles.
         // =======================================================================
 
-        let extract_def_id = |interner: &dyn TypeDatabase, type_id: TypeId| -> Option<DefId> {
-            // First try direct Lazy/Enum DefId
+        // Extract DefId and Application info in a single pass per type.
+        // This consolidates 3+ lookups per type into a single lookup + match.
+        let s_app_id = application_id(self.interner, source);
+        let t_app_id = application_id(self.interner, target);
+
+        let extract_def_id = |interner: &dyn TypeDatabase,
+                              type_id: TypeId,
+                              app_id: Option<TypeApplicationId>|
+         -> Option<DefId> {
             if let Some(def) = lazy_def_id(interner, type_id) {
                 return Some(def);
             }
             if let Some((def, _)) = enum_components(interner, type_id) {
                 return Some(def);
             }
-            // For Application types, extract the base DefId
-            if let Some(app_id) = application_id(interner, type_id) {
+            if let Some(app_id) = app_id {
                 let app = interner.type_application(app_id);
                 if let Some(def) = lazy_def_id(interner, app.base) {
                     return Some(def);
@@ -282,25 +288,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
 
-        let s_def_id = extract_def_id(self.interner, source);
-        let t_def_id = extract_def_id(self.interner, target);
+        let s_def_id = extract_def_id(self.interner, source, s_app_id);
+        let t_def_id = extract_def_id(self.interner, target, t_app_id);
 
         // Skip DefId-level cycle detection when both are Application types with
-        // the SAME base DefId (e.g., Box<number> vs Box<string>). These are
-        // legitimate comparisons that differ only in type arguments — they are
-        // NOT recursive cycles. check_application_to_application_subtype has its
-        // own cycle detection that handles cross-base recursion correctly.
-        // Without this guard, the def_guard entry here conflicts with the one in
-        // check_application_to_application_subtype, causing false CycleDetected
-        // results that collapse unions (e.g., Box<number> | Box<string> | Box<boolean>
-        // incorrectly reduced to Box<number>).
-        let both_same_base_app = if let (Some(s_app_id), Some(t_app_id)) = (
-            application_id(self.interner, source),
-            application_id(self.interner, target),
-        ) {
+        // the SAME base DefId (e.g., Box<number> vs Box<string>).
+        let both_same_base_app = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id)
+        {
             let s_app = self.interner.type_application(s_app_id);
             let t_app = self.interner.type_application(t_app_id);
-            // Check direct base equality first, then DefId/SymbolId-based aliasing
             s_app.base == t_app.base
                 || {
                     let s_def = lazy_def_id(self.interner, s_app.base);
