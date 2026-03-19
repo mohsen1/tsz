@@ -965,7 +965,8 @@ jobs:
           set -euo pipefail
           # Keep shards small enough that the heaviest language-service ranges do not
           # exhaust the runner before results are uploaded.
-          CHUNK=400
+          # 10 shards × 700 = 7000, covering all ~6320 fourslash tests.
+          CHUNK=700
           OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
           TMPOUT=$(mktemp)
