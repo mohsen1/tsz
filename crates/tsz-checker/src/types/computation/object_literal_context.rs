@@ -28,24 +28,6 @@ pub(crate) enum ContextualPropertyPresence {
 }
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn contextual_absent_property_excess_target(
-        &mut self,
-        contextual_type: TypeId,
-    ) -> Option<TypeId> {
-        use crate::query_boundaries::assignability::ExcessPropertiesKind;
-
-        let lookup_type = self.contextual_lookup_type(contextual_type);
-        match crate::query_boundaries::assignability::classify_for_excess_properties(
-            self.ctx.types,
-            lookup_type,
-        ) {
-            ExcessPropertiesKind::Object(_)
-            | ExcessPropertiesKind::ObjectWithIndex(_)
-            | ExcessPropertiesKind::Intersection(_) => Some(contextual_type),
-            ExcessPropertiesKind::Union(_) | ExcessPropertiesKind::NotObject => None,
-        }
-    }
-
     pub(crate) fn named_contextual_property_presence(
         &mut self,
         contextual_type: TypeId,

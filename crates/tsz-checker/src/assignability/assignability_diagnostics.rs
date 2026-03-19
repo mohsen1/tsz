@@ -18,6 +18,46 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
+        match classify_for_excess_properties(self.ctx.types, type_id) {
+            ExcessPropertiesKind::NotObject => (0, 0),
+            ExcessPropertiesKind::Object(shape_id)
+            | ExcessPropertiesKind::ObjectWithIndex(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                let structural_slots = shape.properties.len()
+                    + usize::from(shape.string_index.is_some())
+                    + usize::from(shape.number_index.is_some());
+                let rank = if structural_slots == 0 { 1 } else { 2 };
+                (rank, structural_slots)
+            }
+            ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
+                (3, members.len())
+            }
+        }
+    }
+
+    pub(crate) fn normalized_target_for_excess_properties(&mut self, target: TypeId) -> TypeId {
+        let resolved = self.resolve_type_for_property_access(target);
+        let evaluated = self.judge_evaluate(resolved);
+        let contextual = self.evaluate_contextual_type(target);
+
+        let mut best = resolved;
+        let mut best_score = self.excess_property_target_score(resolved);
+
+        for candidate in [evaluated, contextual, target] {
+            if candidate == best {
+                continue;
+            }
+            let score = self.excess_property_target_score(candidate);
+            if score > best_score {
+                best = candidate;
+                best_score = score;
+            }
+        }
+
+        best
+    }
+
     /// Check if we should skip the general assignability error for an object literal.
     /// Returns true if:
     /// 1. It's a weak union violation (TypeScript shows excess property error instead)
@@ -50,7 +90,7 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        let resolved_target = self.resolve_type_for_property_access(target);
+        let resolved_target = self.normalized_target_for_excess_properties(target);
         let Some(target_shape) = object_shape_for_type(self.ctx.types, resolved_target) else {
             // If we can't extract a simple object shape from the target (e.g., it's
             // an intersection with a deferred conditional type), we should NOT skip
@@ -199,7 +239,7 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         _keyword_pos: Option<u32>,
     ) -> bool {
-        let resolved_target = self.resolve_type_for_property_access(target);
+        let resolved_target = self.normalized_target_for_excess_properties(target);
         let target_shape = match object_shape_for_type(self.ctx.types, resolved_target) {
             Some(shape) => shape,
             None => return false,
@@ -683,7 +723,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let resolved_target = self.resolve_type_for_property_access(target);
+        let resolved_target = self.normalized_target_for_excess_properties(target);
 
         match classify_for_excess_properties(self.ctx.types, resolved_target) {
             ExcessPropertiesKind::Object(shape_id) => {

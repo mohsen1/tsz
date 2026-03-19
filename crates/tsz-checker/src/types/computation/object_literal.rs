@@ -448,27 +448,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let contextual_absent_target = if original_contextual_type != contextual_type {
-                        None
-                    } else {
-                        original_contextual_type
-                            .and_then(|ctx_type| {
-                                self.contextual_absent_property_excess_target(ctx_type)
-                            })
-                            .or_else(|| {
-                                contextual_type.and_then(|ctx_type| {
-                                    self.contextual_absent_property_excess_target(ctx_type)
-                                })
-                            })
-                    };
-                    let property_is_contextually_absent =
-                        contextual_absent_target.is_some_and(|ctx_type| {
-                            let lookup_type = self.contextual_lookup_type(ctx_type);
-                            matches!(
-                                self.named_contextual_property_presence(lookup_type, &name),
-                                ContextualPropertyPresence::Absent
-                            )
-                        }) && !matches!(property_context_type, Some(TypeId::NEVER));
                     let initializer_context_type = if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
                             contextual_type,
@@ -538,8 +517,7 @@ impl<'a> CheckerState<'a> {
                         self.destructuring_target_type_from_initializer(prop.initializer)
                     } else {
                         if initializer_is_function_like
-                            && (property_request.contextual_type == Some(TypeId::NEVER)
-                                || property_is_contextually_absent)
+                            && property_request.contextual_type == Some(TypeId::NEVER)
                             && property_request.is_empty()
                         {
                             self.ctx
@@ -554,8 +532,7 @@ impl<'a> CheckerState<'a> {
                         let value_type =
                             self.get_type_of_node_with_request(prop.initializer, &property_request);
                         if initializer_is_function_like
-                            && (property_request.contextual_type == Some(TypeId::NEVER)
-                                || property_is_contextually_absent)
+                            && property_request.contextual_type == Some(TypeId::NEVER)
                         {
                             self.ctx
                                 .implicit_any_contextual_closures
@@ -656,27 +633,6 @@ impl<'a> CheckerState<'a> {
 
                         final_type
                     };
-
-                    if property_is_contextually_absent
-                        && !self.ctx.in_destructuring_target
-                        && let Some(excess_target) = contextual_absent_target
-                    {
-                        let excess_property_name = self
-                            .ctx
-                            .arena
-                            .get(prop.name)
-                            .and_then(|name_node| {
-                                (name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-                                    .then(|| self.computed_property_display_name(prop.name))
-                                    .flatten()
-                            })
-                            .unwrap_or_else(|| name.clone());
-                        self.error_excess_property_at(
-                            &excess_property_name,
-                            excess_target,
-                            prop.name,
-                        );
-                    }
 
                     // Note: TS7008 is NOT emitted for object literal properties.
                     // tsc only emits TS7008 for class properties, property signatures,

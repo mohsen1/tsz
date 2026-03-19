@@ -199,6 +199,33 @@ f2({ toString: (s: string) => s });
 }
 
 #[test]
+fn object_literal_call_argument_uses_shared_epc_rules_for_generic_intersections() {
+    let source = r#"
+declare function take<T>(value: { nested: T & { a: number } }): void;
+take({ nested: { a: 1, extra: 2 } });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.is_empty(),
+        "generic intersections should capture extra nested properties without TS2353/TS2345, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn contextual_object_literal_assertion_does_not_emit_early_excess_property_errors() {
+    let source = r#"
+var foo = <{ id: number; }> { id: 4, name: "as" };
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.is_empty(),
+        "type assertions should not emit early object-literal TS2353 diagnostics, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts2769_overload_related_information_keeps_overload_order() {
     let source = r#"
 declare function fn(value: string): void;
