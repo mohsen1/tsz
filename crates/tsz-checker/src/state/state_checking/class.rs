@@ -1014,30 +1014,7 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         };
 
-        // tsc suppresses TS2564 when the property's type annotation already has errors
-        // (e.g. TS2314 "A generic type requires type arguments").  The type may resolve
-        // to a valid TypeId even when there's an error on the type reference, so we check
-        // whether any existing diagnostic falls within the type annotation's span.
-        // IMPORTANT: Only check the type annotation span, not the entire member span,
-        // to avoid suppressing TS2564 due to unrelated errors like TS2300 (duplicate
-        // identifier) or TS2717 (incompatible property types).
-        if !self.is_js_file()
-            && prop.type_annotation.is_some()
-            && let Some(type_node) = self.ctx.arena.get(prop.type_annotation)
-        {
-            let type_start = type_node.pos;
-            let type_end = type_node.end;
-            let has_type_annotation_errors = self
-                .ctx
-                .diagnostics
-                .iter()
-                .any(|d| d.start >= type_start && d.start < type_end && d.code != 2564);
-            if has_type_annotation_errors {
-                return false;
-            }
-        }
-
-        // Enhanced property initialization checking:
+        // Property initialization checking:
         // 1. ANY/UNKNOWN types don't need initialization
         // 2. Union types with undefined don't need initialization
         // 3. Optional types don't need initialization
