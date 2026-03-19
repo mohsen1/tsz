@@ -578,10 +578,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // than bidirectional subtyping. In particular, a non-union type is NEVER
         // identical to a union type, even if they are bidirectionally related.
         // E.g., `C` is NOT identical to `C | D` even when `D extends C`.
-        let a_is_union = matches!(self.interner.lookup(a), Some(TypeData::Union(_)));
-        let b_is_union = matches!(self.interner.lookup(b), Some(TypeData::Union(_)));
-        let a_is_intersection = matches!(self.interner.lookup(a), Some(TypeData::Intersection(_)));
-        let b_is_intersection = matches!(self.interner.lookup(b), Some(TypeData::Intersection(_)));
+        // PERF: 2 lookups instead of 4
+        let a_key = self.interner.lookup(a);
+        let b_key = self.interner.lookup(b);
+        let a_is_union = matches!(a_key, Some(TypeData::Union(_)));
+        let b_is_union = matches!(b_key, Some(TypeData::Union(_)));
+        let a_is_intersection = matches!(a_key, Some(TypeData::Intersection(_)));
+        let b_is_intersection = matches!(b_key, Some(TypeData::Intersection(_)));
         // When one side is an intersection, skip the union/non-union identity mismatch
         // because intersections of unions can distribute to unions of intersections
         // (e.g., `(A|B) & (C|D)` ≡ `A&C | A&D | B&C | B&D`)

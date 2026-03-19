@@ -213,42 +213,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => check_type,
             };
 
-            // Handle array extends pattern with infer
-            if let Some(TypeData::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
-                && let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem)
-            {
-                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
-            }
-
-            // Handle tuple extends pattern with infer
-            if let Some(TypeData::Tuple(extends_elements)) =
-                self.interner().lookup(extends_unwrapped)
-            {
-                let extends_elements = self.interner().tuple_list(extends_elements);
-                if extends_elements.len() == 1
-                    && !extends_elements[0].rest
-                    && let Some(TypeData::Infer(info)) =
-                        self.interner().lookup(extends_elements[0].type_id)
-                {
-                    return self.eval_conditional_tuple_infer(
-                        cond,
-                        check_unwrapped,
-                        &extends_elements[0],
-                        info,
-                    );
+            // PERF: Single lookup for array/tuple extends patterns with infer
+            match self.interner().lookup(extends_unwrapped) {
+                Some(TypeData::Array(ext_elem)) => {
+                    if let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem) {
+                        return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                    }
                 }
-            }
-
-            // Handle object extends pattern with infer
-            if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
+                Some(TypeData::Tuple(extends_elements)) => {
+                    let extends_elements = self.interner().tuple_list(extends_elements);
+                    if extends_elements.len() == 1
+                        && !extends_elements[0].rest
+                        && let Some(TypeData::Infer(info)) =
+                            self.interner().lookup(extends_elements[0].type_id)
+                    {
+                        return self.eval_conditional_tuple_infer(
+                            cond,
+                            check_unwrapped,
+                            &extends_elements[0],
+                            info,
+                        );
+                    }
+                }
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                    Some(shape_id)
+                    if let Some(result) =
+                        self.eval_conditional_object_infer(cond, check_unwrapped, shape_id)
+                    {
+                        return result;
+                    }
                 }
-                _ => None,
-            } && let Some(result) =
-                self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
-            {
-                return result;
+                _ => {}
             }
 
             // Step 2: Check for naked type parameter
@@ -421,8 +415,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(substituted_true)
                         {
-                            let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = *next_cond;
+                            let next_cond = self.interner().get_conditional(next_cond_id);
+                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -432,8 +426,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             if let Some(TypeData::Conditional(next_cond_id)) =
                                 self.interner().lookup(instantiated)
                             {
-                                let next_cond = self.interner().conditional_type(next_cond_id);
-                                current_cond = *next_cond;
+                                let next_cond = self.interner().get_conditional(next_cond_id);
+                                current_cond = next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
@@ -508,8 +502,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(cond.false_type)
                     {
-                        let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = *next_cond;
+                        let next_cond = self.interner().get_conditional(next_cond_id);
+                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -522,8 +516,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(instantiated)
                         {
-                            let next_cond = self.interner().conditional_type(next_cond_id);
-                            current_cond = *next_cond;
+                            let next_cond = self.interner().get_conditional(next_cond_id);
+                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -612,8 +606,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Conditional(next_cond_id)) =
                     self.interner().lookup(result_branch)
                 {
-                    let next_cond = self.interner().conditional_type(next_cond_id);
-                    current_cond = *next_cond;
+                    let next_cond = self.interner().get_conditional(next_cond_id);
+                    current_cond = next_cond;
                     tail_recursion_count += 1;
                     continue;
                 }
@@ -625,8 +619,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(instantiated)
                     {
-                        let next_cond = self.interner().conditional_type(next_cond_id);
-                        current_cond = *next_cond;
+                        let next_cond = self.interner().get_conditional(next_cond_id);
+                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -658,7 +652,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Example: { [K in keyof T]: () => unknown }[M] where M extends keyof T
                 // → () => unknown
                 if let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(obj) {
-                    let mapped = self.interner().mapped_type(mapped_id);
+                    let mapped = self.interner().get_mapped(mapped_id);
                     if mapped.name_type.is_none() {
                         let evaluated_template = self.evaluate(mapped.template);
                         if !crate::visitor::contains_type_parameters(
@@ -756,14 +750,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         check_unwrapped: TypeId,
         info: TypeParamInfo,
     ) -> TypeId {
+        // PERF: Single lookup for type parameter check + inferred extraction
+        let check_key = self.interner().lookup(check_unwrapped);
         if matches!(
-            self.interner().lookup(check_unwrapped),
+            check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(*cond);
         }
 
-        let inferred = match self.interner().lookup(check_unwrapped) {
+        let inferred = match check_key {
             Some(TypeData::Array(elem)) => Some(elem),
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner().tuple_list(elements);
@@ -852,14 +848,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends_elem: &TupleElement,
         info: TypeParamInfo,
     ) -> TypeId {
+        let check_key = self.interner().lookup(check_unwrapped);
         if matches!(
-            self.interner().lookup(check_unwrapped),
+            check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(*cond);
         }
 
-        let inferred = match self.interner().lookup(check_unwrapped) {
+        let inferred = match check_key {
             Some(TypeData::Tuple(check_elements)) => {
                 let check_elements = self.interner().tuple_list(check_elements);
                 if check_elements.is_empty() {
@@ -1027,14 +1024,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         info: TypeParamInfo,
         prop_optional: bool,
     ) -> TypeId {
+        let check_key = self.interner().lookup(check_unwrapped);
         if matches!(
-            self.interner().lookup(check_unwrapped),
+            check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(*cond);
         }
 
-        let inferred = match self.interner().lookup(check_unwrapped) {
+        let inferred = match check_key {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape
@@ -1138,14 +1136,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         inner_name: tsz_common::interner::Atom,
         info: TypeParamInfo,
     ) -> TypeId {
+        let check_key = self.interner().lookup(check_unwrapped);
         if matches!(
-            self.interner().lookup(check_unwrapped),
+            check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(*cond);
         }
 
-        let inferred = match self.interner().lookup(check_unwrapped) {
+        let inferred = match check_key {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape

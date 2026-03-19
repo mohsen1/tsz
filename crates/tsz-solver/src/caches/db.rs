@@ -40,6 +40,15 @@ pub trait TypeDatabase {
     fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape>;
     fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType>;
     fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType>;
+
+    /// Get conditional type by value (Copy, no Arc overhead).
+    fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        *self.conditional_type(id)
+    }
+    /// Get mapped type by value (Copy, no Arc overhead).
+    fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        *self.mapped_type(id)
+    }
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication>;
 
     fn literal_string(&self, value: &str) -> TypeId;
@@ -235,6 +244,14 @@ impl TypeDatabase for TypeInterner {
 
     fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
         Self::mapped_type(self, id)
+    }
+
+    fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        TypeInterner::get_conditional(self, id)
+    }
+
+    fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        TypeInterner::get_mapped(self, id)
     }
 
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {

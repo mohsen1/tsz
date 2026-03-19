@@ -956,6 +956,18 @@ impl<'a> CheckerState<'a> {
                 if symbol.is_type_only {
                     return false;
                 }
+                // Skip symbols that came from other files via globals merge.
+                // In the merged program, file_locals includes globals from all files.
+                // For TS4023 "cannot be named" checks, only symbols that are actually
+                // declared in or imported into the current file count as accessible.
+                // A symbol from another file that ended up in globals is NOT nameable
+                // in the current file's declaration emit unless it's explicitly imported.
+                let is_from_current_file = symbol.decl_file_idx == u32::MAX
+                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32;
+                let is_import = symbol.flags & tsz_binder::symbol_flags::ALIAS != 0;
+                if !is_from_current_file && !is_import {
+                    return false;
+                }
                 if local_sym_id == target_sym_id {
                     return true;
                 }

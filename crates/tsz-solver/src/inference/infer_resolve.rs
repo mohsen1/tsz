@@ -874,7 +874,7 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_type(var, shape.return_type);
             }
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.infer_from_conditional(
                     var,
                     cond.check_type,
@@ -995,7 +995,7 @@ impl<'a> InferenceContext<'a> {
                     || self.contains_inference_var_inner(shape.return_type, var, visited, depth + 1)
             }
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.contains_inference_var_inner(cond.check_type, var, visited, depth + 1)
                     || self.contains_inference_var_inner(cond.extends_type, var, visited, depth + 1)
                     || self.contains_inference_var_inner(cond.true_type, var, visited, depth + 1)
@@ -1110,7 +1110,7 @@ impl<'a> InferenceContext<'a> {
                 self.compute_variance_helper(shape.return_type, polarity, state);
             }
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 // Conditional types are invariant in their type parameters
                 self.compute_variance_helper(cond.check_type, false, state);
                 self.compute_variance_helper(cond.extends_type, false, state);

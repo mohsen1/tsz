@@ -557,6 +557,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip constraint checking for `this` type arguments. The polymorphic
+                // `this` type is type-parameter-like and its concrete type is only known
+                // at instantiation time. TSC defers constraint validation for `this` to
+                // instantiation, so we must skip it here to avoid false TS2344 errors.
+                // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }` where
+                // `BoxOfFoo<T extends Foo>` — `this` in Bar satisfies `Foo` but we can't
+                // prove it structurally at definition time.
+                if tsz_solver::visitor::is_this_type(self.ctx.types.as_type_database(), type_arg) {
+                    continue;
+                }
+
                 // When the type argument contains type parameters, we generally skip
                 // constraint checking (deferred to instantiation time). However, when
                 // the type arg IS a bare type parameter, check its base constraint

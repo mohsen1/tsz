@@ -768,7 +768,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             Some(TypeData::Conditional(cond_id)) => {
                 // For unresolved conditional types, check both branches for index
                 // signatures. If either branch has one, it's considered present.
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 let (ts, tn) = self.check_index_signatures(cond.true_type);
                 let (fs, fn_) = self.check_index_signatures(cond.false_type);
                 (ts || fs, tn || fn_)
@@ -825,7 +825,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // branch. This matches tsc's isKnownProperty behavior — excess property
                 // checking should not reject properties that may be valid once the
                 // conditional resolves.
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 let true_props = self.collect_target_properties(cond.true_type);
                 let false_props = self.collect_target_properties(cond.false_type);
                 properties.extend(true_props);
@@ -977,8 +977,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Fallback: single-level mapped type comparison
-        let s_mapped = self.interner.mapped_type(s_mapped_id);
-        let t_mapped = self.interner.mapped_type(t_mapped_id);
+        let s_mapped = self.interner.get_mapped(s_mapped_id);
+        let t_mapped = self.interner.get_mapped(t_mapped_id);
 
         // Both must have the same constraint (e.g., both `keyof T`).
         // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).

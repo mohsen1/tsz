@@ -676,8 +676,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Fallback: single-level mapped type comparison
-        let source_mapped = self.interner.mapped_type(source_mapped_id);
-        let target_mapped = self.interner.mapped_type(target_mapped_id);
+        let source_mapped = self.interner.get_mapped(source_mapped_id);
+        let target_mapped = self.interner.get_mapped(target_mapped_id);
 
         // Both must have the same constraint for this optimization to apply.
         // First try identity comparison, then evaluate to normalize.
@@ -785,7 +785,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         mapped_id: MappedTypeId,
         target: TypeId,
     ) -> bool {
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner.get_mapped(mapped_id);
 
         // Must not have name remapping (as clause) — remapping can change keys
         if mapped.name_type.is_some() {
@@ -884,7 +884,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner.get_mapped(mapped_id);
 
         // The mapped type's template produces the value type for each property.
         // Check if the template is assignable to the index value type.
@@ -912,7 +912,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // the optional modifier (+?), like Partial<T>. All properties are optional,
                 // so an empty object trivially satisfies all constraints.
                 {
-                    let mapped = self.interner.mapped_type(mapped_id);
+                    let mapped = self.interner.get_mapped(mapped_id);
                     if mapped.optional_modifier == Some(MappedModifier::Add)
                         && is_empty_object_type(self.interner, source)
                     {
@@ -950,7 +950,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         mapped_id: MappedTypeId,
     ) -> bool {
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner.get_mapped(mapped_id);
 
         // If there's an as-clause (name_type), it must be a filtering conditional
         // (produces only P or never) for this optimization to apply.
@@ -1011,7 +1011,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
         use crate::{TypeSubstitution, instantiate_type};
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner.get_mapped(mapped_id);
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
             && let Some(constraint) = param.constraint
@@ -1042,7 +1042,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 readonly_modifier: mapped.readonly_modifier,
             });
             if let Some(TypeData::Mapped(m_id)) = self.interner.lookup(new_mapped_id) {
-                let new_mapped = self.interner.mapped_type(m_id);
+                let new_mapped = self.interner.get_mapped(m_id);
                 let res = crate::evaluation::evaluate::evaluate_mapped(self.interner, &new_mapped);
                 if res != TypeId::ERROR && res != new_mapped_id {
                     return Some(res);
@@ -1098,7 +1098,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Otherwise, `any` must flow through mapped type expansion to produce
         // `{ [x: string]: any }` (matching tsc's behavior for `Objectish<any>`).
         if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body) {
-            let mapped = self.interner.mapped_type(mapped_id);
+            let mapped = self.interner.get_mapped(mapped_id);
             if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
                 && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
                 && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
@@ -1146,7 +1146,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
         use crate::{MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type};
 
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner.get_mapped(mapped_id);
 
         // Get concrete keys from the constraint
         let keys = self.try_evaluate_mapped_constraint(mapped.constraint)?;

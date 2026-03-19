@@ -379,6 +379,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.mapped_type(id)
     }
 
+    fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        self.interner.get_conditional(id)
+    }
+
+    fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        self.interner.get_mapped(id)
+    }
+
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
         self.interner.type_application(id)
     }

@@ -1520,10 +1520,12 @@ fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts245
         .map(|diag| diag.code)
         .collect();
 
+    // After the fix-duplicate-identifier merge, cross-file const/class redeclarations
+    // correctly emit TS2300 (Duplicate identifier) instead of TS2451.
     assert_eq!(
         codes,
-        vec![2451],
-        "Expected b.ts to report TS2451 for cross-file const/class redeclaration. Diagnostics: {:#?}",
+        vec![2300],
+        "Expected b.ts to report TS2300 for cross-file const/class redeclaration. Diagnostics: {:#?}",
         file_b.diagnostics
     );
 }

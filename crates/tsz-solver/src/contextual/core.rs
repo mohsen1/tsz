@@ -266,16 +266,19 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_from_intersection(self.interner, param_types, |db, tys| db.union(tys));
         }
 
-        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
-        if let Some(
-            TypeData::Mapped(_)
-            | TypeData::Conditional(_)
-            | TypeData::Lazy(_)
-            | TypeData::IndexAccess(_, _),
-        ) = self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first.
+        // PERF: Single lookup for both the guard check and Conditional extraction.
+        if let Some(expected_key) = self.interner.lookup(expected)
+            && matches!(
+                expected_key,
+                TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::IndexAccess(_, _)
+            )
         {
-            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
-                let cond = self.interner.conditional_type(cond_id);
+            if let TypeData::Conditional(cond_id) = expected_key {
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_param_types = Vec::new();
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
@@ -506,16 +509,19 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
-        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first
-        if let Some(
-            TypeData::Mapped(_)
-            | TypeData::Conditional(_)
-            | TypeData::Lazy(_)
-            | TypeData::IndexAccess(_, _),
-        ) = self.interner.lookup(expected)
+        // Handle Mapped, Conditional, Lazy, and IndexAccess types by evaluating them first.
+        // PERF: Single lookup for both the guard check and Conditional extraction.
+        if let Some(expected_key) = self.interner.lookup(expected)
+            && matches!(
+                expected_key,
+                TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::IndexAccess(_, _)
+            )
         {
-            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
-                let cond = self.interner.conditional_type(cond_id);
+            if let TypeData::Conditional(cond_id) = expected_key {
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_param_types = Vec::new();
                 for (is_true_branch, branch) in [(true, cond.true_type), (false, cond.false_type)] {
                     // Guard against self-recursive aliases.
@@ -624,19 +630,22 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.allows_non_tuple_spread_position(index, arg_count);
         }
 
-        if let Some(
-            TypeData::Mapped(_)
-            | TypeData::Conditional(_)
-            | TypeData::Lazy(_)
-            | TypeData::IndexAccess(_, _),
-        ) = self.interner.lookup(expected)
+        // PERF: Single lookup for guard + IndexAccess check
+        if let Some(expected_key) = self.interner.lookup(expected)
+            && matches!(
+                expected_key,
+                TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::IndexAccess(_, _)
+            )
         {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.allows_non_tuple_spread_position(index, arg_count);
             }
-            if let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(expected) {
+            if matches!(expected_key, TypeData::IndexAccess(_, _)) {
                 return true;
             }
         }
@@ -932,12 +941,16 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_tuple_element_type_inner(index, element_count);
         }
 
-        // Handle Mapped, Conditional, and Lazy types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
-            self.interner.lookup(expected)
+        // Handle Mapped, Conditional, and Lazy types by evaluating them first.
+        // PERF: Single lookup for guard + Conditional extraction.
+        if let Some(expected_key) = self.interner.lookup(expected)
+            && matches!(
+                expected_key,
+                TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)
+            )
         {
-            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
-                let cond = self.interner.conditional_type(cond_id);
+            if let TypeData::Conditional(cond_id) = expected_key {
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_elem_types = Vec::new();
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
@@ -1036,7 +1049,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Mapped(mapped_id)) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 if let Some(prop) = crate::type_queries::get_finite_mapped_property_type(
                     self.interner,
                     mapped_id,
