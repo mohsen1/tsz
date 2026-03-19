@@ -655,21 +655,19 @@ impl TypeInterner {
     /// Preferred over `mapped_type()` since MappedType is Copy.
     #[inline]
     pub fn get_mapped(&self, id: MappedTypeId) -> MappedType {
-        self.mapped_types
-            .get_copy(id.0)
-            .unwrap_or(MappedType {
-                type_param: TypeParamInfo {
-                    is_const: false,
-                    name: self.intern_string("_"),
-                    constraint: None,
-                    default: None,
-                },
-                constraint: TypeId::ERROR,
-                name_type: None,
-                template: TypeId::ERROR,
-                readonly_modifier: None,
-                optional_modifier: None,
-            })
+        self.mapped_types.get_copy(id.0).unwrap_or(MappedType {
+            type_param: TypeParamInfo {
+                is_const: false,
+                name: self.intern_string("_"),
+                constraint: None,
+                default: None,
+            },
+            constraint: TypeId::ERROR,
+            name_type: None,
+            template: TypeId::ERROR,
+            readonly_modifier: None,
+            optional_modifier: None,
+        })
     }
 
     #[inline]
