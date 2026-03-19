@@ -191,6 +191,30 @@ let v: AB = { x: 1, w: true }
     assert!(has_any_error, "Expected some error for excess property 'w'");
 }
 
+#[test]
+fn indirect_discriminant_variable_does_not_trigger_excess_property_narrowing() {
+    let source = r#"
+type Blah =
+    | { type: "foo", abc: string }
+    | { type: "bar", xyz: number, extra: any };
+
+declare function thing(blah: Blah): void;
+
+let foo = "foo";
+thing({
+    type: foo,
+    abc: "hello!",
+    extra: 123,
+});
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Indirect discriminants should not narrow EPC to a union member, got: {diags:?}"
+    );
+}
+
 // --- Type alias name display in diagnostics ---
 
 #[test]
