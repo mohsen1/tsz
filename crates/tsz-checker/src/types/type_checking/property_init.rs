@@ -827,5 +827,4 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
 }

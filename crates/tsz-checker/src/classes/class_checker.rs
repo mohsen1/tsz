@@ -1,7 +1,7 @@
 //! Class/interface declaration checking (inheritance, implements, abstract members).
 
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::classes_domain::class_summary::ClassChainSummary;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
