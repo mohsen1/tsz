@@ -1706,14 +1706,31 @@ fn resolve_package_entry(
     // resolution — contexts where tsc accepts JS files as valid resolution targets
     // (they get added to the program via import-following). This differs from
     // resolve_export_entry which uses is_valid_module_file (TS/JSON only).
+    //
+    // In Node16/NodeNext with ESM packages (type: "module"), Node.js does not
+    // perform directory index resolution. Skip index candidates for ESM packages.
+    let is_esm_no_index = matches!(package_type, Some(PackageType::Module))
+        && matches!(
+            options.effective_module_resolution(),
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        );
     for candidate in expand_module_path_candidates(&path, options, package_type) {
+        // Skip directory index candidates (path/index.{ext}) for ESM packages
+        if is_esm_no_index && candidate.parent() == Some(&path) {
+            if let Some(name) = candidate.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("index.") {
+                    continue;
+                }
+            }
+        }
         if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
         }
     }
 
     // Check subpath's package.json for types/main fields
-    if path.is_dir()
+    if !is_esm_no_index
+        && path.is_dir()
         && let Some(pj) = read_package_json(&path.join("package.json"))
     {
         let sub_type = package_type_from_json(Some(&pj));

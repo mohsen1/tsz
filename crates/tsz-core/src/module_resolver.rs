@@ -1297,6 +1297,20 @@ impl ModuleResolver {
                     span: specifier_span,
                 });
             }
+            // Standard resolution failed. Before giving up on a suggestion, probe
+            // for additional file extensions that aren't in the normal resolution
+            // candidates but can still provide a useful TS2835 suggestion.
+            // Notably, `.json` files are not in the extension candidate lists
+            // (they require `resolveJsonModule`), but tsc still suggests them.
+            let json_candidate = candidate.with_extension("json");
+            if json_candidate.is_file() {
+                return Err(ResolutionFailure::ImportPathNeedsExtension {
+                    specifier: specifier.to_string(),
+                    suggested_extension: ".json".to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
             // File doesn't exist - emit TS2834 (no suggestion) for ESM imports
             return Err(ResolutionFailure::ImportPathNeedsExtension {
                 specifier: specifier.to_string(),
@@ -1755,9 +1769,24 @@ impl ModuleResolver {
                 });
             }
 
-            // Fall back to direct file resolution
+            // Fall back to direct file resolution.
+            // In Node16/NodeNext with ESM packages (no exports field), Node.js does
+            // not perform directory index resolution. Only try file-based resolution
+            // to match tsc behavior.
             let file_path = package_dir.join(subpath);
-            if let Some(resolved) = self.try_file_or_directory(&file_path) {
+            let is_esm_package = matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) && package_json
+                .package_type
+                .as_deref()
+                .is_some_and(|t| t == "module");
+            let resolved = if is_esm_package {
+                self.try_file_no_index(&file_path)
+            } else {
+                self.try_file_or_directory(&file_path)
+            };
+            if let Some(resolved) = resolved {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
@@ -2162,6 +2191,60 @@ impl ModuleResolver {
             }
         }
 
+        None
+    }
+
+    /// Like `try_file`, but does NOT try directory index resolution (path/index.{ext}).
+    /// Used for ESM packages in Node16/NodeNext where directory index resolution
+    /// is not allowed by Node.js.
+    fn try_file_no_index(&self, path: &Path) -> Option<PathBuf> {
+        let suffixes = &self.module_suffixes;
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
+            && split_path_extension(path).is_none()
+        {
+            if self.allow_arbitrary_extensions
+                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
+            {
+                return Some(resolved);
+            }
+            return None;
+        }
+        if let Some((base, extension)) = split_path_extension(path) {
+            if let Some(rewritten) = node16_extension_substitution(path, extension) {
+                for candidate in &rewritten {
+                    if let Some(resolved) = try_file_with_suffixes(candidate, suffixes) {
+                        return Some(resolved);
+                    }
+                }
+            }
+            if self.rewrite_relative_import_extensions {
+                let decl_ext = match extension {
+                    "ts" | "tsx" => Some("d.ts"),
+                    "mts" => Some("d.mts"),
+                    "cts" => Some("d.cts"),
+                    _ => None,
+                };
+                if let Some(decl_ext) = decl_ext {
+                    let candidate = base.with_extension(decl_ext);
+                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+                        return Some(resolved);
+                    }
+                }
+            }
+            if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
+            {
+                return Some(resolved);
+            }
+            return None;
+        }
+
+        let extensions = self.extension_candidates_for_resolution();
+        for ext in extensions {
+            if let Some(resolved) = try_file_with_suffixes_and_extension(path, ext, suffixes) {
+                return Some(resolved);
+            }
+        }
+        // No index fallback — that's the whole point
         None
     }
 
@@ -4109,6 +4192,168 @@ mod tests {
             "Expected TS2834 or TS2835, got TS{}: {}",
             diag.code,
             diag.message,
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_node16_json_file_produces_ts2835_suggestion() {
+        // When an extensionless ESM import matches a .json file on disk,
+        // the resolver should suggest the .json extension (TS2835) instead
+        // of emitting TS2834 with no suggestion.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_node16_json_ts2835");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join("package.json"),
+            r#"{"type":"module","name":"pkg"}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("index.ts"), "import './package';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let result = resolver.resolve_with_kind(
+            "./package",
+            &dir.join("index.ts"),
+            Span::new(8, 19),
+            ImportKind::EsmImport,
+        );
+
+        assert!(
+            result.is_err(),
+            "Expected extension error for extensionless ESM import"
+        );
+        let failure = result.unwrap_err();
+        let diag = failure.to_diagnostic();
+        assert_eq!(
+            diag.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+            "Expected TS2835 (with .json suggestion), got TS{}: {}",
+            diag.code, diag.message,
+        );
+        assert!(
+            diag.message.contains("./package.json"),
+            "Expected suggestion to include './package.json', got: {}",
+            diag.message,
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_node16_esm_package_no_directory_index_for_subpath() {
+        // In Node16/NodeNext, ESM packages (type: "module") without an exports
+        // field should NOT resolve subpaths through directory index (e.g.,
+        // pkg/dist/dir → pkg/dist/dir/index.d.ts). Node.js ESM does not
+        // support directory index resolution.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_esm_no_dir_index");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Root package.json
+        fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        fs::write(dir.join("index.ts"), "import 'test-pkg/dist/dir';").unwrap();
+
+        // Package without exports field
+        let pkg_dir = dir.join("node_modules/test-pkg");
+        fs::create_dir_all(pkg_dir.join("dist/dir")).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"test-pkg","type":"module","main":"dist/index.js"}"#,
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("dist/index.d.ts"),
+            "export declare const a: number;",
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("dist/dir/index.d.ts"),
+            "export declare const b: number;",
+        )
+        .unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        // Should NOT resolve through directory index in ESM package
+        let result = resolver.resolve_with_kind(
+            "test-pkg/dist/dir",
+            &dir.join("index.ts"),
+            Span::new(8, 26),
+            ImportKind::EsmImport,
+        );
+
+        assert!(
+            result.is_err(),
+            "ESM package subpath should not resolve through directory index: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_node16_cjs_package_allows_directory_index_for_subpath() {
+        // CJS packages (no "type": "module") should still allow directory
+        // index resolution for subpaths, even in Node16/NodeNext mode.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_cjs_allows_dir_index");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        fs::write(dir.join("index.ts"), "import 'test-cjs/lib/sub';").unwrap();
+
+        let pkg_dir = dir.join("node_modules/test-cjs");
+        fs::create_dir_all(pkg_dir.join("lib/sub")).unwrap();
+        // CJS package (no "type" field → defaults to commonjs)
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"test-cjs","main":"lib/index.js"}"#,
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("lib/index.d.ts"),
+            "export declare const a: number;",
+        )
+        .unwrap();
+        fs::write(
+            pkg_dir.join("lib/sub/index.d.ts"),
+            "export declare const b: number;",
+        )
+        .unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        // CJS package subpath SHOULD resolve through directory index
+        let result = resolver.resolve_with_kind(
+            "test-cjs/lib/sub",
+            &dir.join("index.ts"),
+            Span::new(8, 25),
+            ImportKind::EsmImport,
+        );
+
+        assert!(
+            result.is_ok(),
+            "CJS package subpath should resolve through directory index: {result:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
