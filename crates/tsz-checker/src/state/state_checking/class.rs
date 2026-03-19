@@ -2,11 +2,9 @@
 
 use crate::EnclosingClassInfo;
 use crate::context::TypingRequest;
-use crate::flow_analysis::{ComputedKey, PropertyKey};
+use crate::flow_analysis::PropertyKey;
 use crate::query_boundaries::class_type as class_query;
-use crate::query_boundaries::definite_assignment::{
-    check_constructor_property_use_before_assignment, constructor_assigned_properties,
-};
+use crate::query_boundaries::definite_assignment::check_constructor_property_use_before_assignment;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -854,132 +852,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this is a derived class (has base class)
-        let is_derived_class = self.class_has_base(class);
-
-        let mut properties = Vec::new();
-        let mut tracked = FxHashSet::default();
-        let mut parameter_properties = FxHashSet::default();
-
-        // First pass: collect parameter properties from constructor
-        // Parameter properties are always definitely assigned
-        for &member_idx in &class.members.nodes {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
-                continue;
-            };
-
-            // Collect parameter properties from constructor parameters
-            for &param_idx in &ctor.parameters.nodes {
-                let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                    continue;
-                };
-
-                // Parameter properties have modifiers (public/private/protected/readonly)
-                if param.modifiers.is_some()
-                    && let Some(key) = self.property_key_from_name(param.name)
-                {
-                    parameter_properties.insert(key.clone());
-                }
-            }
-        }
-
-        // Second pass: collect class properties that need initialization
-        for &member_idx in &class.members.nodes {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                continue;
-            }
-
-            let Some(prop) = self.ctx.arena.get_property_decl(node) else {
-                continue;
-            };
-
-            if !self.property_requires_initialization(member_idx, prop, is_derived_class) {
-                continue;
-            }
-
-            let Some(key) = self.property_key_from_name(prop.name).or_else(|| {
-                let name_node = self.ctx.arena.get(prop.name)?;
-                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    return None;
-                }
-                let raw = self.node_text(prop.name)?;
-                let normalized = raw.trim_end_matches(':').trim();
-                let inner = normalized
-                    .strip_prefix('[')
-                    .and_then(|s| s.strip_suffix(']'))
-                    .unwrap_or(normalized)
-                    .trim()
-                    .to_string();
-                Some(PropertyKey::Computed(ComputedKey::Ident(inner)))
-            }) else {
-                continue;
-            };
-
-            // Get property name for error message.
-            // For computed properties, always use key-based formatting to preserve brackets
-            // (tsc displays computed properties as [x], ["h"], etc. in diagnostics).
-            let format_key_name = |key: &PropertyKey| -> String {
-                match key {
-                    PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{s}]"),
-                    PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{s}\"]"),
-                    PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{n}]"),
-                    PropertyKey::Private(s) => {
-                        // The scanner stores private identifiers with the `#` prefix
-                        if s.starts_with('#') {
-                            s.clone()
-                        } else {
-                            format!("#{s}")
-                        }
-                    }
-                    PropertyKey::Ident(s) => s.clone(),
-                }
-            };
-            let is_computed = self
-                .ctx
-                .arena
-                .get(prop.name)
-                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            let name = if is_computed {
-                // For computed properties, prefer raw node text to preserve the full
-                // expression (e.g., `[x = 0]` instead of just `[x]`).
-                self.node_text(prop.name)
-                    .map(|raw| raw.trim_end_matches(':').trim().to_string())
-                    .unwrap_or_else(|| format_key_name(&key))
-            } else {
-                self.get_property_name(prop.name)
-                    .unwrap_or_else(|| format_key_name(&key))
-            };
-
-            tracked.insert(key.clone());
-            properties.push((key, name, prop.name));
-        }
-
-        if properties.is_empty() {
+        let summary = self.summarize_class_initialization(class_idx, class);
+        if summary.required_instance_fields.is_empty() {
             return;
         }
 
-        let requires_super = self.class_has_base(class);
-        let constructor_body = self.find_constructor_body(&class.members);
-        let assigned = if let Some(body_idx) = constructor_body {
-            constructor_assigned_properties(self, body_idx, &tracked, requires_super)
-        } else {
-            FxHashSet::default()
-        };
-
-        for (key, name, name_node) in properties {
+        for field in &summary.required_instance_fields {
+            let Some(key) = field.key.as_ref() else {
+                continue;
+            };
             // Property is assigned if it's in the assigned set OR it's a parameter property
-            if assigned.contains(&key) || parameter_properties.contains(&key) {
+            if summary.constructor_assigned_fields.contains(key)
+                || summary.parameter_property_keys.contains(key)
+            {
                 continue;
             }
             use crate::diagnostics::format_message;
@@ -991,16 +876,20 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
             );
 
-            self.error_at_node(name_node, &format_message(message, &[&name]), code);
+            self.error_at_node(
+                field.name_idx,
+                &format_message(message, &[field.display_name.as_str()]),
+                code,
+            );
         }
 
         // Check for TS2565 (Property used before being assigned in constructor)
-        if let Some(body_idx) = constructor_body {
+        if let Some(body_idx) = summary.constructor_body {
             check_constructor_property_use_before_assignment(
                 self,
                 body_idx,
-                &tracked,
-                requires_super,
+                &summary.all_instance_field_keys,
+                summary.requires_super,
             );
         }
     }

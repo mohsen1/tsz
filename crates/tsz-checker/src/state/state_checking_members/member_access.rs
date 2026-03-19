@@ -1,6 +1,5 @@
 //! Class member access-resolution and property inference helpers.
 
-use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::NodeIndex;
@@ -76,38 +75,8 @@ impl<'a> CheckerState<'a> {
         let Some(key) = self.property_key_from_name(prop_name) else {
             return false;
         };
-        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
-            return false;
-        };
-
-        let class_idx = class_info.class_idx;
-        let member_nodes = class_info.member_nodes.clone();
-        let requires_super = self
-            .ctx
-            .arena
-            .get(class_idx)
-            .and_then(|n| self.ctx.arena.get_class(n))
-            .is_some_and(|class| self.class_has_base(class));
-
-        let mut tracked = rustc_hash::FxHashSet::default();
-        tracked.insert(key.clone());
-
-        member_nodes.into_iter().any(|member_idx| {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                return false;
-            };
-            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
-                return false;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                return false;
-            };
-            if ctor.body.is_none() {
-                return false;
-            }
-            constructor_assigned_properties(self, ctor.body, &tracked, requires_super)
-                .contains(&key)
-        })
+        self.summarize_enclosing_class_initialization()
+            .is_some_and(|summary| summary.constructor_assigned_fields.contains(&key))
     }
 
     /// Check if a static property is assigned via `this.<prop> = ...` in any

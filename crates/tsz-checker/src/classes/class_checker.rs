@@ -1,6 +1,7 @@
 //! Class/interface declaration checking (inheritance, implements, abstract members).
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::classes_domain::class_summary::ClassChainSummary;
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
@@ -11,6 +12,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Extracted info about a single class member (property, method, or accessor).
+#[derive(Clone)]
 pub(crate) struct ClassMemberInfo {
     pub(crate) name: String,
     pub(crate) type_id: TypeId,
@@ -161,6 +163,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect base member names for override suggestions.
+    #[allow(dead_code)]
     fn collect_base_member_names_for_override(
         &mut self,
         class_idx: NodeIndex,
@@ -364,6 +367,7 @@ impl<'a> CheckerState<'a> {
         self.check_constructor_parameter_property_overrides(
             class_data,
             None,
+            None,
             base_class_name,
             base_member_names,
             no_implicit_override,
@@ -463,6 +467,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
         base_class_idx: Option<NodeIndex>,
+        base_chain_summary: Option<&ClassChainSummary>,
         base_class_name: &str,
         base_instance_member_names: &rustc_hash::FxHashSet<String>,
         no_implicit_override: bool,
@@ -494,9 +499,16 @@ impl<'a> CheckerState<'a> {
 
                 let has_override = self.has_override_modifier(&param.modifiers)
                     || self.has_jsdoc_override_tag(param_idx);
-                let base_member = base_class_idx.and_then(|base_idx| {
-                    self.find_member_in_class_chain(base_idx, &param_name, false, 0, true)
-                });
+                let base_member = match (base_class_idx, base_chain_summary) {
+                    (Some(base_idx), Some(summary)) => {
+                        let _ = base_idx;
+                        summary.lookup(&param_name, false, true).cloned()
+                    }
+                    (Some(base_idx), None) => {
+                        self.find_member_in_class_chain(base_idx, &param_name, false, 0, true)
+                    }
+                    (None, _) => None,
+                };
 
                 if has_override {
                     if base_class_idx.is_none() {
@@ -837,6 +849,7 @@ impl<'a> CheckerState<'a> {
                 self.check_constructor_parameter_property_overrides(
                     class_data,
                     None,
+                    None,
                     &derived_class_name,
                     &rustc_hash::FxHashSet::default(),
                     self.ctx.no_implicit_override(),
@@ -1062,6 +1075,7 @@ impl<'a> CheckerState<'a> {
             self.check_constructor_parameter_property_overrides(
                 class_data,
                 None,
+                None,
                 &derived_class_name,
                 &rustc_hash::FxHashSet::default(),
                 no_implicit_override,
@@ -1165,26 +1179,14 @@ impl<'a> CheckerState<'a> {
         // Base type parameters are only needed to build the extends-clause substitution here.
         self.pop_type_parameters(base_type_param_updates);
 
-        let mut base_instance_member_names: rustc_hash::FxHashSet<String> =
-            rustc_hash::FxHashSet::default();
-        let mut base_static_member_names: rustc_hash::FxHashSet<String> =
-            rustc_hash::FxHashSet::default();
-        self.collect_base_member_names_for_override(
-            base_idx,
-            false,
-            &mut base_instance_member_names,
-            &mut rustc_hash::FxHashSet::default(),
-        );
-        self.collect_base_member_names_for_override(
-            base_idx,
-            true,
-            &mut base_static_member_names,
-            &mut rustc_hash::FxHashSet::default(),
-        );
+        let base_chain_summary = self.summarize_class_chain(base_idx);
+        let base_instance_member_names = base_chain_summary.visible_instance_names.clone();
+        let base_static_member_names = base_chain_summary.visible_static_names.clone();
 
         self.check_constructor_parameter_property_overrides(
             class_data,
             Some(base_idx),
+            Some(&base_chain_summary),
             &base_class_name,
             &base_instance_member_names,
             no_implicit_override,
@@ -1247,8 +1249,9 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|m| m.body.is_none())
             };
 
-            let base_info =
-                self.find_member_in_class_chain(base_idx, &member_name, is_static, 0, true);
+            let base_info = base_chain_summary
+                .lookup(&member_name, is_static, true)
+                .cloned();
 
             if has_override {
                 // Cannot use `override` when name is computed dynamically.
@@ -1386,28 +1389,9 @@ impl<'a> CheckerState<'a> {
 
             // Find matching member including private/protected members to detect
             // class-level visibility/branding incompatibilities (TS2415).
-            let base_any_info = {
-                let mut found = None;
-                for &base_member_idx in &base_class.members.nodes {
-                    if let Some(info) = self.extract_class_member_info(base_member_idx, false)
-                        && info.name == member_name
-                        && info.is_static == is_static
-                    {
-                        found = Some(info);
-                        break;
-                    }
-                }
-                if found.is_none() {
-                    found = self.find_member_in_class_chain(
-                        base_idx,
-                        &member_name,
-                        is_static,
-                        0,
-                        false,
-                    );
-                }
-                found
-            };
+            let base_any_info = base_chain_summary
+                .lookup(&member_name, is_static, false)
+                .cloned();
 
             if let Some(ref base_any_info) = base_any_info
                 && self
@@ -1477,24 +1461,9 @@ impl<'a> CheckerState<'a> {
 
             // Look for a matching member in the base class hierarchy (skip private members)
             // First check direct members of the base class, then walk up the chain
-            let base_info = {
-                let mut found = None;
-                for &base_member_idx in &base_class.members.nodes {
-                    if let Some(info) = self.extract_class_member_info(base_member_idx, true)
-                        && info.name == member_name
-                        && info.is_static == is_static
-                    {
-                        found = Some(info);
-                        break;
-                    }
-                }
-                // If not found in direct base, walk up the ancestor chain
-                if found.is_none() {
-                    found =
-                        self.find_member_in_class_chain(base_idx, &member_name, is_static, 0, true);
-                }
-                found
-            };
+            let base_info = base_chain_summary
+                .lookup(&member_name, is_static, true)
+                .cloned();
 
             self.pop_type_parameters(base_scope.1);
 
