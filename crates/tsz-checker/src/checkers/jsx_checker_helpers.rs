@@ -1,9 +1,10 @@
 //! JSX helper methods extracted from `jsx_checker.rs` to keep that file under 2000 LOC.
 //!
-//! Contains: children count validation (TS2745/TS2746), grammar checks (TS17000),
+//! Contains: children shape validation (TS2745/TS2746), grammar checks (TS17000),
 //! missing-required-props (TS2741), intrinsic-attribute-only fallback, and
 //! generic SFC spread checking.
 
+use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -72,78 +73,69 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check TS2746: children count mismatch (single child expected, multiple provided).
-    pub(super) fn check_jsx_children_count(&mut self, props_type: TypeId, tag_name_idx: NodeIndex) {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        let resolved = self.resolve_type_for_property_access(props_type);
-        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
-            _ => return,
-        };
-        let children_type = self.evaluate_type_with_env(children_type);
-        if children_type == TypeId::ANY || children_type == TypeId::ERROR {
-            return;
-        }
-
-        if self.type_accepts_multiple_children(children_type) {
-            return;
-        }
-
-        // Fallback: any[] assignable to children type (handles complex aliases like ReactNode).
-        let any_array = self.ctx.types.factory().array(TypeId::ANY);
-        if self.is_assignable_to(any_array, children_type) {
-            return;
-        }
-
-        let children_type_str = self.format_type(children_type);
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node_msg(
-            tag_name_idx,
-            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
-            &["children", &children_type_str],
-        );
-    }
-
-    /// Check TS2745: children prop expects an array type (multiple children) but only
-    /// a single child was provided.
-    pub(super) fn check_jsx_needs_multiple_children(
+    /// Check TS2745/TS2746 from one normalized children-shape path.
+    pub(super) fn check_jsx_children_shape(
         &mut self,
         props_type: TypeId,
+        child_count: usize,
         tag_name_idx: NodeIndex,
     ) {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        let Some(children_type) = self.get_jsx_children_prop_type(props_type) else {
+            return;
+        };
 
+        match child_count {
+            0 => {}
+            1 => {
+                if !self.type_requires_multiple_children(children_type) {
+                    return;
+                }
+
+                let children_type_str = self.format_type(children_type);
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    tag_name_idx,
+                    diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
+                    &["children", &children_type_str],
+                );
+            }
+            _ => {
+                if self.type_allows_multiple_children(children_type) {
+                    return;
+                }
+
+                // Fallback: any[] assignable to children type (handles complex aliases like ReactNode).
+                let any_array = self.ctx.types.factory().array(TypeId::ANY);
+                if self.is_assignable_to(any_array, children_type) {
+                    return;
+                }
+
+                let children_type_str = self.format_type(children_type);
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    tag_name_idx,
+                    diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
+                    &["children", &children_type_str],
+                );
+            }
+        }
+    }
+
+    fn get_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
         let resolved = self.resolve_type_for_property_access(props_type);
         let children_type = match self.resolve_property_access_with_env(resolved, "children") {
             PropertyAccessResult::Success { type_id, .. } => type_id,
-            _ => return,
+            _ => return None,
         };
         let children_type = self.evaluate_type_with_env(children_type);
-        if children_type == TypeId::ANY || children_type == TypeId::ERROR {
-            return;
+        if matches!(children_type, TypeId::ANY | TypeId::ERROR) {
+            return None;
         }
-
-        // Only emit TS2745 if the children type requires multiple children (is array-like)
-        // but we only have a single child.
-        if !self.type_accepts_multiple_children(children_type) {
-            return;
-        }
-
-        // Check that a single child is NOT assignable to the array children type.
-        // If it is (e.g., children: ReactNode[] and child is ReactNode[]), no error needed.
-        // We only report when the array requirement is strict.
-        let children_type_str = self.format_type(children_type);
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node_msg(
-            tag_name_idx,
-            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
-            &["children", &children_type_str],
-        );
+        Some(children_type)
     }
 
-    /// Check if a type can accept multiple children (array-like or union with array member).
-    fn type_accepts_multiple_children(&mut self, type_id: TypeId) -> bool {
+    /// Check if a type can accept multiple JSX body children (tuple/array-like or a union with one).
+    fn type_allows_multiple_children(&mut self, type_id: TypeId) -> bool {
         // Evaluate to resolve type aliases and lazy references
         let type_id = self.evaluate_type_with_env(type_id);
 
@@ -165,13 +157,47 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Union: check if any member accepts multiple children.
+        // Union: multiple JSX children are allowed if any branch accepts them.
         if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
         {
             let members_vec: Vec<TypeId> = members.to_vec();
             return members_vec
                 .iter()
-                .any(|&m| self.type_accepts_multiple_children(m));
+                .any(|&member| self.type_allows_multiple_children(member));
+        }
+
+        false
+    }
+
+    /// Check if a type requires multiple JSX body children instead of a single child value.
+    fn type_requires_multiple_children(&mut self, type_id: TypeId) -> bool {
+        let type_id = self.evaluate_type_with_env(type_id);
+
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR {
+            return false;
+        }
+
+        if tsz_solver::is_array_type(self.ctx.types, type_id)
+            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+        {
+            return true;
+        }
+
+        // Object with numeric index signature
+        if tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+            .is_some_and(|shape| shape.number_index.is_some())
+        {
+            return true;
+        }
+
+        // Union: a single JSX child is only invalid when every branch requires
+        // the body-children form (for example `A[] | [A, B]`).
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            let members_vec: Vec<TypeId> = members.to_vec();
+            return members_vec
+                .iter()
+                .all(|&member| self.type_requires_multiple_children(member));
         }
 
         false

@@ -1852,13 +1852,10 @@ impl<'a> CheckerState<'a> {
             }
 
             provided_attrs.push(("children".to_string(), synthesized_type));
-            // TS2746: single child expected but multiple provided.
-            if child_count > 1 && !skip_prop_checks {
-                self.check_jsx_children_count(props_type, tag_name_idx);
-            }
-            // TS2745: multiple children expected but single child provided.
-            if child_count == 1 && !skip_prop_checks {
-                self.check_jsx_needs_multiple_children(props_type, tag_name_idx);
+            // TS2745/TS2746: route JSX body children through one normalized
+            // classifier so union/tuple shapes don't drift by component path.
+            if child_count > 0 && !skip_prop_checks {
+                self.check_jsx_children_shape(props_type, child_count, tag_name_idx);
             }
             // TS2747: text children not accepted by component.
             if has_text_child && !skip_prop_checks {

@@ -1945,6 +1945,75 @@ let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
 }
 
 #[test]
+fn jsx_children_union_with_array_allows_single_child_without_ts2745() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element | JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Union with single-child branch should not emit TS2745, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_with_tuple_allows_single_child_without_ts2745() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: JSX.Element | [JSX.Element];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Union with tuple branch should not emit TS2745 for a single child, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_tuple_still_requires_multiple_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    a: number;
+    children: [JSX.Element];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let k = <Comp a={{10}}><div>hi</div></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Tuple-only children should still emit TS2745 for a single child, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_whitespace_only_text_ignored() {
     // Whitespace-only text children should not count as children
     let source = format!(
