@@ -77,11 +77,9 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
 }
 
 pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::contains_type_matching(
-        db,
-        type_id,
-        |key| matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_)),
-    )
+    tsz_solver::contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
+    })
 }
 
 pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
