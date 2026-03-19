@@ -10,7 +10,7 @@ use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo};
+use crate::types::{ConditionalType, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo};
 
 // =============================================================================
 // Basic Index Access Tests
@@ -518,4 +518,77 @@ fn test_index_access_mapped_with_intersection_index() {
         TypeId::BOOLEAN,
         "mapped[string & keyof T] should resolve to the template type"
     );
+}
+
+#[test]
+fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
+    let interner = TypeInterner::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let keyof_t = interner.keyof(t_type);
+
+    let k_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
+
+    let template = interner.conditional(ConditionalType {
+        check_type: interner.index_access(t_type, k_type),
+        extends_type: TypeId::STRING,
+        true_type: k_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let result = evaluate_type(&interner, interner.index_access(mapped, keyof_t));
+
+    let collapsed = interner.conditional(ConditionalType {
+        check_type: interner.index_access(t_type, keyof_t),
+        extends_type: TypeId::STRING,
+        true_type: keyof_t,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert_ne!(
+        result, collapsed,
+        "mapped[keyof T] should not collapse the whole key space into a single substitution"
+    );
+
+    match interner.lookup(result) {
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = interner.conditional_type(cond_id);
+            match (
+                interner.lookup(cond.check_type),
+                interner.lookup(cond.true_type),
+            ) {
+                (
+                    Some(TypeData::IndexAccess(object_type, key_type)),
+                    Some(TypeData::TypeParameter(_)),
+                ) => {
+                    assert_eq!(object_type, t_type);
+                    assert_eq!(key_type, cond.true_type);
+                }
+                other => panic!("Expected per-key conditional to keep a single key parameter, got {other:?}"),
+            }
+        }
+        other => panic!("Expected deferred conditional result, got {other:?}"),
+    }
 }
