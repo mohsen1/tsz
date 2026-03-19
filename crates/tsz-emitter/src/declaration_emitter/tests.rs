@@ -4751,6 +4751,42 @@ fn test_assertion_function() {
     );
 }
 
+#[test]
+fn test_const_identity_call_preserves_numeric_literal_initializer() {
+    let output = emit_dts(
+        r#"
+function id<T>(x: T): T {
+    return x;
+}
+
+const value = id(123);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value = 123;"),
+        "Expected const identity call to preserve numeric literal initializer: {output}"
+    );
+}
+
+#[test]
+fn test_const_identity_call_preserves_negative_numeric_literal_initializer() {
+    let output = emit_dts(
+        r#"
+function id<T>(x: T): T {
+    return x;
+}
+
+const value = id(-123);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value = -123;"),
+        "Expected const identity call to preserve negative numeric literal initializer: {output}"
+    );
+}
+
 // =============================================================================
 // 31. Multiple variable declarations on one line
 // =============================================================================

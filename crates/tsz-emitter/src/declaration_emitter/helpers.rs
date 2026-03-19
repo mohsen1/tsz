@@ -6225,7 +6225,7 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let literal_initializer_text =
             (keyword == "const" && !has_type_annotation && has_initializer)
-                .then(|| self.const_literal_initializer_text(initializer))
+                .then(|| self.const_literal_initializer_text_deep(initializer))
                 .flatten();
 
         // Determine if we should emit a literal initializer for const
@@ -7869,6 +7869,9 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(text) = self.const_literal_initializer_text(expr_idx) {
             return Some(text);
         }
+        if let Some(text) = self.const_literal_identity_call_text(expr_idx) {
+            return Some(text);
+        }
         // Unwrap as/satisfies expressions
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == syntax_kind_ext::AS_EXPRESSION
@@ -7878,6 +7881,63 @@ impl<'a> DeclarationEmitter<'a> {
             return self.const_literal_initializer_text_deep(assertion.expression);
         }
         None
+    }
+
+    fn const_literal_identity_call_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() != 1 {
+            return None;
+        }
+
+        let func = self.identity_returning_function(call.expression)?;
+        let callee_body = func.body;
+        let returned_identifier = self.function_body_unique_return_identifier(callee_body)?;
+        let return_name = self.get_identifier_text(returned_identifier)?;
+        let first_param_name = func
+            .parameters
+            .nodes
+            .first()
+            .copied()
+            .and_then(|param_idx| self.arena.get(param_idx))
+            .and_then(|param_node| self.arena.get_parameter(param_node))
+            .and_then(|param| self.get_identifier_text(param.name))?;
+
+        if first_param_name != return_name {
+            return None;
+        }
+
+        let mut text = self.const_literal_initializer_text_deep(args.nodes[0])?;
+        if text.starts_with('-') {
+            while text.ends_with(')') {
+                text.pop();
+            }
+        }
+        Some(text)
+    }
+
+    fn identity_returning_function(
+        &self,
+        callee_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let callee_name = self.get_identifier_text(callee_idx)?;
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        source_file.statements.nodes.iter().copied().find_map(|decl_idx| {
+            let decl_node = self.arena.get(decl_idx)?;
+            let func = self.arena.get_function(decl_node)?;
+            let same_name = self
+                .get_identifier_text(func.name)
+                .is_some_and(|name| name == callee_name);
+            (same_name && func.body.is_some() && func.parameters.nodes.len() == 1).then_some(func)
+        })
     }
 
     fn is_import_meta_url_expression(&self, expr_idx: NodeIndex) -> bool {
