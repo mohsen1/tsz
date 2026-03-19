@@ -413,6 +413,23 @@ fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
 }
 
 #[test]
+fn test_array_literal_semicolon_recovers_as_missing_comma() {
+    let source = "var texCoords = [2, 2, 0.5000001192092895, 0.8749999 ; 403953552, 0.5000001192092895, 0.8749999403953552];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let semicolon_pos = source.find(';').expect("semicolon position") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "',' expected."),
+        "Expected missing comma at the array literal semicolon, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_optional_rest_parameter_reports_at_question_mark() {
     let source = "(...arg?) => 102;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -442,6 +459,57 @@ fn test_reserved_word_type_reference_in_parameter_does_not_emit_ts1359() {
     assert!(
         diagnostics.iter().all(|diag| diag.code != 1359),
         "Type positions should not reject reserved-word identifiers with TS1359: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_variable_list_trailing_comma_reports_at_comma() {
+    let source = "var a,\nreturn;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let comma_pos = source.find(',').expect("comma position") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1009
+                && diag.start == comma_pos
+                && diag.message == "Trailing comma not allowed."
+        }),
+        "Expected TS1009 at the trailing comma, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_function_parameter_comma_before_arrow_is_not_suppressed() {
+    let source = "function (a => b;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let arrow_pos = source.find("=>").expect("arrow position") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1005 && diag.start == arrow_pos && diag.message == "',' expected."
+        }),
+        "Expected missing comma at the arrow token, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_repeated_top_level_close_parens_emit_separate_ts1128() {
+    let source = "function foo() {\n}\n\nfunction foo() {\n}\n\n)\n)";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1128_count = diagnostics.iter().filter(|diag| diag.code == 1128).count();
+
+    assert_eq!(
+        ts1128_count, 2,
+        "Expected one TS1128 per stray top-level close paren, got {diagnostics:?}"
     );
 }
 

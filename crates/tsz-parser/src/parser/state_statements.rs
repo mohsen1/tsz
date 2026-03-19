@@ -303,7 +303,9 @@ impl ParserState {
                     }
                 }
 
-                if self.is_token(SyntaxKind::CloseParenToken) {
+                if self.is_token(SyntaxKind::CloseParenToken)
+                    && !self.scanner.has_preceding_line_break()
+                {
                     let source = self.scanner.source_text().as_bytes();
                     let mut i = self.token_pos() as usize;
                     while i > 0 && source[i - 1].is_ascii_whitespace() {
@@ -317,6 +319,19 @@ impl ParserState {
                         self.next_token();
                         continue;
                     }
+                }
+
+                if matches!(
+                    self.token(),
+                    SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+                ) {
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
                 }
 
                 // Statement parsing failed, resync to recover
@@ -449,6 +464,20 @@ impl ParserState {
             let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
+                if matches!(
+                    self.token(),
+                    SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+                ) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
                 // Statement parsing failed, resync to recover
                 // Emit error if we haven't already at the exact same position
                 // Suppress cascading errors when a recent error was within 3 chars
@@ -1474,6 +1503,7 @@ impl ParserState {
             let decl_had_error = self.parse_diagnostics.len() > diag_count_before_decl;
             declarations.push(decl);
 
+            let comma_pos = self.token_pos();
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // If ASI applies (line break, closing brace, EOF, or semicolon),
                 // just break - parse_semicolon() in the caller will handle it
@@ -1588,12 +1618,8 @@ impl ParserState {
                     || self.is_token(SyntaxKind::EndOfFileToken)
                     || self.is_reserved_word()
                 {
-                    // Report at the comma position (one token back).
-                    // The comma was already consumed by parse_optional above.
-                    let end = self.token_pos();
-                    let start = end.saturating_sub(1);
                     self.parse_error_at(
-                        start,
+                        comma_pos,
                         1,
                         diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
                         diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
