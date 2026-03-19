@@ -671,7 +671,10 @@ impl<'a> HoverProvider<'a> {
                     accessor_kind, parent, symbol.escaped_name, type_string
                 );
             }
-            return format!("({}) {}: {}", accessor_kind, symbol.escaped_name, type_string);
+            return format!(
+                "({}) {}: {}",
+                accessor_kind, symbol.escaped_name, type_string
+            );
         }
         if f & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
             if let Some(module_ref) = self.find_import_equals_module_ref_text(symbol) {
