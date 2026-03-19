@@ -1143,6 +1143,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    let resolved_class_access =
+                        self.resolve_class_for_access(access.expression, object_type_for_access);
+                    let class_chain_summary = resolved_class_access
+                        .map(|(class_idx, _)| self.summarize_class_chain(class_idx));
+
                     if let Some(augmented_type) = self.resolve_array_global_augmentation_property(
                         object_type_for_access,
                         property_name,
@@ -1183,8 +1188,7 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    if let Some((class_idx, is_static_access)) =
-                        self.resolve_class_for_access(access.expression, object_type_for_access)
+                    if let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access
                         && let Some(interface_type) = self
                             .recover_property_from_implemented_interfaces(class_idx, property_name)
@@ -1284,15 +1288,12 @@ impl<'a> CheckerState<'a> {
 
                     if self.is_js_file()
                         && self.is_super_expression(access.expression)
-                        && let Some((class_idx, is_static_access)) =
-                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some((_, is_static_access)) = resolved_class_access
                         && is_static_access
                         && matches!(
-                            self.summarize_class_chain(class_idx).member_kind(
-                                property_name,
-                                true,
-                                true
-                            ),
+                            class_chain_summary
+                                .as_ref()
+                                .and_then(|summary| summary.member_kind(property_name, true, true)),
                             Some(ClassMemberKind::FieldLike)
                         )
                     {
@@ -1307,20 +1308,23 @@ impl<'a> CheckerState<'a> {
                     // `super.x()` in static method produce no TS2576 errors in tsc.
 
                     // TS2576: instance.member where `member` exists on the class static side.
-                    // Use .is_some() — TS2576 fires for any static member (property or method).
+                    // Route this through the shared class summary so inherited
+                    // static fields/accessors don't force another class walk.
                     if !self.is_super_expression(access.expression)
-                        && let Some((class_idx, is_static_access)) =
-                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some((_, is_static_access)) = resolved_class_access
                         && !is_static_access
-                        && self
-                            .is_method_member_in_class_hierarchy(class_idx, property_name, true)
+                        && class_chain_summary
+                            .as_ref()
+                            .and_then(|summary| summary.lookup(property_name, true, true))
                             .is_some()
                     {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
-                        let class_name = self.get_class_name_from_decl(class_idx);
+                        let class_name = resolved_class_access
+                            .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
+                            .unwrap_or_default();
                         let static_member_name = format!("{class_name}.{property_name}");
                         let object_type_str = self.format_type(display_object_type);
                         let message = format_message(
