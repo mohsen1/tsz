@@ -50,3 +50,66 @@ pub fn cache_key(path: &Path, test_dir: &Path) -> Option<String> {
 pub fn lookup<'a>(cache: &'a TscCache, key: &str) -> Option<&'a TscResult> {
     cache.get(key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn sample_result() -> TscResult {
+        TscResult {
+            metadata: crate::tsc_results::FileMetadata {
+                mtime_ms: 123,
+                size: 456,
+                typescript_version: Some("5.4.0".to_string()),
+            },
+            error_codes: vec![2307, 2322],
+            diagnostic_fingerprints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn load_cache_reads_entries_and_lookup_finds_them() {
+        let mut file = NamedTempFile::new().expect("temp cache file");
+        let cache_json = serde_json::json!({
+            "compiler/foo.ts": sample_result(),
+        });
+        serde_json::to_writer(&mut file, &cache_json).expect("write cache json");
+        file.flush().expect("flush cache json");
+
+        let cache = load_cache(file.path()).expect("load cache");
+        let result = lookup(&cache, "compiler/foo.ts").expect("cache entry");
+
+        assert_eq!(result.error_codes, vec![2307, 2322]);
+        assert_eq!(result.metadata.size, 456);
+        assert!(lookup(&cache, "missing.ts").is_none());
+    }
+
+    #[test]
+    fn load_cache_reports_json_parse_errors() {
+        let file = NamedTempFile::new().expect("temp cache file");
+        fs::write(file.path(), "{ not valid json").expect("write invalid cache json");
+
+        let err = load_cache(file.path()).expect_err("cache load should fail");
+        let message = format!("{err:#}");
+        assert!(message.contains("Failed to parse cache JSON"));
+    }
+
+    #[test]
+    fn cache_key_uses_canonicalized_paths_when_direct_strip_fails() {
+        let tempdir = tempfile::tempdir().expect("temp directory");
+        let test_dir = tempdir.path().join("cases");
+        let test_dir_with_dot = test_dir.join(".");
+        let compiler_dir = test_dir.join("compiler");
+        fs::create_dir_all(&compiler_dir).expect("create cache test directories");
+
+        let path = compiler_dir.join("foo.ts");
+
+        assert_eq!(
+            cache_key(&path, &test_dir_with_dot),
+            Some("compiler/foo.ts".to_string())
+        );
+    }
+}
