@@ -4,9 +4,7 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::error_reporter::fingerprint_policy::{
-    DiagnosticAnchorKind, RelatedInformationPolicy,
-};
+use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, RelatedInformationPolicy};
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
@@ -1329,12 +1327,8 @@ impl<'a> CheckerState<'a> {
         // related diagnostics under the primary TS2345.
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
         if let Some(ref reason) = analysis.failure_reason
-            && let Some(related) = self.related_from_failure_reason(
-                reason,
-                arg_type,
-                param_type,
-                anchor.node_idx,
-            )
+            && let Some(related) =
+                self.related_from_failure_reason(reason, arg_type, param_type, anchor.node_idx)
         {
             diag.related_information.extend(related);
             diag.related_information = self.normalize_related_information(
@@ -1362,18 +1356,18 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) {
         // When there are excess arguments, point to them instead of the callee.
-        let (start, length) = if let Some((s, l)) =
-            self.resolve_excess_argument_span(args, expected_max)
-        {
-            (s, l)
-        } else {
-            if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
-            {
-                (anchor.start, anchor.length)
+        let (start, length) =
+            if let Some((s, l)) = self.resolve_excess_argument_span(args, expected_max) {
+                (s, l)
             } else {
-                return;
-            }
-        };
+                if let Some(anchor) =
+                    self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
+                {
+                    (anchor.start, anchor.length)
+                } else {
+                    return;
+                }
+            };
 
         let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
             self.ctx.types,
@@ -1463,8 +1457,8 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
-        let related =
-            self.normalize_related_information(related, RelatedInformationPolicy::OVERLOAD_FAILURES);
+        let related = self
+            .normalize_related_information(related, RelatedInformationPolicy::OVERLOAD_FAILURES);
 
         self.ctx.diagnostics.push(Diagnostic {
             code: diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,

@@ -250,8 +250,8 @@ impl<'a> CheckerState<'a> {
                     ),
                 },
             ],
-            SubtypeFailureReason::OptionalPropertyRequired { property_name } => vec![
-                DiagnosticRelatedInformation {
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     file: self.ctx.file_name.clone(),
@@ -265,8 +265,8 @@ impl<'a> CheckerState<'a> {
                             &self.format_type_diagnostic(target),
                         ],
                     ),
-                },
-            ],
+                }]
+            }
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,
@@ -359,8 +359,8 @@ impl<'a> CheckerState<'a> {
                     },
                 ]
             }
-            SubtypeFailureReason::MissingIndexSignature { index_kind } => vec![
-                DiagnosticRelatedInformation {
+            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
+                vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
                     file: self.ctx.file_name.clone(),
@@ -370,15 +370,12 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
                         &[index_kind, &self.format_type_diagnostic(source)],
                     ),
-                },
-            ],
+                }]
+            }
             _ => return None,
         };
 
-        Some(self.normalize_related_information(
-            related,
-            RelatedInformationPolicy::ELABORATION,
-        ))
+        Some(self.normalize_related_information(related, RelatedInformationPolicy::ELABORATION))
     }
 
     pub(crate) fn related_from_diagnostic(

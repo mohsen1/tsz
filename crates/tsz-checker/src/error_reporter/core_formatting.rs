@@ -601,7 +601,6 @@ impl<'a> CheckerState<'a> {
 
         Some(missing_required_props[0].name)
     }
-
 }
 
 /// Simple Levenshtein distance for string literal spelling suggestions.
