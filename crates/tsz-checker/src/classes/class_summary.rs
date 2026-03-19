@@ -548,6 +548,38 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
         }
+
+        self.collect_js_static_expando_member_kinds(class, summary);
+    }
+
+    fn collect_js_static_expando_member_kinds(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        let Some(name_node) = self.ctx.arena.get(class.name) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+
+        for name in self.collect_expando_properties_for_root(ident.escaped_text.as_str()) {
+            Self::record_member_kind(
+                name.clone(),
+                true,
+                ClassMemberKind::FieldLike,
+                &mut summary.visible_instance_member_kinds,
+                &mut summary.visible_static_member_kinds,
+            );
+            Self::record_member_kind(
+                name,
+                true,
+                ClassMemberKind::FieldLike,
+                &mut summary.all_instance_member_kinds,
+                &mut summary.all_static_member_kinds,
+            );
+        }
     }
 
     fn record_js_body_assigned_member_kinds(

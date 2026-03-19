@@ -1282,6 +1282,20 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    if self.is_js_file()
+                        && self.is_super_expression(access.expression)
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && is_static_access
+                        && matches!(
+                            self.summarize_class_chain(class_idx)
+                                .member_kind(property_name, true, true),
+                            Some(ClassMemberKind::FieldLike)
+                        )
+                    {
+                        return TypeId::ANY;
+                    }
+
                     // TSC does not emit TS2576 for `super.member` access. When accessing a
                     // property through `super`, TypeScript suppresses "did you mean to access
                     // the static member?" errors entirely. The TS2576 check only applies to

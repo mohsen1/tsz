@@ -438,6 +438,40 @@ class DerivedYadda extends YaddaBase {
 }
 
 #[test]
+fn test_js_static_super_field_reads_allow_declared_and_expando_base_fields() {
+    let source = r#"
+class C {
+    static blah1 = 123;
+}
+C.blah2 = 456;
+
+class D extends C {
+    static {
+        console.log(super.blah1);
+        console.log(super.blah2);
+    }
+}
+"#;
+
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| !matches!(*code, 2339 | 2551 | 2855 | 7053)),
+        "Expected JS static super field reads to avoid TS2339/TS2551/TS2855/TS7053, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_self_defaulting_expando_initializer_has_no_ts2565() {
     let source = r#"
 var test = {};
