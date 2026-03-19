@@ -1347,6 +1347,33 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::SemicolonToken) {
+                    let saved_token = self.current_token;
+                    let saved_state = self.scanner.save_state();
+                    self.next_token(); // look past `;`
+                    let should_continue = self.is_expression_start()
+                        || self.is_token(SyntaxKind::DotDotDotToken)
+                        || self.is_token(SyntaxKind::CloseBracketToken);
+                    let follows_eof = self.is_token(SyntaxKind::EndOfFileToken);
+                    self.scanner.restore_state(saved_state);
+                    self.current_token = saved_token;
+
+                    if should_continue {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token(); // skip `;`
+                        continue;
+                    }
+
+                    if follows_eof {
+                        self.next_token(); // let missing `]` report at EOF
+                        break;
+                    }
+                }
+
                 if self.is_token(SyntaxKind::ColonToken) {
                     let saved_token = self.current_token;
                     let saved_state = self.scanner.save_state();
