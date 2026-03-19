@@ -5488,7 +5488,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn print_synthetic_class_extends_alias_type(&self, type_id: tsz_solver::types::TypeId) -> String {
+    fn print_synthetic_class_extends_alias_type(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> String {
         let Some(interner) = self.type_interner else {
             return self.print_type_id(type_id);
         };
@@ -6507,7 +6510,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn retain_synthetic_class_extends_alias_dependencies_for_statement(&mut self, stmt_idx: NodeIndex) {
+    fn retain_synthetic_class_extends_alias_dependencies_for_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
@@ -6527,8 +6533,9 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(clause_node) = self.arena.get(export.export_clause) {
                         if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
                             && let Some(class) = self.arena.get_class(clause_node)
-                            && let Some(type_id) = self
-                                .synthetic_class_extends_alias_type_id(class.heritage_clauses.as_ref())
+                            && let Some(type_id) = self.synthetic_class_extends_alias_type_id(
+                                class.heritage_clauses.as_ref(),
+                            )
                         {
                             self.retain_direct_type_symbols_for_public_api(type_id);
                         } else if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {

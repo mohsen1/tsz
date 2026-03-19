@@ -745,8 +745,7 @@ impl ParserState {
     /// Suppresses error if we already emitted an error at the current position
     /// (to prevent cascading errors from sequential `parse_expected` calls)
     pub fn parse_expected(&mut self, kind: SyntaxKind) -> bool {
-        if kind == SyntaxKind::CloseParenToken
-            && self.suppress_next_missing_close_paren_error_once
+        if kind == SyntaxKind::CloseParenToken && self.suppress_next_missing_close_paren_error_once
         {
             self.suppress_next_missing_close_paren_error_once = false;
             if !self.is_token(SyntaxKind::CloseParenToken) {

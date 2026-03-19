@@ -264,21 +264,21 @@ fn test_object_literal_statement_recovery_after_shorthand_property() {
     let eof_pos = source.len() as u32;
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == return_pos
+            && diag.message == "',' expected."),
         "Expected missing comma at the statement keyword, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == semicolon_pos
+            && diag.message == "':' expected."),
         "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == eof_pos
+            && diag.message == "'}' expected."),
         "Expected missing '}}' at EOF, got {diagnostics:?}"
     );
 }
@@ -301,21 +301,21 @@ fn test_object_literal_statement_recovery_after_missing_initializer() {
         "Expected TS1109 at the statement keyword after a missing initializer, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .all(|diag| !(diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected.")),
+        diagnostics.iter().all(|diag| !(diag.code == 1005
+            && diag.start == return_pos
+            && diag.message == "',' expected.")),
         "Missing initializer recovery should not inject a comma error at the next statement keyword: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == semicolon_pos
+            && diag.message == "':' expected."),
         "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == eof_pos
+            && diag.message == "'}' expected."),
         "Expected missing '}}' at EOF, got {diagnostics:?}"
     );
 }
@@ -332,21 +332,21 @@ fn test_object_literal_statement_recovery_after_trailing_comma() {
     let eof_pos = source.len() as u32;
 
     assert!(
-        diagnostics
-            .iter()
-            .all(|diag| !(diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected.")),
+        diagnostics.iter().all(|diag| !(diag.code == 1005
+            && diag.start == return_pos
+            && diag.message == "',' expected.")),
         "Trailing-comma recovery should not add an extra comma error at the next statement keyword: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == semicolon_pos
+            && diag.message == "':' expected."),
         "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == eof_pos
+            && diag.message == "'}' expected."),
         "Expected missing '}}' at EOF, got {diagnostics:?}"
     );
 }
@@ -366,15 +366,15 @@ fn test_function_parameter_list_missing_close_paren_reports_at_body_end() {
         .collect();
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == body_start && diag.message == "',' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == body_start
+            && diag.message == "',' expected."),
         "Expected missing comma at the body opener, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == body_end && diag.message == "')' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == body_end
+            && diag.message == "')' expected."),
         "Expected missing ')' after the recovered body, got {diagnostics:?}"
     );
     assert_eq!(
@@ -399,15 +399,15 @@ fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
         "Missing arrow return types should not fall into TS1110 typed-arrow recovery: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == colon_pos && diag.message == "',' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == colon_pos
+            && diag.message == "',' expected."),
         "Expected missing comma at ':', got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == equals_pos && diag.message == "';' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == equals_pos
+            && diag.message == "';' expected."),
         "Expected missing semicolon at '=>', got {diagnostics:?}"
     );
 }
