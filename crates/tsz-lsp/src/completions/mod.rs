@@ -86,6 +86,19 @@ pub mod sort_priority {
     pub fn deprecated(base: &str) -> String {
         format!("z{base}")
     }
+
+    /// Produce an object literal property sort text by appending the property
+    /// name as a null-byte-separated tiebreaker.
+    /// This matches TypeScript's `SortText.ObjectLiteralProperty()`.
+    pub fn object_literal_property(base: &str, name: &str) -> String {
+        format!("{base}\0{name}\0")
+    }
+
+    /// Produce a sort text that sorts below the given base sort text.
+    /// This matches TypeScript's `SortText.SortBelow()`.
+    pub fn sort_below(base: &str) -> String {
+        format!("{base}1")
+    }
 }
 
 /// Result of a completion request, matching tsserver's `CompletionInfo`.
