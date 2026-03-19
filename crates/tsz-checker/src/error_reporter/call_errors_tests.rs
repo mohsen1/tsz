@@ -155,7 +155,10 @@ takes(123);
         .expect("expected TS2345");
 
     let arg_start = source.find("123").expect("expected argument") as u32;
-    assert_eq!(diag.start, arg_start, "TS2345 should anchor at the argument");
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2345 should anchor at the argument"
+    );
     assert_eq!(diag.length, 3, "TS2345 should cover only the argument span");
 }
 
@@ -174,7 +177,10 @@ fn(true);
         .expect("expected TS2769");
 
     let arg_start = source.find("true").expect("expected first argument") as u32;
-    assert_eq!(diag.start, arg_start, "TS2769 should anchor at the first argument");
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2769 should anchor at the first argument"
+    );
     assert!(
         diag.related_information.len() >= 2,
         "expected overload related info, got: {diag:?}"

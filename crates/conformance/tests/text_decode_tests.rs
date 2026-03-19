@@ -1,5 +1,5 @@
-use super::DecodedSourceText;
 use super::decode_source_text;
+use super::DecodedSourceText;
 
 #[test]
 fn decodes_utf8_bom() {

@@ -82,7 +82,10 @@ let value: string = 42;
         diag.start, value_start,
         "TS2322 should anchor at the variable declaration name"
     );
-    assert_eq!(diag.length, 5, "TS2322 should cover only the declaration name");
+    assert_eq!(
+        diag.length, 5,
+        "TS2322 should cover only the declaration name"
+    );
 }
 
 #[test]
@@ -104,7 +107,10 @@ const value: Outer = { inner: { ok: 1, nope: 2 } };
         diag.start, nope_start,
         "TS2353 should anchor at the offending nested property name"
     );
-    assert_eq!(diag.length, 4, "TS2353 should cover only the offending property");
+    assert_eq!(
+        diag.length, 4,
+        "TS2353 should cover only the offending property"
+    );
 }
 
 #[test]

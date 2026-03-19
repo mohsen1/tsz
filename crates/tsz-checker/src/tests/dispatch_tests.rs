@@ -152,7 +152,10 @@ value.missing;
         matching[0].start, missing_pos,
         "Expected TS2339 to anchor at the property token, got: {matching:?}"
     );
-    assert_eq!(matching[0].length, 7, "Expected TS2339 to cover only the property token");
+    assert_eq!(
+        matching[0].length, 7,
+        "Expected TS2339 to cover only the property token"
+    );
 }
 
 #[test]

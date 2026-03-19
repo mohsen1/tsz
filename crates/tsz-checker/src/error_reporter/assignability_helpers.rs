@@ -72,7 +72,12 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         )
-        .with_related(self.ctx.file_name.clone(), anchor.start, anchor.length, detail);
+        .with_related(
+            self.ctx.file_name.clone(),
+            anchor.start,
+            anchor.length,
+            detail,
+        );
         self.ctx.push_diagnostic(diag);
     }
 

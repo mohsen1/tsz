@@ -4,9 +4,7 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::error_reporter::fingerprint_policy::{
-    DiagnosticAnchorKind, RelatedInformationPolicy,
-};
+use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, RelatedInformationPolicy};
 use crate::state::CheckerState;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
@@ -252,8 +250,8 @@ impl<'a> CheckerState<'a> {
         );
 
         if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
-            let new_related =
-                self.related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
+            let new_related = self
+                .related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
             base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
             base_diag.message_text = msg;
             base_diag.related_information = new_related;
