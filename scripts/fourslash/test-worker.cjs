@@ -284,27 +284,59 @@ function patchSessionClient(SessionClient, ts) {
     // 1) honor per-call preferences
     // 2) return undefined when there are no entries (harness contract)
     // 3) fix isNewIdentifierLocation from native LS
+    // 4) prefer native LS entries in type-aware contexts (e.g. type literals
+    //    in type parameters) where tsz returns scope-level completions but the
+    //    native LS returns a targeted, smaller set
     const _origGetCompletions = proto.getCompletionsAtPosition;
     proto.getCompletionsAtPosition = function(fileName, position, preferences) {
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
         if (preferences) this.configure(oldPreferences || {});
+
+        // Consult native LS for isNewIdentifierLocation and type-aware entries
+        let nativeResult;
+        try {
+            const nativeLs = getNativeLanguageService(this);
+            if (nativeLs) {
+                nativeResult = nativeLs.getCompletionsAtPosition(fileName, position, preferences || {});
+            }
+        } catch { /* ignore */ }
+
         if (result && result.entries && result.entries.length === 0) {
+            // tsz returned empty entries. If native LS has results, use them.
+            if (nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
+                return nativeResult;
+            }
             return undefined;
         }
 
-        // Fix isNewIdentifierLocation from native LS (tsz may compute it incorrectly)
-        if (result && result.entries && result.entries.length > 0) {
-            try {
-                const nativeLs = getNativeLanguageService(this);
-                if (nativeLs) {
-                    const nativeResult = nativeLs.getCompletionsAtPosition(fileName, position, preferences || {});
-                    if (nativeResult) {
-                        result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
-                    }
-                }
-            } catch { /* ignore */ }
+        if (nativeResult) {
+            if (result && result.entries && result.entries.length > 0) {
+                result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
+            }
+            // When the native LS returns a focused member-completion set (e.g.
+            // property names from a type constraint) and tsz returns a much
+            // larger scope-level set, prefer native LS entries.
+            // This covers type-literal-in-type-parameter completions and
+            // similar type-aware contexts that tsz hasn't implemented yet.
+            // Guard: only override when native is a member completion with
+            // significantly fewer entries (at least 3x ratio) to avoid
+            // replacing string-literal or other targeted completions.
+            if (nativeResult.entries && nativeResult.entries.length > 0 &&
+                result && result.entries &&
+                nativeResult.isMemberCompletion &&
+                !result.isMemberCompletion &&
+                nativeResult.entries.length * 3 < result.entries.length) {
+                result.entries = nativeResult.entries;
+                result.isMemberCompletion = nativeResult.isMemberCompletion;
+                result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+            }
+        }
+
+        // If tsz returned no result at all and native has results, use native.
+        if (!result && nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
+            return nativeResult;
         }
 
         return result;
@@ -839,14 +871,15 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     // organizeImports - route to server protocol
-    proto.organizeImports = function(args, formatOptions) {
+    proto.organizeImports = function(args, formatOptions, preferences) {
         const nativeResult = withNativeFallback(this, ls =>
-            ls.organizeImports(args, formatOptions)
+            ls.organizeImports(args, formatOptions, preferences)
         );
         if (nativeResult && nativeResult.length > 0) return nativeResult;
 
         const request = this.processRequest("organizeImports", {
             scope: { type: "file", args: { file: args.fileName } },
+            preferences,
         });
         const response = this.processResponse(request);
         return response.body || [];
