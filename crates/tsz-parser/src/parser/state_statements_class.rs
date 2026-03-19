@@ -1197,8 +1197,13 @@ impl ParserState {
             ));
         }
 
+        if is_duplicate {
+            self.skip_heritage_type_references_for_recovery();
+            return None;
+        }
+
         let type_ref = self.parse_heritage_type_reference();
-        let mut type_refs = vec![type_ref];
+        let type_refs = vec![type_ref];
 
         while self.is_token(SyntaxKind::CommaToken) {
             let comma_pos = self.token_pos();
@@ -1216,12 +1221,12 @@ impl ParserState {
                 break;
             }
             self.parse_error_at(
-                comma_end,
-                comma_end - comma_pos,
+                self.token_pos(),
+                0,
                 "Classes can only extend a single class.",
                 diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
             );
-            type_refs.push(self.parse_heritage_type_reference());
+            let _ = self.parse_heritage_type_reference();
         }
 
         let end_pos = self.token_end();
@@ -1250,6 +1255,7 @@ impl ParserState {
             );
         }
 
+        let is_duplicate = *seen_implements;
         *seen_implements = true;
         self.next_token();
 
@@ -1263,6 +1269,11 @@ impl ParserState {
                 "'implements' list cannot be empty.",
                 diagnostic_codes::LIST_CANNOT_BE_EMPTY,
             );
+            return None;
+        }
+
+        if is_duplicate {
+            self.skip_heritage_type_references_for_recovery();
             return None;
         }
 
@@ -1301,6 +1312,19 @@ impl ParserState {
                 types: self.make_node_list(types),
             },
         ))
+    }
+
+    fn skip_heritage_type_references_for_recovery(&mut self) {
+        while !self.is_token(SyntaxKind::OpenBraceToken)
+            && !self.is_token(SyntaxKind::ExtendsKeyword)
+            && !self.is_token(SyntaxKind::ImplementsKeyword)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let _ = self.parse_heritage_type_reference();
+            if !self.parse_optional(SyntaxKind::CommaToken) {
+                break;
+            }
+        }
     }
 
     /// Parse a heritage type reference: Foo or Foo<T> or Foo.Bar<T> or base<T>()

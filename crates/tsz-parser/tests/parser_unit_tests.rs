@@ -4,6 +4,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, ParserState};
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
 // =============================================================================
@@ -1444,6 +1445,123 @@ fn class_extends_implements() {
         heritage.nodes.len(),
         2,
         "should have extends + implements clauses"
+    );
+}
+
+#[test]
+fn class_duplicate_extends_recovery_discards_duplicate_clause_types() {
+    let (parser, root) = parse_source("class C extends A extends B {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN),
+        "expected TS1172 for duplicate extends clause, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        1,
+        "duplicate extends recovery should keep only the first heritage clause"
+    );
+
+    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
+    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    assert_eq!(
+        clause.types.nodes.len(),
+        1,
+        "duplicate extends recovery should keep only the first base type"
+    );
+}
+
+#[test]
+fn class_duplicate_implements_recovery_discards_duplicate_clause_types() {
+    let (parser, root) = parse_source("class C implements A implements B {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IMPLEMENTS_CLAUSE_ALREADY_SEEN),
+        "expected TS1175 for duplicate implements clause, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        1,
+        "duplicate implements recovery should keep only the first heritage clause"
+    );
+
+    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
+    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    assert_eq!(
+        clause.types.nodes.len(),
+        1,
+        "duplicate implements recovery should keep only the first implemented type"
+    );
+}
+
+#[test]
+fn class_extends_comma_recovery_keeps_single_base_type() {
+    let source = "class C extends A, B {}";
+    let (parser, root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let ts1174 = diags
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS)
+        .expect("expected TS1174 for comma-separated extends");
+    let b_pos = source.find('B').expect("B position") as u32;
+    assert_eq!(
+        ts1174.start, b_pos,
+        "TS1174 should point at the extra base type, got {diags:?}"
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        1,
+        "comma extends recovery should keep a single heritage clause"
+    );
+
+    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
+    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    assert_eq!(
+        clause.types.nodes.len(),
+        1,
+        "comma extends recovery should keep only the first base type"
+    );
+}
+
+#[test]
+fn class_out_of_order_extends_recovery_keeps_trailing_clause() {
+    let (parser, root) = parse_source("class C implements A extends B {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE),
+        "expected TS1173 for out-of-order extends clause, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        2,
+        "out-of-order extends recovery should keep both heritage clauses"
     );
 }
 
