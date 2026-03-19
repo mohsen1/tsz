@@ -5189,4 +5189,71 @@ mod tests {
         assert_eq!(refs[1].path, "./packages/utils");
         assert!(refs[1].prepend);
     }
+
+    #[test]
+    fn test_extract_lib_references_normalizes_and_stops_at_first_code_line() {
+        let source = r#"
+            // regular comment
+            /// <reference lib="ES2015" />
+            /// <reference lib='lib.dom' />
+
+            const x = 1;
+            /// <reference lib="esnext" />
+        "#;
+
+        assert_eq!(
+            extract_lib_references(source),
+            vec!["es2015".to_string(), "dom".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_lib_references_skips_block_comments_and_ignores_embedded_lib_text() {
+        let source = r#"
+            /*
+             * /// <reference lib="es2017" />
+             */
+            /// <reference lib="es2020" />
+            /// not really a lib directive
+        "#;
+
+        assert_eq!(extract_lib_references(source), vec!["es2020".to_string()]);
+    }
+
+    #[test]
+    fn test_strip_jsonc_preserves_comment_like_text_inside_strings() {
+        let input = r#"{
+  // line comment
+  "url": "https://example.test/*keep*/",
+  "text": "// still text",
+  /* block
+     comment */
+  "value": 1
+}"#;
+
+        let stripped = strip_jsonc(input);
+        assert!(stripped.contains(r#""url": "https://example.test/*keep*/""#));
+        assert!(stripped.contains(r#""text": "// still text""#));
+        assert!(stripped.contains(r#""value": 1"#));
+        assert!(!stripped.contains("line comment"));
+        assert!(!stripped.contains("block"));
+    }
+
+    #[test]
+    fn test_default_and_core_lib_names_cover_newer_targets() {
+        assert_eq!(default_lib_name_for_target(ScriptTarget::ES5), "lib");
+        assert_eq!(default_lib_name_for_target(ScriptTarget::ES2015), "es6");
+        assert_eq!(
+            default_lib_name_for_target(ScriptTarget::ES2025),
+            "esnext.full"
+        );
+        assert_eq!(
+            default_lib_name_for_target(ScriptTarget::ESNext),
+            "esnext.full"
+        );
+
+        assert_eq!(core_lib_name_for_target(ScriptTarget::ES3), "es5");
+        assert_eq!(core_lib_name_for_target(ScriptTarget::ES2025), "esnext");
+        assert_eq!(core_lib_name_for_target(ScriptTarget::ESNext), "esnext");
+    }
 }

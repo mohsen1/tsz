@@ -147,6 +147,10 @@ mod strict_mode_and_module_tests;
 #[path = "../tests/overload_compatibility_tests.rs"]
 mod overload_compatibility_tests;
 
+#[cfg(test)]
+#[path = "../tests/core_public_helpers_tests.rs"]
+mod core_public_helpers_tests;
+
 // Cross-file module resolution tests
 #[cfg(test)]
 #[path = "../tests/module_resolution_tests.rs"]
