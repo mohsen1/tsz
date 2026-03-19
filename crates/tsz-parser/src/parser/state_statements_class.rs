@@ -490,14 +490,21 @@ impl ParserState {
         // TS1047: A rest parameter cannot be optional
         if dot_dot_dot_token && question_token {
             use tsz_common::diagnostics::diagnostic_codes;
-            if let Some(node) = self.arena.get(name) {
-                self.parse_error_at(
-                    node.pos,
-                    node.end - node.pos,
-                    "A rest parameter cannot be optional.",
-                    diagnostic_codes::A_REST_PARAMETER_CANNOT_BE_OPTIONAL,
-                );
-            }
+            self.parse_error_at(
+                question_pos,
+                1,
+                "A rest parameter cannot be optional.",
+                diagnostic_codes::A_REST_PARAMETER_CANNOT_BE_OPTIONAL,
+            );
+        }
+
+        if dot_dot_dot_token
+            && question_token
+            && type_annotation.is_none()
+            && initializer.is_none()
+            && let Some(node) = self.arena.get_mut(name)
+        {
+            node.pos = start_pos;
         }
 
         // TS1048: A rest parameter cannot have an initializer
