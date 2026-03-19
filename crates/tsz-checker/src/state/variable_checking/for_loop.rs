@@ -5,11 +5,28 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ForOfProtocolRole {
+    Iterable,
+    Iterator,
+}
+
+impl ForOfProtocolRole {
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Iterable => 0,
+            Self::Iterator => 1,
+        }
+    }
+}
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn is_deferred_object_like_for_in(&mut self, expr_type: TypeId) -> bool {
@@ -555,6 +572,70 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn begin_for_of_self_reference_tracking(
+        &mut self,
+        decl_list_idx: NodeIndex,
+    ) -> usize {
+        if !self.ctx.no_implicit_any() {
+            return 0;
+        }
+
+        let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
+            return 0;
+        };
+        let Some(list) = self.ctx.arena.get_variable(list_node) else {
+            return 0;
+        };
+
+        let mut seen = FxHashSet::default();
+        let mut tracked = 0;
+        for &decl_idx in &list.declarations.nodes {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.type_annotation.is_some() {
+                continue;
+            }
+
+            let sym_id = self
+                .ctx
+                .binder
+                .get_node_symbol(decl_idx)
+                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name));
+            let Some(sym_id) = sym_id else {
+                continue;
+            };
+
+            if seen.insert(sym_id) {
+                self.push_symbol_dependency(sym_id, false);
+                tracked += 1;
+            }
+        }
+
+        if tracked > 0 {
+            self.ctx.non_closure_circular_return_tracking_depth += 1;
+        }
+
+        tracked
+    }
+
+    pub(crate) fn end_for_of_self_reference_tracking(&mut self, tracked_symbol_count: usize) {
+        if tracked_symbol_count == 0 {
+            return;
+        }
+
+        for _ in 0..tracked_symbol_count {
+            self.pop_symbol_dependency();
+        }
+        self.ctx.non_closure_circular_return_tracking_depth = self
+            .ctx
+            .non_closure_circular_return_tracking_depth
+            .saturating_sub(1);
+    }
+
     /// TS7022: Detect self-referencing for-of loop variables.
     ///
     /// When `for (var v of v)` is written with `noImplicitAny`, the iterable
@@ -604,8 +685,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check if the expression references this variable
-            if !self.expression_references_symbol(expression_idx, sym_id) {
+            let mut circular_return_sites = self.take_pending_circular_return_sites(sym_id);
+            for site_idx in
+                self.collect_for_of_protocol_circular_return_sites(expression_idx, sym_id)
+            {
+                if !circular_return_sites.contains(&site_idx) {
+                    circular_return_sites.push(site_idx);
+                }
+            }
+            let has_direct_reference = self.expression_references_symbol(expression_idx, sym_id);
+            if circular_return_sites.is_empty() && !has_direct_reference {
                 continue;
             }
 
@@ -619,7 +708,597 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
                     &[&name],
                 );
+                for site_idx in circular_return_sites {
+                    self.emit_circular_return_site_diagnostic(
+                        site_idx,
+                        Some(name.as_str()),
+                        var_decl.name,
+                        expression_idx,
+                    );
+                }
             }
+        }
+    }
+
+    fn collect_for_of_protocol_circular_return_sites(
+        &mut self,
+        expr_idx: NodeIndex,
+        target_sym: SymbolId,
+    ) -> Vec<NodeIndex> {
+        let mut sites = Vec::new();
+        let mut visited_symbols = FxHashSet::default();
+        let mut visited_holders = FxHashSet::default();
+        self.collect_for_of_protocol_sites_from_expression(
+            expr_idx,
+            target_sym,
+            ForOfProtocolRole::Iterable,
+            None,
+            false,
+            &mut sites,
+            &mut visited_symbols,
+            &mut visited_holders,
+        );
+        sites
+    }
+
+    fn collect_for_of_protocol_sites_from_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+        target_sym: SymbolId,
+        role: ForOfProtocolRole,
+        owner_idx: Option<NodeIndex>,
+        allow_function_returns: bool,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+
+        if node.kind == SyntaxKind::ThisKeyword as u16
+            && role == ForOfProtocolRole::Iterator
+            && let Some(owner_idx) = owner_idx
+        {
+            self.inspect_for_of_protocol_holder(
+                owner_idx,
+                target_sym,
+                role,
+                sites,
+                visited_symbols,
+                visited_holders,
+            );
+            return;
+        }
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let sym_id = self
+                .ctx
+                .binder
+                .get_node_symbol(expr_idx)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx));
+            if let Some(sym_id) = sym_id {
+                self.collect_for_of_protocol_sites_from_symbol(
+                    sym_id,
+                    target_sym,
+                    role,
+                    allow_function_returns,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+                return;
+            }
+        }
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        ) {
+            self.inspect_for_of_protocol_holder(
+                expr_idx,
+                target_sym,
+                role,
+                sites,
+                visited_symbols,
+                visited_holders,
+            );
+            return;
+        }
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NEW_EXPRESSION
+        ) && let Some(call) = self.ctx.arena.get_call_expr(node)
+        {
+            self.collect_for_of_protocol_sites_from_expression(
+                call.expression,
+                target_sym,
+                role,
+                owner_idx,
+                node.kind == syntax_kind_ext::CALL_EXPRESSION,
+                sites,
+                visited_symbols,
+                visited_holders,
+            );
+            return;
+        }
+
+        for child_idx in self.ctx.arena.get_children(expr_idx) {
+            self.collect_for_of_protocol_sites_from_expression(
+                child_idx,
+                target_sym,
+                role,
+                owner_idx,
+                false,
+                sites,
+                visited_symbols,
+                visited_holders,
+            );
+        }
+    }
+
+    fn collect_for_of_protocol_sites_from_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        target_sym: SymbolId,
+        role: ForOfProtocolRole,
+        allow_function_returns: bool,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        if !visited_symbols.insert((sym_id, role.tag())) {
+            return;
+        }
+
+        let Some(declarations) = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|symbol| symbol.declarations.clone())
+        else {
+            return;
+        };
+
+        for decl_idx in declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            if matches!(
+                decl_node.kind,
+                syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            ) {
+                self.inspect_for_of_protocol_holder(
+                    decl_idx,
+                    target_sym,
+                    role,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+                continue;
+            }
+
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                && var_decl.initializer.is_some()
+            {
+                self.collect_for_of_protocol_sites_from_expression(
+                    var_decl.initializer,
+                    target_sym,
+                    role,
+                    None,
+                    false,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+                continue;
+            }
+
+            if allow_function_returns
+                && let Some(func) = self.ctx.arena.get_function(decl_node)
+                && func.body.is_some()
+            {
+                self.inspect_function_like_protocol_returns(
+                    func.body,
+                    decl_idx,
+                    None,
+                    Some(role),
+                    target_sym,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+        }
+    }
+
+    fn inspect_for_of_protocol_holder(
+        &mut self,
+        holder_idx: NodeIndex,
+        target_sym: SymbolId,
+        role: ForOfProtocolRole,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        if !visited_holders.insert((holder_idx, role.tag())) {
+            return;
+        }
+
+        let Some(holder_node) = self.ctx.arena.get(holder_idx) else {
+            return;
+        };
+
+        if let Some(class) = self.ctx.arena.get_class(holder_node) {
+            for &member_idx in &class.members.nodes {
+                self.inspect_for_of_protocol_member(
+                    member_idx,
+                    holder_idx,
+                    target_sym,
+                    role,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+            return;
+        }
+
+        if holder_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(object_literal) = self.ctx.arena.get_literal_expr(holder_node)
+        {
+            for &member_idx in &object_literal.elements.nodes {
+                self.inspect_for_of_protocol_member(
+                    member_idx,
+                    holder_idx,
+                    target_sym,
+                    role,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+        }
+    }
+
+    fn inspect_for_of_protocol_member(
+        &mut self,
+        member_idx: NodeIndex,
+        owner_idx: NodeIndex,
+        target_sym: SymbolId,
+        role: ForOfProtocolRole,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        match member_node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    return;
+                };
+                let Some(name) = self.get_property_name_resolved(method.name) else {
+                    return;
+                };
+                if !self.member_matches_for_of_protocol_role(&name, role) {
+                    return;
+                }
+                self.inspect_function_like_protocol_returns(
+                    method.body,
+                    method.body,
+                    Some(owner_idx),
+                    self.next_protocol_role(name.as_str(), role),
+                    target_sym,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+            syntax_kind_ext::GET_ACCESSOR => {
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    return;
+                };
+                let Some(name) = self.get_property_name_resolved(accessor.name) else {
+                    return;
+                };
+                if !self.member_matches_for_of_protocol_role(&name, role) {
+                    return;
+                }
+                self.inspect_function_like_protocol_returns(
+                    accessor.body,
+                    accessor.body,
+                    Some(owner_idx),
+                    self.next_protocol_role(name.as_str(), role),
+                    target_sym,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    return;
+                };
+                let Some(name) = self.get_property_name_resolved(prop.name) else {
+                    return;
+                };
+                if !self.member_matches_for_of_protocol_role(&name, role) {
+                    return;
+                }
+                self.inspect_function_like_protocol_initializer(
+                    prop.initializer,
+                    owner_idx,
+                    name.as_str(),
+                    role,
+                    target_sym,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let Some(prop) = self.ctx.arena.get_property_assignment(member_node) else {
+                    return;
+                };
+                let Some(name) = self.get_property_name_resolved(prop.name) else {
+                    return;
+                };
+                if !self.member_matches_for_of_protocol_role(&name, role) {
+                    return;
+                }
+                self.inspect_function_like_protocol_initializer(
+                    prop.initializer,
+                    owner_idx,
+                    name.as_str(),
+                    role,
+                    target_sym,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn inspect_function_like_protocol_initializer(
+        &mut self,
+        initializer_idx: NodeIndex,
+        owner_idx: NodeIndex,
+        member_name: &str,
+        role: ForOfProtocolRole,
+        target_sym: SymbolId,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        let initializer_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
+            return;
+        };
+        if let Some(func) = self.ctx.arena.get_function(init_node)
+            && func.body.is_some()
+        {
+            self.inspect_function_like_protocol_returns(
+                func.body,
+                initializer_idx,
+                Some(owner_idx),
+                self.next_protocol_role(member_name, role),
+                target_sym,
+                sites,
+                visited_symbols,
+                visited_holders,
+            );
+        }
+    }
+
+    fn inspect_function_like_protocol_returns(
+        &mut self,
+        body_idx: NodeIndex,
+        diagnostic_site_idx: NodeIndex,
+        owner_idx: Option<NodeIndex>,
+        next_role: Option<ForOfProtocolRole>,
+        target_sym: SymbolId,
+        sites: &mut Vec<NodeIndex>,
+        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
+        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+    ) {
+        if body_idx.is_none() {
+            return;
+        }
+
+        let mut return_exprs = Vec::new();
+        self.collect_return_expressions_in_function_body(body_idx, &mut return_exprs);
+
+        let mut has_circular_return = false;
+        for expr_idx in return_exprs {
+            if self.initializer_has_non_deferred_self_reference(expr_idx, target_sym) {
+                has_circular_return = true;
+            }
+            if let Some(next_role) = next_role {
+                self.collect_for_of_protocol_sites_from_expression(
+                    expr_idx,
+                    target_sym,
+                    next_role,
+                    owner_idx,
+                    false,
+                    sites,
+                    visited_symbols,
+                    visited_holders,
+                );
+            }
+        }
+
+        if has_circular_return && !sites.contains(&diagnostic_site_idx) {
+            sites.push(diagnostic_site_idx);
+        }
+    }
+
+    fn collect_return_expressions_in_function_body(
+        &self,
+        body_idx: NodeIndex,
+        return_exprs: &mut Vec<NodeIndex>,
+    ) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return_exprs.push(body_idx);
+            return;
+        }
+
+        if let Some(block) = self.ctx.arena.get_block(body_node) {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_return_expressions_in_statement(stmt_idx, return_exprs);
+            }
+        }
+    }
+
+    fn collect_return_expressions_in_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        return_exprs: &mut Vec<NodeIndex>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node)
+                    && ret.expression.is_some()
+                {
+                    return_exprs.push(ret.expression);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_return_expressions_in_statement(stmt, return_exprs);
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_return_expressions_in_statement(
+                        if_data.then_statement,
+                        return_exprs,
+                    );
+                    if if_data.else_statement.is_some() {
+                        self.collect_return_expressions_in_statement(
+                            if_data.else_statement,
+                            return_exprs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_return_expressions_in_statement(stmt, return_exprs);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_return_expressions_in_statement(try_data.try_block, return_exprs);
+                    if try_data.catch_clause.is_some() {
+                        self.collect_return_expressions_in_statement(
+                            try_data.catch_clause,
+                            return_exprs,
+                        );
+                    }
+                    if try_data.finally_block.is_some() {
+                        self.collect_return_expressions_in_statement(
+                            try_data.finally_block,
+                            return_exprs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_return_expressions_in_statement(catch_data.block, return_exprs);
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_return_expressions_in_statement(loop_data.statement, return_exprs);
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_return_expressions_in_statement(loop_data.statement, return_exprs);
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_return_expressions_in_statement(labeled.statement, return_exprs);
+                }
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::METHOD_DECLARATION
+            | syntax_kind_ext::GET_ACCESSOR
+            | syntax_kind_ext::SET_ACCESSOR
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::CLASS_EXPRESSION => {}
+            _ => {}
+        }
+    }
+
+    fn member_matches_for_of_protocol_role(
+        &self,
+        member_name: &str,
+        role: ForOfProtocolRole,
+    ) -> bool {
+        match role {
+            ForOfProtocolRole::Iterable => {
+                matches!(member_name, "[Symbol.iterator]" | "[Symbol.asyncIterator]")
+            }
+            ForOfProtocolRole::Iterator => member_name == "next",
+        }
+    }
+
+    fn next_protocol_role(
+        &self,
+        member_name: &str,
+        role: ForOfProtocolRole,
+    ) -> Option<ForOfProtocolRole> {
+        match role {
+            ForOfProtocolRole::Iterable
+                if matches!(member_name, "[Symbol.iterator]" | "[Symbol.asyncIterator]") =>
+            {
+                Some(ForOfProtocolRole::Iterator)
+            }
+            _ => None,
         }
     }
 
@@ -643,6 +1322,20 @@ impl<'a> CheckerState<'a> {
             if ref_sym == Some(target_sym) {
                 return true;
             }
+        }
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
         }
 
         // Recurse into children

@@ -7180,6 +7180,88 @@ const fn1 = () => {
     );
 }
 
+#[test]
+fn test_ts7022_and_ts7024_emitted_for_nested_callback_circular_return() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+declare function fn1<T>(cb: () => T): string;
+const res1 = fn1(() => res1);
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for callback-driven circular initializer inference.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7024),
+        "Should emit TS7024 for the anonymous callback return circularity.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_and_ts7023_emitted_for_object_property_callback_circular_return() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+declare const box: <T>(input: { fields: () => T }) => T;
+const value = box({
+    fields: () => value,
+});
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 when a contextual callback return reads the variable being inferred.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 on the named property callback.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_not_emitted_for_stored_arrow_property_returning_self() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+const value = {
+    fields: () => value,
+};
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for a stored deferred callback.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7023),
+        "Should NOT emit TS7023 for a stored deferred callback.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7024),
+        "Should NOT emit TS7024 for a stored deferred callback.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7023 should NOT fire when noImplicitAny is off.
 #[test]
 fn test_ts7023_not_emitted_without_no_implicit_any() {
@@ -7232,6 +7314,73 @@ for (v of arr) { }
     assert!(
         !has_error(&diagnostics, 2487),
         "Should NOT emit TS2487 for valid for-of LHS.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_and_ts7023_emitted_for_for_of_iterator_method_self_reference() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+declare const Symbol: { readonly iterator: unique symbol };
+class MyIterator {
+    [Symbol.iterator]() {
+        return v;
+    }
+}
+
+for (var v of new MyIterator()) {}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for a for-of iterator method that returns the loop variable.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 for the named iterator method.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_and_ts7023_emitted_for_for_of_next_value_self_reference() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+declare const Symbol: { readonly iterator: unique symbol };
+class MyIterator {
+    next() {
+        return {
+            done: true,
+            value: v,
+        };
+    }
+
+    [Symbol.iterator]() {
+        return this;
+    }
+}
+
+for (var v of new MyIterator()) {}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 when next().value reads the loop variable.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 for next() when its return expression is circular.\nActual errors: {diagnostics:#?}"
     );
 }
 
