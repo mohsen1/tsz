@@ -1712,13 +1712,9 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
             let members = db.type_list(members);
             let mut saw_precise_member = false;
             for (member_idx, &member) in members.iter().enumerate() {
-                let narrowed_member =
-                    narrow_keyof_intersection_member_by_literal_discriminants(
-                        db,
-                        member,
-                        &members,
-                        member_idx,
-                    );
+                let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
+                    db, member, &members, member_idx,
+                );
                 if collect_exact_literal_property_keys_from_keyof_operand(
                     db,
                     narrowed_member,
