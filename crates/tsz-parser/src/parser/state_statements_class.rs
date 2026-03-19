@@ -415,6 +415,7 @@ impl ParserState {
         };
 
         // Parse optional question mark
+        let question_pos = self.token_pos();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -471,10 +472,15 @@ impl ParserState {
             }
         }
 
+        let mut parameter_start_pos = start_pos;
+        if question_token && self.is_js_file() && modifiers.is_none() && !dot_dot_dot_token {
+            parameter_start_pos = question_pos;
+        }
+
         let end_pos = self.token_end();
         self.arena.add_parameter(
             syntax_kind_ext::PARAMETER,
-            start_pos,
+            parameter_start_pos,
             end_pos,
             crate::parser::node::ParameterData {
                 modifiers,

@@ -609,6 +609,26 @@ fn arrow_nested() {
     );
 }
 
+#[test]
+fn js_optional_parameter_span_starts_at_question_token() {
+    let source = "const f = (b, c?: string) => c;";
+    let mut parser = ParserState::new("fileJs.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let init = get_var_initializer(arena, root);
+    let arrow_node = arena.get(init).expect("arrow node");
+    let arrow = arena.get_function(arrow_node).expect("arrow data");
+    let param_idx = arrow.parameters.nodes[1];
+    let param_node = arena.get(param_idx).expect("param node");
+
+    assert_eq!(
+        param_node.pos,
+        source.find('?').expect("question token position") as u32,
+        "JS optional parameter spans should anchor at '?' for JS-only diagnostics"
+    );
+}
+
 // =============================================================================
 // 3. Type Syntax Parsing (15+ tests)
 // =============================================================================
