@@ -238,6 +238,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Object-literal variables can legitimately assign back to properties they
+        // already declare in their semantic shape. Those writes should not opt the
+        // property into the expando-forward-read path.
+        if self.object_literal_root_declares_property(object_expr_idx, property_name) {
+            return false;
+        }
+
         // 1. Check current file's binder
         if self
             .ctx
@@ -821,6 +828,74 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn object_literal_root_declares_property(
+        &self,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(root_ident) = self.root_identifier_index(object_expr_idx) else {
+            return false;
+        };
+        let Some(sym_id) = self.resolve_identifier_symbol(root_ident) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let decl_idx = symbol.value_declaration;
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj_lit) = self.ctx.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+
+        obj_lit.elements.nodes.iter().copied().any(|elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+
+            let elem_prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(elem_node)
+                    .and_then(|method| self.get_property_name(method.name)),
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                    .ctx
+                    .arena
+                    .get_accessor(elem_node)
+                    .and_then(|accessor| self.get_property_name(accessor.name)),
+                _ => None,
+            };
+
+            elem_prop_name.is_some_and(|name| name == property_name)
+        })
     }
 
     pub(super) fn union_has_explicit_property_member(

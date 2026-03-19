@@ -282,6 +282,51 @@ fn test_ts_function_expando_summary_reports_ts2565_and_keeps_returned_members() 
 }
 
 #[test]
+fn test_object_literal_declared_property_assignments_do_not_emit_ts2565() {
+    let source = r#"
+        function f() {
+            const obj = {
+                z: 1,
+                q: "hello",
+            };
+            try {
+                obj.q = "ohhh";
+            } catch (e) {
+                if (obj.z < 10) {
+                    obj.z = 12;
+                } else {
+                    obj.q = "hmm";
+                }
+            }
+            switch (obj.z) {
+                case 0:
+                    return obj.q;
+                default:
+                    return "";
+            }
+        }
+    "#;
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+        ),
+        0,
+        "Declared object-literal properties should not be reclassified as expando forward reads, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_parameter_property_chain_summary_preserves_optional_base_property_override_type() {
     let source = r"
         class Base {
