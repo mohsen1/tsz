@@ -544,10 +544,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
     fn visit_conditional(&mut self, cond_id: u32) {
-        let cond = self
-            .computer
-            .db
-            .get_conditional(ConditionalTypeId(cond_id));
+        let cond = self.computer.db.get_conditional(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
         // In TypeScript, conditional types `T extends U ? X : Y` determine variance
