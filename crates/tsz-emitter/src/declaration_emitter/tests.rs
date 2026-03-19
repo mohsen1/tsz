@@ -336,6 +336,39 @@ export function middle() {
 }
 
 #[test]
+fn test_structural_setter_only_property_uses_write_type() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+    let mut setter_only = PropertyInfo::new(x_atom, TypeId::UNDEFINED);
+    setter_only.write_type = TypeId::NUMBER;
+
+    let point_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![setter_only],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(point_type);
+
+    assert!(
+        printed.contains("x: number;"),
+        "Expected setter-only structural property to use write type in declaration emit: {printed}"
+    );
+    assert!(
+        !printed.contains("x: undefined;"),
+        "Did not expect setter-only structural property to use undefined read type: {printed}"
+    );
+}
+
+#[test]
 fn test_named_class_expression_constructor_type_is_inlined() {
     let source = r#"
 export function wrapClass(param: any) {

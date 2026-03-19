@@ -844,7 +844,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Property type
                 line.push_str(": ");
-                line.push_str(&nested.print_type(property.type_id));
+                line.push_str(&nested.print_type(nested.declaration_property_type(property)));
 
                 line.push(';');
                 lines.push(line);
@@ -942,7 +942,7 @@ impl<'a> TypePrinter<'a> {
 
                 // Property type
                 member.push_str(": ");
-                member.push_str(&self.print_type(property.type_id));
+                member.push_str(&self.print_type(self.declaration_property_type(property)));
 
                 members.push(member);
             }
@@ -1218,6 +1218,17 @@ impl<'a> TypePrinter<'a> {
         }
 
         Some(members)
+    }
+
+    fn declaration_property_type(&self, property: &tsz_solver::types::PropertyInfo) -> TypeId {
+        if !property.readonly
+            && property.type_id == TypeId::UNDEFINED
+            && property.write_type != TypeId::UNDEFINED
+        {
+            property.write_type
+        } else {
+            property.type_id
+        }
     }
 
     fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
