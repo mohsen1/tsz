@@ -5,9 +5,12 @@
 //!
 //! Extracted from `property_access_type.rs` to keep module size manageable.
 
+use crate::FlowAnalyzer;
 use crate::state::CheckerState;
+use std::rc::Rc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -266,6 +269,161 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    pub(super) fn js_expando_property_read_before_assignment(
+        &self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return false;
+        }
+        if self.property_access_is_write_target_or_base(property_access_idx) {
+            return false;
+        }
+        if self.is_commonjs_module_exports_root(object_expr_idx) {
+            return false;
+        }
+        if !self.is_js_expando_capable_read_root(object_expr_idx, property_name) {
+            return false;
+        }
+
+        let Some(flow_node) = self.flow_node_for_reference_usage(property_access_idx) else {
+            return false;
+        };
+
+        !self
+            .flow_analyzer_for_property_reads()
+            .is_definitely_assigned(property_access_idx, flow_node)
+    }
+
+    fn is_js_expando_capable_read_root(
+        &self,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        self.is_expando_property_read(object_expr_idx, property_name)
+            || self.is_js_prototype_read_root(object_expr_idx)
+    }
+
+    fn is_commonjs_module_exports_root(&self, object_expr_idx: NodeIndex) -> bool {
+        self.expression_text(object_expr_idx).as_deref() == Some("module.exports")
+    }
+
+    fn is_js_prototype_read_root(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(member_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        if member_node.kind != SyntaxKind::Identifier as u16
+            || !self
+                .ctx
+                .arena
+                .get_identifier(member_node)
+                .is_some_and(|ident| ident.escaped_text == "prototype")
+        {
+            return false;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(access.expression) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+    }
+
+    fn property_access_is_write_target_or_base(&self, property_access_idx: NodeIndex) -> bool {
+        let mut current = property_access_idx;
+
+        loop {
+            let Some(prop_ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = prop_ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                && access.expression == current
+            {
+                current = parent_idx;
+                continue;
+            }
+
+            if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                    && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+                {
+                    return unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16;
+                }
+                return false;
+            }
+
+            let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                return false;
+            };
+            return binary.left == current && self.is_assignment_operator(binary.operator_token);
+        }
+    }
+
+    fn flow_node_for_reference_usage(&self, idx: NodeIndex) -> Option<tsz_binder::FlowNodeId> {
+        if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
+            return Some(flow);
+        }
+
+        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        while let Some(parent) = current {
+            if parent.is_none() {
+                break;
+            }
+            if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                return Some(flow);
+            }
+            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+        }
+
+        None
+    }
+
+    fn flow_analyzer_for_property_reads(&self) -> FlowAnalyzer<'_> {
+        FlowAnalyzer::with_node_types(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+            &self.ctx.node_types,
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_switch_reference_cache(&self.ctx.flow_switch_reference_cache)
+        .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
+        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_narrowing_cache(&self.ctx.narrowing_cache)
+        .with_call_type_predicates(&self.ctx.call_type_predicates)
+        .with_flow_buffers(
+            &self.ctx.flow_worklist,
+            &self.ctx.flow_in_worklist,
+            &self.ctx.flow_visited,
+            &self.ctx.flow_results,
+        )
     }
 
     /// Check if a class has an instance member (property, method, or accessor) with the given name.

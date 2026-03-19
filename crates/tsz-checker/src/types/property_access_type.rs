@@ -653,8 +653,26 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        let mut js_expando_before_assignment = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
+            js_expando_before_assignment = self.js_expando_property_read_before_assignment(
+                idx,
+                access.expression,
+                property_name,
+            );
+            if js_expando_before_assignment {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::format_message;
+                self.error_at_node(
+                    access.name_or_argument,
+                    &format_message(
+                        diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                        &[property_name],
+                    ),
+                    diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                );
+            }
             if self.is_global_this_expression(access.expression) {
                 let property_type =
                     self.resolve_global_this_property_type(property_name, access.name_or_argument);
@@ -1174,6 +1192,9 @@ impl<'a> CheckerState<'a> {
                             .is_none()
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
+                    }
+                    if js_expando_before_assignment {
+                        return TypeId::ANY;
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Returns `any` type for properties that were assigned via expando pattern.

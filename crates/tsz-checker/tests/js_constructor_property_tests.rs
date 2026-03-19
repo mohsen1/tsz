@@ -271,6 +271,66 @@ class D extends C {
     );
 }
 
+#[test]
+fn test_js_expando_reads_use_ts2565_instead_of_missing_member_errors() {
+    let source = r#"
+function d() {}
+if (cond) {
+    d.q = false;
+}
+d.q;
+
+const g = function() {};
+if (cond) {
+    g.expando = 1;
+}
+g.expando;
+"#;
+
+    let diagnostics = check_js(source);
+    let ts2565: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2565).collect();
+    let missing_member: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339 || *code == 2551)
+        .collect();
+
+    assert_eq!(
+        ts2565.len(),
+        2,
+        "Expected conditional JS expando reads to report TS2565 twice, got: {diagnostics:?}"
+    );
+    assert!(
+        missing_member.is_empty(),
+        "Expected expando reads to avoid TS2339/TS2551 once flow-based TS2565 applies, got: {missing_member:?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_read_before_assignment_reports_ts2565() {
+    let source = r#"
+class NewAjax {}
+NewAjax.prototype.case6_unexpectedlyResolvesPathToNodeModules;
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2565
+                && message.contains(
+                    "Property 'case6_unexpectedlyResolvesPathToNodeModules' is used before being assigned."
+                )
+        }),
+        "Expected JS prototype read on an expando-capable root to report TS2565, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != 2339 && *code != 2551),
+        "Expected JS prototype read-before-write to avoid missing-member diagnostics, got: {diagnostics:?}"
+    );
+}
+
 /// `var self = this; self.prop = value` alias pattern in constructor
 #[test]
 fn test_js_self_alias_this_prop_constructor() {
