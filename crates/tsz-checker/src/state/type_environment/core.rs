@@ -419,27 +419,16 @@ impl<'a> CheckerState<'a> {
             let mapped = self.ctx.types.mapped_type(mapped_id);
             if let Some(keyof_source) =
                 tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
-                && let Some(tp) = tsz_solver::type_param_info(self.ctx.types, keyof_source)
-                && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
-                && idx < args.len()
             {
-                let evaluated_arg = self.evaluate_type_with_env(args[idx]);
-                // Evaluate all args for substitution
+                // Evaluate all args first so instantiated `keyof` sources like
+                // `Gen<T>` become `Gen<ABC.A>` before we rebuild the mapped type.
                 let evaluated_args: Vec<TypeId> = args
                     .iter()
                     .map(|&arg| self.evaluate_type_with_env(arg))
                     .collect();
-                // Substitute outer type params into mapped type parts,
-                // keeping the iteration variable (K) intact.
-                // CRITICAL: We must shadow K in the substitution to prevent
-                // the instantiator from replacing K with its constraint.
-                // When K has constraint `keyof T` and T is substituted with a
-                // concrete type, the instantiator would replace K with `keyof <tuple>`
-                // (via the TypeParameter constraint fallback), destroying the
-                // iteration variable that evaluate_mapped needs.
                 let mut subst =
                     TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-                // Create a constraint-free version of K to shadow the constrained one
+                // Keep the mapped iteration variable intact while substituting outer params.
                 let k_unconstrained = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
                     name: mapped.type_param.name,
                     constraint: None,
@@ -447,25 +436,34 @@ impl<'a> CheckerState<'a> {
                     is_const: false,
                 });
                 subst.insert(mapped.type_param.name, k_unconstrained);
+
+                let instantiated_source = instantiate_type(self.ctx.types, keyof_source, &subst);
+                let evaluated_source =
+                    if self.contains_type_parameters_cached(instantiated_source) {
+                        instantiated_source
+                    } else {
+                        self.evaluate_type_with_resolution(instantiated_source)
+                    };
+
                 let inst_template = instantiate_type(self.ctx.types, mapped.template, &subst);
                 let inst_name_type = mapped
                     .name_type
                     .map(|nt| instantiate_type(self.ctx.types, nt, &subst));
                 let inst_mapped = tsz_solver::MappedType {
                     type_param: mapped.type_param,
-                    constraint: self.ctx.types.keyof(evaluated_arg),
+                    constraint: self.ctx.types.keyof(evaluated_source),
                     name_type: inst_name_type,
                     template: inst_template,
                     readonly_modifier: mapped.readonly_modifier,
                     optional_modifier: mapped.optional_modifier,
                 };
                 let mapped_type_id = self.ctx.types.mapped(inst_mapped);
-                if query::is_union_or_intersection(self.ctx.types, evaluated_arg)
-                    && self.contains_type_parameters_cached(evaluated_arg)
+                if query::is_union_or_intersection(self.ctx.types, evaluated_source)
+                    && self.contains_type_parameters_cached(evaluated_source)
                 {
                     return mapped_type_id;
                 }
-                return self.evaluate_type_with_env(mapped_type_id);
+                return self.evaluate_mapped_type_with_resolution(mapped_type_id);
             }
         }
 
@@ -519,10 +517,18 @@ impl<'a> CheckerState<'a> {
             instantiated = tsz_solver::substitute_this_type(self.ctx.types, instantiated, type_id);
         }
         // Recursively evaluate in case the result contains more applications
-        let result = self.evaluate_application_type(instantiated);
+        let evaluated_result = self.evaluate_application_type(instantiated);
+        let result = self.prune_impossible_object_union_members_with_env(evaluated_result);
 
         // If the result is a Mapped type, try to evaluate it with symbol resolution
         let result = self.evaluate_mapped_type_with_resolution(result);
+
+        // Preserve instantiated discriminated object intersections in their deferred
+        // intersection form. Eager env evaluation collapses these into distributed
+        // unions, which loses both discriminant-aware `keyof` and fresh EPC behavior.
+        if tsz_solver::type_queries::is_discriminated_object_intersection(self.ctx.types, result) {
+            return result;
+        }
 
         // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
 
@@ -719,9 +725,45 @@ impl<'a> CheckerState<'a> {
         // Evaluate the constraint to get concrete keys
         let keys = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
-        // Extract string literal keys
-        let string_keys =
-            tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys);
+        // Preserve the solver's tuple/array mapped-type semantics for homomorphic
+        // cases like `{ [K in keyof T]: T[K] }` over tuple/array sources. The
+        // checker-local object expansion below is correct for object members, but
+        // it loses tuple/array identity and causes rest parameters to stop being
+        // recognized as array-like.
+        if self.mapped_constraint_source_needs_array_like_preservation(mapped.constraint) {
+            let evaluated = self.evaluate_type_with_env(type_id);
+            if evaluated != type_id {
+                return evaluated;
+            }
+        }
+
+        let resolved_mapped_id = if keys != mapped.constraint {
+            let resolved_mapped = tsz_solver::MappedType {
+                type_param: mapped.type_param,
+                constraint: keys,
+                name_type: mapped.name_type,
+                template: mapped.template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            };
+            tsz_solver::mapped_type_id(self.ctx.types, self.ctx.types.mapped(resolved_mapped))
+                .unwrap_or(mapped_id)
+        } else {
+            mapped_id
+        };
+
+        // Prefer the shared finite-key collector once the constraint has been
+        // resolved. This keeps mapped expansion aligned with property access and
+        // exact `keyof` key-space semantics.
+        let string_keys: Vec<_> =
+            if let Some(names) = tsz_solver::type_queries::collect_finite_mapped_property_names(
+                self.ctx.types,
+                resolved_mapped_id,
+            ) {
+                names.into_iter().collect()
+            } else {
+                tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys)
+            };
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;
@@ -762,6 +804,19 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     obj
+                };
+                let obj_type = if crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    obj_type,
+                ) {
+                    crate::query_boundaries::state::checking::type_parameter_constraint(
+                        self.ctx.types,
+                        obj_type,
+                    )
+                    .map(|constraint| self.evaluate_type_with_resolution(constraint))
+                    .unwrap_or(obj_type)
+                } else {
+                    obj_type
                 };
 
                 // Now get the property type from the object
@@ -804,6 +859,43 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.object(properties)
+    }
+
+    fn mapped_constraint_source_needs_array_like_preservation(
+        &mut self,
+        constraint: TypeId,
+    ) -> bool {
+        let query::MappedConstraintKind::KeyOf(source) =
+            query::classify_mapped_constraint(self.ctx.types, constraint)
+        else {
+            return false;
+        };
+
+        let source = self.evaluate_type_with_resolution(source);
+        self.is_array_like_mapped_source(source)
+    }
+
+    fn is_array_like_mapped_source(&mut self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id).is_some()
+            || crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
+                .is_some()
+        {
+            return true;
+        }
+
+        let Some(constraint) =
+            crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        else {
+            return false;
+        };
+
+        let constraint = self.evaluate_type_with_resolution(constraint);
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, constraint).is_some()
+            || crate::query_boundaries::common::array_element_type(self.ctx.types, constraint)
+                .is_some()
     }
 
     /// Evaluate a mapped type constraint with symbol resolution.

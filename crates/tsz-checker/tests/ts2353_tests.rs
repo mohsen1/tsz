@@ -239,6 +239,35 @@ const ok: Gen2 = { v: "", a: "" };
 }
 
 #[test]
+fn mapped_keyof_intersection_keeps_enum_discriminant_member_keys() {
+    let source = r#"
+enum ABC { A, B }
+
+type Gen<T extends ABC> = { v: T; } & (
+  { v: ABC.A, a: string } |
+  { v: ABC.B, b: string }
+);
+
+type Gen2<T extends ABC> = {
+  [Property in keyof Gen<T>]: string;
+};
+
+const gen2TypeA: Gen2<ABC.A> = { v: "I am A", a: "" };
+const gen2TypeB: Gen2<ABC.B> = { v: "I am B", b: "" };
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Enum discriminant mapped keys should not report excess-property errors, got: {diags:?}"
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics for enum discriminant mapped keys, got: {diags:?}"
+    );
+}
+
+#[test]
 fn object_literal_union_normalization_avoids_ts2339_and_ts2353() {
     let source = r#"
 let a1 = [{ a: 0 }, { a: 1, b: "x" }, { a: 2, b: "y", c: true }][0];

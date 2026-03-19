@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
-        match query::classify_for_type_resolution(self.ctx.types, type_id) {
+        let resolved = match query::classify_for_type_resolution(self.ctx.types, type_id) {
             query::TypeResolutionKind::Lazy(def_id) => {
                 // When a bare Lazy(DefId) represents a generic interface/class with
                 // all-defaulted type parameters (e.g., `Int32Array` which is
@@ -267,7 +267,8 @@ impl<'a> CheckerState<'a> {
                         .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
                         .collect();
                     let app = self.ctx.types.application(type_id, default_args);
-                    return self.evaluate_application_type(app);
+                    let evaluated = self.evaluate_application_type(app);
+                    return self.prune_impossible_object_union_members_with_env(evaluated);
                 }
 
                 // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
@@ -305,7 +306,131 @@ impl<'a> CheckerState<'a> {
             }
             query::TypeResolutionKind::Application => self.evaluate_application_type(type_id),
             query::TypeResolutionKind::Resolved => type_id,
+        };
+
+        self.prune_impossible_object_union_members_with_env(resolved)
+    }
+
+    pub(crate) fn prune_impossible_object_union_members_with_env(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        let Some(members) =
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let total_members = members.len();
+
+        let retained: Vec<_> = members
+            .into_iter()
+            .filter(|&member| {
+                !self.intersection_has_impossible_literal_discriminants_with_env(member)
+                    && !self.object_member_has_impossible_required_property_with_env(member)
+            })
+            .collect();
+
+        match retained.len() {
+            0 => TypeId::NEVER,
+            len if len == total_members => type_id,
+            1 => retained[0],
+            _ => self.ctx.types.union_preserve_members(retained),
         }
+    }
+
+    fn intersection_has_impossible_literal_discriminants_with_env(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::state::checking::intersection_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let mut discriminants: rustc_hash::FxHashMap<tsz_common::Atom, Vec<TypeId>> =
+            rustc_hash::FxHashMap::default();
+
+        for member in members {
+            let evaluated_member = self.evaluate_type_with_resolution(member);
+            let Some(shape) =
+                crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_member)
+            else {
+                continue;
+            };
+
+            for prop in &shape.properties {
+                if !crate::query_boundaries::state::checking::is_unit_type(
+                    self.ctx.types,
+                    prop.type_id,
+                ) {
+                    continue;
+                }
+
+                let seen = discriminants.entry(prop.name).or_default();
+                if seen.iter().any(|&other| {
+                    !self.is_subtype_of(prop.type_id, other)
+                        && !self.is_subtype_of(other, prop.type_id)
+                }) {
+                    return true;
+                }
+                if !seen.contains(&prop.type_id) {
+                    seen.push(prop.type_id);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn object_member_has_impossible_required_property_with_env(&mut self, type_id: TypeId) -> bool {
+        let evaluated_type = self.evaluate_type_with_resolution(type_id);
+        let Some(shape) =
+            crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_type)
+        else {
+            return false;
+        };
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional && self.type_is_impossible_unit_intersection_with_env(prop.type_id)
+        })
+    }
+
+    fn type_is_impossible_unit_intersection_with_env(&mut self, type_id: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_resolution(type_id);
+        if evaluated == TypeId::NEVER {
+            return true;
+        }
+
+        let Some(members) =
+            crate::query_boundaries::state::checking::intersection_members(self.ctx.types, evaluated)
+        else {
+            return false;
+        };
+
+        let mut units = Vec::new();
+        for member in members {
+            let evaluated_member = self.evaluate_type_with_resolution(member);
+            if !crate::query_boundaries::state::checking::is_unit_type(
+                self.ctx.types,
+                evaluated_member,
+            ) {
+                continue;
+            }
+
+            if units.iter().any(|&other| {
+                !self.is_subtype_of(evaluated_member, other)
+                    && !self.is_subtype_of(other, evaluated_member)
+            }) {
+                return true;
+            }
+
+            if !units.contains(&evaluated_member) {
+                units.push(evaluated_member);
+            }
+        }
+
+        false
     }
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {

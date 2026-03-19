@@ -621,8 +621,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             original_type_id,
                         );
                     }
-                    // Recursively evaluate the result
-                    let evaluated = self.evaluate(instantiated);
+                    // Preserve discriminated object intersections after instantiation.
+                    // Re-evaluating them here distributes impossible branches again,
+                    // which breaks both fresh EPC and `keyof` on generic applications.
+                    let evaluated = if crate::type_queries::is_discriminated_object_intersection(
+                        self.interner,
+                        instantiated,
+                    ) {
+                        instantiated
+                    } else {
+                        self.evaluate(instantiated)
+                    };
+                    let evaluated = crate::type_queries::prune_impossible_object_union_members(
+                        self.interner,
+                        evaluated,
+                    );
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
@@ -669,7 +682,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             original_type_id,
                         );
                     }
-                    let evaluated = self.evaluate(instantiated);
+                    let evaluated = if crate::type_queries::is_discriminated_object_intersection(
+                        self.interner,
+                        instantiated,
+                    ) {
+                        instantiated
+                    } else {
+                        self.evaluate(instantiated)
+                    };
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,

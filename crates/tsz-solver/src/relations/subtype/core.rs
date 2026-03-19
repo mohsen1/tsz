@@ -1496,6 +1496,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             enum_components(self.interner, source),
             enum_components(self.interner, target),
         ) {
+            if s_def_id == t_def_id
+                && source != target
+                && crate::type_queries::is_literal_enum_member(self.interner, source)
+                && crate::type_queries::is_literal_enum_member(self.interner, target)
+            {
+                if let Some(tracer) = &mut self.tracer
+                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    })
+                {
+                    return SubtypeResult::False;
+                }
+                return SubtypeResult::False;
+            }
+
             // Enum to Enum: Nominal check - DefIds must match
             if s_def_id == t_def_id {
                 return SubtypeResult::True;

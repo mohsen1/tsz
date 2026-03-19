@@ -282,7 +282,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         {
             // Same enum DefId but different TypeIds
             // Check if both are literal enum members (not union-based enums)
-            if self.is_literal_enum_member(source) && self.is_literal_enum_member(target) {
+            if crate::type_queries::is_literal_enum_member(self.interner, source)
+                && crate::type_queries::is_literal_enum_member(self.interner, target)
+            {
                 // Both are enum literals with same DefId but different values
                 // Nominal rule: E.A is NOT assignable to E.B
                 return Some(false);
@@ -411,19 +413,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Use visitor to check for string literals, template literals, etc.
         let mut visitor = StringLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
-    }
-
-    /// Get the `DefId` of an enum type, handling both direct Enum members and Union-based Enums.
-    /// Check whether `type_id` is an enum whose underlying member is a string or number literal.
-    fn is_literal_enum_member(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.interner.lookup(type_id),
-            Some(TypeData::Enum(_, member_type))
-                if matches!(
-                    self.interner.lookup(member_type),
-                    Some(TypeData::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
-                )
-        )
     }
 
     /// Returns `Some(def_id)` if the type is an Enum or a Union of Enum members from the same enum.

@@ -856,7 +856,7 @@ mapped("hello", 42);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count, 0,
-        "Mapped tuple rest param should not produce false TS2345, got {ts2345_count}"
+        "Mapped tuple rest param should not produce false TS2345, got {ts2345_count}. Diagnostics: {diagnostics:?}"
     );
 }
 
@@ -872,7 +872,7 @@ const result = mapTuple("hello", 42);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count, 0,
-        "Generic mapped tuple inference should not produce false TS2345, got {ts2345_count}"
+        "Generic mapped tuple inference should not produce false TS2345, got {ts2345_count}. Diagnostics: {diagnostics:?}"
     );
 }
 

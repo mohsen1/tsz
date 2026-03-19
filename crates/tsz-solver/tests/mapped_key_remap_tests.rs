@@ -164,6 +164,341 @@ fn test_mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
 }
 
 #[test]
+fn test_mapped_keyof_intersection_prunes_impossible_enum_discriminant_branch() {
+    let interner = TypeInterner::new();
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let enum_def = crate::def::DefId(100);
+    let enum_a = interner.intern(TypeData::Enum(enum_def, interner.literal_number(0.0)));
+    let enum_b = interner.intern(TypeData::Enum(enum_def, interner.literal_number(1.0)));
+
+    let fixed_v_a = interner.object(vec![PropertyInfo::new(v_name, enum_a)]);
+    let branch_a = interner.object(vec![
+        PropertyInfo::new(v_name, enum_a),
+        PropertyInfo::new(a_name, TypeId::STRING),
+    ]);
+    let branch_b = interner.object(vec![
+        PropertyInfo::new(v_name, enum_b),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let discriminated_union = interner.union(vec![branch_a, branch_b]);
+    let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
+
+    assert!(crate::is_subtype_of(&interner, enum_a, enum_a));
+    assert!(!crate::is_subtype_of(&interner, enum_a, enum_b));
+
+    let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
+    let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
+        .unwrap_or_else(|| vec![keyof_intersection]);
+
+    assert!(
+        keyof_members.contains(&interner.literal_string("v")),
+        "expected keyof intersection to contain 'v', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        keyof_members.contains(&interner.literal_string("a")),
+        "expected keyof intersection to contain 'a', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !keyof_members.contains(&interner.literal_string("b")),
+        "did not expect keyof intersection to contain 'b', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+
+    let key_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(intersection),
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+    let mapped_id = crate::mapped_type_id(&interner, mapped).expect("expected mapped type id");
+
+    let names =
+        collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
+    assert!(
+        names.contains(&v_name),
+        "expected mapped keys to include 'v'"
+    );
+    assert!(
+        names.contains(&a_name),
+        "expected mapped keys to include 'a'"
+    );
+    assert!(
+        !names.contains(&b_name),
+        "did not expect mapped keys to include 'b'"
+    );
+}
+
+#[test]
+fn test_mapped_keyof_intersection_prunes_impossible_distinct_enum_member_branch() {
+    let interner = TypeInterner::new();
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let enum_member_a = interner.intern(TypeData::Enum(
+        crate::def::DefId(100),
+        interner.literal_number(0.0),
+    ));
+    let enum_member_b = interner.intern(TypeData::Enum(
+        crate::def::DefId(101),
+        interner.literal_number(1.0),
+    ));
+
+    let fixed_v_a = interner.object(vec![PropertyInfo::new(v_name, enum_member_a)]);
+    let branch_a = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_a),
+        PropertyInfo::new(a_name, TypeId::STRING),
+    ]);
+    let branch_b = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_b),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let discriminated_union = interner.union(vec![branch_a, branch_b]);
+    let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
+    assert!(
+        matches!(interner.lookup(intersection), Some(TypeData::Intersection(_))),
+        "expected discriminated object intersection to stay deferred, got {:?}",
+        interner.lookup(intersection)
+    );
+
+    assert!(crate::is_subtype_of(&interner, enum_member_a, enum_member_a));
+    assert!(!crate::is_subtype_of(&interner, enum_member_a, enum_member_b));
+    let narrowed = crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants(
+        &interner,
+        discriminated_union,
+        &[fixed_v_a, discriminated_union],
+        1,
+    );
+    assert_eq!(narrowed, branch_a);
+    let branch_a_keyof = evaluate_type(&interner, interner.keyof(branch_a));
+    let branch_a_keys = crate::type_queries::get_union_members(&interner, branch_a_keyof)
+        .unwrap_or_else(|| vec![branch_a_keyof]);
+    assert!(branch_a_keys.contains(&interner.literal_string("v")));
+    assert!(branch_a_keys.contains(&interner.literal_string("a")));
+    let fixed_keyof = evaluate_type(&interner, interner.keyof(fixed_v_a));
+    let merged_keyof = interner.union(vec![fixed_keyof, branch_a_keyof]);
+    let merged_keys = crate::type_queries::get_union_members(&interner, merged_keyof)
+        .unwrap_or_else(|| vec![merged_keyof]);
+    assert!(merged_keys.contains(&interner.literal_string("v")));
+    assert!(merged_keys.contains(&interner.literal_string("a")));
+
+    let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
+    let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
+        .unwrap_or_else(|| vec![keyof_intersection]);
+
+    assert!(
+        keyof_members.contains(&interner.literal_string("v")),
+        "expected keyof intersection to contain 'v', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        keyof_members.contains(&interner.literal_string("a")),
+        "expected keyof intersection to contain 'a', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !keyof_members.contains(&interner.literal_string("b")),
+        "did not expect keyof intersection to contain 'b', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_keys() {
+    let interner = TypeInterner::new();
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.type_param(t_info);
+
+    let enum_member_a = interner.intern(TypeData::Enum(
+        crate::def::DefId(200),
+        interner.literal_number(0.0),
+    ));
+    let enum_member_b = interner.intern(TypeData::Enum(
+        crate::def::DefId(201),
+        interner.literal_number(1.0),
+    ));
+
+    let fixed_v_t = interner.object(vec![PropertyInfo::new(v_name, t_param)]);
+    let branch_a = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_a),
+        PropertyInfo::new(a_name, TypeId::STRING),
+    ]);
+    let branch_b = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_b),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let generic_intersection = interner.intersection(vec![
+        fixed_v_t,
+        interner.union(vec![branch_a, branch_b]),
+    ]);
+
+    assert!(
+        matches!(interner.lookup(generic_intersection), Some(TypeData::Intersection(_))),
+        "expected generic discriminant intersection to stay deferred, got {:?}",
+        interner.lookup(generic_intersection)
+    );
+
+    let instantiated = crate::instantiation::instantiate::instantiate_generic(
+        &interner,
+        generic_intersection,
+        &[t_info],
+        &[enum_member_a],
+    );
+    let keyof_instantiated = evaluate_type(&interner, interner.keyof(instantiated));
+    let keys = crate::type_queries::get_union_members(&interner, keyof_instantiated)
+        .unwrap_or_else(|| vec![keyof_instantiated]);
+
+    assert!(
+        keys.contains(&interner.literal_string("v")),
+        "expected instantiated keyof to contain 'v', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+    assert!(
+        keys.contains(&interner.literal_string("a")),
+        "expected instantiated keyof to contain 'a', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+    assert!(
+        !keys.contains(&interner.literal_string("b")),
+        "did not expect instantiated keyof to contain 'b', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof_branch_keys() {
+    let interner = TypeInterner::new();
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.type_param(t_info);
+
+    let enum_def = crate::def::DefId(300);
+    let enum_member_a = interner.intern(TypeData::Enum(enum_def, interner.literal_number(0.0)));
+    let enum_member_b = interner.intern(TypeData::Enum(enum_def, interner.literal_number(1.0)));
+
+    let fixed_v_t = interner.object(vec![PropertyInfo::new(v_name, t_param)]);
+    let branch_a = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_a),
+        PropertyInfo::new(a_name, TypeId::STRING),
+    ]);
+    let branch_b = interner.object(vec![
+        PropertyInfo::new(v_name, enum_member_b),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let generic_intersection = interner.intersection(vec![
+        fixed_v_t,
+        interner.union(vec![branch_a, branch_b]),
+    ]);
+
+    assert!(
+        matches!(interner.lookup(generic_intersection), Some(TypeData::Intersection(_))),
+        "expected generic discriminant intersection to stay deferred, got {:?}",
+        interner.lookup(generic_intersection)
+    );
+
+    let instantiated = crate::instantiation::instantiate::instantiate_generic(
+        &interner,
+        generic_intersection,
+        &[t_info],
+        &[enum_member_a],
+    );
+    let keyof_instantiated = evaluate_type(&interner, interner.keyof(instantiated));
+    let keys = crate::type_queries::get_union_members(&interner, keyof_instantiated)
+        .unwrap_or_else(|| vec![keyof_instantiated]);
+
+    assert!(
+        keys.contains(&interner.literal_string("v")),
+        "expected instantiated keyof to contain 'v', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+    assert!(
+        keys.contains(&interner.literal_string("a")),
+        "expected instantiated keyof to contain 'a', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+    assert!(
+        !keys.contains(&interner.literal_string("b")),
+        "did not expect instantiated keyof to contain 'b', got {:?}",
+        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_enum_member_intersection_with_other_member_lazy_ref_reduces_to_never() {
+    let interner = TypeInterner::new();
+
+    let enum_member_a = interner.intern(TypeData::Enum(
+        crate::def::DefId(400),
+        interner.literal_number(0.0),
+    ));
+    let impossible = interner.intersection2(enum_member_a, interner.lazy(crate::def::DefId(401)));
+    let compatible = interner.intersection2(enum_member_a, interner.lazy(crate::def::DefId(400)));
+
+    assert_eq!(
+        impossible,
+        TypeId::NEVER,
+        "distinct enum-member refs should reduce to never"
+    );
+    assert_ne!(
+        compatible,
+        TypeId::NEVER,
+        "same enum-member ref should remain compatible"
+    );
+}
+
+#[test]
 fn test_mapped_type_key_remap_to_never_filters_property() {
     let interner = TypeInterner::new();
 

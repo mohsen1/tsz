@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
 
         let source_props = source_shape.properties.as_slice();
         let effective_target = self.normalized_target_for_excess_properties(target);
-        let resolved_target = effective_target;
+        let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
 
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
@@ -333,6 +333,11 @@ impl<'a> CheckerState<'a> {
 
             for &member in members.iter() {
                 let resolved_member = self.resolve_type_for_property_access(member);
+                let resolved_member = self.narrow_union_target_by_object_literal_discriminants(
+                    resolved_member,
+                    idx,
+                    explicit_property_names.as_ref(),
+                );
                 if query::is_type_parameter_like(self.ctx.types, resolved_member) {
                     return;
                 }
@@ -358,7 +363,7 @@ impl<'a> CheckerState<'a> {
                     if resolved_member == TypeId::OBJECT {
                         continue;
                     }
-                    dynamic_members.push(member);
+                    dynamic_members.push(resolved_member);
                 }
             }
 
@@ -770,6 +775,56 @@ impl<'a> CheckerState<'a> {
         }
 
         discriminants
+    }
+
+    fn narrow_union_target_by_object_literal_discriminants(
+        &mut self,
+        union_type: TypeId,
+        obj_literal_idx: NodeIndex,
+        explicit_property_names: Option<&HashSet<Atom>>,
+    ) -> TypeId {
+        let Some(members) = query::union_members(self.ctx.types, union_type) else {
+            return union_type;
+        };
+
+        let direct_discriminants =
+            self.object_literal_direct_unit_discriminants(obj_literal_idx, explicit_property_names);
+        if direct_discriminants.is_empty() {
+            return union_type;
+        }
+
+        for (prop_name, prop_type) in direct_discriminants {
+            let mut matching_members = Vec::new();
+            let mut fully_discriminated = true;
+
+            for &member in &members {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
+                    fully_discriminated = false;
+                    break;
+                };
+                let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_name) else {
+                    fully_discriminated = false;
+                    break;
+                };
+                if !query::is_unit_type(self.ctx.types, prop.type_id) {
+                    fully_discriminated = false;
+                    break;
+                }
+                if self.is_subtype_of(prop_type, prop.type_id) {
+                    matching_members.push(member);
+                }
+            }
+
+            if fully_discriminated
+                && !matching_members.is_empty()
+                && matching_members.len() < members.len()
+            {
+                return tsz_solver::utils::union_or_single(self.ctx.types, matching_members);
+            }
+        }
+
+        union_type
     }
 
     /// Detect whether an object shape represents the global `Object` or `Function`
@@ -1353,6 +1408,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let pruned_object_type = self.prune_impossible_object_union_members_with_env(resolved_object_type);
+        if pruned_object_type != resolved_object_type {
+            resolved_object_type = pruned_object_type;
+            mapped_candidate_type = pruned_object_type;
+            result = self.ctx.types.resolve_property_access_with_options(
+                pruned_object_type,
+                prop_name,
+                self.ctx.compiler_options.no_unchecked_indexed_access,
+            );
+        }
+
         // If the solver returned PropertyNotFound for a TypeParameter whose
         // constraint is an Application (e.g. `P extends Partial<Foo>`), the
         // solver's NoopResolver couldn't expand the Application body.  Evaluate
@@ -1511,7 +1577,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
-
         if let Some(property_type) =
             crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                 self.ctx.types,
@@ -1674,6 +1739,13 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use crate::test_utils::check_source_diagnostics;
+    use crate::{
+        context::CheckerOptions,
+        query_boundaries::type_construction::TypeInterner,
+        state::CheckerState,
+    };
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
 
     #[test]
     fn ts2353_spread_object_literal_reports_explicit_excess_property_only() {
@@ -1762,6 +1834,82 @@ function f<P extends MyPartial<Foo>>(p: P) {
                 .iter()
                 .map(|d| (d.code, &d.message_text))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    fn build_checker(source: &str) -> (ParserState, tsz_parser::parser::NodeIndex, BinderState, TypeInterner) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        (parser, root, binder, types)
+    }
+
+    #[test]
+    fn mapped_enum_discriminant_application_exposes_member_property() {
+        let source = r#"
+enum ABC { A, B }
+
+type Gen<T extends ABC> = { v: T } & (
+  { v: ABC.A, a: string } |
+  { v: ABC.B, b: string }
+);
+
+type Gen2<T extends ABC> = {
+  [Property in keyof Gen<T>]: string;
+};
+
+type ProbeGen = Gen<ABC.A>;
+type Probe = Gen2<ABC.A>;
+"#;
+
+        let (parser, root, binder, types) = build_checker(source);
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let probe_sym = checker
+            .ctx
+            .binder
+            .file_locals
+            .get("Probe")
+            .expect("Probe symbol");
+        let probe_gen_sym = checker
+            .ctx
+            .binder
+            .file_locals
+            .get("ProbeGen")
+            .expect("ProbeGen symbol");
+        let probe_gen_type = checker.type_reference_symbol_type(probe_gen_sym);
+        let probe_type = checker.type_reference_symbol_type(probe_sym);
+        let gen_a_result = checker.resolve_property_access_with_env(probe_gen_type, "a");
+        let a_result = checker.resolve_property_access_with_env(probe_type, "a");
+
+        assert!(
+            matches!(
+                gen_a_result,
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            ),
+            "expected ProbeGen.a to resolve, got {gen_a_result:?} for type {:?}",
+            checker.ctx.types.lookup(probe_gen_type),
+        );
+
+        assert!(
+            matches!(
+                a_result,
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            ),
+            "expected Probe.a to resolve, got {a_result:?} for type {:?}",
+            checker.ctx.types.lookup(probe_type),
         );
     }
 }

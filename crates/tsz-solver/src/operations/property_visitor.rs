@@ -6,7 +6,8 @@
 use super::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeData, TypeId,
+    TypeListId,
 };
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
@@ -546,6 +547,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
             normalize_fresh_object_literal_union_members(self.interner(), &non_unknown_members)
         {
             non_unknown_members = normalized;
+        }
+
+        let pruned_union = crate::type_queries::prune_impossible_object_union_members(
+            self.interner(),
+            self.interner().union_from_slice(&non_unknown_members),
+        );
+        match self.interner().lookup(pruned_union) {
+            Some(TypeData::Union(pruned_members)) => {
+                non_unknown_members = self.interner().type_list(pruned_members).to_vec();
+            }
+            _ => {
+                non_unknown_members = vec![pruned_union];
+            }
         }
 
         // Reconstructing the union can be expensive for large unions. Delay it
