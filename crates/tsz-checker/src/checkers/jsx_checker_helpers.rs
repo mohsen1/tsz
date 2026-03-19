@@ -139,7 +139,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn get_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
+    pub(super) fn get_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
+        if let Some(children_type) = self.get_specific_jsx_union_children_prop_type(props_type) {
+            return Some(children_type);
+        }
+
+        if let Some(children_type) =
+            self.get_specific_jsx_intersection_children_prop_type(props_type)
+        {
+            return Some(children_type);
+        }
+
         let resolved = self.resolve_type_for_property_access(props_type);
         let children_type = match self.resolve_property_access_with_env(resolved, "children") {
             PropertyAccessResult::Success { type_id, .. } => type_id,
@@ -150,6 +160,150 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(children_type)
+    }
+
+    pub(super) fn normalize_jsx_props_member_for_children_resolution(
+        &mut self,
+        props_type: TypeId,
+    ) -> TypeId {
+        let props_type = self.resolve_type_for_property_access(props_type);
+        let props_type = self.evaluate_type_with_env(props_type);
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
+        {
+            let mut best_member = None;
+            let mut best_score = 0;
+            for member in members {
+                let normalized_member = self.strip_jsx_readonly_application_alias(member);
+                let Some(children_type) = self.get_direct_jsx_children_prop_type(normalized_member)
+                else {
+                    continue;
+                };
+                let score = if self.type_has_jsx_children_callable_signature(children_type) {
+                    3
+                } else if children_type == TypeId::NEVER {
+                    2
+                } else {
+                    1
+                };
+                if score > best_score {
+                    best_score = score;
+                    best_member = Some(normalized_member);
+                }
+            }
+            if let Some(best_member) = best_member {
+                return best_member;
+            }
+        }
+
+        self.strip_jsx_readonly_application_alias(props_type)
+    }
+
+    fn get_specific_jsx_union_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, props_type)?;
+        let mut callable_candidates = Vec::new();
+        let mut other_candidates = Vec::new();
+        let mut callable_seen = rustc_hash::FxHashSet::default();
+        let mut other_seen = rustc_hash::FxHashSet::default();
+
+        for member in members {
+            let member = self.normalize_jsx_props_member_for_children_resolution(member);
+            let Some(children_type) = self
+                .get_specific_jsx_intersection_children_prop_type(member)
+                .or_else(|| self.get_direct_jsx_children_prop_type(member))
+            else {
+                continue;
+            };
+
+            let key = self.format_type(children_type);
+            if self.type_has_jsx_children_callable_signature(children_type) {
+                if callable_seen.insert(key) {
+                    callable_candidates.push(children_type);
+                }
+            } else if other_seen.insert(key) {
+                other_candidates.push(children_type);
+            }
+        }
+
+        match callable_candidates.len() {
+            0 => match other_candidates.len() {
+                0 => None,
+                1 => other_candidates.into_iter().next(),
+                _ => Some(self.ctx.types.factory().union(other_candidates)),
+            },
+            1 if other_candidates.is_empty() => callable_candidates.into_iter().next(),
+            _ if other_candidates.is_empty() => {
+                Some(self.ctx.types.factory().union(callable_candidates))
+            }
+            _ => {
+                callable_candidates.extend(other_candidates);
+                Some(self.ctx.types.factory().union(callable_candidates))
+            }
+        }
+    }
+
+    fn get_specific_jsx_intersection_children_prop_type(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<TypeId> {
+        let members =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)?;
+        let mut callable_candidates = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+
+        for member in members {
+            let Some(children_type) = self.get_direct_jsx_children_prop_type(member) else {
+                continue;
+            };
+            if !self.type_has_jsx_children_callable_signature(children_type) {
+                continue;
+            }
+
+            let key = self.format_type(children_type);
+            if seen.insert(key) {
+                callable_candidates.push(children_type);
+            }
+        }
+
+        match callable_candidates.len() {
+            0 => None,
+            1 => callable_candidates.into_iter().next(),
+            _ => Some(self.ctx.types.factory().union(callable_candidates)),
+        }
+    }
+
+    fn get_direct_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
+        let resolved = self.resolve_type_for_property_access(props_type);
+        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return None,
+        };
+        let children_type = self.evaluate_type_with_env(children_type);
+        if matches!(children_type, TypeId::ANY | TypeId::ERROR) {
+            return None;
+        }
+        Some(children_type)
+    }
+
+    fn type_has_jsx_children_callable_signature(&self, type_id: TypeId) -> bool {
+        tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+            .is_some_and(|shape| !shape.is_constructor)
+            || tsz_solver::type_queries::get_call_signatures(self.ctx.types, type_id)
+                .is_some_and(|sigs| !sigs.is_empty())
+    }
+
+    fn strip_jsx_readonly_application_alias(&mut self, type_id: TypeId) -> TypeId {
+        let type_id = self.resolve_type_for_property_access(type_id);
+        let type_id = self.evaluate_type_with_env(type_id);
+        if let Some((base, args)) =
+            tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)
+            && args.len() == 1
+            && self.format_type(base) == "Readonly"
+        {
+            return self.resolve_type_for_property_access(args[0]);
+        }
+        type_id
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
@@ -275,7 +429,10 @@ impl<'a> CheckerState<'a> {
         emitted
     }
 
-    fn get_jsx_body_child_nodes(&self, attributes_idx: NodeIndex) -> Option<Vec<NodeIndex>> {
+    pub(super) fn get_jsx_body_child_nodes(
+        &self,
+        attributes_idx: NodeIndex,
+    ) -> Option<Vec<NodeIndex>> {
         let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let opening_node = self.ctx.arena.get(opening_idx)?;
         self.ctx.arena.get_jsx_opening(opening_node)?;
