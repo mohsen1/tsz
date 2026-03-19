@@ -348,6 +348,155 @@ fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        dir.push(format!("tsz_fs_unit_{label}_{}_{}", std::process::id(), nanos));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_build_include_patterns_defaults_only_when_files_are_not_explicit() {
+        let implicit_options = FileDiscoveryOptions {
+            base_dir: PathBuf::from("."),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+        };
+        assert_eq!(build_include_patterns(&implicit_options), vec!["**/*"]);
+
+        let explicit_options = FileDiscoveryOptions {
+            files_explicitly_set: true,
+            ..implicit_options
+        };
+        assert!(build_include_patterns(&explicit_options).is_empty());
+    }
+
+    #[test]
+    fn test_normalize_patterns_trims_drops_empty_and_normalizes_prefixes() {
+        let normalized = normalize_patterns(&[
+            "  ./src\\nested  ".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+            ".\\tests\\case.ts".to_string(),
+        ]);
+
+        assert_eq!(normalized, vec!["src/nested", "tests/case.ts"]);
+    }
+
+    #[test]
+    fn test_expand_include_patterns_preserves_explicit_files_and_expands_directories() {
+        let expanded = expand_include_patterns(&[
+            "src".to_string(),
+            "tests/".to_string(),
+            "already/**/*".to_string(),
+            "index.ts".to_string(),
+            "subdir/*.tsx".to_string(),
+        ]);
+
+        assert_eq!(
+            expanded,
+            vec![
+                "src/**/*".to_string(),
+                "tests/**/*".to_string(),
+                "already/**/*".to_string(),
+                "index.ts".to_string(),
+                "subdir/*.tsx".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_exclude_patterns_adds_defaults_and_relative_out_dir() {
+        let base_dir = PathBuf::from("/repo");
+        let options = FileDiscoveryOptions {
+            base_dir: base_dir.clone(),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: Some(base_dir.join("dist")),
+            follow_links: false,
+            allow_js: false,
+        };
+
+        let patterns = build_exclude_patterns(&options);
+
+        assert!(patterns.contains(&"node_modules".to_string()));
+        assert!(patterns.contains(&"**/node_modules/**".to_string()));
+        assert!(patterns.contains(&"dist".to_string()));
+        assert!(patterns.contains(&"dist/**".to_string()));
+    }
+
+    #[test]
+    fn test_allow_entry_handles_paths_outside_base_dir() {
+        let base_dir = unique_temp_dir("base");
+        let outside_dir = unique_temp_dir("outside");
+        let outside_file = outside_dir.join("skip.ts");
+        fs::write(&outside_file, "export const skip = 1;").unwrap();
+
+        let exclude = build_globset(&[outside_file.to_string_lossy().to_string()]).unwrap();
+        let entry = walkdir::WalkDir::new(&outside_file)
+            .max_depth(0)
+            .into_iter()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert!(!allow_entry(&entry, &base_dir, Some(&exclude)));
+
+        let _ = fs::remove_dir_all(&base_dir);
+        let _ = fs::remove_dir_all(&outside_dir);
+    }
+
+    #[test]
+    fn test_module_file_predicates_distinguish_ts_js_and_json() {
+        assert!(is_ts_file(Path::new("types.d.ts")));
+        assert!(is_ts_file(Path::new("types.d.mts")));
+        assert!(is_valid_module_file(Path::new("config.json")));
+        assert!(!is_valid_module_file(Path::new("script.js")));
+        assert!(is_valid_module_or_js_file(Path::new("script.js")));
+        assert!(!is_valid_module_or_js_file(Path::new("README.md")));
+    }
+
+    #[test]
+    fn test_path_to_pattern_handles_absolute_relative_and_empty_paths() {
+        let base_dir = Path::new("/repo");
+        assert_eq!(
+            path_to_pattern(base_dir, Path::new("src\\nested")),
+            Some("src/nested".to_string())
+        );
+        assert_eq!(
+            path_to_pattern(base_dir, Path::new("/repo/dist")),
+            Some("dist".to_string())
+        );
+        assert_eq!(path_to_pattern(base_dir, Path::new("")), None);
+        assert_eq!(path_to_pattern(base_dir, Path::new("/other/place")), None);
+    }
+
+    #[test]
+    fn test_ensure_file_exists_rejects_directory_paths() {
+        let dir = unique_temp_dir("directory");
+        let err = ensure_file_exists(&dir, Path::new("directory")).unwrap_err();
+        assert!(err.to_string().contains("path is not a file"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_build_globset_reports_invalid_pattern() {
+        let err = build_globset(&["[".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("invalid glob pattern"));
+    }
 
     #[test]
     fn test_discover_explicitly_listed_js_file_without_allow_js() {
