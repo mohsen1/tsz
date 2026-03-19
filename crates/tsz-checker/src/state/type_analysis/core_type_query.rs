@@ -27,6 +27,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn get_type_from_type_query_flow_sensitive(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_from_type_query_flow_sensitive_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_from_type_query_flow_sensitive_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use tsz_solver::SymbolRef;
         trace!(idx = idx.0, "ENTER get_type_from_type_query_flow_sensitive");
 
@@ -58,12 +66,12 @@ impl<'a> CheckerState<'a> {
         let use_flow_sensitive_query =
             !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
         let query_expr_type = |state: &mut Self, use_flow: bool| {
-            let request = if use_flow {
-                TypingRequest::NONE
+            let expr_request = if use_flow {
+                request.read().contextual_opt(None)
             } else {
-                TypingRequest::for_write_context()
+                request.write().contextual_opt(None)
             };
-            state.get_type_of_node_with_request(type_query.expr_name, &request)
+            state.get_type_of_node_with_request(type_query.expr_name, &expr_request)
         };
 
         // `typeof default` is not valid — `default` is a keyword and is not visible
@@ -121,8 +129,11 @@ impl<'a> CheckerState<'a> {
                     // For nested qualified names (e.g. `typeof a.b.c`), recurse
                     // through the value property chain instead of dispatching to
                     // resolve_qualified_name which treats it as a namespace.
-                    let left_type = self
-                        .resolve_typeof_qualified_value_chain(left_idx, use_flow_sensitive_query);
+                    let left_type = self.resolve_typeof_qualified_value_chain_with_request(
+                        left_idx,
+                        request,
+                        use_flow_sensitive_query,
+                    );
                     trace!(left_type = ?left_type, "type_query qualified: left_type");
                     if left_type == TypeId::ANY {
                         // globalThis resolves to ANY since it's a synthetic global.

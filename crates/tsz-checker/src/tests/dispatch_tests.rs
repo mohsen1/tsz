@@ -395,6 +395,30 @@ switch (0) {
 }
 
 #[test]
+fn destructuring_parameter_declaration_preserves_nested_binding_context() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(fn: ([a, b, [[c]], ...x]: [number, number, [[string]], boolean, boolean]) => void): void;
+
+takes(([a, b, [[c]], ...x]) => {
+    a.toFixed();
+    b.toFixed();
+    c.toUpperCase();
+});
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2322 | 2339 | 7031))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected destructuring parameter bindings to stay request-aware, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn catch_finally_and_logical_assignment_preserve_request_intent() {
     let diags = check_source_diagnostics(
         r#"
@@ -665,6 +689,26 @@ new Box("ok");
         relevant.len(),
         0,
         "Expected JSDoc template/param resolution to stay stable, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn tagged_template_contextual_typing_flows_through_request_path() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function tag(strs: TemplateStringsArray, f: (n: number) => void): void;
+
+tag`${n => n.toFixed()}`;
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected tagged-template contextual typing to stay on the request path, got: {relevant:?}"
     );
 }
 

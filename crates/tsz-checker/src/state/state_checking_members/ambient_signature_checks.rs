@@ -24,6 +24,7 @@ impl<'a> CheckerState<'a> {
             .filter(|&ty| ty != TypeId::ANY && !self.type_contains_error(ty))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
         self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
@@ -301,9 +302,9 @@ impl<'a> CheckerState<'a> {
                     // Function expressions may have been typed without contextual info
                     // during build_type_environment, missing parameter type inference.
                     self.clear_type_cache_recursive(prop.initializer);
-                    TypingRequest::with_contextual_type(declared_type)
+                    request.read().contextual(declared_type)
                 } else {
-                    TypingRequest::NONE
+                    request.read().contextual_opt(None)
                 };
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
 
@@ -444,6 +445,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a method declaration.
+    #[allow(dead_code)]
     pub(crate) fn check_method_declaration(&mut self, member_idx: NodeIndex) {
         self.check_method_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
@@ -905,6 +907,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a constructor declaration.
+    #[allow(dead_code)]
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
         self.check_constructor_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
@@ -1367,6 +1370,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check an accessor declaration (getter/setter).
+    #[allow(dead_code)]
     pub(crate) fn check_accessor_declaration(&mut self, member_idx: NodeIndex) {
         self.check_accessor_declaration_with_request(member_idx, &TypingRequest::NONE);
     }

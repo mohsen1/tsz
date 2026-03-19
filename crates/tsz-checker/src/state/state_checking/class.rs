@@ -657,6 +657,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn check_class_expression(
         &mut self,
         class_idx: NodeIndex,

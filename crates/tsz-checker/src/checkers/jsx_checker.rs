@@ -12,6 +12,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_jsx_opening_element_with_request(idx, &TypingRequest::NONE)
     }

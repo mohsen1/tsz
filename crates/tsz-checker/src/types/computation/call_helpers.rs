@@ -1,7 +1,9 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::checkers::call::{
+    expanded_this_type_from_application, is_type_parameter_type,
+};
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -1086,6 +1088,7 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(param_type)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finalize_generic_call_result(
         &mut self,
         callee_type_for_call: TypeId,
@@ -1186,6 +1189,11 @@ impl<'a> CheckerState<'a> {
                                     })
                                 })
                                 .is_some_and(|arg_idx| {
+                                    if self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
+                                        index < skip.len() && skip[index]
+                                    }) {
+                                        return false;
+                                    }
                                     if is_type_parameter_type(self.ctx.types, expected_param) {
                                         return false;
                                     }
@@ -1234,6 +1242,11 @@ impl<'a> CheckerState<'a> {
                         && param.type_id != TypeId::ANY
                         && param.type_id != TypeId::UNKNOWN
                     {
+                        if self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
+                            i < skip.len() && skip[i]
+                        }) {
+                            continue;
+                        }
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
                         if !is_type_parameter_type(self.ctx.types, evaluated_param) {
                             let arg_type = self.refreshed_generic_call_arg_type_with_context(
@@ -1284,30 +1297,15 @@ impl<'a> CheckerState<'a> {
             if let Some(tt) = ctx_helper.get_this_type_from_marker() {
                 return Some(tt);
             }
-            if let Some(tsz_solver::TypeData::Application(app_id)) =
-                self.ctx.types.lookup(param.type_id)
             {
-                let app = self.ctx.types.type_application(app_id);
-                if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.ctx.types.lookup(app.base) {
-                    use tsz_solver::TypeResolver;
-                    let env = self.ctx.type_env.borrow();
-                    if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
-                        let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
-                        let expanded = tsz_solver::instantiate_generic(
-                            self.ctx.types,
-                            body,
-                            &type_params,
-                            &app.args,
-                        );
-                        let expanded_ctx = ContextualTypeContext::with_expected_and_options(
-                            self.ctx.types,
-                            expanded,
-                            self.ctx.compiler_options.no_implicit_any,
-                        );
-                        if let Some(tt) = expanded_ctx.get_this_type_from_marker() {
-                            return Some(tt);
-                        }
-                    }
+                let env = self.ctx.type_env.borrow();
+                if let Some(tt) = expanded_this_type_from_application(
+                    self.ctx.types,
+                    &env,
+                    param.type_id,
+                    self.ctx.compiler_options.no_implicit_any,
+                ) {
+                    return Some(tt);
                 }
             }
         }

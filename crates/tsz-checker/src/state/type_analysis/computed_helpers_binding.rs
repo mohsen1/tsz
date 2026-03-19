@@ -121,7 +121,8 @@ impl<'a> CheckerState<'a> {
         if !var_decl.initializer.is_some() {
             return None;
         }
-        let init_type = self.get_type_of_node(var_decl.initializer);
+        let init_type =
+            self.get_type_of_node_with_request(var_decl.initializer, &TypingRequest::NONE);
         if init_type == TypeId::ANY || init_type == TypeId::ERROR {
             return None;
         }

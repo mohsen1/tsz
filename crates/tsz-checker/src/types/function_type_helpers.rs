@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
                 shadowed_class_param = true;
             }
 
-            let type_id = factory.type_param(info.clone());
+            let type_id = factory.type_param(*info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, shadowed_class_param));
         }

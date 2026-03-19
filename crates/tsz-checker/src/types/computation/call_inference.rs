@@ -41,6 +41,16 @@ fn contextual_constraint_preserves_literals(
         return true;
     }
 
+    if matches!(
+        tsz_solver::type_queries::extended::classify_literal_type(db, type_id),
+        tsz_solver::type_queries::extended::LiteralTypeKind::String(_)
+            | tsz_solver::type_queries::extended::LiteralTypeKind::Number(_)
+            | tsz_solver::type_queries::extended::LiteralTypeKind::BigInt(_)
+            | tsz_solver::type_queries::extended::LiteralTypeKind::Boolean(_)
+    ) {
+        return true;
+    }
+
     if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
         return members
             .iter()
@@ -81,6 +91,13 @@ pub(crate) fn should_preserve_contextual_application_shape(
     }
 
     if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
+        return members
+            .iter()
+            .copied()
+            .any(|member| should_preserve_contextual_application_shape(db, member));
+    }
+
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, ty) {
         return members
             .iter()
             .copied()
@@ -192,6 +209,11 @@ impl<'a> CheckerState<'a> {
                     substitution,
                 );
                 contextual_constraint_preserves_literals(self.ctx.types, instantiated)
+                    || {
+                        let evaluated = self.evaluate_type_with_env(instantiated);
+                        evaluated != instantiated
+                            && contextual_constraint_preserves_literals(self.ctx.types, evaluated)
+                    }
             });
             if preserve_literals {
                 continue;
@@ -1358,6 +1380,7 @@ impl<'a> CheckerState<'a> {
         expected_type: Option<TypeId>,
         check_excess_properties: bool,
         effective_index: usize,
+        arg_count: usize,
         suppress_diagnostics: bool,
     ) -> TypeId {
         use tsz_scanner::SyntaxKind;
@@ -1399,6 +1422,25 @@ impl<'a> CheckerState<'a> {
         let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx);
+        let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
+            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+                || should_preserve_contextual_application_shape(self.ctx.types, ty)
+        });
+        let callable_context_requires_generic_epc_skip =
+            self.ctx.current_callable_type.is_some_and(|callable_type| {
+                let ctx =
+                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                ctx.get_parameter_type_for_call(effective_index, arg_count)
+                    .is_some_and(|param_type| {
+                        tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            param_type,
+                        ) || should_preserve_contextual_application_shape(
+                            self.ctx.types,
+                            param_type,
+                        )
+                    })
+            });
 
         // Extract ThisType<T> marker from the unevaluated expected type BEFORE
         // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
@@ -1537,6 +1579,8 @@ impl<'a> CheckerState<'a> {
                 .generic_excess_skip
                 .as_ref()
                 .is_some_and(|skip| effective_index < skip.len() && skip[effective_index])
+            && !raw_context_requires_generic_epc_skip
+            && !callable_context_requires_generic_epc_skip
         {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }

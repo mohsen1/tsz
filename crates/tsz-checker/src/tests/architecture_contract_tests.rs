@@ -2286,6 +2286,11 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/computation/call_display.rs",
         "types/function_type.rs",
         "types/class_type/constructor.rs",
+        "state/state.rs",
+        "state/type_analysis/core.rs",
+        "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/computed_helpers.rs",
+        "state/type_analysis/computed_helpers_binding.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
         "state/state_checking_members/member_declaration_checks.rs",
         "state/state_checking/class.rs",
@@ -2339,13 +2344,19 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
         "types/computation/helpers.rs",
         "state/type_analysis/core.rs",
         "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/computed_helpers.rs",
         "state/type_analysis/computed_helpers_binding.rs",
+        "state/variable_checking/destructuring.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
         "state/state_checking_members/member_declaration_checks.rs",
         "state/state_checking/class.rs",
         // Wave 3: call_checker and call_inference migrated skip_flow via TypingRequest
         "checkers/call_checker.rs",
         "types/computation/call_inference.rs",
+        "types/computation/tagged_template.rs",
+        "types/class_type/constructor.rs",
+        "state/state_checking_members/ambient_signature_checks.rs",
+        "state/state.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2402,6 +2413,7 @@ fn migrated_helper_files_no_raw_ambient_request_reads() {
         "state/state_checking_members/ambient_signature_checks.rs",
         "state/state_checking_members/member_declaration_checks.rs",
         "state/state_checking/class.rs",
+        "state/state.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2456,6 +2468,12 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "types/class_type/constructor.rs",
         "state/state_checking_members/member_declaration_checks.rs",
         "state/state_checking/class.rs",
+        "state/type_analysis/core.rs",
+        "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/computed_helpers.rs",
+        "state/type_analysis/computed_helpers_binding.rs",
+        "state/variable_checking/destructuring.rs",
+        "state/state.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

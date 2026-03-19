@@ -8,7 +8,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::query_boundaries::common::PropertyAccessResult;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeData, TypeId, TypeInterner};
+use tsz_solver::{TypeId, TypeInterner};
 
 fn symbol_property_type_strings(
     source: &str,
@@ -40,7 +40,7 @@ fn symbol_property_type_strings(
         .map(|name| {
             let sym_id = binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .unwrap_or_else(|| panic!("missing symbol {name}"));
             let symbol_type = checker.get_type_of_symbol(sym_id);
             let property_type =
@@ -222,10 +222,8 @@ fn first_construct_signature_param_is_type_parameter(
     let Some(first_param) = construct_sig.params.first() else {
         return false;
     };
-    matches!(
-        checker.ctx.types.lookup(first_param.type_id),
-        Some(TypeData::TypeParameter(_))
-    )
+    tsz_solver::type_queries::get_type_parameter_info(checker.ctx.types, first_param.type_id)
+        .is_some()
 }
 
 fn resolve_new_result_property_type_string(

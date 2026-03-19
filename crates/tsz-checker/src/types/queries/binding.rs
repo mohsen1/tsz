@@ -1,4 +1,5 @@
 use crate::state::CheckerState;
+use crate::context::TypingRequest;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -8,6 +9,19 @@ impl<'a> CheckerState<'a> {
         &mut self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
+    ) -> TypeId {
+        self.infer_type_from_binding_pattern_with_request(
+            pattern_idx,
+            parent_type,
+            &TypingRequest::NONE,
+        )
+    }
+
+    pub(crate) fn infer_type_from_binding_pattern_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+        request: &TypingRequest,
     ) -> TypeId {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return TypeId::ANY;
@@ -64,7 +78,13 @@ impl<'a> CheckerState<'a> {
                     let mut element_type = if parent_type == TypeId::UNKNOWN {
                         TypeId::ANY
                     } else {
-                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
+                        self.get_binding_element_type_with_request(
+                            pattern_idx,
+                            i,
+                            parent_type,
+                            element_data,
+                            request,
+                        )
                     };
 
                     if element_data.initializer.is_some() {
@@ -74,12 +94,13 @@ impl<'a> CheckerState<'a> {
                         //   stays "foo" for assignability checks against union types)
                         // The first evaluation caches the type, so contextual typing
                         // must be set here to ensure the cached type is correct.
-                        let request =
-                            if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN {
-                                crate::context::TypingRequest::with_contextual_type(element_type)
-                            } else {
-                                crate::context::TypingRequest::NONE
-                            };
+                        let request = if element_type != TypeId::ANY
+                            && element_type != TypeId::UNKNOWN
+                        {
+                            request.read().contextual(element_type)
+                        } else {
+                            request.read().contextual_opt(None)
+                        };
                         let init_type =
                             self.get_type_of_node_with_request(element_data.initializer, &request);
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
@@ -97,7 +118,11 @@ impl<'a> CheckerState<'a> {
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                     {
                         element_type =
-                            self.infer_type_from_binding_pattern(element_data.name, element_type);
+                            self.infer_type_from_binding_pattern_with_request(
+                                element_data.name,
+                                element_type,
+                                request,
+                            );
                     }
 
                     let is_optional =
@@ -135,7 +160,13 @@ impl<'a> CheckerState<'a> {
                     let mut element_type = if parent_type == TypeId::UNKNOWN {
                         TypeId::ANY
                     } else {
-                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
+                        self.get_binding_element_type_with_request(
+                            pattern_idx,
+                            i,
+                            parent_type,
+                            element_data,
+                            request,
+                        )
                     };
 
                     if element_data.initializer.is_some() {
@@ -146,9 +177,9 @@ impl<'a> CheckerState<'a> {
                             && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                                 || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
                         {
-                            crate::context::TypingRequest::with_contextual_type(element_type)
+                            request.read().contextual(element_type)
                         } else {
-                            crate::context::TypingRequest::NONE
+                            request.read().contextual_opt(None)
                         };
                         let init_type =
                             self.get_type_of_node_with_request(element_data.initializer, &request);
@@ -167,7 +198,11 @@ impl<'a> CheckerState<'a> {
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                     {
                         element_type =
-                            self.infer_type_from_binding_pattern(element_data.name, element_type);
+                            self.infer_type_from_binding_pattern_with_request(
+                                element_data.name,
+                                element_type,
+                                request,
+                            );
                     }
 
                     let is_optional =

@@ -133,7 +133,7 @@ impl CheckerState<'_> {
             };
             let param_type = if param.type_annotation.is_some() {
                 Some(self.get_type_from_type_node(param.type_annotation))
-            } else if let (Some(ref jsdoc), Some(comment_start)) = (jsdoc.as_ref(), comment_start) {
+            } else if let (Some(jsdoc), Some(comment_start)) = (jsdoc.as_ref(), comment_start) {
                 let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                 self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, Some(comment_start))
                     .or_else(|| {
