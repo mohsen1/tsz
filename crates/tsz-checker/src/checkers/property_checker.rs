@@ -1,12 +1,12 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
+use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::checkers::property as query;
 use crate::query_boundaries::type_computation::complex::{
     ClassDeclTypeKind, classify_for_class_decl,
 };
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
-use crate::classes_domain::class_summary::ClassMemberKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -256,8 +256,7 @@ impl<'a> CheckerState<'a> {
             self.summarize_class_chain(class_idx)
                 .member_kind(property_name, true, true),
             Some(ClassMemberKind::MethodLike | ClassMemberKind::FieldLike)
-        )
-        {
+        ) {
             return false;
         }
 

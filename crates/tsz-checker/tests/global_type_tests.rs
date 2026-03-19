@@ -293,7 +293,10 @@ fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
         if let Some(path) = maybe_path
             && let Ok(content) = std::fs::read_to_string(&path)
         {
-            lib_files.push(Arc::new(LibFile::from_source(file_name.to_string(), content)));
+            lib_files.push(Arc::new(LibFile::from_source(
+                file_name.to_string(),
+                content,
+            )));
         }
     }
     lib_files

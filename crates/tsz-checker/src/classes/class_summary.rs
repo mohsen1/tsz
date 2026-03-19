@@ -385,13 +385,22 @@ impl<'a> CheckerState<'a> {
                 summary.all_static_lookup.entry(name).or_insert(info);
             }
             for (name, kind) in own_summary.visible_instance_member_kinds {
-                summary.visible_instance_member_kinds.entry(name).or_insert(kind);
+                summary
+                    .visible_instance_member_kinds
+                    .entry(name)
+                    .or_insert(kind);
             }
             for (name, kind) in own_summary.visible_static_member_kinds {
-                summary.visible_static_member_kinds.entry(name).or_insert(kind);
+                summary
+                    .visible_static_member_kinds
+                    .entry(name)
+                    .or_insert(kind);
             }
             for (name, kind) in own_summary.all_instance_member_kinds {
-                summary.all_instance_member_kinds.entry(name).or_insert(kind);
+                summary
+                    .all_instance_member_kinds
+                    .entry(name)
+                    .or_insert(kind);
             }
             for (name, kind) in own_summary.all_static_member_kinds {
                 summary.all_static_member_kinds.entry(name).or_insert(kind);
