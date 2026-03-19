@@ -467,12 +467,12 @@ impl<'a> Completions<'a> {
             completions.push(item);
         }
 
-        // 10. If inside a function, also add "arguments" as a local variable
+        // 10. If inside a function, also add "arguments" as a built-in variable
         if inside_func && !seen_names.contains("arguments") {
             seen_names.insert("arguments".to_string());
             let mut item =
                 CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
-            item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
+            item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
             completions.push(item);
         }
 
