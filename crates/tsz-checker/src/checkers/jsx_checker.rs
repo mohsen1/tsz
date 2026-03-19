@@ -839,7 +839,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get JSX.Element type for return type checking (no factory diagnostics).
-    fn get_jsx_element_type_for_check(&mut self) -> Option<TypeId> {
+    pub(crate) fn get_jsx_element_type_for_check(&mut self) -> Option<TypeId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
         let symbol = self
@@ -1859,6 +1859,7 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     attributes_idx,
                     child_count,
+                    has_text_child,
                     tag_name_idx,
                 );
             }
