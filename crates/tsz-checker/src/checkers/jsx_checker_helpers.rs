@@ -200,9 +200,7 @@ impl<'a> CheckerState<'a> {
     fn get_jsx_body_child_nodes(&self, attributes_idx: NodeIndex) -> Option<Vec<NodeIndex>> {
         let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let opening_node = self.ctx.arena.get(opening_idx)?;
-        if self.ctx.arena.get_jsx_opening(opening_node).is_none() {
-            return None;
-        }
+        self.ctx.arena.get_jsx_opening(opening_node)?;
 
         let element_idx = self.ctx.arena.get_extended(opening_idx)?.parent;
         let element_node = self.ctx.arena.get(element_idx)?;
