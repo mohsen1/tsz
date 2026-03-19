@@ -109,6 +109,27 @@ pub struct LabelInfo {
     pub(crate) label_node: tsz_parser::parser::NodeIndex,
 }
 
+/// Classification for deferred implicit-any diagnostics that are surfaced later
+/// at use sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingImplicitAnyKind {
+    /// Bare implicit-any variables only become errors when captured by a nested
+    /// function boundary.
+    CaptureOnly,
+    /// Evolving `any[]` variables become errors at unsafe reads before their
+    /// element type is fixed.
+    EvolvingArray,
+}
+
+/// Deferred implicit-any diagnostic state for a variable declaration.
+#[derive(Clone, Copy, Debug)]
+pub struct PendingImplicitAnyVar {
+    /// Declaration name node used for the TS7034 anchor.
+    pub name_node: NodeIndex,
+    /// Which deferred implicit-any behavior applies to this declaration.
+    pub kind: PendingImplicitAnyKind,
+}
+
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
 #[derive(Clone, Debug)]
@@ -531,9 +552,10 @@ pub struct CheckerContext<'a> {
     /// fix the return type of `new` on circular generic classes: tsc returns
     /// `C<unknown>` instead of the raw `C<T>`.
     pub circular_class_symbols: FxHashSet<SymbolId>,
-    /// Deferred TS7034 candidates: non-ambient variables with no annotation, no init, and type ANY.
-    /// Maps symbol ID → declaration name node. Consumed when a capture is detected.
-    pub pending_implicit_any_vars: FxHashMap<SymbolId, NodeIndex>,
+    /// Deferred implicit-any candidates keyed by variable symbol.
+    /// Bare implicit-any declarations stay capture-only, while evolving empty
+    /// arrays also report on unsafe same-scope reads.
+    pub pending_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyVar>,
     /// Closure/function-expression sites whose return expressions read a variable
     /// symbol currently being resolved. Used to centralize TS7022/TS7023/TS7024
     /// emission and suppress downstream relation noise from the circularity.
@@ -542,9 +564,9 @@ pub struct CheckerContext<'a> {
     /// construct consults those bodies immediately during type computation
     /// (currently the `for...of` iterator protocol path).
     pub non_closure_circular_return_tracking_depth: usize,
-    /// Variables that have already had TS7034 emitted.
-    /// Used to emit TS7005 on subsequent usages.
-    pub reported_implicit_any_vars: FxHashSet<SymbolId>,
+    /// Variables that have already had TS7034 emitted, keyed by the deferred
+    /// implicit-any classification that triggered it.
+    pub reported_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyKind>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph,
