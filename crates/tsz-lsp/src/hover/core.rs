@@ -1119,11 +1119,15 @@ impl<'a> HoverProvider<'a> {
         if f & symbol_flags::TYPE_PARAMETER != 0 {
             return "type parameter".to_string();
         }
-        if f & symbol_flags::GET_ACCESSOR != 0 {
+        if f & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR) != 0 {
+            // Use declaration node kind to distinguish when both flags are set
+            if decl_node_idx.is_some()
+                && let Some(decl_node) = self.arena.get(decl_node_idx)
+                && decl_node.kind == tsz_parser::syntax_kind_ext::SET_ACCESSOR
+            {
+                return "setter".to_string();
+            }
             return "getter".to_string();
-        }
-        if f & symbol_flags::SET_ACCESSOR != 0 {
-            return "setter".to_string();
         }
         if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             return self.get_variable_keyword(decl_node_idx).to_string();
