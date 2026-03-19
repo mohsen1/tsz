@@ -1716,12 +1716,12 @@ fn resolve_package_entry(
         );
     for candidate in expand_module_path_candidates(&path, options, package_type) {
         // Skip directory index candidates (path/index.{ext}) for ESM packages
-        if is_esm_no_index && candidate.parent() == Some(&path) {
-            if let Some(name) = candidate.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("index.") {
-                    continue;
-                }
-            }
+        if is_esm_no_index
+            && candidate.parent() == Some(&path)
+            && let Some(name) = candidate.file_name().and_then(|n| n.to_str())
+            && name.starts_with("index.")
+        {
+            continue;
         }
         if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
