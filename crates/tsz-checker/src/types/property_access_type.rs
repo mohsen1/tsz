@@ -662,8 +662,8 @@ impl<'a> CheckerState<'a> {
                 property_name,
             );
             if js_expando_before_assignment {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 use crate::diagnostics::format_message;
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     access.name_or_argument,
                     &format_message(

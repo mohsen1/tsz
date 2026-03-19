@@ -288,7 +288,10 @@ g.expando;
 "#;
 
     let diagnostics = check_js(source);
-    let ts2565: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2565).collect();
+    let ts2565: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2565)
+        .collect();
     let missing_member: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2339 || *code == 2551)
