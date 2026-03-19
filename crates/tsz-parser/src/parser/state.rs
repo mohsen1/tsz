@@ -150,6 +150,12 @@ pub struct ParserState {
     /// Malformed type-import attribute recovery consumed the import call tail
     /// through `).Name`, so `parse_import_expression` must not expect `)` again.
     pub(crate) import_attribute_tail_recovered: bool,
+    /// After a missing object-literal property initializer, allow the next
+    /// line-broken property-like token to continue without a synthetic comma error.
+    pub(crate) suppress_object_literal_comma_once: bool,
+    /// Recovery already reported a missing `)` at a later synchronized position,
+    /// so the immediate caller should suppress its fallback `parse_expected(')')`.
+    pub(crate) suppress_next_missing_close_paren_error_once: bool,
 }
 
 impl ParserState {
@@ -192,6 +198,8 @@ impl ParserState {
             fallback_import_type_options_once: false,
             in_import_type_options_context: false,
             import_attribute_tail_recovered: false,
+            suppress_object_literal_comma_once: false,
+            suppress_next_missing_close_paren_error_once: false,
         }
     }
 
@@ -214,6 +222,8 @@ impl ParserState {
         self.fallback_import_type_options_once = false;
         self.in_import_type_options_context = false;
         self.import_attribute_tail_recovered = false;
+        self.suppress_object_literal_comma_once = false;
+        self.suppress_next_missing_close_paren_error_once = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -735,6 +745,15 @@ impl ParserState {
     /// Suppresses error if we already emitted an error at the current position
     /// (to prevent cascading errors from sequential `parse_expected` calls)
     pub fn parse_expected(&mut self, kind: SyntaxKind) -> bool {
+        if kind == SyntaxKind::CloseParenToken
+            && self.suppress_next_missing_close_paren_error_once
+        {
+            self.suppress_next_missing_close_paren_error_once = false;
+            if !self.is_token(SyntaxKind::CloseParenToken) {
+                return false;
+            }
+        }
+
         if self.is_token(kind) {
             // Check for TS1260 if consuming a keyword
             if token_is_keyword(kind) {

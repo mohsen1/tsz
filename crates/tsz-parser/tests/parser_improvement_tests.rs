@@ -253,6 +253,166 @@ fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
 }
 
 #[test]
+fn test_object_literal_statement_recovery_after_shorthand_property() {
+    let source = "var v = { a\nreturn;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let return_pos = source.find("return").expect("return position") as u32;
+    let semicolon_pos = source.rfind(';').expect("semicolon position") as u32;
+    let eof_pos = source.len() as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected."),
+        "Expected missing comma at the statement keyword, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        "Expected missing '}}' at EOF, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_statement_recovery_after_missing_initializer() {
+    let source = "var v = { a:\nreturn;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let return_pos = source.find("return").expect("return position") as u32;
+    let semicolon_pos = source.rfind(';').expect("semicolon position") as u32;
+    let eof_pos = source.len() as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1109 && diag.start == return_pos),
+        "Expected TS1109 at the statement keyword after a missing initializer, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected.")),
+        "Missing initializer recovery should not inject a comma error at the next statement keyword: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        "Expected missing '}}' at EOF, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_statement_recovery_after_trailing_comma() {
+    let source = "var v = { a: 1,\nreturn;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let return_pos = source.find("return").expect("return position") as u32;
+    let semicolon_pos = source.rfind(';').expect("semicolon position") as u32;
+    let eof_pos = source.len() as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.start == return_pos && diag.message == "',' expected.")),
+        "Trailing-comma recovery should not add an extra comma error at the next statement keyword: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "':' expected."),
+        "Expected missing ':' at the trailing semicolon, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == eof_pos && diag.message == "'}' expected."),
+        "Expected missing '}}' at EOF, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_function_parameter_list_missing_close_paren_reports_at_body_end() {
+    let source = "function f(a {\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let body_start = source.find('{').expect("body start") as u32;
+    let body_end = source.rfind('}').expect("body end") as u32 + 1;
+    let close_paren_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 1005 && diag.message == "')' expected.")
+        .collect();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == body_start && diag.message == "',' expected."),
+        "Expected missing comma at the body opener, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == body_end && diag.message == "')' expected."),
+        "Expected missing ')' after the recovered body, got {diagnostics:?}"
+    );
+    assert_eq!(
+        close_paren_diags.len(),
+        1,
+        "Expected only one missing ')' recovery diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
+    let source = "var v = (a): => { };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let colon_pos = source.find(':').expect("colon position") as u32;
+    let equals_pos = source.find("=>").expect("arrow position") as u32;
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 1110),
+        "Missing arrow return types should not fall into TS1110 typed-arrow recovery: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == colon_pos && diag.message == "',' expected."),
+        "Expected missing comma at ':', got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.start == equals_pos && diag.message == "';' expected."),
+        "Expected missing semicolon at '=>', got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
     let source = r#"
 type T = [first: string, rest: ...string[]?];
