@@ -310,6 +310,85 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             Some(TypeData::TypeParameter(_))
         )
     }
+
+    fn can_fast_path_large_union_index(&self) -> bool {
+        crate::type_queries::get_literal_property_name(self.evaluator.interner(), self.index_type)
+            .is_some()
+            || literal_number(self.evaluator.interner(), self.index_type).is_some()
+            || matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
+    }
+
+    fn try_fast_index_large_union_member(&mut self, member: TypeId) -> Option<TypeId> {
+        match self.evaluator.interner().lookup(member) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = self.evaluator.interner().object_shape(shape_id);
+                Some(
+                    self.evaluator
+                        .evaluate_object_index(&shape.properties, self.index_type),
+                )
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.evaluator.interner().object_shape(shape_id);
+                Some(
+                    self.evaluator
+                        .evaluate_object_with_index(&shape, self.index_type),
+                )
+            }
+            Some(TypeData::Array(element_type)) => Some(
+                self.evaluator
+                    .evaluate_array_index(element_type, self.index_type),
+            ),
+            Some(TypeData::Tuple(list_id)) => {
+                let elements = self.evaluator.interner().tuple_list(list_id);
+                Some(
+                    self.evaluator
+                        .evaluate_tuple_index(&elements, self.index_type),
+                )
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.evaluator.interner().callable_shape(shape_id);
+                Some(
+                    self.evaluator
+                        .evaluate_callable_index(&shape, self.index_type),
+                )
+            }
+            Some(TypeData::ReadonlyType(inner_type)) => {
+                self.try_fast_index_large_union_member(inner_type)
+            }
+            Some(TypeData::Lazy(def_id)) => {
+                let resolved = self
+                    .evaluator
+                    .resolver()
+                    .resolve_lazy(def_id, self.evaluator.interner())?;
+                if resolved == member {
+                    None
+                } else {
+                    self.try_fast_index_large_union_member(resolved)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn try_fast_index_large_union(&mut self, members: &[TypeId]) -> Option<TypeId> {
+        if !self.can_fast_path_large_union_index() {
+            return None;
+        }
+
+        let mut results = Vec::with_capacity(members.len());
+        for &member in members {
+            let result = self.try_fast_index_large_union_member(member)?;
+            if result != TypeId::UNDEFINED || self.evaluator.no_unchecked_indexed_access() {
+                results.push(result);
+            }
+        }
+
+        if results.is_empty() {
+            Some(TypeId::UNDEFINED)
+        } else {
+            Some(self.evaluator.interner().union(results))
+        }
+    }
 }
 
 impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
@@ -385,6 +464,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
         const MAX_UNION_INDEX_SIZE: usize = 100;
         if members.len() > MAX_UNION_INDEX_SIZE {
+            if let Some(result) = self.try_fast_index_large_union(&members) {
+                return Some(result);
+            }
             self.evaluator.mark_depth_exceeded();
             return Some(TypeId::ERROR);
         }
