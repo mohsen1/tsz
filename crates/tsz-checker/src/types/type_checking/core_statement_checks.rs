@@ -567,13 +567,33 @@ impl<'a> CheckerState<'a> {
 
         // Resolve just the constraint type node (e.g., Date, T, keyof T)
         // rather than the whole mapped type, to avoid side effects.
-        let constraint_type = self.get_type_from_type_node(tp_data.constraint);
+        let mut constraint_type = self.get_type_from_type_node(tp_data.constraint);
         if constraint_type == TypeId::ERROR {
             self.ctx.type_parameter_scope.remove(&name);
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
             return;
+        }
+
+        // Nested mapped types like `{ [Q in P]: ... }` rely on the outer mapped key
+        // parameter `P` carrying its `keyof T` constraint. Resolve bare type-parameter
+        // references through the current scoped bindings before validating them.
+        let scoped_name = self
+            .ctx
+            .arena
+            .get(tp_data.constraint)
+            .and_then(|n| self.ctx.arena.get_type_ref(n).map(|tr| tr.type_name))
+            .or(Some(tp_data.constraint))
+            .and_then(|idx| self.ctx.arena.get(idx))
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|ident| ident.escaped_text.clone());
+        if let Some(ref scoped_name) = scoped_name
+            && scoped_name.as_str() != name.as_str()
+            && let Some(&scoped_type) = self.ctx.type_parameter_scope.get(scoped_name.as_str())
+            && tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, scoped_type)
+        {
+            constraint_type = scoped_type;
         }
 
         let is_direct_self_constraint = if constraint_type == provisional_type_id {
@@ -674,7 +694,36 @@ impl<'a> CheckerState<'a> {
             }
             return;
         }
-        if !is_valid {
+        let references_enclosing_mapped_key = scoped_name.as_ref().is_some_and(|constraint_name| {
+            let mut current = self
+                .ctx
+                .arena
+                .get_extended(mapped_node_idx)
+                .and_then(|ext| (ext.parent != NodeIndex::NONE).then_some(ext.parent));
+            while let Some(parent_idx) = current {
+                let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent.kind == syntax_kind_ext::MAPPED_TYPE
+                    && let Some(parent_mapped) = self.ctx.arena.get_mapped_type(parent)
+                    && let Some(parent_tp_node) = self.ctx.arena.get(parent_mapped.type_parameter)
+                    && let Some(parent_tp) = self.ctx.arena.get_type_parameter(parent_tp_node)
+                    && let Some(parent_name_node) = self.ctx.arena.get(parent_tp.name)
+                    && let Some(parent_ident) = self.ctx.arena.get_identifier(parent_name_node)
+                    && &parent_ident.escaped_text == constraint_name
+                {
+                    return true;
+                }
+                current = self
+                    .ctx
+                    .arena
+                    .get_extended(parent_idx)
+                    .and_then(|ext| (ext.parent != NodeIndex::NONE).then_some(ext.parent));
+            }
+            false
+        });
+
+        if !is_valid && !references_enclosing_mapped_key {
             let constraint_name = {
                 let mut formatter = self.ctx.create_type_formatter();
                 formatter.format(constraint_type)
