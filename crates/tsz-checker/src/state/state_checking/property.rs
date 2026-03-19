@@ -244,6 +244,7 @@ impl<'a> CheckerState<'a> {
             //    structurally-matched members, causing false TS2353 errors.
             let discriminant_shapes = self
                 .discriminant_matching_union_member_indices(
+                    idx,
                     source_props,
                     &target_shapes,
                     explicit_property_names.as_ref(),
@@ -622,6 +623,7 @@ impl<'a> CheckerState<'a> {
             .collect();
         let matching_indices = self
             .discriminant_matching_union_member_indices(
+                obj_literal_idx,
                 source_props,
                 &union_shapes,
                 explicit_property_names.as_ref(),
@@ -681,18 +683,19 @@ impl<'a> CheckerState<'a> {
 
     fn discriminant_matching_union_member_indices(
         &mut self,
+        obj_literal_idx: NodeIndex,
         source_props: &[tsz_solver::PropertyInfo],
         union_shapes: &[std::sync::Arc<tsz_solver::ObjectShape>],
         explicit_property_names: Option<&HashSet<Atom>>,
     ) -> Option<Vec<usize>> {
-        for source_prop in source_props {
-            if explicit_property_names.is_some_and(|names| !names.contains(&source_prop.name)) {
-                continue;
-            }
+        let direct_discriminants =
+            self.object_literal_direct_unit_discriminants(obj_literal_idx, explicit_property_names);
 
-            if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
+        for (prop_name, prop_type) in direct_discriminants {
+            let source_prop = source_props.iter().find(|prop| prop.name == prop_name);
+            let Some(source_prop) = source_prop else {
                 continue;
-            }
+            };
 
             let mut target_prop_types = Vec::with_capacity(union_shapes.len());
             for shape in union_shapes {
@@ -720,8 +723,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, &target_ty)| {
-                    self.is_subtype_of(source_prop.type_id, target_ty)
-                        .then_some(i)
+                    self.is_subtype_of(prop_type, target_ty).then_some(i)
                 })
                 .collect();
 
@@ -731,6 +733,45 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn object_literal_direct_unit_discriminants(
+        &mut self,
+        obj_literal_idx: NodeIndex,
+        explicit_property_names: Option<&HashSet<Atom>>,
+    ) -> Vec<(Atom, TypeId)> {
+        let Some(obj_node) = self.ctx.arena.get(obj_literal_idx) else {
+            return Vec::new();
+        };
+        let Some(obj_lit) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return Vec::new();
+        };
+
+        let mut discriminants = Vec::new();
+        for &elem_idx in &obj_lit.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                continue;
+            };
+            let Some(prop_name) = self.get_property_name_resolved(prop.name) else {
+                continue;
+            };
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if explicit_property_names.is_some_and(|names| !names.contains(&prop_atom)) {
+                continue;
+            }
+            let Some(lit_type) = self.literal_type_from_initializer(prop.initializer) else {
+                continue;
+            };
+            if !query::is_unit_type(self.ctx.types, lit_type) {
+                continue;
+            }
+            discriminants.push((prop_atom, lit_type));
+        }
+
+        discriminants
     }
 
     /// Detect whether an object shape represents the global `Object` or `Function`
