@@ -59,6 +59,5 @@ Progress: [████████████████░░░░] 80.0% (
 ```
 <!-- FOURSLASH_END -->
 
-All 6,320 fourslash tests are enabled (no skip list).
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
