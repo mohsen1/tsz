@@ -50,7 +50,7 @@ pub struct ExpressionChecker<'a, 'ctx> {
 }
 
 impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
-    fn is_audited_contextual_request_cache_kind(kind: u16) -> bool {
+    const fn is_audited_contextual_request_cache_kind(kind: u16) -> bool {
         kind == SyntaxKind::NullKeyword as u16
             || kind == syntax_kind_ext::TYPE_OF_EXPRESSION
             || kind == syntax_kind_ext::VOID_EXPRESSION

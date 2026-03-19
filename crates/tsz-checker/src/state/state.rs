@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
     /// - Caching prevents redundant type computation
     /// - Circular reference detection prevents infinite recursion
     /// - Fuel management ensures termination even for malformed code
-    fn request_cache_is_audited_access_kind(kind: u16) -> bool {
+    const fn request_cache_is_audited_access_kind(kind: u16) -> bool {
         kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
     }

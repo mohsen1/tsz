@@ -43,7 +43,7 @@ pub struct RequestCacheCounters {
 }
 
 impl RequestCacheCounters {
-    pub fn merge(&mut self, other: Self) {
+    pub const fn merge(&mut self, other: Self) {
         self.request_cache_hits += other.request_cache_hits;
         self.request_cache_misses += other.request_cache_misses;
         self.contextual_cache_bypasses += other.contextual_cache_bypasses;
