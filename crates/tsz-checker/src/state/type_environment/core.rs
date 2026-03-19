@@ -716,7 +716,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         mapped_id: MappedTypeId,
     ) -> TypeId {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
         use tsz_solver::PropertyInfo;
         let factory = self.ctx.types.factory();
 
@@ -772,68 +771,8 @@ impl<'a> CheckerState<'a> {
         // Build the resulting object properties
         let mut properties = Vec::new();
         for key_name in string_keys {
-            // Create the key literal type
-            let key_literal = self.ctx.types.literal_string_atom(key_name);
-
-            // Instantiate the template without recursively expanding nested applications.
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_literal);
-
-            // Instantiate the template without recursively expanding nested applications.
-            let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
-
-            // CRITICAL: Evaluate the property type to resolve index access types.
-            // For mapped types like { [K in keyof T]?: T[K] }, after instantiation
-            // we get T["host"] which is an IndexAccess type that needs to be evaluated
-            // to get the actual property type (e.g., "string" for T["host"]).
-            //
-            // We handle this specially by directly resolving Lazy(DefId) index access
-            // types, because the TypeEvaluator might not have access to the type
-            // environment's def_types map during evaluation.
-            let property_type = if let Some((obj, _idx)) =
-                query::index_access_types(self.ctx.types, property_type)
-            {
-                // For IndexAccess types, we need to resolve the object type and get the property
-                // First, check if obj is a Lazy type that needs resolution
-                let obj_type = if let Some(def_id) = query::lazy_def_id(self.ctx.types, obj) {
-                    // Resolve the Lazy type to get the actual object type
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                        self.get_type_of_symbol(sym_id)
-                    } else {
-                        obj
-                    }
-                } else {
-                    obj
-                };
-                let obj_type = if crate::query_boundaries::state::checking::is_type_parameter_like(
-                    self.ctx.types,
-                    obj_type,
-                ) {
-                    crate::query_boundaries::state::checking::type_parameter_constraint(
-                        self.ctx.types,
-                        obj_type,
-                    )
-                    .map(|constraint| self.evaluate_type_with_resolution(constraint))
-                    .unwrap_or(obj_type)
-                } else {
-                    obj_type
-                };
-
-                // Now get the property type from the object
-                if let Some(prop) = tsz_solver::type_queries::find_property_in_object(
-                    self.ctx.types,
-                    obj_type,
-                    key_name,
-                ) {
-                    prop.type_id
-                } else {
-                    // Property not found or not an object type, fall back
-                    self.evaluate_type_with_env(property_type)
-                }
-            } else {
-                // Not an IndexAccess, evaluate normally
-                self.evaluate_type_with_env(property_type)
-            };
+            let property_type =
+                self.instantiate_mapped_property_template_with_env(&mapped, key_name);
 
             let optional = matches!(
                 mapped.optional_modifier,
@@ -859,6 +798,47 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.object(properties)
+    }
+
+    pub(crate) fn instantiate_mapped_property_template_with_env(
+        &mut self,
+        mapped: &tsz_solver::MappedType,
+        key_name: Atom,
+    ) -> TypeId {
+        let key_literal = self.ctx.types.literal_string_atom(key_name);
+        let property_type =
+            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
+                self.ctx.types,
+                mapped.template,
+                mapped.type_param.name,
+                key_literal,
+            );
+
+        if let Some((obj, _idx)) = query::index_access_types(self.ctx.types, property_type) {
+            let obj_type = if let Some(def_id) = query::lazy_def_id(self.ctx.types, obj) {
+                self.ctx
+                    .def_to_symbol_id(def_id)
+                    .map(|sym_id| self.get_type_of_symbol(sym_id))
+                    .unwrap_or(obj)
+            } else {
+                obj
+            };
+
+            let prop_name_arc = self.ctx.types.resolve_atom_ref(key_name);
+            let prop_name: &str = &prop_name_arc;
+            match self.resolve_property_access_with_env(obj_type, prop_name) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id, ..
+                } => return type_id,
+                tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => return type_id,
+                _ => {}
+            }
+        }
+
+        self.evaluate_type_with_env(property_type)
     }
 
     fn mapped_constraint_source_needs_array_like_preservation(
