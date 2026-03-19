@@ -208,12 +208,11 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     substitution,
                 );
-                contextual_constraint_preserves_literals(self.ctx.types, instantiated)
-                    || {
-                        let evaluated = self.evaluate_type_with_env(instantiated);
-                        evaluated != instantiated
-                            && contextual_constraint_preserves_literals(self.ctx.types, evaluated)
-                    }
+                contextual_constraint_preserves_literals(self.ctx.types, instantiated) || {
+                    let evaluated = self.evaluate_type_with_env(instantiated);
+                    evaluated != instantiated
+                        && contextual_constraint_preserves_literals(self.ctx.types, evaluated)
+                }
             });
             if preserve_literals {
                 continue;

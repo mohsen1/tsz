@@ -696,8 +696,10 @@ impl<'a> CheckerState<'a> {
         // normalization on recursive alias unions. Cases like
         // `['and', ...Expression[]] | ['not', Expression]` can overflow when
         // union simplification tries to compare recursive tuple members.
-        let has_recursive_alias_shape =
-            common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), parent_type);
+        let has_recursive_alias_shape = common_query::contains_lazy_or_recursive(
+            self.ctx.types.as_type_database(),
+            parent_type,
+        );
         let parent_type = if has_recursive_alias_shape {
             let parent_type = self.resolve_lazy_type(parent_type);
             let parent_type = self.resolve_type_for_property_access(parent_type);

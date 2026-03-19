@@ -1189,9 +1189,12 @@ impl<'a> CheckerState<'a> {
                                     })
                                 })
                                 .is_some_and(|arg_idx| {
-                                    if self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                                        index < skip.len() && skip[index]
-                                    }) {
+                                    if self
+                                        .ctx
+                                        .generic_excess_skip
+                                        .as_ref()
+                                        .is_some_and(|skip| index < skip.len() && skip[index])
+                                    {
                                         return false;
                                     }
                                     if is_type_parameter_type(self.ctx.types, expected_param) {
@@ -1242,9 +1245,12 @@ impl<'a> CheckerState<'a> {
                         && param.type_id != TypeId::ANY
                         && param.type_id != TypeId::UNKNOWN
                     {
-                        if self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                            i < skip.len() && skip[i]
-                        }) {
+                        if self
+                            .ctx
+                            .generic_excess_skip
+                            .as_ref()
+                            .is_some_and(|skip| i < skip.len() && skip[i])
+                        {
                             continue;
                         }
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);

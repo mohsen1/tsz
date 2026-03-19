@@ -212,8 +212,7 @@ impl<'a> CheckerState<'a> {
                         let ctx_type = ctx_helper
                             .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
                         let arg_request = request.read().contextual_opt(ctx_type);
-                        let arg_type =
-                            self.get_type_of_node_with_request(expr_idx, &arg_request);
+                        let arg_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
                         round1_arg_types.push(arg_type);
                     }
                 }

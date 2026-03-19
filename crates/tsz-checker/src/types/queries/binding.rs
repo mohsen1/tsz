@@ -1,5 +1,5 @@
-use crate::state::CheckerState;
 use crate::context::TypingRequest;
+use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -94,13 +94,12 @@ impl<'a> CheckerState<'a> {
                         //   stays "foo" for assignability checks against union types)
                         // The first evaluation caches the type, so contextual typing
                         // must be set here to ensure the cached type is correct.
-                        let request = if element_type != TypeId::ANY
-                            && element_type != TypeId::UNKNOWN
-                        {
-                            request.read().contextual(element_type)
-                        } else {
-                            request.read().contextual_opt(None)
-                        };
+                        let request =
+                            if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN {
+                                request.read().contextual(element_type)
+                            } else {
+                                request.read().contextual_opt(None)
+                            };
                         let init_type =
                             self.get_type_of_node_with_request(element_data.initializer, &request);
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
@@ -117,12 +116,11 @@ impl<'a> CheckerState<'a> {
                         && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                     {
-                        element_type =
-                            self.infer_type_from_binding_pattern_with_request(
-                                element_data.name,
-                                element_type,
-                                request,
-                            );
+                        element_type = self.infer_type_from_binding_pattern_with_request(
+                            element_data.name,
+                            element_type,
+                            request,
+                        );
                     }
 
                     let is_optional =
@@ -197,12 +195,11 @@ impl<'a> CheckerState<'a> {
                         && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                     {
-                        element_type =
-                            self.infer_type_from_binding_pattern_with_request(
-                                element_data.name,
-                                element_type,
-                                request,
-                            );
+                        element_type = self.infer_type_from_binding_pattern_with_request(
+                            element_data.name,
+                            element_type,
+                            request,
+                        );
                     }
 
                     let is_optional =
