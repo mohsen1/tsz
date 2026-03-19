@@ -286,7 +286,12 @@ fn test_completions_member_list_of_class_exact() {
     assert!(items.is_some(), "Should have member completions");
     let items = items.unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-    assert_eq!(names.len(), 2, "Expected exactly 2 completions (pubMeth, pubProp), got: {:?}", names);
+    assert_eq!(
+        names.len(),
+        2,
+        "Expected exactly 2 completions (pubMeth, pubProp), got: {:?}",
+        names
+    );
     assert!(names.contains(&"pubMeth"), "Should suggest pubMeth");
     assert!(names.contains(&"pubProp"), "Should suggest pubProp");
 }
