@@ -351,19 +351,26 @@ impl<'a> NarrowingContext<'a> {
         literal_value: TypeId,
         keep_matching: bool,
     ) -> Option<TypeId> {
-        // PERF: For keep_matching (true branch), use discriminant index for O(1)
-        // lookup instead of O(N) member iteration. This is the common case in
-        // switch-case narrowing where each case clause matches one member.
-        if keep_matching
-            && members.len() >= 8
-            && let Some(result) = self.fast_narrow_via_discriminant_index(
+        // PERF: Use discriminant index for O(1) lookup instead of O(N) member iteration.
+        // Works for both true branch (keep matching) and false branch (exclude matching).
+        if members.len() >= 8 {
+            if keep_matching {
+                if let Some(result) = self.fast_narrow_via_discriminant_index(
+                    original_union_type,
+                    members,
+                    property,
+                    literal_value,
+                ) {
+                    return Some(result);
+                }
+            } else if let Some(result) = self.fast_narrow_excluding_via_discriminant_index(
                 original_union_type,
                 members,
                 property,
                 literal_value,
-            )
-        {
-            return Some(result);
+            ) {
+                return Some(result);
+            }
         }
 
         let mut kept = Vec::with_capacity(members.len());
@@ -478,6 +485,64 @@ impl<'a> NarrowingContext<'a> {
                 // Fall back to linear scan for these edge cases.
                 None
             }
+        }
+    }
+
+    /// O(1) discriminant narrowing for the false/excluding branch.
+    /// Builds the index if needed, then returns all members NOT matching the literal.
+    fn fast_narrow_excluding_via_discriminant_index(
+        &self,
+        original_union_type: TypeId,
+        members: &[TypeId],
+        property: Atom,
+        excluded_literal: TypeId,
+    ) -> Option<TypeId> {
+        // Build/retrieve the index (same as fast_narrow_via_discriminant_index)
+        let cache_key = (original_union_type, property);
+        let existing = self
+            .cache
+            .discriminant_index
+            .borrow()
+            .get(&cache_key)
+            .cloned();
+
+        let index = if let Some(idx) = existing {
+            idx
+        } else {
+            // Trigger index build via the positive path
+            let _ = self.fast_narrow_via_discriminant_index(
+                original_union_type,
+                members,
+                property,
+                excluded_literal,
+            );
+            // Re-fetch from cache
+            self.cache
+                .discriminant_index
+                .borrow()
+                .get(&cache_key)
+                .cloned()?
+        };
+
+        // Compute complement: all members from OTHER buckets
+        let excluded_set = index.get(&excluded_literal);
+        let mut kept = Vec::new();
+        for (_, bucket_members) in index.iter() {
+            for &m in bucket_members {
+                if excluded_set.is_none_or(|excluded| !excluded.contains(&m))
+                    && !kept.contains(&m)
+                {
+                    kept.push(m);
+                }
+            }
+        }
+
+        if kept.is_empty() {
+            Some(TypeId::NEVER)
+        } else if kept.len() == members.len() {
+            Some(original_union_type)
+        } else {
+            Some(union_or_single_preserve(self.db, kept))
         }
     }
 

@@ -324,6 +324,29 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    /// Check if a type contains type parameters, using the shared narrowing cache
+    /// when available to avoid per-call `FxHashMap` allocation.
+    fn contains_type_parameters_cached(&self, type_id: TypeId) -> bool {
+        if let Some(cache) = self.narrowing_cache {
+            let cached = cache
+                .contains_type_parameters_cache
+                .borrow()
+                .get(&type_id)
+                .copied();
+            if let Some(result) = cached {
+                return result;
+            }
+            let result = query::contains_type_parameters(self.interner, type_id);
+            cache
+                .contains_type_parameters_cache
+                .borrow_mut()
+                .insert(type_id, result);
+            result
+        } else {
+            query::contains_type_parameters(self.interner, type_id)
+        }
+    }
+
     /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
     /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
     pub(super) fn make_narrowing_context(&self) -> tsz_solver::NarrowingContext<'_> {
@@ -664,7 +687,7 @@ impl<'a> FlowAnalyzer<'a> {
         // CRITICAL: Check if initial type contains type parameters ONCE, outside the loop.
         // This prevents caching generic types across different instantiations.
         // See: https://github.com/microsoft/TypeScript/issues/9998
-        let initial_has_type_params = query::contains_type_parameters(self.interner, initial_type);
+        let initial_has_type_params = self.contains_type_parameters_cached(initial_type);
         let control_flow_typed_any_symbol = symbol_id
             .or_else(|| self.reference_symbol(reference))
             .is_some_and(|sid| self.is_control_flow_typed_any_symbol(sid));
@@ -1417,7 +1440,7 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(cache) = self.flow_cache
             {
                 let final_has_type_params =
-                    query::contains_type_parameters(self.interner, final_type);
+                    self.contains_type_parameters_cached(final_type);
 
                 // Only cache if neither initial nor final types contain type parameters
                 if !initial_has_type_params && !final_has_type_params {
