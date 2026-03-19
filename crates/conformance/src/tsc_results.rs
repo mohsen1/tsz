@@ -250,3 +250,102 @@ impl TestStats {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::cache_key;
+    use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn diagnostic_fingerprint_normalizes_whitespace_and_display_uses_unknown_file() {
+        let fingerprint = DiagnosticFingerprint::new(
+            2307,
+            String::new(),
+            12,
+            4,
+            "  Cannot   find\nmodule\t'foo'  ",
+        );
+
+        assert_eq!(fingerprint.message_key, "Cannot find module 'foo'");
+        assert_eq!(
+            fingerprint.display_key(),
+            "TS2307 <unknown>:12:4 Cannot find module 'foo'"
+        );
+    }
+
+    #[test]
+    fn diagnostic_fingerprint_equality_includes_message_key_normalization() {
+        let a = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "one   two");
+        let b = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "one two");
+        let c = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "different");
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn error_frequency_ranks_by_total_then_insertion_order_is_not_relied_on() {
+        let freq = ErrorFrequency::default();
+
+        freq.record_missing(2307);
+        freq.record_extra(2307);
+        freq.record_missing(2307);
+        freq.record_extra(2322);
+        freq.record_extra(2322);
+        freq.record_missing(2353);
+
+        let top = freq.top_errors(2);
+        assert_eq!(top, vec![(2307, 2, 1), (2322, 0, 2)]);
+    }
+
+    #[test]
+    fn fingerprint_frequency_tracks_missing_and_extra_counts() {
+        let freq = ErrorFrequency::default();
+        let fp = DiagnosticFingerprint::new(2345, "file.ts".to_string(), 3, 9, "mismatch");
+
+        freq.record_missing_fingerprint(fp.clone());
+        freq.record_extra_fingerprint(fp.clone());
+        freq.record_extra_fingerprint(fp.clone());
+
+        let top = freq.top_fingerprint_errors(1);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].0, fp);
+        assert_eq!(top[0].1, 1);
+        assert_eq!(top[0].2, 2);
+    }
+
+    #[test]
+    fn test_stats_evaluated_and_pass_rate_handle_skips_and_zero_division() {
+        let stats = TestStats::default();
+        assert_eq!(stats.evaluated(), 0);
+        assert_eq!(stats.pass_rate(), 0.0);
+
+        stats.total.store(10, Ordering::SeqCst);
+        stats.skipped.store(3, Ordering::SeqCst);
+        stats.passed.store(7, Ordering::SeqCst);
+
+        assert_eq!(stats.evaluated(), 7);
+        assert_eq!(stats.pass_rate(), 100.0);
+    }
+
+    #[test]
+    fn tsc_result_deserializes_missing_fingerprints_as_empty() {
+        let value = serde_json::json!({
+            "metadata": { "mtime_ms": 1, "size": 2, "typescript_version": "5.4.0" },
+            "error_codes": [2307, 2322]
+        });
+
+        let result: TscResult = serde_json::from_value(value).expect("valid TscResult JSON");
+        assert!(result.diagnostic_fingerprints.is_empty());
+        assert_eq!(result.error_codes, vec![2307, 2322]);
+        assert_eq!(result.metadata.typescript_version.as_deref(), Some("5.4.0"));
+    }
+
+    #[test]
+    fn cache_key_returns_empty_relative_path_for_root_match() {
+        let test_dir = PathBuf::from("/repo/TypeScript/tests/cases");
+        assert_eq!(cache_key(&test_dir, &test_dir), Some(String::new()));
+    }
+}
