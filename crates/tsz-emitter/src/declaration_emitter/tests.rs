@@ -2535,6 +2535,104 @@ export var basePrototype = {
 }
 
 #[test]
+fn test_object_literal_computed_accessor_pair_emits_writable_symbol_property() {
+    let output = emit_dts_with_binding(
+        r#"
+var obj = {
+    get [Symbol.isConcatSpreadable]() { return ""; },
+    set [Symbol.isConcatSpreadable](x) { }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[Symbol.isConcatSpreadable]: string;"),
+        "Expected computed accessor pair to collapse to writable symbol property: {output}"
+    );
+    assert!(
+        !output.contains("readonly [Symbol.isConcatSpreadable]: string;"),
+        "Did not expect computed accessor pair to remain readonly: {output}"
+    );
+}
+
+#[test]
+fn test_object_literal_computed_literal_key_reuses_resolved_property_name() {
+    let source = r#"
+const Foo = {
+    BANANA: "banana" as "banana",
+};
+
+export const Baa = {
+    [Foo.BANANA]: 1,
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let baa_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("Baa"))
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .map(|(_, decl)| decl)
+        .expect("missing Baa declaration");
+    let object_literal = parser
+        .arena
+        .get(baa_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing Baa object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+    let computed_expr = parser
+        .arena
+        .get(prop_assignment.name)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("missing computed property name");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let banana_type = interner.literal_string("banana");
+    let banana_atom = interner.intern_string("banana");
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(banana_atom, TypeId::NUMBER)],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(computed_expr.0, banana_type);
+    type_cache.node_types.insert(baa_decl.initializer.0, object_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("banana: number;"),
+        "Expected computed literal key to emit resolved property name: {output}"
+    );
+    assert!(
+        !output.contains("[Foo.BANANA]: number;"),
+        "Did not expect computed literal key syntax to leak into declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_enum_member_initializers_respect_const_assertion_widening() {
     let output = emit_dts_with_binding(
         r#"

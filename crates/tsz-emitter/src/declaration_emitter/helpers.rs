@@ -4678,13 +4678,13 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(n) = self.arena.get(idx) {
                 if n.kind == syntax_kind_ext::SET_ACCESSOR {
                     if let Some(acc) = self.arena.get_accessor(n)
-                        && let Some(name) = self.infer_property_name_text(acc.name)
+                        && let Some(name) = self.object_literal_member_name_text(acc.name)
                     {
                         setter_names.insert(name);
                     }
                 } else if n.kind == syntax_kind_ext::GET_ACCESSOR
                     && let Some(acc) = self.arena.get_accessor(n)
-                    && let Some(name) = self.infer_property_name_text(acc.name)
+                    && let Some(name) = self.object_literal_member_name_text(acc.name)
                 {
                     getter_names.insert(name);
                 }
@@ -4696,49 +4696,20 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
-            // Handle setters: skip if there's a matching getter (merged),
-            // otherwise emit as writable property with setter parameter type
-            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(acc) = self.arena.get_accessor(member_node)
-                && let Some(name) = self.infer_property_name_text(acc.name)
-            {
-                if getter_names.contains(&name) {
-                    continue; // merged with getter
-                }
-                // Setter-only: emit as writable property using first param type
-                let type_text = acc
-                    .parameters
-                    .nodes
-                    .first()
-                    .and_then(|&p_idx| self.arena.get(p_idx))
-                    .and_then(|p_node| self.arena.get_parameter(p_node))
-                    .and_then(|param| {
-                        self.infer_fallback_type_text_at(param.type_annotation, depth + 1)
-                    })
-                    .unwrap_or_else(|| "any".to_string());
-                members.push(format!("{name}: {type_text}"));
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
                 continue;
-            }
-            // For getters: handle readonly based on setter existence + infer body type
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                && let Some(acc) = self.arena.get_accessor(member_node)
-                && let Some(name) = self.infer_property_name_text(acc.name)
-            {
-                let type_text = self
-                    .infer_fallback_type_text_at(acc.type_annotation, depth + 1)
-                    .or_else(|| self.function_body_preferred_return_type_text(acc.body))
-                    .unwrap_or_else(|| "any".to_string());
-                let readonly = if setter_names.contains(&name) {
-                    ""
-                } else {
-                    "readonly "
-                };
-                members.push(format!("{readonly}{name}: {type_text}"));
+            };
+            let Some(name) = self.object_literal_member_name_text(name_idx) else {
                 continue;
-            }
+            };
 
-            if let Some(member_text) = self.infer_object_member_type_text_at(member_idx, depth + 1)
-            {
+            if let Some(member_text) = self.infer_object_member_type_text_named_at(
+                member_idx,
+                &name,
+                depth + 1,
+                getter_names.contains(&name),
+                setter_names.contains(&name),
+            ) {
                 members.push(member_text);
             }
         }
@@ -4760,17 +4731,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn infer_object_member_type_text_at(
+    fn infer_object_member_type_text_named_at(
         &self,
         member_idx: NodeIndex,
+        name: &str,
         depth: u32,
+        getter_exists: bool,
+        setter_exists: bool,
     ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
 
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 let data = self.arena.get_property_assignment(member_node)?;
-                let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
                     .preferred_object_member_initializer_type_text(data.initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
@@ -4778,7 +4751,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let data = self.arena.get_shorthand_property(member_node)?;
-                let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
                     .preferred_object_member_initializer_type_text(
                         data.object_assignment_initializer,
@@ -4789,17 +4761,32 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let data = self.arena.get_accessor(member_node)?;
-                let name = self.infer_property_name_text(data.name)?;
                 // Infer return type: explicit annotation > body inference > any
                 let type_text = self
                     .infer_fallback_type_text_at(data.type_annotation, depth)
                     .or_else(|| self.function_body_preferred_return_type_text(data.body))
                     .unwrap_or_else(|| "any".to_string());
-                Some(format!("readonly {name}: {type_text}"))
+                let readonly = if setter_exists { "" } else { "readonly " };
+                Some(format!("{readonly}{name}: {type_text}"))
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                if getter_exists {
+                    return None;
+                }
+
+                let data = self.arena.get_accessor(member_node)?;
+                let type_text = data
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&p_idx| self.arena.get(p_idx))
+                    .and_then(|p_node| self.arena.get_parameter(p_node))
+                    .and_then(|param| self.infer_fallback_type_text_at(param.type_annotation, depth))
+                    .unwrap_or_else(|| "any".to_string());
+                Some(format!("{name}: {type_text}"))
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                let name = self.infer_property_name_text(data.name)?;
                 let type_text = if data.parameters.nodes.is_empty() {
                     "readonly ".to_string()
                 } else {
@@ -4809,6 +4796,73 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn object_literal_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        self.resolved_computed_property_name_text(name_idx)
+            .or_else(|| self.infer_property_name_text(name_idx))
+    }
+
+    fn resolved_computed_property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+
+        let computed = self.arena.get_computed_property(name_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                let interner = self.type_interner?;
+                let type_id = self.get_node_type_or_names(&[expr_idx])?;
+                let literal = tsz_solver::visitor::literal_value(interner, type_id)?;
+                Some(Self::format_property_name_literal_value(&literal, interner))
+            }
+            _ => None,
+        }
+    }
+
+    fn format_property_name_literal_value(
+        literal: &tsz_solver::types::LiteralValue,
+        interner: &tsz_solver::TypeInterner,
+    ) -> String {
+        match literal {
+            tsz_solver::types::LiteralValue::String(atom) => {
+                Self::format_property_name_literal_text(&interner.resolve_atom(*atom))
+            }
+            tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
+            tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
+            tsz_solver::types::LiteralValue::BigInt(atom) => {
+                format!("{}n", interner.resolve_atom(*atom))
+            }
+        }
+    }
+
+    fn format_property_name_literal_text(text: &str) -> String {
+        if Self::is_unquoted_property_name(text) {
+            text.to_string()
+        } else {
+            format!("\"{text}\"")
+        }
+    }
+
+    fn is_unquoted_property_name(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return false;
+        }
+
+        chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     fn preferred_object_member_initializer_type_text(
@@ -5123,6 +5177,25 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let object = self.arena.get_literal_expr(init_node)?;
 
+        let mut setter_names = rustc_hash::FxHashSet::<String>::default();
+        let mut getter_names = rustc_hash::FxHashSet::<String>::default();
+        for &idx in &object.elements.nodes {
+            if let Some(n) = self.arena.get(idx) {
+                if n.kind == syntax_kind_ext::SET_ACCESSOR {
+                    if let Some(acc) = self.arena.get_accessor(n)
+                        && let Some(name) = self.object_literal_member_name_text(acc.name)
+                    {
+                        setter_names.insert(name);
+                    }
+                } else if n.kind == syntax_kind_ext::GET_ACCESSOR
+                    && let Some(acc) = self.arena.get_accessor(n)
+                    && let Some(name) = self.object_literal_member_name_text(acc.name)
+                {
+                    getter_names.insert(name);
+                }
+            }
+        }
+
         let mut computed_members = Vec::new();
         let mut overridden_members = Vec::new();
         let mut only_numeric_like = true;
@@ -5152,15 +5225,21 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let Some(name_text) = self.infer_property_name_text(name_idx) else {
+            let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
                 continue;
             };
-            let Some(member_text) =
-                self.infer_object_member_type_text_at(member_idx, self.indent_level + 1)
-            else {
+            let preserve_computed_syntax = name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && self.resolved_computed_property_name_text(name_idx).is_none();
+            let Some(member_text) = self.infer_object_member_type_text_named_at(
+                member_idx,
+                &name_text,
+                self.indent_level + 1,
+                getter_names.contains(&name_text),
+                setter_names.contains(&name_text),
+            ) else {
                 continue;
             };
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if preserve_computed_syntax {
                 // Skip methods with computed names — the solver already produces correct
                 // method signatures (e.g., `"new"(x: number): number`). Overriding them
                 // would emit a wrong property form like `"new": any`.
@@ -5246,6 +5325,15 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn object_literal_property_name_prefixes(name_text: &str) -> Vec<String> {
         let mut prefixes = vec![format!("{name_text}:")];
+
+        if let Some(unquoted) = name_text
+            .strip_prefix('"')
+            .and_then(|name| name.strip_suffix('"'))
+            .or_else(|| name_text.strip_prefix('\'').and_then(|name| name.strip_suffix('\'')))
+        {
+            prefixes.push(format!("\"{unquoted}\":"));
+            prefixes.push(format!("'{unquoted}':"));
+        }
 
         if let Some(negative_numeric) = name_text
             .strip_prefix("[-")
