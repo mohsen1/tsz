@@ -6,6 +6,7 @@ use crate::query_boundaries::type_computation::complex::{
 };
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
+use crate::classes_domain::class_summary::ClassMemberKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -115,16 +116,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.is_super_expression(object_expr)
-            && let Some(false) =
-                self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
+            && !is_static
+            && matches!(
+                self.summarize_class_chain(class_idx)
+                    .member_kind(property_name, false, true),
+                Some(ClassMemberKind::FieldLike)
+            )
         {
-            // Inside a class static block, `super.prop` accessing inherited static fields
-            // is valid — TypeScript does NOT emit TS2340/TS2855 in this context.
-            if self.find_enclosing_static_block(object_expr).is_some()
-                || self.find_enclosing_static_block(error_node).is_some()
-            {
-                return true;
-            }
             // When target < ES2022, useDefineForClassFields defaults to false and
             // super.prop for non-method members just works — tsc emits no error.
             // TS2855 only applies when useDefineForClassFields is effectively true
@@ -250,13 +248,15 @@ impl<'a> CheckerState<'a> {
     }
 
     fn super_static_block_reads_base_expando(
-        &self,
+        &mut self,
         class_idx: NodeIndex,
         property_name: &str,
     ) -> bool {
-        if self
-            .is_method_member_in_class_hierarchy(class_idx, property_name, true)
-            .is_some()
+        if matches!(
+            self.summarize_class_chain(class_idx)
+                .member_kind(property_name, true, true),
+            Some(ClassMemberKind::MethodLike | ClassMemberKind::FieldLike)
+        )
         {
             return false;
         }

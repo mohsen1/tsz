@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[derive(Clone)]
@@ -57,6 +58,16 @@ struct ClassOwnMemberSummary {
     visible_static_members: Vec<ClassMemberInfo>,
     all_instance_members: Vec<ClassMemberInfo>,
     all_static_members: Vec<ClassMemberInfo>,
+    visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
+    visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
+    all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
+    all_static_member_kinds: FxHashMap<String, ClassMemberKind>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClassMemberKind {
+    MethodLike,
+    FieldLike,
 }
 
 #[derive(Clone, Default)]
@@ -65,6 +76,10 @@ pub(crate) struct ClassChainSummary {
     visible_static_lookup: FxHashMap<String, ClassMemberInfo>,
     all_instance_lookup: FxHashMap<String, ClassMemberInfo>,
     all_static_lookup: FxHashMap<String, ClassMemberInfo>,
+    visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
+    visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
+    all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
+    all_static_member_kinds: FxHashMap<String, ClassMemberKind>,
     pub(crate) visible_instance_names: FxHashSet<String>,
     pub(crate) visible_static_names: FxHashSet<String>,
 }
@@ -83,6 +98,21 @@ impl ClassChainSummary {
             (true, false) => &self.all_static_lookup,
         };
         map.get(target_name)
+    }
+
+    pub(crate) fn member_kind(
+        &self,
+        target_name: &str,
+        target_is_static: bool,
+        skip_private: bool,
+    ) -> Option<ClassMemberKind> {
+        let map = match (target_is_static, skip_private) {
+            (false, true) => &self.visible_instance_member_kinds,
+            (true, true) => &self.visible_static_member_kinds,
+            (false, false) => &self.all_instance_member_kinds,
+            (true, false) => &self.all_static_member_kinds,
+        };
+        map.get(target_name).copied()
     }
 }
 
@@ -124,18 +154,22 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(info) = self.extract_class_member_info(member_idx, true) {
-                Self::push_own_member_info(
+                Self::record_own_member_info(
                     info,
                     &mut summary.visible_instance_members,
                     &mut summary.visible_static_members,
+                    &mut summary.visible_instance_member_kinds,
+                    &mut summary.visible_static_member_kinds,
                 );
             }
 
             if let Some(info) = self.extract_class_member_info(member_idx, false) {
-                Self::push_own_member_info(
+                Self::record_own_member_info(
                     info,
                     &mut summary.all_instance_members,
                     &mut summary.all_static_members,
+                    &mut summary.all_instance_member_kinds,
+                    &mut summary.all_static_member_kinds,
                 );
             }
 
@@ -165,18 +199,22 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, true)
                     {
-                        Self::push_own_member_info(
+                        Self::record_own_member_info(
                             info,
                             &mut summary.visible_instance_members,
                             &mut summary.visible_static_members,
+                            &mut summary.visible_instance_member_kinds,
+                            &mut summary.visible_static_member_kinds,
                         );
                     }
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
                     {
-                        Self::push_own_member_info(
+                        Self::record_own_member_info(
                             info,
                             &mut summary.all_instance_members,
                             &mut summary.all_static_members,
+                            &mut summary.all_instance_member_kinds,
+                            &mut summary.all_static_member_kinds,
                         );
                     }
                 }
@@ -280,6 +318,8 @@ impl<'a> CheckerState<'a> {
                 .push(info);
         }
 
+        self.collect_js_implicit_member_kinds(class, &mut summary);
+
         summary.initialization.constructor_assigned_fields =
             if let Some(body_idx) = summary.initialization.constructor_body {
                 constructor_assigned_properties(
@@ -344,6 +384,18 @@ impl<'a> CheckerState<'a> {
                 let name = info.name.clone();
                 summary.all_static_lookup.entry(name).or_insert(info);
             }
+            for (name, kind) in own_summary.visible_instance_member_kinds {
+                summary.visible_instance_member_kinds.entry(name).or_insert(kind);
+            }
+            for (name, kind) in own_summary.visible_static_member_kinds {
+                summary.visible_static_member_kinds.entry(name).or_insert(kind);
+            }
+            for (name, kind) in own_summary.all_instance_member_kinds {
+                summary.all_instance_member_kinds.entry(name).or_insert(kind);
+            }
+            for (name, kind) in own_summary.all_static_member_kinds {
+                summary.all_static_member_kinds.entry(name).or_insert(kind);
+            }
 
             current = self.get_base_class_idx(current_idx);
         }
@@ -399,15 +451,281 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn push_own_member_info(
+    fn record_own_member_info(
         info: ClassMemberInfo,
         instance_members: &mut Vec<ClassMemberInfo>,
         static_members: &mut Vec<ClassMemberInfo>,
+        instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+        static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
     ) {
+        let kind = Self::member_kind_from_info(&info);
+        let name = info.name.clone();
         if info.is_static {
+            static_member_kinds.entry(name).or_insert(kind);
             static_members.push(info);
         } else {
+            instance_member_kinds.entry(name).or_insert(kind);
             instance_members.push(info);
+        }
+    }
+
+    fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {
+        if info.is_method || info.is_accessor {
+            ClassMemberKind::MethodLike
+        } else {
+            ClassMemberKind::FieldLike
+        }
+    }
+
+    fn collect_js_implicit_member_kinds(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        if !self.ctx.is_js_file() {
+            return;
+        }
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            match member_node.kind {
+                syntax_kind_ext::CONSTRUCTOR => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    if ctor.body.is_some() {
+                        self.record_js_body_assigned_member_kinds(ctor.body, false, summary);
+                    }
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if method.body.is_some() {
+                        self.record_js_body_assigned_member_kinds(
+                            method.body,
+                            self.has_static_modifier(&method.modifiers),
+                            summary,
+                        );
+                    }
+                }
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if accessor.body.is_some() {
+                        self.record_js_body_assigned_member_kinds(
+                            accessor.body,
+                            self.has_static_modifier(&accessor.modifiers),
+                            summary,
+                        );
+                    }
+                }
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if let Some(body_idx) = self.function_like_body(prop.initializer) {
+                        self.record_js_body_assigned_member_kinds(
+                            body_idx,
+                            self.has_static_modifier(&prop.modifiers),
+                            summary,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn record_js_body_assigned_member_kinds(
+        &mut self,
+        body_idx: NodeIndex,
+        is_static: bool,
+        summary: &mut ClassOwnMemberSummary,
+    ) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return;
+        };
+
+        let statements = block.statements.nodes.clone();
+        let this_aliases = self.collect_js_this_aliases(&statements);
+
+        for stmt_idx in statements {
+            let Some(name) = self.js_implicit_member_name(stmt_idx, &this_aliases) else {
+                continue;
+            };
+            Self::record_member_kind(
+                name.clone(),
+                is_static,
+                ClassMemberKind::FieldLike,
+                &mut summary.visible_instance_member_kinds,
+                &mut summary.visible_static_member_kinds,
+            );
+            Self::record_member_kind(
+                name,
+                is_static,
+                ClassMemberKind::FieldLike,
+                &mut summary.all_instance_member_kinds,
+                &mut summary.all_static_member_kinds,
+            );
+        }
+    }
+
+    fn record_member_kind(
+        name: String,
+        is_static: bool,
+        kind: ClassMemberKind,
+        instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+        static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+    ) {
+        if is_static {
+            static_member_kinds.entry(name).or_insert(kind);
+        } else {
+            instance_member_kinds.entry(name).or_insert(kind);
+        }
+    }
+
+    fn collect_js_this_aliases(&self, statements: &[NodeIndex]) -> FxHashSet<String> {
+        let mut aliases = FxHashSet::default();
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.ctx.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+                        continue;
+                    };
+                    if init_node.kind != SyntaxKind::ThisKeyword as u16 {
+                        continue;
+                    }
+                    let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    aliases.insert(ident.escaped_text.clone());
+                }
+            }
+        }
+
+        aliases
+    }
+
+    fn js_implicit_member_name(
+        &mut self,
+        stmt_idx: NodeIndex,
+        this_aliases: &FxHashSet<String>,
+    ) -> Option<String> {
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+
+        let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+        let (access, is_element_access) = if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                return None;
+            }
+            let lhs_node = self.ctx.arena.get(binary.left)?;
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                return None;
+            }
+            (
+                self.ctx.arena.get_access_expr(lhs_node)?,
+                lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
+            )
+        } else {
+            if self.jsdoc_type_annotation_for_node(stmt_idx).is_none() {
+                return None;
+            }
+            if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                return None;
+            }
+            (
+                self.ctx.arena.get_access_expr(expr_node)?,
+                expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
+            )
+        };
+
+        let object_node = self.ctx.arena.get(access.expression)?;
+        let is_this_or_alias = if object_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if object_node.kind == SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(object_node)
+                .is_some_and(|ident| this_aliases.contains(ident.escaped_text.as_str()))
+        } else {
+            false
+        };
+        if !is_this_or_alias {
+            return None;
+        }
+
+        if is_element_access {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let key_type = self.get_type_of_node(access.name_or_argument);
+            self.ctx.preserve_literal_types = prev_preserve;
+
+            crate::query_boundaries::type_computation::access::literal_property_name(
+                self.ctx.types,
+                key_type,
+            )
+            .map(|atom| self.ctx.types.resolve_atom(atom))
+        } else {
+            let name_node = self.ctx.arena.get(access.name_or_argument)?;
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                return None;
+            }
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            Some(ident.escaped_text.clone())
+        }
+    }
+
+    fn function_like_body(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(node_idx)?;
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .and_then(|func| (!func.body.is_none()).then_some(func.body)),
+            _ => None,
         }
     }
 

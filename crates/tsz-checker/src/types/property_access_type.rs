@@ -2,6 +2,7 @@
 //! and expando function pattern detection.
 
 use crate::context::TypingRequest;
+use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
@@ -13,6 +14,49 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn is_jsdoc_annotated_this_member_declaration(&mut self, idx: NodeIndex) -> bool {
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let mut current = idx;
+        for _ in 0..4 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                if self.jsdoc_type_annotation_for_node(ext.parent).is_none() {
+                    return false;
+                }
+                let Some(stmt) = self.ctx.arena.get_expression_statement(parent_node) else {
+                    return false;
+                };
+                let Some(expr_node) = self.ctx.arena.get(stmt.expression) else {
+                    return false;
+                };
+                if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                {
+                    return false;
+                }
+                let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+                let Some(base_node) = self.ctx.arena.get(access.expression) else {
+                    return false;
+                };
+                return base_node.kind == SyntaxKind::ThisKeyword as u16
+                    && self.this_has_contextual_owner(access.expression).is_some();
+            }
+            current = ext.parent;
+        }
+
+        false
+    }
+
     fn finalize_property_access_result(
         &self,
         idx: NodeIndex,
@@ -985,6 +1029,19 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if self.is_super_expression(access.expression)
+                && let Some((class_idx, is_static_access)) =
+                    self.resolve_class_for_access(access.expression, object_type_for_access)
+                && !is_static_access
+                && matches!(
+                    self.summarize_class_chain(class_idx)
+                        .member_kind(property_name, false, true),
+                    Some(ClassMemberKind::FieldLike)
+                )
+            {
+                return TypeId::ANY;
+            }
+
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
             let result =
@@ -1214,6 +1271,9 @@ impl<'a> CheckerState<'a> {
                         // keep checks when `this` is contextually owned by a class/object
                         // member (checkJs should still enforce member-consistent typing).
                         if self.this_has_contextual_owner(access.expression).is_none() {
+                            return TypeId::ANY;
+                        }
+                        if self.is_jsdoc_annotated_this_member_declaration(idx) {
                             return TypeId::ANY;
                         }
                         // Constructor and method bodies in JS/checkJs use `this.prop = value`

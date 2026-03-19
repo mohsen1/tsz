@@ -390,6 +390,54 @@ D.prototype.foo.call(new D());
 }
 
 #[test]
+fn test_js_super_implicit_base_field_reports_ts2855_without_missing_member_noise() {
+    let source = r#"
+class YaddaBase {
+    constructor() {
+        this.roots = "hi";
+        /** @type number */
+        this.justProp;
+        /** @type string */
+        this['literalElementAccess'];
+    }
+}
+
+class DerivedYadda extends YaddaBase {
+    get rootTests() {
+        return super.roots;
+    }
+    get justPropTests() {
+        return super.justProp;
+    }
+    get literalElementAccessTests() {
+        return super.literalElementAccess;
+    }
+}
+"#;
+
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2855),
+        "Expected JS super access to implicit base fields to report TS2855, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != 2339 && *code != 7053),
+        "Expected JS super implicit-field checks to avoid TS2339/TS7053 fallback noise, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_self_defaulting_expando_initializer_has_no_ts2565() {
     let source = r#"
 var test = {};
