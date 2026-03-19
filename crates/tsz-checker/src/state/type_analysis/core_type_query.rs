@@ -26,10 +26,6 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| self.merge_namespace_exports_into_object(sym_id, type_id))
     }
 
-    pub(crate) fn get_type_from_type_query_flow_sensitive(&mut self, idx: NodeIndex) -> TypeId {
-        self.get_type_from_type_query_flow_sensitive_with_request(idx, &TypingRequest::NONE)
-    }
-
     pub(crate) fn get_type_from_type_query_flow_sensitive_with_request(
         &mut self,
         idx: NodeIndex,

@@ -249,18 +249,6 @@ impl<'a> CheckerState<'a> {
     /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
     /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
     /// We infer the binding element type from the destructured value type and cache it on the symbol.
-    pub(crate) fn assign_binding_pattern_symbol_types(
-        &mut self,
-        pattern_idx: NodeIndex,
-        parent_type: TypeId,
-    ) {
-        self.assign_binding_pattern_symbol_types_with_request(
-            pattern_idx,
-            parent_type,
-            &TypingRequest::NONE,
-        );
-    }
-
     pub(crate) fn assign_binding_pattern_symbol_types_with_request(
         &mut self,
         pattern_idx: NodeIndex,
@@ -667,22 +655,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the expected type for a binding element from its parent type.
-    pub(crate) fn get_binding_element_type(
-        &mut self,
-        pattern_idx: NodeIndex,
-        element_index: usize,
-        parent_type: TypeId,
-        element_data: &tsz_parser::parser::node::BindingElementData,
-    ) -> TypeId {
-        self.get_binding_element_type_with_request(
-            pattern_idx,
-            element_index,
-            parent_type,
-            element_data,
-            &TypingRequest::NONE,
-        )
-    }
-
     pub(crate) fn get_binding_element_type_with_request(
         &mut self,
         pattern_idx: NodeIndex,
