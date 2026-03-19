@@ -1228,7 +1228,9 @@ impl ParserState {
         *seen_extends = true;
         self.next_token();
 
-        if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::ImplementsKeyword)
+        if self.is_token(SyntaxKind::ImplementsKeyword)
+            || (self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.look_ahead_is_object_literal_heritage_expression())
         {
             // Use full start position (including leading trivia) to match TSC's
             // grammarErrorAtPos(node, types.pos, 0, ...) which uses getTokenFullStart().
@@ -1393,12 +1395,51 @@ impl ParserState {
         self.parse_heritage_left_hand_expression()
     }
 
+    fn look_ahead_is_object_literal_heritage_expression(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::OpenBraceToken) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        let mut brace_depth = 0u32;
+        let mut result = false;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenBraceToken => {
+                    brace_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBraceToken => {
+                    if brace_depth == 0 {
+                        break;
+                    }
+                    brace_depth -= 1;
+                    self.next_token();
+                    if brace_depth == 0 {
+                        result = self.is_token(SyntaxKind::OpenBraceToken);
+                        break;
+                    }
+                }
+                _ => {
+                    self.next_token();
+                }
+            }
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        result
+    }
+
     /// Parse heritage type reference for interfaces (extends clause).
     /// Interfaces must reference types; literals or arbitrary expressions should produce diagnostics.
     pub(crate) fn parse_interface_heritage_type_reference(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
 
-        if self.is_token(SyntaxKind::OpenParenToken) {
+        if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::OpenBracketToken)
+        {
             let start_pos = self.token_pos();
             let invalid_ref = self.parse_heritage_type_reference();
             let end_pos = self.token_end();
@@ -1464,18 +1505,26 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::NewKeyword)
         {
             self.parse_left_hand_side_expression()
+        } else if self.is_token(SyntaxKind::VoidKeyword) {
+            let start_pos = self.token_pos();
+            let end_pos = self.token_end();
+            self.error_expression_expected();
+            self.next_token();
+            self.arena
+                .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
         } else if matches!(
             self.token(),
             SyntaxKind::NullKeyword
                 | SyntaxKind::TrueKeyword
                 | SyntaxKind::FalseKeyword
                 | SyntaxKind::UndefinedKeyword
-                | SyntaxKind::VoidKeyword
                 | SyntaxKind::NumericLiteral
                 | SyntaxKind::StringLiteral
                 | SyntaxKind::BigIntLiteral
                 | SyntaxKind::NoSubstitutionTemplateLiteral
                 | SyntaxKind::TemplateHead
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::OpenBracketToken
         ) {
             self.parse_primary_expression()
         } else if self.is_identifier_or_keyword() {

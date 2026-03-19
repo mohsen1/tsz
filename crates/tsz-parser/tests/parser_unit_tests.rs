@@ -1613,6 +1613,173 @@ fn class_out_of_order_extends_recovery_keeps_trailing_clause() {
     );
 }
 
+#[test]
+fn class_extends_object_literal_recovery_keeps_body_and_uses_ts1005() {
+    let source = "class C extends { foo: string; } { method() {} }";
+    let (parser, root) = parse_source(source);
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 from the object-literal separator recovery, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::LIST_CANNOT_BE_EMPTY),
+        "should not treat the object literal as an empty extends list, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "should not spill the heritage literal into class-member parsing, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "should not emit TS1109 for object literal bases, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        1,
+        "should keep a single extends clause"
+    );
+    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
+    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    assert_eq!(
+        clause.types.nodes.len(),
+        1,
+        "should keep one base expression"
+    );
+    let base_node = arena.get(clause.types.nodes[0]).expect("base");
+    assert_eq!(
+        base_node.kind,
+        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION,
+        "extends base should recover as an object literal expression"
+    );
+    assert_eq!(
+        class.members.nodes.len(),
+        1,
+        "class body should still parse"
+    );
+}
+
+#[test]
+fn class_extends_array_literal_expression_keeps_body() {
+    let source = "class C extends [] { method() {} }";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "class extends array literal");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
+    assert_eq!(
+        heritage.nodes.len(),
+        1,
+        "should keep a single extends clause"
+    );
+    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
+    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    assert_eq!(
+        clause.types.nodes.len(),
+        1,
+        "should keep one base expression"
+    );
+    let base_node = arena.get(clause.types.nodes[0]).expect("base");
+    assert_eq!(
+        base_node.kind,
+        syntax_kind_ext::ARRAY_LITERAL_EXPRESSION,
+        "extends base should recover as an array literal expression"
+    );
+    assert_eq!(
+        class.members.nodes.len(),
+        1,
+        "class body should still parse"
+    );
+}
+
+#[test]
+fn class_extends_void_emits_ts1109_and_preserves_body() {
+    let (parser, root) = parse_source("class C extends void { method() {} }");
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for `extends void`, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::LIST_CANNOT_BE_EMPTY),
+        "should not treat `void` as an empty extends list, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "should not spill `void` into class-member parsing, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    assert_eq!(
+        class.members.nodes.len(),
+        1,
+        "class body should still parse"
+    );
+}
+
+#[test]
+fn class_empty_extends_list_still_reports_ts1097() {
+    let (parser, _root) = parse_source("class C extends { }");
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::LIST_CANNOT_BE_EMPTY),
+        "expected TS1097 for an empty extends list, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn interface_extends_array_literal_reports_interface_heritage_error() {
+    let (parser, _root) = parse_source("interface I extends [] {}");
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG
+        ),
+        "expected the interface-specific heritage diagnostic, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
 // =============================================================================
 // 6. Statement Edge Cases (8+ tests)
 // =============================================================================
