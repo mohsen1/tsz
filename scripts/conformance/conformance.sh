@@ -51,6 +51,7 @@ Run options:
   --offset N        Skip first N tests (default: 0)
   --workers N       Number of parallel workers (default: 16)
   --profile NAME    Cargo build profile (default: dist-fast)
+  --test-dir PATH   Override TypeScript test corpus path
   --no-cache        Force cache regeneration even if cache exists
   --force           Override snapshot safety guards (dirty-tree + regression check)
 
@@ -380,7 +381,7 @@ run_tests() {
     #   verbose: FAIL lines with expected/actual, file bodies, fingerprint deltas
     local runner_flags=()
     if [ "$verbose" = true ]; then
-        runner_flags+=(--print-test --print-test-files --print-fingerprints --verbose)
+        runner_flags+=(--print-test-files --print-fingerprints --verbose)
     fi
 
     # Always capture per-test results for diffing against baseline.
@@ -785,6 +786,11 @@ while [ $i -lt ${#@} ]; do
     elif [ "$arg" = "--workers" ]; then
         i=$((i + 1))
         WORKERS="${@:$((i+1)):1}"
+    elif [ "$arg" = "--test-dir" ]; then
+        i=$((i + 1))
+        TEST_DIR="${@:$((i+1)):1}"
+    elif [[ "$arg" == --test-dir=* ]]; then
+        TEST_DIR="${arg#--test-dir=}"
     elif [ "$arg" = "--profile" ]; then
         i=$((i + 1))
         BUILD_PROFILE="${@:$((i+1)):1}"

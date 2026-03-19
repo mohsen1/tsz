@@ -1693,6 +1693,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(prop) = self.ctx.arena.get_property_decl(node)
                 && !self.has_static_modifier(&prop.modifiers)
                 && !in_class_decorator
+                && !self.is_in_decorator_of_declaration(usage_idx, current)
             {
                 return false;
             }

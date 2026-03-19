@@ -91,6 +91,7 @@ impl<'a> CheckerState<'a> {
                 && !is_tdz_in_property_initializer
                 && !is_tdz_in_heritage_clause
                 && !self.is_in_static_property_initializer_ast_context(idx)
+                && !self.is_in_class_member_decorator_ast_context(idx)
                 && !self.is_in_binding_element_default_initializer(idx)
                 && self.ctx.strict_null_checks()
                 && (!self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
@@ -125,12 +126,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2729 companion for static property initializers:
-            // in `X.Y`, when `X` is in TDZ, tsc also reports that `Y` is used
-            // before initialization at the property name site.
+            // TS2729 companion for property-value TDZ reads that happen during
+            // class definition work:
+            // - static property initializers
+            // - property decorator expressions
+            //
+            // In `X.Y`, when `X` is in TDZ, tsc also reports that `Y` is used
+            // before initialization at the property name site in those contexts.
             // Skip when inside a computed property name — those use A.p1 as a
             // key, not as a value, and tsc doesn't emit TS2729 there.
-            if self.is_in_static_property_initializer_ast_context(idx)
+            if (self.is_in_static_property_initializer_ast_context(idx)
+                || self.is_in_property_decorator_ast_context(idx))
                 && self.find_enclosing_computed_property(idx).is_none()
                 && let Some(ext) = self.ctx.arena.get_extended(idx)
                 && ext.parent.is_some()
@@ -157,6 +163,137 @@ impl<'a> CheckerState<'a> {
             // `get_invalid_index_type_member` correctly returns None for `any`.
         }
         is_tdz
+    }
+
+    /// Returns true when `usage_idx` is lexically inside a decorator expression
+    /// that belongs to a class member decorator (including parameter decorators).
+    fn is_in_class_member_decorator_ast_context(&self, usage_idx: NodeIndex) -> bool {
+        self.decorated_class_member_owner_kind(usage_idx).is_some()
+    }
+
+    /// Returns true when `usage_idx` is lexically inside a decorator expression
+    /// that belongs to a property declaration.
+    fn is_in_property_decorator_ast_context(&self, usage_idx: NodeIndex) -> bool {
+        self.decorated_class_member_owner_kind(usage_idx)
+            == Some(syntax_kind_ext::PROPERTY_DECLARATION)
+    }
+
+    fn decorated_class_member_owner_kind(&self, usage_idx: NodeIndex) -> Option<u16> {
+        let mut current = usage_idx;
+        let mut decorator_idx = NodeIndex::NONE;
+        let mut class_idx = NodeIndex::NONE;
+        while current.is_some() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return None;
+            };
+
+            if node.kind == syntax_kind_ext::DECORATOR {
+                decorator_idx = current;
+            }
+
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                class_idx = current;
+                break;
+            }
+
+            if node.is_function_like() && !self.ctx.arena.is_immediately_invoked(current) {
+                return None;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return None;
+            };
+            current = ext.parent;
+        }
+
+        if decorator_idx.is_none() || class_idx.is_none() {
+            return None;
+        }
+
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return None;
+        };
+        let Some(class) = self.ctx.arena.get_class(class_node) else {
+            return None;
+        };
+
+        class.members.nodes.iter().find_map(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return None;
+            };
+            let member_has_decorator = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|prop| prop.modifiers.as_ref())
+                    .is_some_and(|modifiers| modifiers.nodes.contains(&decorator_idx)),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|method| method.modifiers.as_ref())
+                    .is_some_and(|modifiers| modifiers.nodes.contains(&decorator_idx)),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .and_then(|accessor| accessor.modifiers.as_ref())
+                        .is_some_and(|modifiers| modifiers.nodes.contains(&decorator_idx))
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(member_node)
+                    .and_then(|ctor| ctor.modifiers.as_ref())
+                    .is_some_and(|modifiers| modifiers.nodes.contains(&decorator_idx)),
+                _ => false,
+            };
+            if member_has_decorator {
+                return Some(member_node.kind);
+            }
+
+            let parameter_lists = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .map(|method| &method.parameters),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .map(|accessor| &accessor.parameters)
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(member_node)
+                    .map(|ctor| &ctor.parameters),
+                _ => None,
+            };
+
+            if let Some(parameters) = parameter_lists {
+                for &param_idx in &parameters.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    if self
+                        .ctx
+                        .arena
+                        .get_parameter(param_node)
+                        .and_then(|param| param.modifiers.as_ref())
+                        .is_some_and(|modifiers| modifiers.nodes.contains(&decorator_idx))
+                    {
+                        return Some(syntax_kind_ext::PARAMETER);
+                    }
+                }
+            }
+
+            None
+        })
     }
 
     /// Returns true when `usage_idx` is lexically inside a static class property

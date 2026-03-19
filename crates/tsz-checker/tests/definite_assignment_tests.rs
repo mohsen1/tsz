@@ -238,6 +238,79 @@ fn test_ts2564_named_class_expression_prefers_outer_namespace_member_resolution(
 }
 
 #[test]
+fn test_ts2729_property_decorator_enum_member_forward_reference_only() {
+    let source = r"
+        function dec(...args: any[]): any {}
+
+        class C {
+            @dec(Enum.No)
+            prop: string;
+
+            @dec(Enum.No)
+            method() {}
+        }
+
+        enum Enum {
+            No = 0,
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            experimental_decorators: true,
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+        ),
+        1,
+        "TS2729 should be emitted for property decorators but not method decorators on the same forward enum member reference, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_generic_property_types_still_require_initialization() {
+    let source = r"
+        class Unconstrained<T> {
+            value: T;
+        }
+
+        class UnknownConstraint<T extends unknown> {
+            value: T;
+        }
+
+        class UndefinedConstraint<T extends string | undefined> {
+            value: T;
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        3,
+        "TS2564 should still be reported for generic property types, regardless of type-parameter constraints, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_definite_assignment_ts2454_control_flow_join() {
     let source = r"
         function f1(flag: boolean) {

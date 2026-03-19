@@ -1428,7 +1428,7 @@ impl<'a> CheckerState<'a> {
                 let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
                     continue;
                 };
-                let decorator_type = self.get_type_of_node(decorator.expression);
+                let decorator_type = self.compute_type_of_node(decorator.expression);
 
                 // TS1329: Check if the decorator accepts too few arguments for this position.
                 // For experimental decorators on methods/accessors, the decorator is called
