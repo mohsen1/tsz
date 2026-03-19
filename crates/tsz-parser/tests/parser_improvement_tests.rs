@@ -413,6 +413,39 @@ fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
 }
 
 #[test]
+fn test_optional_rest_parameter_reports_at_question_mark() {
+    let source = "(...arg?) => 102;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let question_pos = source.find('?').expect("question position") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1047
+                && diag.start == question_pos
+                && diag.message == "A rest parameter cannot be optional."
+        }),
+        "Expected TS1047 at the question mark, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_reserved_word_type_reference_in_parameter_does_not_emit_ts1359() {
+    let source = "class Foo { public banana(x: break) { } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 1359),
+        "Type positions should not reject reserved-word identifiers with TS1359: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
     let source = r#"
 type T = [first: string, rest: ...string[]?];
