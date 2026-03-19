@@ -102,6 +102,27 @@ fn find_class_symbol(
         .unwrap_or_else(|| panic!("missing symbol for class {name}"))
 }
 
+fn find_interface_symbol(parser: &ParserState, binder: &BinderState, name: &str) -> tsz_binder::SymbolId {
+    parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .and_then(|idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_interface(node))
+                        .filter(|iface| parser.arena.get_identifier_text(iface.name) == Some(name))
+                        .and_then(|_| binder.get_node_symbol(idx))
+                })
+        })
+        .unwrap_or_else(|| panic!("missing symbol for interface {name}"))
+}
+
 fn find_first_class_method_name(
     parser: &ParserState,
     class_name: &str,
@@ -157,6 +178,51 @@ fn find_first_class_node(parser: &ParserState, class_kind: u16) -> NodeIndex {
         .enumerate()
         .find_map(|(idx, node)| (node.kind == class_kind).then_some(NodeIndex(idx as u32)))
         .unwrap_or_else(|| panic!("missing class node of kind {class_kind}"))
+}
+
+fn find_class_node(parser: &ParserState, class_name: &str, class_kind: u16) -> NodeIndex {
+    parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == class_kind)
+                .then_some(NodeIndex(idx as u32))
+                .and_then(|idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_class(node))
+                        .filter(|class| {
+                            parser.arena.get_identifier_text(class.name) == Some(class_name)
+                        })
+                        .map(|_| idx)
+                })
+        })
+        .unwrap_or_else(|| panic!("missing class node for {class_name}"))
+}
+
+fn find_class_extends_expression(parser: &ParserState, class_idx: NodeIndex) -> NodeIndex {
+    let class = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class data");
+    let heritage = class
+        .heritage_clauses
+        .as_ref()
+        .and_then(|clauses| clauses.nodes.first().copied())
+        .and_then(|idx| parser.arena.get(idx))
+        .and_then(|node| parser.arena.get_heritage_clause(node))
+        .expect("missing heritage clause");
+    let type_idx = *heritage.types.nodes.first().expect("missing extends type");
+    parser
+        .arena
+        .get(type_idx)
+        .and_then(|node| parser.arena.get_expr_type_args(node))
+        .map(|eta| eta.expression)
+        .unwrap_or(type_idx)
 }
 
 #[test]
@@ -327,6 +393,118 @@ export function wrapClass(param: any) {
     assert!(
         printed.contains("foo(): any;"),
         "Expected named class expression methods to be preserved structurally: {printed}"
+    );
+}
+
+#[test]
+fn test_named_class_extends_expression_uses_synthetic_base_alias() {
+    let source = r#"
+interface MixedBase {
+    new (): {
+        bar: number;
+    };
+}
+declare function mixin(base: any): MixedBase;
+declare class Base {}
+export class Derived extends mixin(Base) {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "Derived",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let mixed_base_sym = find_interface_symbol(&parser, &binder, "MixedBase");
+
+    let interner = TypeInterner::new();
+    let mixed_base_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(mixed_base_sym),
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, mixed_base_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const Derived_base: MixedBase;"),
+        "Expected named class extends expression to synthesize a base alias: {output}"
+    );
+    assert!(
+        output.contains("export declare class Derived extends Derived_base {"),
+        "Expected class heritage to reference the synthetic base alias: {output}"
+    );
+    assert!(
+        !output.contains("extends mixin(Base)"),
+        "Did not expect raw extends expression to leak into declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_default_export_class_extends_expression_uses_synthetic_base_alias() {
+    let source = r#"
+interface GreeterConstructor {
+    new (): {};
+}
+declare function getGreeterBase(): GreeterConstructor;
+export default class extends getGreeterBase() {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_first_class_node(
+        &parser,
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let greeter_ctor_sym = find_interface_symbol(&parser, &binder, "GreeterConstructor");
+
+    let interner = TypeInterner::new();
+    let greeter_ctor_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(greeter_ctor_sym),
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, greeter_ctor_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const default_base: GreeterConstructor;"),
+        "Expected default export class extends expression to synthesize a default_base alias: {output}"
+    );
+    assert!(
+        output.contains("export default class extends default_base {"),
+        "Expected default export class to extend the synthetic base alias: {output}"
+    );
+    assert!(
+        !output.contains("extends getGreeterBase()"),
+        "Did not expect raw default export extends expression in declaration output: {output}"
     );
 }
 

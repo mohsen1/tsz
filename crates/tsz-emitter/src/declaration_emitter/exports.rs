@@ -490,6 +490,11 @@ impl<'a> DeclarationEmitter<'a> {
         let is_abstract = self
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+        let extends_alias = self.emit_synthetic_class_extends_alias_if_needed(
+            class.name,
+            class.heritage_clauses.as_ref(),
+            true,
+        );
 
         self.write_indent();
         self.write("export default ");
@@ -516,7 +521,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_heritage_clauses(heritage);
+            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
         }
 
         self.write(" {");
@@ -720,6 +725,11 @@ impl<'a> DeclarationEmitter<'a> {
         let is_abstract = self
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+        let extends_alias = self.emit_synthetic_class_extends_alias_if_needed(
+            class.name,
+            class.heritage_clauses.as_ref(),
+            false,
+        );
 
         self.write_indent();
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
@@ -741,7 +751,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_heritage_clauses(heritage);
+            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
         }
 
         self.write(" {");
@@ -1750,14 +1760,27 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_heritage_clauses(&mut self, clauses: &NodeList) {
-        self.emit_heritage_clauses_inner(clauses, false);
+        self.emit_heritage_clauses_inner(clauses, false, None);
+    }
+
+    pub(crate) fn emit_class_heritage_clauses(
+        &mut self,
+        clauses: &NodeList,
+        extends_alias: Option<&str>,
+    ) {
+        self.emit_heritage_clauses_inner(clauses, false, extends_alias);
     }
 
     pub(crate) fn emit_interface_heritage_clauses(&mut self, clauses: &NodeList) {
-        self.emit_heritage_clauses_inner(clauses, true);
+        self.emit_heritage_clauses_inner(clauses, true, None);
     }
 
-    fn emit_heritage_clauses_inner(&mut self, clauses: &NodeList, is_interface: bool) {
+    fn emit_heritage_clauses_inner(
+        &mut self,
+        clauses: &NodeList,
+        is_interface: bool,
+        extends_alias: Option<&str>,
+    ) {
         for &clause_idx in &clauses.nodes {
             let Some(clause_node) = self.arena.get(clause_idx) else {
                 continue;
@@ -1795,6 +1818,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(keyword);
             self.write(" ");
 
+            if heritage.token == SyntaxKind::ExtendsKeyword as u16
+                && let Some(alias_name) = extends_alias
+            {
+                self.write(alias_name);
+                continue;
+            }
+
             let mut first = true;
             for &type_idx in &valid_types {
                 if !first {
@@ -1810,7 +1840,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// property access chain). Non-entity-name expressions like `typeof X` or
     /// parenthesized expressions are invalid in interface `extends` clauses
     /// and should be stripped in .d.ts output.
-    fn is_entity_name_heritage(&self, type_idx: NodeIndex) -> bool {
+    pub(crate) fn is_entity_name_heritage(&self, type_idx: NodeIndex) -> bool {
         let Some(type_node) = self.arena.get(type_idx) else {
             return false;
         };

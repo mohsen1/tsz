@@ -146,6 +146,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
     /// Synthetic JSDoc type aliases already emitted for the current file.
     pub(super) emitted_jsdoc_type_aliases: FxHashSet<String>,
+    /// Local declarations emitted on-demand to support synthetic class base aliases.
+    pub(super) emitted_synthetic_dependency_symbols: FxHashSet<SymbolId>,
     /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).
     pub(super) diagnostics: Vec<Diagnostic>,
 }
@@ -233,6 +235,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
+            emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -301,6 +304,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
+            emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -661,6 +665,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_grouped_reexports = grouped_reexports;
         self.js_skipped_reexports = skipped_reexports;
         self.emitted_jsdoc_type_aliases.clear();
+        self.emitted_synthetic_dependency_symbols.clear();
         let deferred_js_namespace_objects =
             self.collect_js_namespace_object_statements(source_file);
 
@@ -1207,6 +1212,11 @@ impl<'a> DeclarationEmitter<'a> {
         let is_abstract = self
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+        let extends_alias = self.emit_synthetic_class_extends_alias_if_needed(
+            class.name,
+            class.heritage_clauses.as_ref(),
+            false,
+        );
 
         self.emit_pending_js_export_equals_for_name(class.name);
         self.write_indent();
@@ -1233,7 +1243,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Heritage clauses (extends, implements)
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_heritage_clauses(heritage);
+            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
         }
 
         self.write(" {");

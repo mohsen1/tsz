@@ -6367,6 +6367,162 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn non_nameable_extends_heritage_type(
+        &self,
+        clauses: &NodeList,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        for &clause_idx in &clauses.nodes {
+            let clause_node = self.arena.get(clause_idx)?;
+            let heritage = self.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let &type_idx = heritage.types.nodes.first()?;
+            if self.is_entity_name_heritage(type_idx) {
+                return None;
+            }
+
+            let expr_idx = self
+                .arena
+                .get(type_idx)
+                .and_then(|type_node| self.arena.get_expr_type_args(type_node))
+                .map(|eta| eta.expression)
+                .unwrap_or(type_idx);
+            return Some((type_idx, expr_idx));
+        }
+
+        None
+    }
+
+    fn retain_direct_type_symbols_for_public_api(&mut self, type_id: tsz_solver::TypeId) {
+        let (Some(used_symbols), Some(type_cache), Some(interner)) = (
+            self.used_symbols.as_mut(),
+            self.type_cache.as_ref(),
+            self.type_interner,
+        ) else {
+            return;
+        };
+
+        let mut mark = |sym_id: SymbolId| {
+            used_symbols
+                .entry(sym_id)
+                .and_modify(|kind| *kind |= super::usage_analyzer::UsageKind::TYPE)
+                .or_insert(super::usage_analyzer::UsageKind::TYPE);
+        };
+
+        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, type_id)
+            && let Some(&sym_id) = type_cache.def_to_symbol.get(&def_id)
+        {
+            mark(sym_id);
+        }
+
+        if let Some((def_id, _)) = tsz_solver::visitor::enum_components(interner, type_id)
+            && let Some(&sym_id) = type_cache.def_to_symbol.get(&def_id)
+        {
+            mark(sym_id);
+        }
+
+        if let Some(shape_id) = tsz_solver::visitor::object_shape_id(interner, type_id)
+            .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id))
+        {
+            if let Some(sym_id) = interner.object_shape(shape_id).symbol {
+                mark(sym_id);
+            }
+        }
+
+        if let Some(shape_id) = tsz_solver::visitor::callable_shape_id(interner, type_id)
+            && let Some(sym_id) = interner.callable_shape(shape_id).symbol
+        {
+            mark(sym_id);
+        }
+    }
+
+    fn emit_direct_symbol_dependency_for_type(&mut self, type_id: tsz_solver::TypeId) {
+        let Some(binder) = self.binder else {
+            return;
+        };
+        let Some(interner) = self.type_interner else {
+            return;
+        };
+        let Some(type_cache) = self.type_cache.as_ref() else {
+            return;
+        };
+
+        let symbol_id = tsz_solver::visitor::lazy_def_id(interner, type_id)
+            .and_then(|def_id| type_cache.def_to_symbol.get(&def_id).copied())
+            .or_else(|| {
+                tsz_solver::visitor::object_shape_id(interner, type_id)
+                    .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id))
+                    .and_then(|shape_id| interner.object_shape(shape_id).symbol)
+            })
+            .or_else(|| {
+                tsz_solver::visitor::callable_shape_id(interner, type_id)
+                    .and_then(|shape_id| interner.callable_shape(shape_id).symbol)
+            });
+        let Some(symbol_id) = symbol_id else {
+            return;
+        };
+        if !self.emitted_synthetic_dependency_symbols.insert(symbol_id) {
+            return;
+        }
+
+        let Some(symbol) = binder.symbols.get(symbol_id) else {
+            return;
+        };
+        let Some(decl_idx) = symbol.declarations.first().copied() else {
+            return;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return;
+        };
+
+        let saved_emit_public_api_only = self.emit_public_api_only;
+        self.emit_public_api_only = false;
+        match decl_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.emit_interface_declaration(decl_idx);
+            }
+            _ => {
+                self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+            }
+        }
+        self.emit_public_api_only = saved_emit_public_api_only;
+    }
+
+    pub(crate) fn emit_synthetic_class_extends_alias_if_needed(
+        &mut self,
+        class_name: NodeIndex,
+        heritage: Option<&NodeList>,
+        is_default_export: bool,
+    ) -> Option<String> {
+        let heritage = heritage?;
+        let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
+        let type_id = self.get_node_type_or_names(&[expr_idx, type_idx])?;
+        self.retain_direct_type_symbols_for_public_api(type_id);
+        self.emit_direct_symbol_dependency_for_type(type_id);
+        let alias_name = if is_default_export {
+            "default_base".to_string()
+        } else {
+            let class_name = self.get_identifier_text(class_name)?;
+            format!("{class_name}_base")
+        };
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("const ");
+        self.write(&alias_name);
+        self.write(": ");
+        self.write(&self.print_type_id(type_id));
+        self.write(";");
+        self.write_line();
+        self.emitted_non_exported_declaration = true;
+
+        Some(alias_name)
+    }
+
     fn emit_function_initializer_type_annotation(
         &mut self,
         decl_idx: NodeIndex,
