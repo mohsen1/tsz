@@ -125,10 +125,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<DiagnosticRelatedInformation>> {
         use tsz_solver::SubtypeFailureReason;
 
-        let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
-        else {
-            return None;
-        };
+        let anchor = self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)?;
         let start = anchor.start;
         let length = anchor.length;
 
