@@ -215,6 +215,29 @@ thing({
     );
 }
 
+#[test]
+fn mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
+    let source = r#"
+type Gen = { v: 0 } & (
+  { v: 0, a: string } |
+  { v: 1, b: string }
+);
+
+type Gen2 = {
+  [Property in keyof Gen]: string;
+};
+
+const ok: Gen2 = { v: "", a: "" };
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Mapped discriminant filtering should not report excess-property errors here, got: {diags:?}"
+    );
+    assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
+}
+
 // --- Type alias name display in diagnostics ---
 
 #[test]
