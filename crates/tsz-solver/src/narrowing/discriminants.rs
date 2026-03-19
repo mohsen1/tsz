@@ -529,8 +529,7 @@ impl<'a> NarrowingContext<'a> {
         let mut kept = Vec::new();
         for (_, bucket_members) in index.iter() {
             for &m in bucket_members {
-                if excluded_set.is_none_or(|excluded| !excluded.contains(&m))
-                    && !kept.contains(&m)
+                if excluded_set.is_none_or(|excluded| !excluded.contains(&m)) && !kept.contains(&m)
                 {
                     kept.push(m);
                 }

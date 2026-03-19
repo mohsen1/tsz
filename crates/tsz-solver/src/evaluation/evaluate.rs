@@ -289,14 +289,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Expand type arguments
         let body_is_conditional_with_app_infer =
             self.is_conditional_with_application_infer(resolved);
-        let expanded_args: std::borrow::Cow<'_, [TypeId]> =
-            if body_is_conditional_with_app_infer {
-                std::borrow::Cow::Owned(
-                    self.expand_type_args_preserve_applications(&app.args),
-                )
-            } else {
-                self.expand_type_args(&app.args)
-            };
+        let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional_with_app_infer {
+            std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(&app.args))
+        } else {
+            self.expand_type_args(&app.args)
+        };
 
         // Instantiate the body with the type arguments — but do NOT evaluate
         let instantiated =

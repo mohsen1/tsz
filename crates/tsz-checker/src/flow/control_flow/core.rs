@@ -1439,8 +1439,7 @@ impl<'a> FlowAnalyzer<'a> {
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
                 && let Some(cache) = self.flow_cache
             {
-                let final_has_type_params =
-                    self.contains_type_parameters_cached(final_type);
+                let final_has_type_params = self.contains_type_parameters_cached(final_type);
 
                 // Only cache if neither initial nor final types contain type parameters
                 if !initial_has_type_params && !final_has_type_params {
