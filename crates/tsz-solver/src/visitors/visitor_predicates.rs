@@ -511,14 +511,14 @@ where
                 app.args.iter().any(|&a| self.check(a))
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.types.conditional_type(*cond_id);
+                let cond = self.types.get_conditional(*cond_id);
                 self.check(cond.check_type)
                     || self.check(cond.extends_type)
                     || self.check(cond.true_type)
                     || self.check(cond.false_type)
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.mapped_type(*mapped_id);
+                let mapped = self.types.get_mapped(*mapped_id);
                 mapped.type_param.constraint.is_some_and(|c| self.check(c))
                     || mapped.type_param.default.is_some_and(|d| self.check(d))
                     || self.check(mapped.constraint)

@@ -158,15 +158,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             (Some(TypeData::Conditional(cond_id)), _) => {
-                let cond = self.interner.conditional_type(cond_id);
-                let evaluated = self.interner.evaluate_conditional(cond.as_ref());
+                let cond = self.interner.get_conditional(cond_id);
+                let evaluated = self.interner.evaluate_conditional(&cond);
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeData::Conditional(cond_id))) => {
-                let cond = self.interner.conditional_type(cond_id);
-                let evaluated = self.interner.evaluate_conditional(cond.as_ref());
+                let cond = self.interner.get_conditional(cond_id);
+                let evaluated = self.interner.evaluate_conditional(&cond);
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
@@ -189,14 +189,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             (Some(TypeData::Mapped(mapped_id)), _) => {
-                let mapped = self.interner.mapped_type(mapped_id);
-                let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
+                let mapped = self.interner.get_mapped(mapped_id);
+                let evaluated = self.interner.evaluate_mapped(&mapped);
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeData::Mapped(mapped_id))) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 let source_shape_id = match self.interner.lookup(source) {
                     Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => Some(id),
                     _ => None,
@@ -314,7 +314,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return;
                     }
                 }
-                let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
+                let evaluated = self.interner.evaluate_mapped(&mapped);
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
@@ -435,7 +435,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             && let Some(TypeData::Conditional(cond_id)) =
                                 self.interner.lookup(cond_eval)
                         {
-                            let cond = self.interner.conditional_type(cond_id);
+                            let cond = self.interner.get_conditional(cond_id);
                             if var_map.contains_key(&cond.check_type) {
                                 self.constrain_types(
                                     ctx,
@@ -2005,7 +2005,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // an object, perform a nested reverse-mapped inference with T[K] as the new
         // target placeholder. This reconstructs the inner type from source properties.
         if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(template) {
-            let mapped = self.interner.mapped_type(mapped_id);
+            let mapped = self.interner.get_mapped(mapped_id);
             // Extract the new target placeholder from the constraint:
             // keyof X → X becomes the new placeholder for recursive reversal
             if let Some(TypeData::KeyOf(inner_placeholder)) =

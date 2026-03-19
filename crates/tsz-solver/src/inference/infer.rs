@@ -615,14 +615,14 @@ impl<'a> InferenceContext<'a> {
                 }
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.collect_type_params(cond.check_type, params, visited);
                 self.collect_type_params(cond.extends_type, params, visited);
                 self.collect_type_params(cond.true_type, params, visited);
                 self.collect_type_params(cond.false_type, params, visited);
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 self.collect_type_params(mapped.constraint, params, visited);
                 if let Some(name_type) = mapped.name_type {
                     self.collect_type_params(name_type, params, visited);
@@ -816,14 +816,14 @@ impl<'a> InferenceContext<'a> {
                     .any(|p| self.type_contains_param(p.type_id, target, visited))
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.type_contains_param(cond.check_type, target, visited)
                     || self.type_contains_param(cond.extends_type, target, visited)
                     || self.type_contains_param(cond.true_type, target, visited)
                     || self.type_contains_param(cond.false_type, target, visited)
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 if mapped.type_param.name == target {
                     return false;
                 }

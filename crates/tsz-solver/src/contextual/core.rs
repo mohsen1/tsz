@@ -278,7 +278,7 @@ impl<'a> ContextualTypeContext<'a> {
             )
         {
             if let TypeData::Conditional(cond_id) = expected_key {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_param_types = Vec::new();
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
@@ -521,7 +521,7 @@ impl<'a> ContextualTypeContext<'a> {
             )
         {
             if let TypeData::Conditional(cond_id) = expected_key {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_param_types = Vec::new();
                 for (is_true_branch, branch) in [(true, cond.true_type), (false, cond.false_type)] {
                     // Guard against self-recursive aliases.
@@ -950,7 +950,7 @@ impl<'a> ContextualTypeContext<'a> {
             )
         {
             if let TypeData::Conditional(cond_id) = expected_key {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 let mut branch_elem_types = Vec::new();
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
@@ -1049,7 +1049,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Mapped(mapped_id)) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 if let Some(prop) = crate::type_queries::get_finite_mapped_property_type(
                     self.interner,
                     mapped_id,

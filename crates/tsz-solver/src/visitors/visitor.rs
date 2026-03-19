@@ -469,7 +469,7 @@ where
 
         // Conditional types
         TypeData::Conditional(cond_id) => {
-            let cond = db.conditional_type(*cond_id);
+            let cond = db.get_conditional(*cond_id);
             f(cond.check_type);
             f(cond.extends_type);
             f(cond.true_type);
@@ -478,7 +478,7 @@ where
 
         // Mapped types
         TypeData::Mapped(mapped_id) => {
-            let mapped = db.mapped_type(*mapped_id);
+            let mapped = db.get_mapped(*mapped_id);
             if let Some(constraint) = mapped.type_param.constraint {
                 f(constraint);
             }
@@ -1043,14 +1043,14 @@ impl<'a> RecursiveTypeCollector<'a> {
                 }
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.types.conditional_type(*cond_id);
+                let cond = self.types.get_conditional(*cond_id);
                 self.visit(cond.check_type);
                 self.visit(cond.extends_type);
                 self.visit(cond.true_type);
                 self.visit(cond.false_type);
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.types.mapped_type(*mapped_id);
+                let mapped = self.types.get_mapped(*mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint {
                     self.visit(constraint);
                 }
