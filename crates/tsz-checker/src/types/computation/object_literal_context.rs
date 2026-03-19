@@ -1197,7 +1197,57 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
-            if unit_match && never_match {
+            // Check absent required discriminants: if the member has a required
+            // (non-optional) property that is NOT present in the object literal,
+            // AND at least one other member either doesn't have that property or
+            // has it as optional, then this member can be eliminated.
+            // This handles cases like:
+            //   type A = { disc: true; cb: (x: string) => void }
+            //   type B = { disc?: false; cb: (x: number) => void }
+            //   f({ cb: n => ... })  // disc is required in A but optional in B
+            let absent_required_match = {
+                let mut ok = true;
+                if let Some(shape) = tsz_solver::type_queries::data::get_object_shape(
+                    self.ctx.types,
+                    resolved_member,
+                ) {
+                    for prop in &shape.properties {
+                        if prop.optional {
+                            continue;
+                        }
+                        let prop_name_str = self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                        // Skip properties that ARE present in the object literal.
+                        if present_property_names.contains(&prop_name_str) {
+                            continue;
+                        }
+                        // This member requires a property that the literal doesn't have.
+                        // Check if at least one other member doesn't require it (optional or absent).
+                        let some_other_doesnt_require = members.iter().any(|&other| {
+                            if other == member {
+                                return false;
+                            }
+                            let resolved_other = self.resolve_type_for_property_access(other);
+                            let other_prop =
+                                tsz_solver::type_queries::data::find_property_in_object(
+                                    self.ctx.types,
+                                    resolved_other,
+                                    prop.name,
+                                );
+                            match other_prop {
+                                None => true,          // other member doesn't have it at all
+                                Some(p) => p.optional, // other member has it as optional
+                            }
+                        });
+                        if some_other_doesnt_require {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                ok
+            };
+
+            if unit_match && never_match && absent_required_match {
                 matching_members.push(member);
             }
         }
