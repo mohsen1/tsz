@@ -2240,6 +2240,75 @@ fn expr_prefix_postfix_unary() {
 }
 
 #[test]
+fn expr_prefix_update_delete_recovery_drops_outer_update() {
+    let source = "++ delete foo.bar;";
+    let (parser, root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for invalid prefix update operand");
+    assert_eq!(
+        ts1109.start,
+        source.find("delete").expect("delete") as u32,
+        "TS1109 should anchor at `delete`: {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let stmt = arena.get(get_first_statement(arena, root)).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt)
+        .expect("expression statement");
+    let expr = arena.get(expr_stmt.expression).expect("expression");
+    assert_eq!(
+        expr.kind,
+        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+        "recovered expression should still be unary"
+    );
+    let unary = arena.get_unary_expr(expr).expect("unary expression");
+    assert_eq!(
+        unary.operator,
+        SyntaxKind::DeleteKeyword as u16,
+        "outer prefix update should be dropped during recovery"
+    );
+}
+
+#[test]
+fn expr_prefix_update_repeated_operator_recovers_to_inner_update() {
+    let source = "++\n++y;";
+    let (parser, root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for repeated prefix update");
+    assert_eq!(
+        ts1109.start, 0,
+        "TS1109 should anchor at the outer `++`: {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let stmt = arena.get(get_first_statement(arena, root)).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt)
+        .expect("expression statement");
+    let expr = arena.get(expr_stmt.expression).expect("expression");
+    assert_eq!(
+        expr.kind,
+        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+        "recovered expression should keep the inner prefix update"
+    );
+    let unary = arena.get_unary_expr(expr).expect("unary expression");
+    assert_eq!(unary.operator, SyntaxKind::PlusPlusToken as u16);
+    let operand = arena.get(unary.operand).expect("inner operand");
+    assert_eq!(
+        operand.kind,
+        SyntaxKind::Identifier as u16,
+        "inner update should still target the identifier"
+    );
+}
+
+#[test]
 fn expr_element_access() {
     // `a[0]`
     let (parser, root) = parse_source("const x = a[0];");
