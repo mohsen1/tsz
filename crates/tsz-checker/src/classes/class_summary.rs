@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 #[derive(Clone)]
 pub(crate) struct ClassPropertyInitializationInfo {
@@ -22,6 +23,7 @@ pub(crate) struct ClassPropertyInitializationInfo {
 pub(crate) struct ClassInitializationSummary {
     pub(crate) requires_super: bool,
     pub(crate) constructor_body: Option<NodeIndex>,
+    pub(crate) has_super_call_position_sensitive_members: bool,
     pub(crate) all_instance_field_keys: FxHashSet<PropertyKey>,
     pub(crate) parameter_property_keys: FxHashSet<PropertyKey>,
     pub(crate) parameter_property_names: FxHashSet<String>,
@@ -46,6 +48,15 @@ impl ClassInitializationSummary {
             .get(name)
             .and_then(|&idx| self.ordered_instance_properties.get(idx))
     }
+}
+
+#[derive(Clone, Default)]
+struct ClassOwnMemberSummary {
+    initialization: ClassInitializationSummary,
+    visible_instance_members: Vec<ClassMemberInfo>,
+    visible_static_members: Vec<ClassMemberInfo>,
+    all_instance_members: Vec<ClassMemberInfo>,
+    all_static_members: Vec<ClassMemberInfo>,
 }
 
 #[derive(Clone, Default)]
@@ -78,24 +89,55 @@ impl ClassChainSummary {
 impl<'a> CheckerState<'a> {
     pub(crate) fn summarize_class_initialization(
         &mut self,
-        _class_idx: NodeIndex,
+        class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> ClassInitializationSummary {
+        self.summarize_own_class_members(class_idx, class)
+            .initialization
+    }
+
+    fn summarize_own_class_members(
+        &mut self,
+        _class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> ClassOwnMemberSummary {
         let requires_super = self.class_has_base(class);
         let constructor_body = self.find_constructor_body(&class.members);
 
-        let mut summary = ClassInitializationSummary {
-            requires_super,
-            constructor_body,
-            ..ClassInitializationSummary::default()
+        let mut summary = ClassOwnMemberSummary {
+            initialization: ClassInitializationSummary {
+                requires_super,
+                constructor_body,
+                ..ClassInitializationSummary::default()
+            },
+            ..ClassOwnMemberSummary::default()
         };
 
         for (position, &member_idx) in class.members.nodes.iter().enumerate() {
-            summary.member_positions.insert(member_idx, position);
+            summary
+                .initialization
+                .member_positions
+                .insert(member_idx, position);
 
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
+
+            if let Some(info) = self.extract_class_member_info(member_idx, true) {
+                Self::push_own_member_info(
+                    info,
+                    &mut summary.visible_instance_members,
+                    &mut summary.visible_static_members,
+                );
+            }
+
+            if let Some(info) = self.extract_class_member_info(member_idx, false) {
+                Self::push_own_member_info(
+                    info,
+                    &mut summary.all_instance_members,
+                    &mut summary.all_static_members,
+                );
+            }
 
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
@@ -112,24 +154,76 @@ impl<'a> CheckerState<'a> {
                     if !self.has_parameter_property_modifier(&param.modifiers) {
                         continue;
                     }
+                    summary
+                        .initialization
+                        .has_super_call_position_sensitive_members = true;
                     if let Some(key) = self.property_key_from_name(param.name) {
-                        summary.parameter_property_keys.insert(key);
+                        summary.initialization.parameter_property_keys.insert(key);
                     }
                     if let Some(name) = self.get_property_name(param.name) {
-                        summary.parameter_property_names.insert(name);
+                        summary.initialization.parameter_property_names.insert(name);
+                    }
+                    if let Some(info) = self.parameter_property_member_info(param_idx, param, true)
+                    {
+                        Self::push_own_member_info(
+                            info,
+                            &mut summary.visible_instance_members,
+                            &mut summary.visible_static_members,
+                        );
+                    }
+                    if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
+                    {
+                        Self::push_own_member_info(
+                            info,
+                            &mut summary.all_instance_members,
+                            &mut summary.all_static_members,
+                        );
                     }
                 }
 
                 continue;
             }
 
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                continue;
+            match member_node.kind {
+                syntax_kind_ext::PROPERTY_DECLARATION => {}
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(member_node)
+                        && self.is_private_identifier_name(method.name)
+                    {
+                        summary
+                            .initialization
+                            .has_super_call_position_sensitive_members = true;
+                    }
+                    continue;
+                }
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && self.is_private_identifier_name(accessor.name)
+                    {
+                        summary
+                            .initialization
+                            .has_super_call_position_sensitive_members = true;
+                    }
+                    continue;
+                }
+                _ => continue,
             }
 
             let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
                 continue;
             };
+
+            if self.is_private_identifier_name(prop.name) {
+                summary
+                    .initialization
+                    .has_super_call_position_sensitive_members = true;
+            }
+            if !self.has_static_modifier(&prop.modifiers) && prop.initializer.is_some() {
+                summary
+                    .initialization
+                    .has_super_call_position_sensitive_members = true;
+            }
+
             if self.has_static_modifier(&prop.modifiers) {
                 continue;
             }
@@ -138,9 +232,15 @@ impl<'a> CheckerState<'a> {
                 .property_key_from_name(prop.name)
                 .or_else(|| self.synthetic_computed_property_key(prop.name));
             if let Some(ref key) = key {
-                summary.all_instance_field_keys.insert(key.clone());
+                summary
+                    .initialization
+                    .all_instance_field_keys
+                    .insert(key.clone());
                 if prop.initializer.is_some() {
-                    summary.field_initializer_keys.insert(key.clone());
+                    summary
+                        .initialization
+                        .field_initializer_keys
+                        .insert(key.clone());
                 }
             }
 
@@ -161,28 +261,36 @@ impl<'a> CheckerState<'a> {
 
             if let Some(ref name) = info.lookup_name {
                 summary
+                    .initialization
                     .instance_property_by_name
                     .entry(name.clone())
-                    .or_insert(summary.ordered_instance_properties.len());
+                    .or_insert(summary.initialization.ordered_instance_properties.len());
             }
 
             if info.requires_initialization {
-                summary.required_instance_fields.push(info.clone());
+                summary
+                    .initialization
+                    .required_instance_fields
+                    .push(info.clone());
             }
 
-            summary.ordered_instance_properties.push(info);
+            summary
+                .initialization
+                .ordered_instance_properties
+                .push(info);
         }
 
-        summary.constructor_assigned_fields = if let Some(body_idx) = summary.constructor_body {
-            constructor_assigned_properties(
-                self,
-                body_idx,
-                &summary.all_instance_field_keys,
-                summary.requires_super,
-            )
-        } else {
-            FxHashSet::default()
-        };
+        summary.initialization.constructor_assigned_fields =
+            if let Some(body_idx) = summary.initialization.constructor_body {
+                constructor_assigned_properties(
+                    self,
+                    body_idx,
+                    &summary.initialization.all_instance_field_keys,
+                    summary.initialization.requires_super,
+                )
+            } else {
+                FxHashSet::default()
+            };
 
         summary
     }
@@ -197,6 +305,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn summarize_class_chain(&mut self, class_idx: NodeIndex) -> ClassChainSummary {
         let mut summary = ClassChainSummary::default();
+        let mut own_summary_cache = FxHashMap::default();
         let mut visited = FxHashSet::default();
         let mut current = Some(class_idx);
 
@@ -209,34 +318,31 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            for &member_idx in &class.members.nodes {
-                if let Some(info) = self.extract_class_member_info(member_idx, true) {
-                    let name = info.name.clone();
-                    if info.is_static {
-                        summary.visible_static_names.insert(name.clone());
-                        summary.visible_static_lookup.entry(name).or_insert(info);
-                    } else {
-                        summary.visible_instance_names.insert(name.clone());
-                        summary.visible_instance_lookup.entry(name).or_insert(info);
-                    }
-                }
+            let own_summary = if let Some(cached) = own_summary_cache.get(&current_idx).cloned() {
+                cached
+            } else {
+                let built = self.summarize_own_class_members(current_idx, class);
+                own_summary_cache.insert(current_idx, built.clone());
+                built
+            };
 
-                if let Some(info) = self.extract_class_member_info(member_idx, false) {
-                    let name = info.name.clone();
-                    if info.is_static {
-                        summary.all_static_lookup.entry(name).or_insert(info);
-                    } else {
-                        summary.all_instance_lookup.entry(name).or_insert(info);
-                    }
-                }
+            for info in own_summary.visible_instance_members {
+                let name = info.name.clone();
+                summary.visible_instance_names.insert(name.clone());
+                summary.visible_instance_lookup.entry(name).or_insert(info);
             }
-
-            for skip_private in [true, false] {
-                self.collect_constructor_parameter_properties_into_summary(
-                    current_idx,
-                    skip_private,
-                    &mut summary,
-                );
+            for info in own_summary.visible_static_members {
+                let name = info.name.clone();
+                summary.visible_static_names.insert(name.clone());
+                summary.visible_static_lookup.entry(name).or_insert(info);
+            }
+            for info in own_summary.all_instance_members {
+                let name = info.name.clone();
+                summary.all_instance_lookup.entry(name).or_insert(info);
+            }
+            for info in own_summary.all_static_members {
+                let name = info.name.clone();
+                summary.all_static_lookup.entry(name).or_insert(info);
             }
 
             current = self.get_base_class_idx(current_idx);
@@ -245,78 +351,63 @@ impl<'a> CheckerState<'a> {
         summary
     }
 
-    fn collect_constructor_parameter_properties_into_summary(
+    fn parameter_property_member_info(
         &mut self,
-        class_idx: NodeIndex,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
         skip_private: bool,
-        summary: &mut ClassChainSummary,
-    ) {
-        let Some(class) = self.ctx.arena.get_class_at(class_idx) else {
-            return;
+    ) -> Option<ClassMemberInfo> {
+        if skip_private && self.has_private_modifier(&param.modifiers) {
+            return None;
+        }
+
+        let name = self.get_property_name(param.name)?;
+        let mut prop_type = if param.type_annotation.is_some() {
+            self.get_type_from_type_node(param.type_annotation)
+        } else {
+            TypeId::ANY
         };
+        if param.question_token && self.ctx.strict_null_checks() {
+            prop_type = self
+                .ctx
+                .types
+                .factory()
+                .union(vec![prop_type, TypeId::UNDEFINED]);
+        }
 
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                continue;
-            };
+        Some(ClassMemberInfo {
+            name,
+            type_id: prop_type,
+            name_idx: param.name,
+            visibility: if self.has_private_modifier(&param.modifiers) {
+                crate::class_checker::MemberVisibility::Private
+            } else if self.has_protected_modifier(&param.modifiers) {
+                crate::class_checker::MemberVisibility::Protected
+            } else {
+                crate::class_checker::MemberVisibility::Public
+            },
+            is_method: false,
+            is_static: false,
+            is_accessor: false,
+            is_abstract: false,
+            has_override: self.has_override_modifier(&param.modifiers)
+                || self.has_jsdoc_override_tag(param_idx),
+            is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
+                && self.has_jsdoc_override_tag(param_idx),
+            has_dynamic_name: false,
+            has_computed_non_literal_name: false,
+        })
+    }
 
-            for &param_idx in &ctor.parameters.nodes {
-                let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                    continue;
-                };
-                if !self.has_parameter_property_modifier(&param.modifiers) {
-                    continue;
-                }
-                if skip_private && self.has_private_modifier(&param.modifiers) {
-                    continue;
-                }
-                let Some(name) = self.get_property_name(param.name) else {
-                    continue;
-                };
-                let prop_type = if param.type_annotation.is_some() {
-                    self.get_type_from_type_node(param.type_annotation)
-                } else {
-                    tsz_solver::TypeId::ANY
-                };
-                let info = ClassMemberInfo {
-                    name: name.clone(),
-                    type_id: prop_type,
-                    name_idx: param.name,
-                    visibility: if self.has_private_modifier(&param.modifiers) {
-                        crate::class_checker::MemberVisibility::Private
-                    } else if self.has_protected_modifier(&param.modifiers) {
-                        crate::class_checker::MemberVisibility::Protected
-                    } else {
-                        crate::class_checker::MemberVisibility::Public
-                    },
-                    is_method: false,
-                    is_static: false,
-                    is_accessor: false,
-                    is_abstract: false,
-                    has_override: self.has_override_modifier(&param.modifiers)
-                        || self.has_jsdoc_override_tag(param_idx),
-                    is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
-                        && self.has_jsdoc_override_tag(param_idx),
-                    has_dynamic_name: false,
-                    has_computed_non_literal_name: false,
-                };
-
-                if skip_private {
-                    summary.visible_instance_names.insert(name.clone());
-                    summary.visible_instance_lookup.entry(name).or_insert(info);
-                } else {
-                    summary.all_instance_lookup.entry(name).or_insert(info);
-                }
-            }
+    fn push_own_member_info(
+        info: ClassMemberInfo,
+        instance_members: &mut Vec<ClassMemberInfo>,
+        static_members: &mut Vec<ClassMemberInfo>,
+    ) {
+        if info.is_static {
+            static_members.push(info);
+        } else {
+            instance_members.push(info);
         }
     }
 

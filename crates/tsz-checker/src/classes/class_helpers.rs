@@ -146,67 +146,12 @@ impl<'a> CheckerState<'a> {
     /// initialized instance properties, constructor parameter properties,
     /// or private identifiers.
     pub(crate) fn class_has_super_call_position_sensitive_members(
-        &self,
+        &mut self,
+        class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> bool {
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                        continue;
-                    };
-
-                    if self.is_private_identifier_name(prop.name) {
-                        return true;
-                    }
-
-                    if !self.has_static_modifier(&prop.modifiers) && prop.initializer.is_some() {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                        continue;
-                    };
-                    if self.is_private_identifier_name(method.name) {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                        continue;
-                    };
-                    if self.is_private_identifier_name(accessor.name) {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                        continue;
-                    };
-
-                    for &param_idx in &ctor.parameters.nodes {
-                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                            continue;
-                        };
-                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                            continue;
-                        };
-
-                        if self.has_parameter_property_modifier(&param.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
+        self.summarize_class_initialization(class_idx, class)
+            .has_super_call_position_sensitive_members
     }
 
     /// Find the constructor body in a class member list.
