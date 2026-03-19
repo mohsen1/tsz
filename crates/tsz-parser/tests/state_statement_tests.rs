@@ -293,3 +293,37 @@ fn modifier_led_keyword_named_members_still_parse() {
         "valid keyword-named members should still parse after class-member recovery changes, got {diags:?}"
     );
 }
+
+#[test]
+fn bare_var_statement_in_class_body_recovers_as_ts1068_then_ts1128() {
+    let (parser, _root) = parse_source("class Foo2 {\n  var icecream = \"chocolate\";\n}");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        ],
+        "bare variable statements in class bodies should recover as TS1068 + TS1128, got {diags:?}"
+    );
+}
+
+#[test]
+fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
+    let (parser, _root) = parse_source("namespace M { ¬ class C { } @ enum E { ¬");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::INVALID_CHARACTER),
+        "expected TS1127 for invalid characters, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for stray '@' before enum, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_EXPECTED),
+        "should not emit TS1146 for stray '@' before enum, got {diags:?}"
+    );
+}

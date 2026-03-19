@@ -546,8 +546,14 @@ impl ParserState {
                 }
             }
             SyntaxKind::AtToken => {
-                // Decorator: @decorator class/function
-                self.parse_decorated_declaration()
+                if self.look_ahead_has_missing_decorator_expression() {
+                    self.error_expression_expected();
+                    self.next_token();
+                    self.parse_statement()
+                } else {
+                    // Decorator: @decorator class/function
+                    self.parse_decorated_declaration()
+                }
             }
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::AbstractKeyword => self.parse_statement_abstract_keyword(),
@@ -808,6 +814,39 @@ impl ParserState {
             // where the token after `import` can't start a valid clause.
             self.parse_import_declaration()
         }
+    }
+
+    fn look_ahead_has_missing_decorator_expression(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::AtToken) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let result = matches!(
+            self.token(),
+            SyntaxKind::AbstractKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::ImportKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::UsingKeyword
+                | SyntaxKind::VarKeyword
+        );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Look ahead to see if a modifier keyword (public, protected, private, static, etc.)
