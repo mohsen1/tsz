@@ -706,9 +706,13 @@ impl<'a> Completions<'a> {
     /// (after `{`, `;`, or `}` inside a class or interface body).
     /// Returns Some("class") or Some("interface") if at a member position.
     fn member_body_context(&self, node_idx: NodeIndex, offset: u32) -> Option<&'static str> {
-        let in_class =
-            self.is_in_class_body_context(node_idx) || self.text_likely_in_class_body(offset);
-        let in_interface = !in_class && self.is_in_interface_body_context(node_idx);
+        // Use AST-based check and verify the offset is strictly inside
+        // the class/interface body braces (not after the closing brace).
+        let in_class = self.is_in_class_body_context(node_idx)
+            && self.offset_is_inside_body_braces(node_idx, offset);
+        let in_interface = !in_class
+            && self.is_in_interface_body_context(node_idx)
+            && self.offset_is_inside_body_braces(node_idx, offset);
         if !in_class && !in_interface {
             return None;
         }
@@ -727,6 +731,36 @@ impl<'a> Completions<'a> {
             return Some(if in_class { "class" } else { "interface" });
         }
         None
+    }
+
+    /// Verify that the byte offset is strictly between the `{` and `}` of
+    /// the nearest class or interface declaration. Prevents false positives
+    /// when the cursor is after the closing brace.
+    fn offset_is_inside_body_braces(&self, node_idx: NodeIndex, offset: u32) -> bool {
+        let mut current = node_idx;
+        for _ in 0..15 {
+            if let Some(node) = self.arena.get(current)
+                && (node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    || node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+            {
+                let start = node.pos as usize;
+                let end = node.end as usize;
+                if end <= self.source_text.len()
+                    && let Some(open) = self.source_text[start..end].find('{')
+                {
+                    let open_offset = start + open;
+                    return (offset as usize) > open_offset && (offset as usize) < end;
+                }
+                return false;
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        true
     }
 
     /// Check if node is inside an interface body.
