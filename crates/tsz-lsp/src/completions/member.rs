@@ -85,17 +85,35 @@ impl<'a> Completions<'a> {
         // Type-qualified member access (`A.B`) should prefer namespace/module exports
         // instead of instance/member shape properties.
         let qualified_name_target = self.is_qualified_name_member_target(expr_idx);
+        // When the expression is `this` inside a class body, all members
+        // (public, private, protected) should be visible in completions.
+        let is_this_in_class = self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+            && self.find_enclosing_class_declaration(expr_idx).is_some();
+
         if !qualified_name_target {
             let type_id = checker.get_type_of_node(expr_idx);
             let mut visited = FxHashSet::default();
             let mut props: FxHashMap<String, PropertyCompletion> = FxHashMap::default();
-            self.collect_properties_for_type(
-                type_id,
-                interner,
-                &mut checker,
-                &mut visited,
-                &mut props,
-            );
+            if is_this_in_class {
+                self.collect_all_properties_for_type(
+                    type_id,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+            } else {
+                self.collect_properties_for_type(
+                    type_id,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+            }
 
             for (name, info) in props {
                 let kind = if info.is_method {
@@ -242,6 +260,35 @@ impl<'a> Completions<'a> {
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
+        self.collect_properties_for_type_inner(
+            type_id, interner, checker, visited, props, false,
+        );
+    }
+
+    /// Collect properties including private/protected members.
+    /// Used for `this.` access inside a class body where all members are accessible.
+    pub(super) fn collect_all_properties_for_type(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.collect_properties_for_type_inner(
+            type_id, interner, checker, visited, props, true,
+        );
+    }
+
+    fn collect_properties_for_type_inner(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        include_private: bool,
+    ) {
         if !visited.insert(type_id) {
             return;
         }
@@ -249,7 +296,9 @@ impl<'a> Completions<'a> {
         let resolved = checker.resolve_lazy_type(type_id);
         let evaluated = tsz_solver::evaluate_type(interner, resolved);
         if evaluated != type_id {
-            self.collect_properties_for_type(evaluated, interner, checker, visited, props);
+            self.collect_properties_for_type_inner(
+                evaluated, interner, checker, visited, props, include_private,
+            );
             return;
         }
 
@@ -258,7 +307,7 @@ impl<'a> Completions<'a> {
         {
             let shape = interner.object_shape(shape_id);
             for prop in &shape.properties {
-                if prop.visibility != Visibility::Public {
+                if !include_private && prop.visibility != Visibility::Public {
                     continue;
                 }
                 let name = interner.resolve_atom(prop.name);
@@ -290,12 +339,13 @@ impl<'a> Completions<'a> {
                 for &member in members.iter() {
                     let mut member_props = FxHashMap::default();
                     let mut member_visited = visited.clone();
-                    self.collect_properties_for_type(
+                    self.collect_properties_for_type_inner(
                         member,
                         interner,
                         checker,
                         &mut member_visited,
                         &mut member_props,
+                        include_private,
                     );
                     per_member_props.push(member_props);
                 }
@@ -315,7 +365,9 @@ impl<'a> Completions<'a> {
                 }
             } else {
                 for &member in members.iter() {
-                    self.collect_properties_for_type(member, interner, checker, visited, props);
+                    self.collect_properties_for_type_inner(
+                        member, interner, checker, visited, props, include_private,
+                    );
                 }
             }
             return;
@@ -325,14 +377,18 @@ impl<'a> Completions<'a> {
             // For intersections, include properties from ALL members (union of properties).
             let members = interner.type_list(members_id);
             for &member in members.iter() {
-                self.collect_properties_for_type(member, interner, checker, visited, props);
+                self.collect_properties_for_type_inner(
+                    member, interner, checker, visited, props, include_private,
+                );
             }
             return;
         }
 
         if let Some(app) = visitor::application_id(interner, evaluated) {
             let app = interner.type_application(app);
-            self.collect_properties_for_type(app.base, interner, checker, visited, props);
+            self.collect_properties_for_type_inner(
+                app.base, interner, checker, visited, props, include_private,
+            );
             return;
         }
 
@@ -972,13 +1028,27 @@ impl<'a> Completions<'a> {
         if let Some(parent) = Self::normalize_member_parent_type_name(&type_text) {
             return Some(parent);
         }
-        self.resolve_member_target_symbol(expr_idx)
+        if let Some(parent) = self.resolve_member_target_symbol(expr_idx)
             .and_then(|sym_id| self.binder.symbols.get(sym_id))
             .and_then(|symbol| {
                 use tsz_binder::symbol_flags;
                 ((symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) != 0)
                     .then(|| symbol.escaped_name.clone())
             })
+        {
+            return Some(parent);
+        }
+
+        // For `this.` inside a class body, use the enclosing class name.
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            let class_idx = self.find_enclosing_class_declaration(expr_idx)?;
+            let class_node = self.arena.get(class_idx)?;
+            let class_data = self.arena.get_class(class_node)?;
+            return self.arena.get_identifier_text(class_data.name).map(|s| s.to_string());
+        }
+
+        None
     }
 
     fn meta_property_parent_type_name(&self, offset: u32) -> Option<String> {
