@@ -1519,6 +1519,16 @@ impl<'a> CheckerState<'a> {
                 Some(self.ctx.types.literal_boolean(false))
             }
             k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            // `undefined` in expression position is parsed as an Identifier with
+            // text "undefined".  Treat it as a unit literal for discriminant narrowing.
+            k if k == SyntaxKind::Identifier as u16 => {
+                let ident = self.ctx.arena.get_identifier(node)?;
+                if ident.escaped_text == "undefined" {
+                    Some(TypeId::UNDEFINED)
+                } else {
+                    None
+                }
+            }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 let unary = self.ctx.arena.get_unary_expr(node)?;
                 let op = unary.operator;
