@@ -344,3 +344,55 @@ async fn read_until_sentinel(
         output.push_str(&line);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_process_rss_reports_current_process_memory_usage() {
+        let rss = get_process_rss(std::process::id())
+            .expect("current process RSS should be readable on supported platforms");
+        assert!(rss > 0, "RSS should be positive, got {rss}");
+    }
+
+    #[tokio::test]
+    async fn read_until_sentinel_collects_all_output_before_marker() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s\\n%s\\n%s\\n' first second '{BATCH_SENTINEL}'"))
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn sentinel process");
+        let stdout = child.stdout.take().expect("stdout");
+        let mut reader = BufReader::new(stdout);
+
+        let output = read_until_sentinel(&mut reader)
+            .await
+            .expect("read until sentinel");
+
+        assert_eq!(output.as_deref(), Some("first\nsecond\n"));
+        let status = child.wait().await.expect("wait for child");
+        assert!(status.success(), "child should exit successfully: {status}");
+    }
+
+    #[tokio::test]
+    async fn read_until_sentinel_returns_none_when_process_ends_early() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s\\n' partial")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn eof process");
+        let stdout = child.stdout.take().expect("stdout");
+        let mut reader = BufReader::new(stdout);
+
+        let output = read_until_sentinel(&mut reader)
+            .await
+            .expect("read before eof");
+
+        assert_eq!(output, None);
+        let status = child.wait().await.expect("wait for child");
+        assert!(status.success(), "child should exit successfully: {status}");
+    }
+}
