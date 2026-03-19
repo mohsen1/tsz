@@ -201,6 +201,43 @@ fn test_ts2729_parameter_property_before_define_field_initialization() {
 }
 
 #[test]
+fn test_ts2564_named_class_expression_prefers_outer_namespace_member_resolution() {
+    let source = r"
+        namespace C {
+            export interface type {}
+        }
+
+        var x = class C {
+            prop: C.type;
+        };
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        1,
+        "TS2564 should be reported for the named class expression property once the outer namespace member resolves correctly, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2694),
+        0,
+        "TS2694 should stay suppressed when a named class expression shadows an outer namespace with the requested member, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_definite_assignment_ts2454_control_flow_join() {
     let source = r"
         function f1(flag: boolean) {
