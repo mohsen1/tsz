@@ -1,5 +1,6 @@
 use crate::context::{CheckerOptions, ScriptTarget};
 use crate::test_utils::check_source;
+use crate::test_utils::check_js_source_diagnostics;
 use crate::test_utils::check_source_diagnostics;
 use tsz_common::checker_options::JsxMode;
 
@@ -789,6 +790,95 @@ new Box("ok");
         relevant.len(),
         0,
         "Expected JSDoc template/param resolution to stay stable, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_generic_callback_typedef_type_tag_resolves_as_callable() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @template T
+ * @callback B
+ * @returns {T}
+ */
+
+/** @type {B<string>} */
+let b = {};
+
+b();
+b(1);
+"#,
+    );
+    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for assigning {{}} to generic callback typedef, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2554),
+        "Expected TS2554 for calling instantiated callback typedef with an extra arg, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2349),
+        "Expected instantiated callback typedef to stay callable, got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_nested_params_build_one_object_parameter() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @callback WorksWithPeopleCallback
+ * @param {Object} person
+ * @param {string} person.name
+ * @param {number} [person.age]
+ * @returns {void}
+ */
+
+/**
+ * @param {WorksWithPeopleCallback} callback
+ * @returns {void}
+ */
+function eachPerson(callback) {
+    callback({ name: "Empty" });
+}
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2554 || d.code == 2345).collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected nested callback params to shape a single object parameter, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_optional_properties_stay_optional_in_param_tags() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @typedef {Object} Opts
+ * @property {string} x
+ * @property {string=} y
+ * @property {string} [z]
+ * @property {string} [w="hi"]
+ *
+ * @param {Opts} opts
+ */
+function foo(opts) {
+    opts.x;
+}
+
+foo({ x: "abc" });
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected optional typedef properties to stay optional at param-tag call sites, got: {relevant:?}"
     );
 }
 

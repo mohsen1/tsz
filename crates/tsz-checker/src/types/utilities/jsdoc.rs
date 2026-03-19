@@ -11,14 +11,33 @@ use tsz_solver::{
 #[derive(Clone)]
 pub(crate) struct JsdocTypedefInfo {
     pub(crate) base_type: Option<String>,
-    pub(crate) properties: Vec<(String, String)>,
+    pub(crate) properties: Vec<JsdocPropertyTagInfo>,
+    pub(crate) template_params: Vec<JsdocTemplateParamInfo>,
     /// If this is a `@callback` definition, holds the parsed parameter and return info.
     pub(crate) callback: Option<JsdocCallbackInfo>,
+}
+#[derive(Clone)]
+pub(crate) struct JsdocTemplateParamInfo {
+    pub(crate) name: String,
+    pub(crate) constraint: Option<String>,
+}
+#[derive(Clone)]
+pub(crate) struct JsdocPropertyTagInfo {
+    pub(crate) name: String,
+    pub(crate) type_expr: String,
+    pub(crate) optional: bool,
+}
+#[derive(Clone)]
+pub(crate) struct JsdocParamTagInfo {
+    pub(crate) name: String,
+    pub(crate) type_expr: Option<String>,
+    pub(crate) optional: bool,
+    pub(crate) rest: bool,
 }
 /// Parsed `@callback` information: parameter names/types and return type/predicate.
 #[derive(Clone)]
 pub(crate) struct JsdocCallbackInfo {
-    pub(crate) params: Vec<(String, String)>, // (name, type_expr)
+    pub(crate) params: Vec<JsdocParamTagInfo>,
     pub(crate) return_type: Option<String>,   // raw return type expression
     /// Parsed type predicate from `@return {x is Type}`.
     pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
@@ -1367,6 +1386,10 @@ impl<'a> CheckerState<'a> {
         base_name: &str,
         type_args: Vec<TypeId>,
     ) -> Option<TypeId> {
+        if let Some(instantiated) = self.resolve_jsdoc_generic_typedef_type(base_name, &type_args) {
+            return Some(instantiated);
+        }
+
         // Look up the base type in file_locals (includes merged lib types like Partial, Record)
         let sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(base_name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -1708,85 +1731,184 @@ impl<'a> CheckerState<'a> {
         // post-checking phase, so we don't emit it here to avoid duplicates.
         let result = self
             .type_from_jsdoc_typedef(typedef_info)
+            .map(|(body_type, _)| body_type)
             .or(Some(TypeId::ANY));
         if let Some(ty) = result {
             self.register_jsdoc_typedef_def(type_expr, ty);
         }
         result
     }
-    fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
-        // Handle @callback definitions — build a function type.
-        if let Some(cb) = info.callback {
-            let mut params = Vec::with_capacity(cb.params.len());
-            for (name, type_expr) in &cb.params {
-                let is_rest = type_expr.starts_with("...");
-                let effective_expr = if is_rest {
-                    &type_expr[3..]
-                } else {
-                    type_expr.as_str()
-                };
-                let base_type = self
-                    .jsdoc_type_from_expression(effective_expr)
-                    .unwrap_or(TypeId::ANY);
-                let type_id = if is_rest {
-                    let factory = self.ctx.types.factory();
-                    factory.array(base_type)
-                } else {
-                    base_type
-                };
-                let name_atom = self.ctx.types.intern_string(name);
-                params.push(ParamInfo {
-                    name: Some(name_atom),
-                    type_id,
-                    optional: false,
-                    rest: is_rest,
-                });
-            }
-            let mut type_predicate = None;
-            let return_type = if let Some((is_asserts, param_name, type_str)) = cb.predicate {
-                let pred_type = type_str
-                    .as_deref()
-                    .and_then(|s| self.jsdoc_type_from_expression(s));
-                let target = if param_name == "this" {
-                    TypePredicateTarget::This
-                } else {
-                    let atom = self.ctx.types.intern_string(&param_name);
-                    TypePredicateTarget::Identifier(atom)
-                };
-                let parameter_index = if param_name != "this" {
-                    cb.params.iter().position(|(n, _)| n == &param_name)
-                } else {
-                    None
-                };
-                type_predicate = Some(TypePredicate {
-                    asserts: is_asserts,
-                    target,
-                    type_id: pred_type,
-                    parameter_index,
-                });
-                if is_asserts {
-                    TypeId::VOID
-                } else {
-                    TypeId::BOOLEAN
-                }
-            } else if let Some(ref ret_expr) = cb.return_type {
-                self.jsdoc_type_from_expression(ret_expr)
-                    .unwrap_or(TypeId::ANY)
-            } else {
-                TypeId::VOID
+    fn type_from_jsdoc_typedef(
+        &mut self,
+        info: JsdocTypedefInfo,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let factory = self.ctx.types.factory();
+        let mut type_param_infos = Vec::with_capacity(info.template_params.len());
+        let mut scope_updates = Vec::with_capacity(info.template_params.len());
+        for template in &info.template_params {
+            let constraint = template
+                .constraint
+                .as_deref()
+                .and_then(|expr| self.resolve_jsdoc_type_str(expr));
+            let atom = self.ctx.types.intern_string(&template.name);
+            let param = tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default: None,
+                is_const: false,
             };
-            let shape = FunctionShape {
-                type_params: Vec::new(),
-                params,
-                this_type: None,
-                return_type,
-                type_predicate,
-                is_constructor: false,
-                is_method: false,
-            };
-            let factory = self.ctx.types.factory();
-            return Some(factory.function(shape));
+            let type_id = factory.type_param(param);
+            let previous = self
+                .ctx
+                .type_parameter_scope
+                .insert(template.name.clone(), type_id);
+            type_param_infos.push(param);
+            scope_updates.push((template.name.clone(), previous));
         }
+
+        let result = if let Some(cb) = info.callback {
+            self.type_from_jsdoc_callback(cb, &type_param_infos)
+        } else {
+            self.type_from_jsdoc_object_typedef(info)
+        };
+
+        for (name, previous) in scope_updates.into_iter().rev() {
+            if let Some(previous) = previous {
+                self.ctx.type_parameter_scope.insert(name, previous);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+
+        result.map(|type_id| (type_id, type_param_infos))
+    }
+
+    fn type_from_jsdoc_callback(
+        &mut self,
+        cb: JsdocCallbackInfo,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
+        let mut params = Vec::new();
+        let mut this_type = None;
+        let nested_entries: Vec<(String, String, bool)> = cb
+            .params
+            .iter()
+            .filter_map(|param| {
+                (param.name.contains('.') || param.name.contains("[]")).then_some((
+                    param.name.clone(),
+                    param.type_expr.clone().unwrap_or_else(|| "any".to_string()),
+                    param.optional,
+                ))
+            })
+            .collect();
+
+        for param in &cb.params {
+            if param.name.contains('.') || param.name.contains("[]") {
+                continue;
+            }
+
+            let raw_type_expr = param
+                .type_expr
+                .clone()
+                .unwrap_or_else(|| "any".to_string());
+            let effective_expr = raw_type_expr.trim_end_matches('=').trim();
+            let effective_expr = if param.rest {
+                effective_expr.trim_start_matches("...").trim()
+            } else {
+                effective_expr
+            };
+
+            let is_object_base = effective_expr == "Object" || effective_expr == "object";
+            let is_array_object_base = effective_expr == "Object[]"
+                || effective_expr == "object[]"
+                || effective_expr == "Array.<Object>"
+                || effective_expr == "Array.<object>"
+                || effective_expr == "Array<Object>"
+                || effective_expr == "Array<object>";
+
+            let mut type_id = if (is_object_base || is_array_object_base)
+                && !nested_entries.is_empty()
+            {
+                self.build_nested_param_object_type_from_entries(
+                    &nested_entries,
+                    &param.name,
+                    is_array_object_base,
+                )
+                .or_else(|| self.jsdoc_type_from_expression(effective_expr))
+                .unwrap_or(TypeId::ANY)
+            } else {
+                self.jsdoc_type_from_expression(effective_expr)
+                    .unwrap_or(TypeId::ANY)
+            };
+
+            if param.rest {
+                type_id = factory.array(type_id);
+            }
+
+            if param.name == "this" {
+                this_type = Some(type_id);
+                continue;
+            }
+
+            let name_atom = self.ctx.types.intern_string(&param.name);
+            params.push(ParamInfo {
+                name: Some(name_atom),
+                type_id,
+                optional: param.optional,
+                rest: param.rest,
+            });
+        }
+
+        let mut type_predicate = None;
+        let return_type = if let Some((is_asserts, param_name, type_str)) = cb.predicate {
+            let pred_type = type_str
+                .as_deref()
+                .and_then(|s| self.jsdoc_type_from_expression(s));
+            let target = if param_name == "this" {
+                TypePredicateTarget::This
+            } else {
+                let atom = self.ctx.types.intern_string(&param_name);
+                TypePredicateTarget::Identifier(atom)
+            };
+            let parameter_index = if param_name != "this" {
+                params.iter().position(|param| {
+                    param.name
+                        .is_some_and(|name| name == self.ctx.types.intern_string(&param_name))
+                })
+            } else {
+                None
+            };
+            type_predicate = Some(TypePredicate {
+                asserts: is_asserts,
+                target,
+                type_id: pred_type,
+                parameter_index,
+            });
+            if is_asserts {
+                TypeId::VOID
+            } else {
+                TypeId::BOOLEAN
+            }
+        } else if let Some(ref ret_expr) = cb.return_type {
+            self.jsdoc_type_from_expression(ret_expr)
+                .unwrap_or(TypeId::ANY)
+        } else {
+            TypeId::VOID
+        };
+
+        Some(factory.function(FunctionShape {
+            type_params: type_params.to_vec(),
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_constructor: false,
+            is_method: false,
+        }))
+    }
+
+    fn type_from_jsdoc_object_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
         let factory = self.ctx.types.factory();
         let base_type = if let Some(base_type_expr) = &info.base_type {
             let expr = base_type_expr.trim();
@@ -1797,64 +1919,50 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        // Group properties: dotted names like "icons.image32" become nested object
-        // properties on the parent property "icons".
-        // First pass: collect nested properties by parent name.
-        let mut top_level: Vec<(String, String)> = Vec::new();
-        let mut nested: std::collections::BTreeMap<String, Vec<(String, String)>> =
-            std::collections::BTreeMap::new();
-        for (name, prop_type_expr) in info.properties {
-            if let Some(dot_pos) = name.find('.') {
-                let parent = name[..dot_pos].to_string();
-                let child = name[dot_pos + 1..].to_string();
-                nested
-                    .entry(parent)
-                    .or_default()
-                    .push((child, prop_type_expr));
+        let mut top_level = Vec::new();
+        let mut nested_entries = Vec::new();
+        for prop in info.properties {
+            if prop.name.contains('.') {
+                nested_entries.push((prop.name, prop.type_expr, prop.optional));
             } else {
-                top_level.push((name, prop_type_expr));
+                top_level.push(prop);
             }
         }
         let mut prop_infos = Vec::with_capacity(top_level.len());
-        for (name, prop_type_expr) in top_level {
-            let mut prop_type = if prop_type_expr.trim().is_empty() {
+        for prop in top_level {
+            let mut prop_type = if prop.type_expr.trim().is_empty() {
                 TypeId::ANY
             } else {
-                self.jsdoc_type_from_expression(&prop_type_expr)
+                self.jsdoc_type_from_expression(&prop.type_expr)
                     .unwrap_or(TypeId::ANY)
             };
-            if let Some(children) = nested.remove(&name) {
-                let mut child_props = Vec::with_capacity(children.len());
-                for (child_name, child_type_expr) in children {
-                    let child_type = if child_type_expr.trim().is_empty() {
-                        TypeId::ANY
-                    } else {
-                        self.jsdoc_type_from_expression(&child_type_expr)
-                            .unwrap_or(TypeId::ANY)
-                    };
-                    let child_atom = self.ctx.types.intern_string(&child_name);
-                    child_props.push(PropertyInfo {
-                        name: child_atom,
-                        type_id: child_type,
-                        write_type: child_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                    });
-                }
-                let factory = self.ctx.types.factory();
-                prop_type = factory.object(child_props);
+            let effective_expr = prop.type_expr.trim_end_matches('=').trim();
+            let is_array_object_base = effective_expr == "Object[]"
+                || effective_expr == "object[]"
+                || effective_expr == "Array.<Object>"
+                || effective_expr == "Array.<object>"
+                || effective_expr == "Array<Object>"
+                || effective_expr == "Array<object>";
+            if let Some(built) = self.build_nested_param_object_type_from_entries(
+                &nested_entries,
+                &prop.name,
+                is_array_object_base,
+            ) {
+                prop_type = built;
             }
-            let name_atom = self.ctx.types.intern_string(&name);
+            if prop.optional
+                && self.ctx.strict_null_checks()
+                && prop_type != TypeId::ANY
+                && prop_type != TypeId::UNDEFINED
+            {
+                prop_type = factory.union2(prop_type, TypeId::UNDEFINED);
+            }
+            let name_atom = self.ctx.types.intern_string(&prop.name);
             prop_infos.push(PropertyInfo {
                 name: name_atom,
                 type_id: prop_type,
                 write_type: prop_type,
-                optional: false,
+                optional: prop.optional,
                 readonly: false,
                 is_method: false,
                 is_class_prototype: false,
@@ -1874,6 +1982,42 @@ impl<'a> CheckerState<'a> {
             (None, Some(base)) => Some(base),
             (None, None) => None,
         }
+    }
+
+    fn resolve_jsdoc_generic_typedef_type(
+        &mut self,
+        base_name: &str,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let source_file = self.ctx.arena.source_files.first()?;
+        let anchor_pos = self.ctx.jsdoc_typedef_anchor_pos.get();
+        let mut best_def = None;
+        for comment in &source_file.comments {
+            if comment.end > anchor_pos || !is_jsdoc_comment(comment, &source_file.text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, &source_file.text);
+            for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
+                if name == base_name {
+                    best_def = Some(typedef_info);
+                }
+            }
+        }
+
+        let (body_type, type_params) = self.type_from_jsdoc_typedef(best_def?)?;
+        if type_params.is_empty() || type_args.is_empty() {
+            return Some(body_type);
+        }
+
+        use tsz_solver::instantiate_generic;
+        Some(instantiate_generic(
+            self.ctx.types,
+            body_type,
+            &type_params,
+            type_args,
+        ))
     }
     /// Check if a node has a JSDoc `@readonly` tag.
     pub(crate) fn jsdoc_has_readonly_tag(&self, idx: NodeIndex) -> bool {
