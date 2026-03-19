@@ -4,6 +4,7 @@
 //! type kind, plus impl helper methods for complex cases (objects, unions, etc.).
 
 use super::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeId, TypeListId,
 };
@@ -530,7 +531,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
         // Only return IsUnknown if ALL members are UNKNOWN
-        let non_unknown_members: Vec<_> = members
+        let mut non_unknown_members: Vec<_> = members
             .iter()
             .filter(|&&t| t != TypeId::UNKNOWN)
             .copied()
@@ -539,6 +540,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if non_unknown_members.is_empty() {
             // All members are UNKNOWN
             return Some(PropertyAccessResult::IsUnknown);
+        }
+
+        if let Some(normalized) =
+            normalize_fresh_object_literal_union_members(self.interner(), &non_unknown_members)
+        {
+            non_unknown_members = normalized;
         }
 
         // Reconstructing the union can be expensive for large unions. Delay it
