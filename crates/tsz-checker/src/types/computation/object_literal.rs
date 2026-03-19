@@ -540,6 +540,7 @@ impl<'a> CheckerState<'a> {
                         if initializer_is_function_like
                             && (property_request.contextual_type == Some(TypeId::NEVER)
                                 || property_is_contextually_absent)
+                            && property_request.is_empty()
                         {
                             self.ctx
                                 .implicit_any_contextual_closures

@@ -42,9 +42,9 @@ fn is_primitive_type_name(name: &str) -> bool {
 /// it typically means the source type inherits it implicitly but its `ObjectShape`
 /// doesn't include it. In this case, the mismatch is a type compatibility issue
 /// (TS2322), not a missing property issue (TS2741).
-pub(super) fn is_object_prototype_method(name: &str) -> bool {
+pub(super) fn is_object_prototype_method(name: impl AsRef<str>) -> bool {
     matches!(
-        name,
+        name.as_ref(),
         "valueOf"
             | "toString"
             | "toLocaleString"
@@ -222,7 +222,9 @@ impl<'a> CheckerState<'a> {
         let mut base_diag = match reason {
             Some(reason) => self.render_failure_reason(&reason, source, target, anchor_idx, 0),
             None => {
-                let Some(loc) = self.get_source_location(anchor_idx) else {
+                let Some(anchor) =
+                    self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+                else {
                     return;
                 };
                 let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
@@ -232,7 +234,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_def_store(&self.ctx.definition_store)
                 .with_namespace_module_names(&self.ctx.namespace_module_names);
-                let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
+                let diag = builder.type_not_assignable(source, target, anchor.start, anchor.length);
                 diag.to_checker_diagnostic(&self.ctx.file_name)
             }
         };
@@ -317,7 +319,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for private brand mismatch
         if let Some(detail) = self.private_brand_mismatch_error(source, target) {
-            let Some(loc) = self.get_node_span(anchor_idx) else {
+            let Some(anchor) =
+                self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+            else {
                 return;
             };
 
@@ -330,12 +334,17 @@ impl<'a> CheckerState<'a> {
 
             let diag = Diagnostic::error(
                 self.ctx.file_name.clone(),
-                loc.0,
-                loc.1 - loc.0,
+                anchor.start,
+                anchor.length,
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             )
-            .with_related(self.ctx.file_name.clone(), loc.0, loc.1 - loc.0, detail);
+            .with_related(
+                self.ctx.file_name.clone(),
+                anchor.start,
+                anchor.length,
+                detail,
+            );
 
             self.ctx.push_diagnostic(diag);
             return;
@@ -343,7 +352,8 @@ impl<'a> CheckerState<'a> {
 
         // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
         if self.has_exact_optional_property_mismatch(source, target)
-            && let Some(loc) = self.get_source_location(anchor_idx)
+            && let Some(anchor) =
+                self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
         {
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
@@ -354,8 +364,8 @@ impl<'a> CheckerState<'a> {
                 );
             self.ctx.push_diagnostic(Diagnostic::error(
                     self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
+                    anchor.start,
+                    anchor.length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                 ));
@@ -453,10 +463,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(anchor_idx) {
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+        {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
-            if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
+            if self.has_more_specific_diagnostic_at_span(anchor.start, anchor.length) {
                 return;
             }
 
@@ -537,8 +549,8 @@ impl<'a> CheckerState<'a> {
                 };
                 self.ctx.push_diagnostic(Diagnostic::error(
                     self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
+                    anchor.start,
+                    anchor.length,
                     message,
                     code,
                 ));
@@ -554,8 +566,8 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.push_diagnostic(Diagnostic::error(
                 self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
+                anchor.start,
+                anchor.length,
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             ));
@@ -1401,15 +1413,12 @@ impl<'a> CheckerState<'a> {
 
             SubtypeFailureReason::ExcessProperty {
                 property_name,
-                target_type,
+                target_type: _,
             } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let target_str = self.format_excess_property_target_type(*target_type);
-                let message = format_message(
-                    diagnostic_messages::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-                    &[&prop_name, &target_str],
-                );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                let (code, message) =
+                    self.excess_property_diagnostic_message(&prop_name, target, idx);
+                Diagnostic::error(file_name, start, length, message, code)
             }
 
             SubtypeFailureReason::ReturnTypeMismatch {

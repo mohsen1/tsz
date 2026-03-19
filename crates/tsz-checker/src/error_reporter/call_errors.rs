@@ -168,6 +168,10 @@ impl<'a> CheckerState<'a> {
         Some((index_value_type, index_value_type))
     }
 
+    fn object_literal_property_name_text(&self, prop_name_idx: NodeIndex) -> Option<String> {
+        self.get_property_name(prop_name_idx)
+    }
+
     fn literal_call_argument_display(&self, arg_idx: NodeIndex) -> Option<String> {
         self.literal_expression_display(arg_idx)
     }
@@ -897,12 +901,7 @@ impl<'a> CheckerState<'a> {
                     _ => continue,
                 };
 
-                let Some(prop_name) = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(prop_name_idx)
-                    .map(|ident| ident.escaped_text.clone())
-                else {
+                let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
                     continue;
                 };
 
@@ -915,19 +914,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let already_reported =
-                    self.get_node_span(prop_name_idx)
-                        .is_some_and(|(start, end)| {
-                            self.has_diagnostic_code_within_span(
-                                start,
-                                end,
-                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-                            ) || self.has_diagnostic_code_within_span(
-                                start,
-                                end,
-                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                            )
-                        });
+                let already_reported = self
+                    .resolve_diagnostic_anchor(prop_name_idx, DiagnosticAnchorKind::PropertyToken)
+                    .is_some_and(|anchor| {
+                        let end = anchor.start.saturating_add(anchor.length);
+                        self.has_diagnostic_code_within_span(
+                            anchor.start,
+                            end,
+                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                        ) || self.has_diagnostic_code_within_span(
+                            anchor.start,
+                            end,
+                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                        )
+                    });
                 if !already_reported {
                     self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
                 }
@@ -963,9 +963,8 @@ impl<'a> CheckerState<'a> {
             };
 
             // Get the property name string
-            let prop_name = match self.ctx.arena.get_identifier_at(prop_name_idx) {
-                Some(ident) => ident.escaped_text.clone(),
-                None => continue,
+            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
+                continue;
             };
 
             let property_presence = excess_target
@@ -976,19 +975,20 @@ impl<'a> CheckerState<'a> {
                     crate::computation::object_literal_context::ContextualPropertyPresence::Absent
                 )
             ) {
-                let already_reported =
-                    self.get_node_span(prop_name_idx)
-                        .is_some_and(|(start, end)| {
-                            self.has_diagnostic_code_within_span(
-                                start,
-                                end,
-                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-                            ) || self.has_diagnostic_code_within_span(
-                                start,
-                                end,
-                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                            )
-                        });
+                let already_reported = self
+                    .resolve_diagnostic_anchor(prop_name_idx, DiagnosticAnchorKind::PropertyToken)
+                    .is_some_and(|anchor| {
+                        let end = anchor.start.saturating_add(anchor.length);
+                        self.has_diagnostic_code_within_span(
+                            anchor.start,
+                            end,
+                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                        ) || self.has_diagnostic_code_within_span(
+                            anchor.start,
+                            end,
+                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                        )
+                    });
                 if !already_reported && let Some(excess_target) = excess_target {
                     self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
                 }
@@ -1097,6 +1097,12 @@ impl<'a> CheckerState<'a> {
                 );
                 elaborated = true;
             }
+        }
+
+        if !elaborated
+            && self.should_suppress_object_literal_call_mismatch(source_type, effective_param_type)
+        {
+            return true;
         }
 
         elaborated
@@ -1423,8 +1429,6 @@ impl<'a> CheckerState<'a> {
 
         use tsz_solver::PendingDiagnostic;
 
-        // tsc reports TS2769 at the first argument position, not the call expression.
-        // Fall back to the call expression itself if there are no arguments.
         let Some(anchor) =
             self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::OverloadPrimary)
         else {

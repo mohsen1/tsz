@@ -15,14 +15,14 @@
 //! This is pure checker orchestration — it manages diagnostic/cache state, not
 //! type algorithms. The solver is not involved.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{FlowNodeId, SymbolId};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 use crate::diagnostics::Diagnostic;
 
-use super::CheckerContext;
+use super::{CheckerContext, RequestCacheKey};
 
 // ---------------------------------------------------------------------------
 // Snapshot types
@@ -48,6 +48,7 @@ pub(crate) struct FullSnapshot {
     pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
     pub modules_with_ts2307_emitted: FxHashSet<String>,
     pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
+    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 }
 
 /// Cache snapshot for return-type inference, which also corrupts `node_types`
@@ -55,6 +56,9 @@ pub(crate) struct FullSnapshot {
 pub(crate) struct CacheSnapshot {
     /// Set of `node_types` keys that existed before speculation.
     pub node_type_keys: std::collections::HashSet<u32>,
+    /// Full request-aware cache snapshot. Speculation may overwrite existing
+    /// entries, so rollback must restore values, not just prune additions.
+    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
     /// Clone of the flow analysis cache.
     pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
 }
@@ -93,6 +97,7 @@ impl CheckerContext<'_> {
             emitted_ts2454_errors: self.emitted_ts2454_errors.clone(),
             modules_with_ts2307_emitted: self.modules_with_ts2307_emitted.clone(),
             implicit_any_checked_closures: self.implicit_any_checked_closures.clone(),
+            request_node_types: self.request_node_types.clone(),
         }
     }
 
@@ -105,6 +110,7 @@ impl CheckerContext<'_> {
             full: self.snapshot_full(),
             cache: CacheSnapshot {
                 node_type_keys: self.node_types.keys().copied().collect(),
+                request_node_types: self.request_node_types.clone(),
                 flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
             },
         }
@@ -132,6 +138,7 @@ impl CheckerContext<'_> {
             .clone_from(&snap.modules_with_ts2307_emitted);
         self.implicit_any_checked_closures
             .clone_from(&snap.implicit_any_checked_closures);
+        self.request_node_types.clone_from(&snap.request_node_types);
     }
 
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
@@ -140,6 +147,8 @@ impl CheckerContext<'_> {
         self.rollback_full(&snap.full);
         self.node_types
             .retain(|k, _| snap.cache.node_type_keys.contains(k));
+        self.request_node_types
+            .clone_from(&snap.cache.request_node_types);
         *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();
     }
 

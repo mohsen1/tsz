@@ -847,6 +847,27 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target) {
                 result.failure_reason = None;
             }
+            let has_non_epc_intersection_member = [target, evaluated_target]
+                .into_iter()
+                .filter_map(|candidate| {
+                    tsz_solver::type_queries::data::get_intersection_members(
+                        self.ctx.types,
+                        candidate,
+                    )
+                })
+                .any(|members| {
+                    members.iter().any(|member| {
+                        let evaluated_member = self.evaluate_type_for_assignability(*member);
+                        tsz_solver::is_primitive_type(self.ctx.types, evaluated_member)
+                            || tsz_solver::type_queries::is_type_parameter_like(
+                                self.ctx.types,
+                                evaluated_member,
+                            )
+                    })
+                });
+            if has_non_epc_intersection_member {
+                result.failure_reason = None;
+            }
         }
 
         result

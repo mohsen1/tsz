@@ -341,6 +341,27 @@ const assigned: (x: string) => string = (x) => 1;
 }
 
 #[test]
+fn speculative_overload_check_does_not_poison_successful_candidate() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function fn(cb: (s: number) => void): void;
+declare function fn(cb: (s: string) => void): void;
+
+fn(s => s.toUpperCase());
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2339 | 2345))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected speculative overload rollback to avoid poisoning the successful candidate, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn nested_object_literal_context_is_preserved_without_ambient_restore() {
     let diags = check_source_diagnostics(
         r#"

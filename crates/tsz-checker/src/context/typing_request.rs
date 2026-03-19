@@ -21,7 +21,7 @@ use tsz_solver::TypeId;
 ///
 /// Replaces the boolean `ctx.skip_flow_narrowing` with an explicit enum
 /// so callers express *intent* rather than toggling a global flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FlowIntent {
     /// Normal read: apply flow narrowing (the common case).
     #[default]
@@ -48,7 +48,7 @@ impl FlowIntent {
 ///
 /// Replaces the boolean `ctx.contextual_type_is_assertion` with an enum
 /// that distinguishes normal contextual typing from assertion contexts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ContextualOrigin {
     /// Normal contextual typing (variable declaration, assignment, etc.).
     /// Function body return types are checked against the contextual type.

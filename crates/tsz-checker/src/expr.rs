@@ -30,7 +30,7 @@
 //! - Conditional expressions (need union type building)
 //! - Await expressions (need Promise unwrapping)
 
-use super::context::CheckerContext;
+use super::context::{CheckerContext, RequestCacheKey, TypingRequest};
 
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -50,6 +50,12 @@ pub struct ExpressionChecker<'a, 'ctx> {
 }
 
 impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
+    fn is_audited_contextual_request_cache_kind(kind: u16) -> bool {
+        kind == SyntaxKind::NullKeyword as u16
+            || kind == syntax_kind_ext::TYPE_OF_EXPRESSION
+            || kind == syntax_kind_ext::VOID_EXPRESSION
+    }
+
     /// Create a new expression checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self {
@@ -73,11 +79,6 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// - `const x: string = expr` - `expr` is checked with context `string`
     /// - `const f: (x: number) => void = (x) => {}` - `x` is inferred as `number`
     ///
-    /// # Caching Behavior
-    ///
-    /// When `context_type` is `Some`, the cache is **bypassed** to avoid
-    /// incorrect results. The same expression can have different types
-    /// depending on the context, so caching by `NodeIndex` alone is unsound.
     pub fn check_with_context(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
         // Stack overflow protection
         if !self.depth.enter() {
@@ -85,9 +86,34 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
         }
 
         let result = if let Some(ctx_type) = context_type {
-            // Bypass cache when contextual type is provided
-            // Contextual types can produce different results for the same node
-            self.compute_type_with_context(idx, ctx_type)
+            let request = TypingRequest::with_contextual_type(ctx_type);
+            let cache_key = self.ctx.arena.get(idx).and_then(|node| {
+                Self::is_audited_contextual_request_cache_kind(node.kind)
+                    .then(|| RequestCacheKey::from_request(&request))
+                    .flatten()
+            });
+            if let Some(key) = cache_key {
+                if let Some(&cached) = self.ctx.request_node_types.get(&(idx.0, key)) {
+                    self.ctx.request_cache_counters.request_cache_hits += 1;
+                    self.depth.leave();
+                    return cached;
+                }
+                self.ctx.request_cache_counters.request_cache_misses += 1;
+            }
+
+            let result = self.compute_type_with_context(idx, ctx_type);
+            if let Some(key) = cache_key {
+                if result != TypeId::DELEGATE {
+                    self.ctx.request_node_types.insert((idx.0, key), result);
+                } else {
+                    self.ctx.request_cache_counters.contextual_cache_bypasses += 1;
+                }
+            } else {
+                // Keep unaudited contextual direct checks uncached until their
+                // request dependencies are made explicit and reviewed.
+                self.ctx.request_cache_counters.contextual_cache_bypasses += 1;
+            }
+            result
         } else {
             // Check cache first for non-contextual checks
             if let Some(&cached) = self.ctx.node_types.get(&idx.0) {

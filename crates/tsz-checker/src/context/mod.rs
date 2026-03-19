@@ -19,10 +19,12 @@ mod core;
 mod def_mapping;
 mod lib_queries;
 mod module_entity;
+mod request_cache;
 mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
 pub mod typing_request;
+pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -271,6 +273,12 @@ pub struct CheckerContext<'a> {
 
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
+
+    /// Request-aware cache for audited non-empty request paths only.
+    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+
+    /// Internal counters for request-aware cache usage and cache-clear churn.
+    pub request_cache_counters: RequestCacheCounters,
 
     /// Cached type environment for resolving Ref types during assignability checks.
     pub type_environment: Rc<RefCell<TypeEnvironment>>,

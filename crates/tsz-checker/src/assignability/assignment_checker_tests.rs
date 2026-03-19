@@ -114,6 +114,148 @@ const value: Outer = { inner: { ok: 1, nope: 2 } };
 }
 
 #[test]
+fn nested_object_literal_assignability_keeps_exact_property_anchor() {
+    let source = r#"
+type Inner = { ok: string };
+type Outer = { inner: Inner };
+const value: Outer = { inner: { ok: 42 } };
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    let ok_start = source.rfind("ok").expect("expected nested property name") as u32;
+    assert_eq!(
+        diag.start, ok_start,
+        "TS2322 should stay anchored at the offending nested property name"
+    );
+    assert_eq!(
+        diag.length, 2,
+        "TS2322 should cover only the offending property token"
+    );
+}
+
+#[test]
+fn numeric_property_assignment_reports_nested_value_mismatch() {
+    let source = r#"
+interface A {
+    0: string;
+}
+var x: A = {
+    0: 3
+};
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    let prop_start = source.rfind("0: 3").expect("expected numeric property") as u32;
+    assert_eq!(
+        diag.start, prop_start,
+        "TS2322 should anchor at the offending numeric property token"
+    );
+    assert_eq!(
+        diag.length, 1,
+        "TS2322 should cover only the numeric property token"
+    );
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type 'string'"),
+        "TS2322 should report the nested numeric property mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
+fn missing_property_message_uses_contextual_function_parameter_types() {
+    let source = r#"
+let value: {
+    f(n: number): number;
+    g(s: string): number;
+    m: number;
+} = {
+    f: (n) => 0,
+    g: (s) => 0,
+};
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2741)
+        .expect("expected TS2741");
+
+    assert!(
+        diag.message_text
+            .contains("{ f: (n: number) => number; g: (s: string) => number; }"),
+        "TS2741 should preserve contextual function parameter types in the source display, got: {diag:?}"
+    );
+}
+
+#[test]
+fn function_expression_assignment_reports_outer_signature_mismatch() {
+    let source = r#"
+interface T {
+    (x: number): string;
+}
+declare let t: T;
+t = (x: number) => 1;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322 && d.message_text.contains("Type '(x: number) => number'"))
+        .expect("expected outer TS2322");
+
+    let assignment_start = source.find("t = (x: number)").expect("expected assignment") as u32;
+    assert_eq!(
+        diag.start, assignment_start,
+        "TS2322 should anchor at the assignment target for function-expression signature mismatches"
+    );
+    assert!(
+        diag.message_text.contains("Type '(x: number) => number'"),
+        "TS2322 should report the outer signature mismatch, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("Type 'number' is not assignable to type 'string'"),
+        "The outer TS2322 should not collapse to the nested return-type leaf, got: {diag:?}"
+    );
+}
+
+#[test]
+fn generic_default_initializer_widens_numeric_literals() {
+    let source = r#"
+function foo3<T extends Number>(x: T = 1) { }
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type 'T'"),
+        "TS2322 should widen the initializer to number, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("Type '1' is not assignable to type 'T'"),
+        "TS2322 should not preserve the numeric literal in this generic initializer case, got: {diag:?}"
+    );
+}
+
+#[test]
 fn non_distributive_conditional_with_any_evaluates_to_true_branch() {
     // `[any] extends [number] ? 1 : 0` should evaluate to `1` (non-distributive).
     // `any extends number ? 1 : 0` should evaluate to `0 | 1` (distributive, picks both).

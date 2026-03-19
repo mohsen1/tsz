@@ -731,11 +731,6 @@ impl<'a> CheckerState<'a> {
                         && !jsdoc_blocks_callable_context
                         && !suppress_initializer_context
                     {
-                        // Clear cached type to force recomputation with contextual type
-                        // This is necessary because the expression (especially arrow functions)
-                        // might have been previously typed without contextual information
-                        // (e.g., during symbol binding or early AST traversal)
-                        checker.clear_type_cache_recursive(var_decl.initializer);
                         TypingRequest::with_contextual_type(evaluated_type)
                     } else {
                         TypingRequest::NONE
@@ -950,7 +945,6 @@ impl<'a> CheckerState<'a> {
                 let satisfies_info = checker.jsdoc_satisfies_annotation_with_pos(decl_idx);
                 if let Some((sat_type, keyword_pos)) = satisfies_info {
                     let request = TypingRequest::with_contextual_type(sat_type);
-                    checker.clear_type_cache_recursive(var_decl.initializer);
                     let init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
                     // Check satisfies assignability
@@ -992,9 +986,6 @@ impl<'a> CheckerState<'a> {
                         var_decl.initializer,
                         typing_request,
                     );
-                    if !request.is_empty() {
-                        checker.clear_type_cache_recursive(var_decl.initializer);
-                    }
                     request
                 } else {
                     let request = checker.redeclaration_initializer_request(
@@ -1002,9 +993,6 @@ impl<'a> CheckerState<'a> {
                         var_decl.name,
                         var_decl.initializer,
                     );
-                    if !request.is_empty() {
-                        checker.clear_type_cache_recursive(var_decl.initializer);
-                    }
                     request
                 };
                 let mut init_type =

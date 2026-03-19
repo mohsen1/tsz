@@ -163,6 +163,42 @@ takes(123);
 }
 
 #[test]
+fn ts2345_object_literal_contextual_typing_ignores_object_prototype_members() {
+    let source = r#"
+interface I {
+    value: string;
+    toString: (t: string) => string;
+}
+declare function f2(args: I): void;
+f2({ value: '' });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics when only Object.prototype members are missing, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2345_object_literal_contextual_typing_still_reports_real_missing_property() {
+    let source = r#"
+interface I {
+    value: string;
+    toString: (t: string) => string;
+}
+declare function f2(args: I): void;
+f2({ toString: (s: string) => s });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "expected TS2345 when a real required property is missing, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts2769_overload_related_information_keeps_overload_order() {
     let source = r#"
 declare function fn(value: string): void;
@@ -176,11 +212,12 @@ fn(true);
         .find(|d| d.code == 2769)
         .expect("expected TS2769");
 
-    let arg_start = source.find("true").expect("expected first argument") as u32;
+    let callee_start = source.rfind("fn(true)").expect("expected call expression") as u32;
     assert_eq!(
-        diag.start, arg_start,
-        "TS2769 should anchor at the first argument"
+        diag.start, callee_start,
+        "TS2769 should anchor at the callee"
     );
+    assert_eq!(diag.length, 2, "TS2769 should cover only the callee token");
     assert!(
         diag.related_information.len() >= 2,
         "expected overload related info, got: {diag:?}"

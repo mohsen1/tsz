@@ -225,6 +225,121 @@ let f: Foo = { a: 1, b: 2 }
     );
 }
 
+#[test]
+fn excess_property_intersection_annotation_preserves_declared_type_display() {
+    let source = r#"
+interface Book { foreword: string }
+interface Cover { color?: string }
+let book: Book & Cover = { foreword: "hi", colour: "blue" };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2561 = diags.iter().find(|d| d.0 == 2561).expect("expected TS2561");
+    assert!(
+        ts2561.1.contains("'Book & Cover'"),
+        "Expected declared intersection display in TS2561, got: {}",
+        ts2561.1
+    );
+}
+
+#[test]
+fn excess_property_object_intersection_display_keeps_object_member() {
+    let source = r#"
+const value: object & { x: string } = { z: "abc" };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'object & { x: string; }'"),
+        "Expected object intersection display in TS2353, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn generic_intersection_target_skips_excess_property_check() {
+    let source = r#"
+interface IFoo {}
+function test<T extends IFoo>() {
+    const value: T & { prop: boolean } = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 for generic intersection assignment, got: {diags:?}"
+    );
+}
+
+#[test]
+fn primitive_intersection_target_uses_ts2322_instead_of_epc() {
+    let source = r#"
+interface Book { foreword: string }
+const value: Book & number = { foreword: "hi", price: 10.99 };
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2322),
+        "Expected TS2322 for primitive intersection assignment, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 for primitive intersection assignment, got: {diags:?}"
+    );
+}
+
+#[test]
+fn union_with_generic_member_still_checks_concrete_member_for_excess_property() {
+    let source = r#"
+interface IFoo {}
+function test<T extends IFoo>() {
+    const value: T | { prop: boolean } = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'{ prop: boolean; }'"),
+        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn function_argument_contextual_typed_object_literal_reports_property_token_excesses() {
+    let source = r#"
+interface I {
+    value: string;
+    toString: (t: string) => string;
+}
+
+function f2(args: I) {}
+
+f2({ hello: 1 });
+f2({ value: "", what: 1 });
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected two TS2353 errors, got: {diags:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.1.contains("'hello'")),
+        "Expected TS2353 for 'hello', got: {diags:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.1.contains("'what'")),
+        "Expected TS2353 for 'what', got: {diags:?}"
+    );
+}
+
 // --- Intersection with index signatures ---
 
 // --- Post-inference EPC for generic calls with mapped type parameters ---

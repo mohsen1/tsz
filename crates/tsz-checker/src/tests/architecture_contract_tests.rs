@@ -2559,6 +2559,60 @@ fn no_typing_context_bridge_helper_or_calls() {
     }
 }
 
+/// The request-aware cache bypass must stay confined to the approved entry points.
+///
+/// This blocks new blanket "if request is non-empty, bypass cache" logic from
+/// being reintroduced into other checker main entry points.
+#[test]
+fn request_empty_cache_bypass_stays_confined_to_approved_entry_points() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let allowlist = ["state/state.rs", "types/class_type/constructor.rs"];
+
+    let mut checker_files = Vec::new();
+    collect_checker_rs_files_recursive(&base, &mut checker_files);
+
+    let mut violations = Vec::new();
+    for path in checker_files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(&base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if allowlist.iter().any(|allowed| relative.ends_with(allowed)) {
+            continue;
+        }
+
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with("*") {
+                continue;
+            }
+            if trimmed.starts_with("if request.is_empty()")
+                || trimmed.starts_with("let use_node_cache = request.is_empty()")
+                || trimmed.starts_with("let can_use_cache = request.is_empty()")
+            {
+                violations.push(format!("{}:{}", relative, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "request-empty cache bypass logic must stay confined to state/state.rs and \
+         types/class_type/constructor.rs; violations:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The `TypingRequest` type must exist and have the expected fields.
 #[test]
 fn typing_request_api_exists() {

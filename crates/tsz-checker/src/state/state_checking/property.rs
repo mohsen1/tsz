@@ -188,13 +188,16 @@ impl<'a> CheckerState<'a> {
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
                 let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
-                    // If a union member has no object shape and is a type parameter
-                    // or the `object` intrinsic, it conceptually accepts any properties,
-                    // so excess property checking should not apply at all.
-                    if query::is_type_parameter_like(self.ctx.types, resolved_member)
-                        || resolved_member == TypeId::OBJECT
-                    {
+                    // If a union member is the `object` intrinsic, it conceptually
+                    // accepts any properties, so excess property checking should not
+                    // apply at all.
+                    if resolved_member == TypeId::OBJECT {
                         return;
+                    }
+                    // TypeScript still applies excess property checking to the
+                    // concrete members of unions like `T | { prop: boolean }`.
+                    if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                        continue;
                     }
                     continue;
                 };
@@ -321,9 +324,17 @@ impl<'a> CheckerState<'a> {
             let mut dynamic_members = Vec::new();
             let mut has_index_signature = false;
             let mut index_value_types: Vec<TypeId> = Vec::new();
+            let mut has_primitive_member = false;
 
             for &member in members.iter() {
                 let resolved_member = self.resolve_type_for_property_access(member);
+                if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                    return;
+                }
+                if tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
+                    has_primitive_member = true;
+                    continue;
+                }
                 if let Some(shape) = query::object_shape(self.ctx.types, resolved_member) {
                     if let Some(ref idx_sig) = shape.string_index {
                         has_index_signature = true;
@@ -342,10 +353,12 @@ impl<'a> CheckerState<'a> {
                     if resolved_member == TypeId::OBJECT {
                         continue;
                     }
-                    if !tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
-                        dynamic_members.push(member);
-                    }
+                    dynamic_members.push(member);
                 }
+            }
+
+            if has_primitive_member {
+                return;
             }
 
             if target_shapes.is_empty() && dynamic_members.is_empty() {

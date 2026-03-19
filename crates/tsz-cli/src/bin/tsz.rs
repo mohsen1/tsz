@@ -1368,6 +1368,19 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     if extended {
         // Use process memory info if available
         let memory_used = get_memory_usage_kb();
+        let counters = result.request_cache_counters;
+        let request_lookups = counters.request_cache_hits + counters.request_cache_misses;
+        let request_hit_rate = if request_lookups == 0 {
+            0.0
+        } else {
+            counters.request_cache_hits as f64 * 100.0 / request_lookups as f64
+        };
+        let access_hit_rate = if counters.property_access_request_cache_lookups == 0 {
+            0.0
+        } else {
+            counters.property_access_request_cache_hits as f64 * 100.0
+                / counters.property_access_request_cache_lookups as f64
+        };
         println!(
             "Emitted files:                 {}",
             result.emitted_files.len()
@@ -1375,6 +1388,29 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         println!(
             "Total diagnostics:             {}",
             result.diagnostics.len()
+        );
+        println!(
+            "Request cache hits:            {}",
+            counters.request_cache_hits
+        );
+        println!(
+            "Request cache misses:          {}",
+            counters.request_cache_misses
+        );
+        println!("Request cache hit rate:        {:.1}%", request_hit_rate);
+        println!(
+            "Contextual cache bypasses:     {}",
+            counters.contextual_cache_bypasses
+        );
+        println!(
+            "clear_type_cache_recursive:    {}",
+            counters.clear_type_cache_recursive_calls
+        );
+        println!(
+            "Access request-cache hit rate: {:.1}% ({}/{})",
+            access_hit_rate,
+            counters.property_access_request_cache_hits,
+            counters.property_access_request_cache_lookups
         );
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");

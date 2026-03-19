@@ -18,14 +18,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench/bench-vs-tsgo.sh"
 
-# Focus on current benchmark losers (2026-03-18 analysis):
-# - Optional-chain/CFA: the biggest loss cluster
-# - Union members: discriminant narrowing and property resolution scaling
-# - Generic functions: inference/constraint conflicts at high N
-# - Classes: heritage/member closure at high N
-# - ts-essentials: real-world complex type computation
-DEFAULT_FILTER='^(Shallow optional-chain N=400|DeepPartial optional-chain N=400|200 union members|200 classes|200 generic functions|Constraint conflicts N=200|CFA branches=150|ts-essentials/xor\.ts|ts-essentials/deep-readonly\.ts)$'
-FILTER="$DEFAULT_FILTER"
+# Focus on the current requested losers.
+# In --quick mode bench-vs-tsgo only emits reduced-size representatives for the
+# same hotspot families, so the default filter must track those quick labels.
+DEFAULT_FILTER_FULL='^(DeepPartial optional-chain N=400|Shallow optional-chain N=400|200 union members|200 generic functions|Constraint conflicts N=200|200 classes)$'
+DEFAULT_FILTER_QUICK='^(DeepPartial optional-chain N=50|Shallow optional-chain N=50|50 generic functions|100 classes|Constraint conflicts N=30)$'
+FILTER=""
 JSON_FILE="$PROJECT_ROOT/artifacts/perf/hotspots-$(date +%Y%m%d-%H%M%S).json"
 QUICK_MODE=false
 FORCE_REBUILD=false
@@ -83,6 +81,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$FILTER" ]]; then
+    if [[ "$QUICK_MODE" == true ]]; then
+        FILTER="$DEFAULT_FILTER_QUICK"
+    else
+        FILTER="$DEFAULT_FILTER_FULL"
+    fi
+fi
 
 if [[ ! -x "$BENCH_SCRIPT" ]]; then
     echo "Benchmark script not found or not executable: $BENCH_SCRIPT" >&2
