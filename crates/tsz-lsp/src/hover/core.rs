@@ -149,13 +149,7 @@ impl<'a> HoverProvider<'a> {
             )
         };
 
-        let decl_node_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first) = symbol.declarations.first() {
-            first
-        } else {
-            NodeIndex::NONE
-        };
+        let decl_node_idx = self.find_best_declaration(symbol, node_idx);
 
         let type_id = if decl_node_idx.is_some()
             && symbol.flags
@@ -658,6 +652,26 @@ impl<'a> HoverProvider<'a> {
                 return format!("(method) {}.{}{}", parent, symbol.escaped_name, sig);
             }
             return format!("(method) {}{}", symbol.escaped_name, sig);
+        }
+        if f & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR) != 0 {
+            // Use declaration node kind to distinguish getter vs setter,
+            // since the symbol may have both flags when both are declared.
+            let accessor_kind = if decl_node_idx.is_some()
+                && let Some(decl_node) = self.arena.get(decl_node_idx)
+                && decl_node.kind == tsz_parser::syntax_kind_ext::SET_ACCESSOR
+            {
+                "setter"
+            } else {
+                "getter"
+            };
+            let parent_name = self.get_parent_name(decl_node_idx);
+            if let Some(parent) = parent_name {
+                return format!(
+                    "({}) {}.{}: {}",
+                    accessor_kind, parent, symbol.escaped_name, type_string
+                );
+            }
+            return format!("({}) {}: {}", accessor_kind, symbol.escaped_name, type_string);
         }
         if f & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
             if let Some(module_ref) = self.find_import_equals_module_ref_text(symbol) {
@@ -1271,6 +1285,46 @@ impl<'a> HoverProvider<'a> {
             return node.kind == syntax_kind_ext::PARAMETER;
         }
         false
+    }
+
+    /// Pick the declaration that is an ancestor of the hovered node.
+    /// When a symbol has multiple declarations (e.g., getter + setter),
+    /// this ensures we display the correct kind.
+    fn find_best_declaration(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        hovered_node: NodeIndex,
+    ) -> NodeIndex {
+        if symbol.declarations.len() > 1 {
+            for &decl in &symbol.declarations {
+                if self.node_is_descendant_of(hovered_node, decl) {
+                    return decl;
+                }
+            }
+        }
+        if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first) = symbol.declarations.first() {
+            first
+        } else {
+            NodeIndex::NONE
+        }
+    }
+
+    /// Check if `child` is a descendant of `ancestor` in the AST.
+    fn node_is_descendant_of(&self, child: NodeIndex, ancestor: NodeIndex) -> bool {
+        if ancestor.is_none() || child.is_none() {
+            return false;
+        }
+        let ancestor_node = match self.arena.get(ancestor) {
+            Some(n) => n,
+            None => return false,
+        };
+        let child_node = match self.arena.get(child) {
+            Some(n) => n,
+            None => return false,
+        };
+        child_node.pos >= ancestor_node.pos && child_node.end <= ancestor_node.end
     }
 
     /// Get the parent symbol name (for enum members, properties, methods).
