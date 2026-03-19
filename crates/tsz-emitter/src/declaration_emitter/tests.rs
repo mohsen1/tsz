@@ -513,6 +513,106 @@ export default class extends getGreeterBase() {}
 }
 
 #[test]
+fn test_named_class_extends_expression_preserves_type_arguments_on_alias() {
+    let source = r#"
+declare function getBase(): any;
+export class Derived extends getBase()<string, number> {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "Derived",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(extends_expr_idx.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const Derived_base: any;"),
+        "Expected synthetic base alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("export declare class Derived extends Derived_base<string, number> {"),
+        "Expected class heritage to preserve original type arguments on the alias: {output}"
+    );
+    assert!(
+        !output.contains("extends getBase()<string, number>"),
+        "Did not expect raw extends expression to leak into declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_named_class_extends_expression_keeps_local_class_dependency() {
+    let source = r#"
+export {};
+class LocalBase<T, U> {
+    x: T;
+    y: U;
+}
+declare function getBase(): typeof LocalBase;
+export class Derived extends getBase()<string, number> {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "Derived",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let local_base_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "LocalBase",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let local_base_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(local_base_sym),
+        is_abstract: false,
+    });
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, local_base_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare class LocalBase<T, U> {"),
+        "Expected local base class declaration to be retained for synthetic alias types: {output}"
+    );
+    assert!(
+        output.contains("export declare class Derived extends Derived_base<string, number> {"),
+        "Expected derived class to preserve original type arguments on the alias: {output}"
+    );
+}
+
+#[test]
 fn test_non_unique_symbol_computed_method_uses_property_syntax_in_structural_type() {
     let source = r#"
 export const a: symbol = Symbol();
