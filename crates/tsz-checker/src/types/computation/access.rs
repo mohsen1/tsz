@@ -541,6 +541,9 @@ impl<'a> CheckerState<'a> {
         {
             return TypeId::ANY;
         }
+        if self.is_jsdoc_annotated_this_member_declaration(idx) {
+            return TypeId::ANY;
+        }
         let union_keys = self.get_literal_key_union_from_type(index_type);
         // Track missing literal keys for TS2339 reporting (instead of TS7053).
         let mut missing_literal_keys: Vec<String> = Vec::new();

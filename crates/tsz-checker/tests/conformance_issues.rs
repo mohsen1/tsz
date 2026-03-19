@@ -5322,6 +5322,30 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_static_super_field_access_does_not_report_ts2855() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    static value = 1;
+}
+
+class Derived extends Base {
+    static extra = super.value + 1;
+
+    static {
+        super.value;
+    }
+}
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2855),
+        "Expected static super field access to avoid TS2855. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_super_in_constructor_parameter_reports_ts2336_and_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
         r"
