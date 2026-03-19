@@ -475,3 +475,114 @@ fn test_build_order_keeps_sibling_dependencies_deterministic() {
         "build order should remain deterministic for sibling projects that share a dependency"
     );
 }
+
+#[test]
+fn test_affected_projects_walks_dependents_transitively() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    let shared = root.join("shared");
+    std::fs::create_dir_all(&shared).expect("directory creation should succeed in test");
+    let shared_config = create_test_project(
+        &shared,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true }
+        }"#,
+    );
+
+    let leaf_a = root.join("leaf-a");
+    std::fs::create_dir_all(&leaf_a).expect("directory creation should succeed in test");
+    create_test_project(
+        &leaf_a,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../shared" }]
+        }"#,
+    );
+
+    let leaf_b = root.join("leaf-b");
+    std::fs::create_dir_all(&leaf_b).expect("directory creation should succeed in test");
+    create_test_project(
+        &leaf_b,
+        r#"{
+            "compilerOptions": { "composite": true, "declaration": true },
+            "references": [{ "path": "../shared" }]
+        }"#,
+    );
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "references": [
+                { "path": "./leaf-a" },
+                { "path": "./leaf-b" }
+            ]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let shared_id = graph
+        .get_project_id(&std::fs::canonicalize(&shared_config).unwrap())
+        .unwrap();
+
+    let affected = graph.affected_projects(shared_id);
+    let affected_names: std::collections::BTreeSet<String> = affected
+        .iter()
+        .map(|&id| {
+            graph
+                .get_project(id)
+                .unwrap()
+                .config_path
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(
+        affected_names,
+        std::collections::BTreeSet::from([
+            "leaf-a".to_string(),
+            "leaf-b".to_string(),
+            temp.path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        ])
+    );
+}
+
+#[test]
+fn test_load_project_keeps_invalid_reference_metadata_without_loading_missing_project() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let config_path = create_test_project(
+        temp.path(),
+        r#"{
+            "references": [{ "path": "./missing-project" }]
+        }"#,
+    );
+
+    let project = load_project(&config_path).unwrap();
+    assert_eq!(project.resolved_references.len(), 1);
+    let missing = &project.resolved_references[0];
+    assert!(!missing.is_valid);
+    let normalized_path = missing.config_path.to_string_lossy().replace('\\', "/");
+    assert!(
+        normalized_path.ends_with("missing-project/tsconfig.json"),
+        "unexpected missing config path: {normalized_path}"
+    );
+    assert!(
+        missing
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Referenced project not found")
+    );
+
+    let graph = ProjectReferenceGraph::load(&config_path).unwrap();
+    assert_eq!(graph.project_count(), 1);
+}

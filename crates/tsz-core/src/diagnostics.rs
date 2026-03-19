@@ -810,4 +810,101 @@ mod tests {
         let codes = bag.error_codes();
         assert_eq!(codes, vec![2304, 2322]);
     }
+
+    #[test]
+    fn test_sound_domain_updates_prefix_and_source() {
+        let diag = Diagnostic::warning("test.ts", Span::new(1, 2), "Unsound edge", 8001)
+            .with_domain(DiagnosticDomain::Sound);
+
+        assert_eq!(diag.domain.prefix(), "TSZ");
+        assert_eq!(diag.source.as_deref(), Some("tsz-sound"));
+        assert_eq!(diag.format_simple(), "warning[TSZ8001]: Unsound edge");
+    }
+
+    #[test]
+    fn test_with_related_all_and_with_source_preserve_metadata() {
+        let diag = Diagnostic::info("test.ts", Span::new(3, 4), "Info", 1000)
+            .with_related_all(vec![
+                DiagnosticRelatedInfo::new("a.ts", Span::new(0, 1), "First"),
+                DiagnosticRelatedInfo::new("b.ts", Span::new(2, 3), "Second"),
+            ])
+            .with_source("custom-source");
+
+        assert_eq!(diag.related.len(), 2);
+        assert_eq!(diag.related[0].file_name, "a.ts");
+        assert_eq!(diag.related[1].message, "Second");
+        assert_eq!(diag.source.as_deref(), Some("custom-source"));
+    }
+
+    #[test]
+    fn test_diagnostic_bag_default_file_sound_helpers_and_filters() {
+        let mut bag = DiagnosticBag::new();
+        bag.set_default_file("default.ts");
+        bag.error(Span::new(0, 1), "Error", 2304);
+        bag.sound_error(Span::new(1, 2), "Sound error", 9001);
+        bag.warning_in("other.ts", Span::new(2, 3), "Warning", 6133);
+
+        let default_diags: Vec<_> = bag.for_file("default.ts").collect();
+        assert_eq!(default_diags.len(), 2);
+        assert_eq!(default_diags[0].file_name, "default.ts");
+        assert!(default_diags[1].domain == DiagnosticDomain::Sound);
+        assert_eq!(default_diags[1].source.as_deref(), Some("tsz-sound"));
+
+        let other_diags: Vec<_> = bag.for_file("other.ts").collect();
+        assert_eq!(other_diags.len(), 1);
+        assert!(bag.has_errors());
+        assert!(bag.has_warnings());
+        assert_eq!(bag.default_file(), "default.ts");
+    }
+
+    #[test]
+    fn test_diagnostic_bag_clear_and_extend_reset_and_count() {
+        let mut bag = DiagnosticBag::with_file("test.ts");
+        bag.extend([
+            Diagnostic::error("test.ts", Span::new(0, 1), "Error", 2304),
+            Diagnostic::warning("test.ts", Span::new(1, 2), "Warning", 6133),
+            Diagnostic::hint("test.ts", Span::new(2, 3), "Hint", 8000),
+        ]);
+
+        assert_eq!(bag.len(), 3);
+        assert_eq!(bag.error_count(), 1);
+        assert_eq!(bag.warning_count(), 1);
+
+        bag.clear();
+
+        assert!(bag.is_empty());
+        assert!(!bag.has_errors());
+        assert!(!bag.has_warnings());
+        assert_eq!(bag.error_count(), 0);
+        assert_eq!(bag.warning_count(), 0);
+    }
+
+    #[test]
+    fn test_format_message_replaces_repeated_placeholders_and_preserves_unknown() {
+        let msg = format_message("{0} -> {1} -> {0} -> {2}", &["a", "b"]);
+        assert_eq!(msg, "a -> b -> a -> {2}");
+    }
+
+    #[test]
+    fn test_format_code_snippet_multiline_zero_length_span_underlines_one_char() {
+        let text = "first line\nsecond line\nthird line";
+        let second_line_start = text.find("second").unwrap() as u32;
+        let snippet = format_code_snippet(text, Span::new(second_line_start, second_line_start), 0);
+
+        assert_eq!(snippet, "second line\n^");
+    }
+
+    #[test]
+    fn test_format_all_joins_multiple_diagnostics() {
+        let mut bag = DiagnosticBag::with_file("test.ts");
+        bag.error(Span::new(0, 5), "First", 2304);
+        bag.warning(Span::new(6, 7), "Second", 6133);
+
+        let mut source = SourceFile::new("test.ts", "const x = 1;");
+        let formatted = bag.format_all(&mut source);
+
+        assert!(formatted.contains("test.ts(1,1): error TS2304: First"));
+        assert!(formatted.contains("\n"));
+        assert!(formatted.contains("test.ts(1,7): warning TS6133: Second"));
+    }
 }
