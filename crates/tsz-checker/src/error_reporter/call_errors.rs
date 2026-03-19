@@ -4,7 +4,9 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::error_reporter::assignability::is_object_prototype_method;
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, RelatedInformationPolicy,
+};
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
@@ -874,6 +876,70 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        let excess_target = self.contextual_absent_property_excess_target(effective_param_type);
+        let mut had_excess_property = false;
+        if let Some(excess_target) = excess_target {
+            for &elem_idx in &obj.elements.nodes {
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    continue;
+                };
+                let prop_name_idx = match elem_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                            continue;
+                        };
+                        prop.name
+                    }
+                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                        let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                            continue;
+                        };
+                        prop.name
+                    }
+                    _ => continue,
+                };
+
+                let Some(prop_name) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(prop_name_idx)
+                    .map(|ident| ident.escaped_text.clone())
+                else {
+                    continue;
+                };
+
+                let property_presence =
+                    self.named_contextual_property_presence(excess_target, &prop_name);
+                if !matches!(
+                    property_presence,
+                    crate::computation::object_literal_context::ContextualPropertyPresence::Absent
+                ) {
+                    continue;
+                }
+
+                let already_reported =
+                    self.get_node_span(prop_name_idx)
+                        .is_some_and(|(start, end)| {
+                            self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                            ) || self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                            )
+                        });
+                if !already_reported {
+                    self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
+                }
+                had_excess_property = true;
+            }
+        }
+        if had_excess_property {
+            return true;
+        }
+
         let mut elaborated = false;
 
         for &elem_idx in &obj.elements.nodes {
@@ -904,7 +970,6 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
-            let excess_target = self.contextual_absent_property_excess_target(effective_param_type);
             let property_presence = excess_target
                 .map(|target| self.named_contextual_property_presence(target, &prop_name));
             if matches!(
@@ -1232,15 +1297,15 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        let Some(loc) = self.get_source_location(idx) else {
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
             return;
         };
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
-        let arg_end = loc.start.saturating_add(loc.length());
+        let arg_end = anchor.start.saturating_add(anchor.length);
         if self.ctx.diagnostics.iter().any(|diag| {
             diag.code
                 == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
-                && diag.start >= loc.start
+                && diag.start >= anchor.start
                 && diag.start < arg_end
         }) {
             return;
@@ -1253,8 +1318,8 @@ impl<'a> CheckerState<'a> {
         );
         let mut diag = Diagnostic::error(
             self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
+            anchor.start,
+            anchor.length,
             message,
             diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
         );
@@ -1264,308 +1329,21 @@ impl<'a> CheckerState<'a> {
         // related diagnostics under the primary TS2345.
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
         if let Some(ref reason) = analysis.failure_reason
-            && let Some(related) =
-                self.build_related_from_failure_reason(reason, arg_type, param_type, idx)
+            && let Some(related) = self.related_from_failure_reason(
+                reason,
+                arg_type,
+                param_type,
+                anchor.node_idx,
+            )
         {
             diag.related_information.extend(related);
+            diag.related_information = self.normalize_related_information(
+                std::mem::take(&mut diag.related_information),
+                RelatedInformationPolicy::ELABORATION,
+            );
         }
 
         self.ctx.push_diagnostic(diag);
-    }
-
-    /// Build related diagnostics from a solver failure reason.
-    /// Returns `None` if the reason doesn't map to related diagnostics.
-    fn build_related_from_failure_reason(
-        &mut self,
-        reason: &tsz_solver::SubtypeFailureReason,
-        _source: TypeId,
-        _target: TypeId,
-        idx: NodeIndex,
-    ) -> Option<Vec<DiagnosticRelatedInformation>> {
-        use tsz_solver::SubtypeFailureReason;
-
-        let (start, length) = self.get_node_span(idx)?;
-
-        match reason {
-            SubtypeFailureReason::MissingProperty {
-                property_name,
-                source_type,
-                target_type,
-            } => {
-                // Don't emit TS2741 for primitives, wrapper built-ins,
-                // intersection targets, or private brand properties
-                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
-                    return None;
-                }
-                let tgt_str = self.format_type_diagnostic(*target_type);
-                if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
-                    return None;
-                }
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
-                    return None;
-                }
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                if prop_name.starts_with("__private_brand") {
-                    return None;
-                }
-                let widened = self.widen_type_for_display(*source_type);
-                let src_str = self.format_type_diagnostic(widened);
-                let msg = format_message(
-                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[&prop_name, &src_str, &tgt_str],
-                );
-                Some(vec![DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length: length.saturating_sub(start),
-                    message_text: msg,
-                }])
-            }
-            SubtypeFailureReason::MissingProperties {
-                property_names,
-                source_type,
-                target_type,
-            } => {
-                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
-                    return None;
-                }
-                let tgt_str = self.format_type_diagnostic(*target_type);
-                if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
-                    return None;
-                }
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
-                    return None;
-                }
-                let src_str = self.format_type_diagnostic(*source_type);
-                // Filter out Object.prototype methods — they exist on every object
-                // via prototype inheritance and should never appear as "missing".
-                let names: Vec<String> = property_names
-                    .iter()
-                    .filter(|a| !is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**a)))
-                    .map(|a| self.ctx.types.resolve_atom_ref(*a).to_string())
-                    .collect();
-                if names.is_empty() {
-                    return None;
-                }
-                let count = names.len();
-                if count <= 4 {
-                    // TS2739: Type 'X' is missing the following properties from type 'Y': a, b, c
-                    let props_str = names.join(", ");
-                    let msg = format_message(
-                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                        &[&src_str, &tgt_str, &props_str],
-                    );
-                    Some(vec![DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: length.saturating_sub(start),
-                        message_text: msg,
-                    }])
-                } else {
-                    // TS2740: Type 'X' is missing the following properties from type 'Y': a, b, c, and N more.
-                    let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
-                    let more = count - 4;
-                    let props_str = shown.join(", ");
-                    let msg = format_message(
-                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                        &[&src_str, &tgt_str, &props_str, &more.to_string()],
-                    );
-                    Some(vec![DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: length.saturating_sub(start),
-                        message_text: msg,
-                    }])
-                }
-            }
-            SubtypeFailureReason::PropertyTypeMismatch {
-                property_name,
-                source_property_type,
-                target_property_type,
-                nested_reason,
-            } => {
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let msg = format_message(
-                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                    &[&prop_name],
-                );
-                let mut related = vec![DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length: length.saturating_sub(start),
-                    message_text: msg,
-                }];
-                if let Some(nested) = nested_reason {
-                    match nested.as_ref() {
-                        SubtypeFailureReason::TypeMismatch { .. }
-                        | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
-                        | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
-                            let source_str = self.format_type_diagnostic(*source_property_type);
-                            let target_str = self.format_type_diagnostic(*target_property_type);
-                            let message = format_message(
-                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                &[&source_str, &target_str],
-                            );
-                            related.push(DiagnosticRelatedInformation {
-                                category: DiagnosticCategory::Message,
-                                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                file: self.ctx.file_name.clone(),
-                                start,
-                                length: length.saturating_sub(start),
-                                message_text: message,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Some(related)
-            }
-            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let source_str = self.format_type_diagnostic(_source);
-                let target_str = self.format_type_diagnostic(_target);
-                let msg = format_message(
-                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[&prop_name, &source_str, &target_str],
-                );
-                Some(vec![DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length: length.saturating_sub(start),
-                    message_text: msg,
-                }])
-            }
-            SubtypeFailureReason::ReturnTypeMismatch {
-                source_return,
-                target_return,
-                nested_reason,
-            } => {
-                let source_str = self.format_type_diagnostic(*source_return);
-                let target_str = self.format_type_diagnostic(*target_return);
-                let msg =
-                    format!("Return type '{source_str}' is not assignable to '{target_str}'.");
-                let mut related = vec![DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: reason.diagnostic_code(),
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length: length.saturating_sub(start),
-                    message_text: msg,
-                }];
-                if let Some(nested) = nested_reason {
-                    match nested.as_ref() {
-                        SubtypeFailureReason::TypeMismatch { .. }
-                        | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
-                        | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
-                            let message = format_message(
-                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                &[&source_str, &target_str],
-                            );
-                            related.push(DiagnosticRelatedInformation {
-                                category: DiagnosticCategory::Message,
-                                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                file: self.ctx.file_name.clone(),
-                                start,
-                                length: length.saturating_sub(start),
-                                message_text: message,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Some(related)
-            }
-            SubtypeFailureReason::IndexSignatureMismatch {
-                index_kind,
-                source_value_type,
-                target_value_type,
-            } => {
-                let source_str = self.format_type_diagnostic(*source_value_type);
-                let target_str = self.format_type_diagnostic(*target_value_type);
-                let msg = format!(
-                    "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                );
-                let nested = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                );
-                Some(vec![
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: length.saturating_sub(start),
-                        message_text: msg,
-                    },
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: length.saturating_sub(start),
-                        message_text: nested,
-                    },
-                ])
-            }
-            SubtypeFailureReason::ArrayElementMismatch {
-                source_element,
-                target_element,
-            } => {
-                let s = self.format_type_diagnostic(*source_element);
-                let t = self.format_type_diagnostic(*target_element);
-                let len = length.saturating_sub(start);
-                Some(vec![
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: len,
-                        message_text: format!(
-                            "Array element type '{s}' is not assignable to '{t}'."
-                        ),
-                    },
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length: len,
-                        message_text: format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&s, &t],
-                        ),
-                    },
-                ])
-            }
-            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
-                let source_str = self.format_type_diagnostic(_source);
-                let msg = format_message(
-                    diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
-                    &[index_kind, &source_str],
-                );
-                Some(vec![DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length: length.saturating_sub(start),
-                    message_text: msg,
-                }])
-            }
-            _ => None,
-        }
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
@@ -1584,26 +1362,14 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) {
         // When there are excess arguments, point to them instead of the callee.
-        let excess_loc = if got > expected_max && expected_max < args.len() {
-            // Compute span from the first excess argument to the last argument.
-            let first_excess = &args[expected_max];
-            let last_arg = &args[args.len() - 1];
-            let start_loc = self.get_source_location(*first_excess);
-            let end_loc = self.get_source_location(*last_arg);
-            match (start_loc, end_loc) {
-                (Some(s), Some(e)) => Some((s.start, e.end.saturating_sub(s.start))),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        let (start, length) = if let Some((s, l)) = excess_loc {
+        let (start, length) = if let Some((s, l)) =
+            self.resolve_excess_argument_span(args, expected_max)
+        {
             (s, l)
         } else {
-            let report_idx = self.call_error_anchor_node(idx);
-            if let Some(loc) = self.get_source_location(report_idx) {
-                (loc.start, loc.length())
+            if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
+            {
+                (anchor.start, anchor.length)
             } else {
                 return;
             }
@@ -1639,40 +1405,13 @@ impl<'a> CheckerState<'a> {
         got: usize,
         idx: NodeIndex,
     ) {
-        let report_idx = self.call_error_anchor_node(idx);
         let message = format!("Expected at least {expected_min} arguments, but got {got}.");
-        self.error_at_node(
-            report_idx,
+        self.error_at_anchor(
+            idx,
+            DiagnosticAnchorKind::CallPrimary,
             &message,
             diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
         );
-    }
-
-    /// Prefer callee name span for call-arity diagnostics.
-    fn call_error_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return idx;
-        };
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return idx;
-        }
-
-        let Some(call) = self.ctx.arena.get_call_expr(node) else {
-            return idx;
-        };
-        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
-            return idx;
-        };
-
-        if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
-        {
-            return access.name_or_argument;
-        }
-
-        call.expression
     }
 
     /// Report "No overload matches this call" with related overload failures.
@@ -1694,15 +1433,16 @@ impl<'a> CheckerState<'a> {
 
         // tsc reports TS2769 at the first argument position, not the call expression.
         // Fall back to the call expression itself if there are no arguments.
-        let report_idx = self.ts2769_first_arg_or_call(idx);
-        let Some(loc) = self.get_source_location(report_idx) else {
+        let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::OverloadPrimary)
+        else {
             return;
         };
 
         let mut formatter = self.ctx.create_type_formatter();
         let mut related = Vec::new();
         let span =
-            tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), loc.start, loc.length());
+            tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
@@ -1723,45 +1463,21 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
+        let related =
+            self.normalize_related_information(related, RelatedInformationPolicy::OVERLOAD_FAILURES);
 
         self.ctx.diagnostics.push(Diagnostic {
             code: diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
             category: DiagnosticCategory::Error,
             message_text: diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
             file: self.ctx.file_name.clone(),
-            start: loc.start,
-            length: loc.length(),
+            start: anchor.start,
+            length: anchor.length,
             related_information: related,
         });
     }
 
-    /// tsc reports TS2769 at the first argument node rather than the full call
-    /// expression. This returns the first argument's `NodeIndex`, or falls back
-    /// to the call expression itself when there are no arguments.
-    fn ts2769_first_arg_or_call(&self, call_idx: NodeIndex) -> NodeIndex {
-        let Some(node) = self.ctx.arena.get(call_idx) else {
-            return call_idx;
-        };
-        let Some(call) = self.ctx.arena.get_call_expr(node) else {
-            return call_idx;
-        };
-        if let Some(args) = &call.arguments
-            && let Some(&first) = args.nodes.first()
-        {
-            if let Some(arg_node) = self.ctx.arena.get(first)
-                && arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                && self.is_concat_call(call.expression)
-                && let Some(array) = self.ctx.arena.get_literal_expr(arg_node)
-                && let Some(&first_elem) = array.elements.nodes.first()
-            {
-                return first_elem;
-            }
-            return first;
-        }
-        call_idx
-    }
-
-    fn is_concat_call(&self, expr: NodeIndex) -> bool {
+    pub(super) fn is_concat_call(&self, expr: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr) else {
             return false;
         };

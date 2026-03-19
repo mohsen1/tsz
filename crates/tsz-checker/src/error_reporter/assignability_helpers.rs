@@ -2,6 +2,7 @@
 //! Extracted from `assignability.rs` for maintainability.
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -48,7 +49,7 @@ impl<'a> CheckerState<'a> {
         target_level: Option<MemberAccessLevel>,
         idx: NodeIndex,
     ) {
-        let Some(loc) = self.get_source_location(idx) else {
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
             return;
         };
 
@@ -66,12 +67,12 @@ impl<'a> CheckerState<'a> {
 
         let diag = Diagnostic::error(
             self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
+            anchor.start,
+            anchor.length,
             message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         )
-        .with_related(self.ctx.file_name.clone(), loc.start, loc.length(), detail);
+        .with_related(self.ctx.file_name.clone(), anchor.start, anchor.length, detail);
         self.ctx.push_diagnostic(diag);
     }
 

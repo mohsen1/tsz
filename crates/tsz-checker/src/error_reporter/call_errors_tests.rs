@@ -140,3 +140,79 @@ foo.optionalMethod(1);
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2345_argument_mismatch_anchors_argument_node() {
+    let source = r#"
+declare function takes(value: string): void;
+takes(123);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    let arg_start = source.find("123").expect("expected argument") as u32;
+    assert_eq!(diag.start, arg_start, "TS2345 should anchor at the argument");
+    assert_eq!(diag.length, 3, "TS2345 should cover only the argument span");
+}
+
+#[test]
+fn ts2769_overload_related_information_keeps_overload_order() {
+    let source = r#"
+declare function fn(value: string): void;
+declare function fn(value: number): void;
+fn(true);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let arg_start = source.find("true").expect("expected first argument") as u32;
+    assert_eq!(diag.start, arg_start, "TS2769 should anchor at the first argument");
+    assert!(
+        diag.related_information.len() >= 2,
+        "expected overload related info, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information[0]
+            .message_text
+            .contains("parameter of type 'string'"),
+        "expected the first overload failure first, got: {diag:?}"
+    );
+    assert!(
+        diag.related_information[1]
+            .message_text
+            .contains("parameter of type 'number'"),
+        "expected the second overload failure second, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2554_excess_argument_span_starts_at_first_excess_argument() {
+    let source = r#"
+declare function takes(): void;
+takes(1, 2);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2554)
+        .expect("expected TS2554");
+
+    let first_excess = source.find("1, 2").expect("expected excess arguments") as u32;
+    assert_eq!(
+        diag.start, first_excess,
+        "TS2554 should start at the first excess argument"
+    );
+    assert_eq!(
+        diag.length, 4,
+        "TS2554 should cover the contiguous excess-argument span"
+    );
+}

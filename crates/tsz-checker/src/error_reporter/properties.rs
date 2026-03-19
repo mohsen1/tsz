@@ -1,6 +1,7 @@
 //! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
+use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -176,7 +177,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.get_source_location(idx).is_some() {
+        if self
+            .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
+            .is_some()
+        {
             // TS2550: Check if property exists in a newer lib version before
             // trying spelling suggestions. This matches tsc's priority order.
             if !self.has_syntax_parse_errors()
@@ -191,8 +195,9 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
                 );
-                self.error_at_node(
+                self.error_at_anchor(
                     idx,
+                    DiagnosticAnchorKind::PropertyToken,
                     &message,
                     diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CH,
                 );
@@ -227,7 +232,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.error_at_node(idx, &message, code);
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
                 return;
             }
 
@@ -252,7 +257,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.error_at_node(idx, &message, code);
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
                 return;
             }
 
@@ -273,7 +278,7 @@ impl<'a> CheckerState<'a> {
                         format!("Property '{prop_name}' does not exist on type '{type_str}'."),
                     )
                 };
-                self.error_at_node(idx, &message, code);
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
                 return;
             }
 
@@ -284,8 +289,9 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_display}'. Try changing the 'lib' compiler option to include 'dom'."
                 );
-                self.error_at_node(
+                self.error_at_anchor(
                     idx,
+                    DiagnosticAnchorKind::PropertyToken,
                     &message,
                     diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_TRY_CHANGING_THE_LIB_COMPILER_OPTION_TO_INCLUDE,
                 );
@@ -306,7 +312,7 @@ impl<'a> CheckerState<'a> {
                     format!("Property '{prop_name}' does not exist on type '{type_display}'."),
                 )
             };
-            self.error_at_node(idx, &message, code);
+            self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
         }
     }
 
@@ -319,8 +325,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         let message = format!("Property '{prop_name}' does not exist on type '{type_display}'.");
-        self.error_at_node(
+        self.error_at_anchor(
             idx,
+            DiagnosticAnchorKind::PropertyToken,
             &message,
             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
         );
@@ -341,8 +348,9 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
             );
-            self.error_at_node(
+            self.error_at_anchor(
                 idx,
+                DiagnosticAnchorKind::PropertyToken,
                 &message,
                 diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
             );
@@ -480,7 +488,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
+        {
             // TS2561: Check for spelling suggestion on excess properties.
             if !self.has_syntax_parse_errors()
                 && let Some(suggestion) = self.find_similar_property(prop_name, target)
@@ -489,8 +499,9 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
                 );
-                self.error_at_node(
+                self.error_at_anchor(
                     idx,
+                    DiagnosticAnchorKind::PropertyToken,
                     &message,
                     diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
                 );
@@ -503,8 +514,8 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.push_diagnostic(Diagnostic::error(
                 &self.ctx.file_name,
-                loc.start,
-                loc.length(),
+                anchor.start,
+                anchor.length,
                 message,
                 diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
             ));
@@ -657,8 +668,9 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER)
         {
             // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
-            self.error_at_node(
+            self.error_at_anchor(
                 arg_idx,
+                DiagnosticAnchorKind::ElementIndexArg,
                 "Element implicitly has an 'any' type because index expression is not of type 'number'.",
                 diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
             );
@@ -700,7 +712,12 @@ impl<'a> CheckerState<'a> {
         );
 
         // TS7053 is reported at the full element access expression.
-        self.error_at_node(expr_idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
+        self.error_at_anchor(
+            expr_idx,
+            DiagnosticAnchorKind::ElementAccessExpr,
+            &message,
+            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        );
     }
 
     /// Check if an identifier node refers to a variable declared in a for-in statement.

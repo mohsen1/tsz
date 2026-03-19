@@ -137,6 +137,62 @@ fn ts2352_array_assertion_anchors_first_excess_property() {
 }
 
 #[test]
+fn ts2339_property_access_anchors_property_token() {
+    let source = r#"
+declare const value: {};
+value.missing;
+"#;
+
+    let diags = check_source_diagnostics(source);
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(matching.len(), 1, "Expected one TS2339, got: {diags:?}");
+
+    let missing_pos = source.find("missing").expect("expected property token") as u32;
+    assert_eq!(
+        matching[0].start, missing_pos,
+        "Expected TS2339 to anchor at the property token, got: {matching:?}"
+    );
+    assert_eq!(matching[0].length, 7, "Expected TS2339 to cover only the property token");
+}
+
+#[test]
+fn ts7053_element_access_anchors_full_expression() {
+    let source = r#"
+declare const key: string;
+declare const value: {};
+value[key];
+"#;
+
+    let diags = check_source_diagnostics(source);
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 7053).collect();
+    assert_eq!(matching.len(), 1, "Expected one TS7053, got: {diags:?}");
+
+    let expr_pos = source.find("value[key]").expect("expected element access") as u32;
+    assert_eq!(
+        matching[0].start, expr_pos,
+        "Expected TS7053 to anchor at the full element access expression, got: {matching:?}"
+    );
+}
+
+#[test]
+fn ts7015_number_index_error_anchors_index_argument() {
+    let source = r#"
+declare const arr: number[];
+arr["name"];
+"#;
+
+    let diags = check_source_diagnostics(source);
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 7015).collect();
+    assert_eq!(matching.len(), 1, "Expected one TS7015, got: {diags:?}");
+
+    let index_pos = source.find("\"name\"").expect("expected string index") as u32;
+    assert_eq!(
+        matching[0].start, index_pos,
+        "Expected TS7015 to anchor at the index argument, got: {matching:?}"
+    );
+}
+
+#[test]
 #[ignore = "fresh literal object display model changed"]
 fn ts2345_never_parameter_uses_non_contextual_object_literal_display() {
     let diags = check_source_diagnostics(

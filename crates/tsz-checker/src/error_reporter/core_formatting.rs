@@ -6,7 +6,6 @@
 //! Extracted from `core.rs` to keep module size manageable.
 
 use crate::state::{CheckerState, MemberAccessLevel};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -603,100 +602,6 @@ impl<'a> CheckerState<'a> {
         Some(missing_required_props[0].name)
     }
 
-    /// Walk up the AST to find the appropriate diagnostic anchor for assignment errors.
-    ///
-    /// For variable declarations, tsc anchors TS2322 at the variable **name** (e.g.,
-    /// just `x` in `let x: string = 42`), not the full statement.
-    /// For assignment expressions, tsc walks up to the expression statement level.
-    pub(super) fn assignment_diagnostic_anchor_idx(&self, idx: NodeIndex) -> NodeIndex {
-        let mut current = idx;
-        let mut saw_assignment_binary = false;
-        let mut var_decl: Option<NodeIndex> = None;
-
-        while current.is_some() {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-
-            // Stop at scope boundaries — never walk through function-like nodes
-            // or class bodies into the enclosing scope.
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::FUNCTION_DECLARATION
-                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
-                    | syntax_kind_ext::METHOD_DECLARATION
-                    | syntax_kind_ext::CONSTRUCTOR
-                    | syntax_kind_ext::GET_ACCESSOR
-                    | syntax_kind_ext::SET_ACCESSOR
-                    | syntax_kind_ext::CLASS_EXPRESSION
-                    | syntax_kind_ext::CLASS_DECLARATION
-            ) {
-                break;
-            }
-
-            // Stop at JSX element boundaries — JSX attribute errors should anchor
-            // at the attribute itself, not walk up to the enclosing variable
-            // declaration or expression statement.
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT | syntax_kind_ext::JSX_OPENING_ELEMENT
-            ) {
-                break;
-            }
-
-            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                && self.is_assignment_operator(binary.operator_token)
-            {
-                if saw_assignment_binary {
-                    return idx;
-                }
-                saw_assignment_binary = true;
-            }
-
-            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                if saw_assignment_binary {
-                    return idx;
-                }
-                var_decl = Some(parent);
-            }
-
-            if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT && var_decl.is_some() {
-                if let Some(vd_idx) = var_decl
-                    && let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                    && vd.name.is_some()
-                {
-                    return vd.name;
-                }
-                return parent;
-            }
-
-            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT && saw_assignment_binary {
-                return parent;
-            }
-
-            current = parent;
-        }
-
-        if let Some(vd_idx) = var_decl {
-            if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                && vd.name.is_some()
-            {
-                return vd.name;
-            }
-            return vd_idx;
-        }
-        idx
-    }
 }
 
 /// Simple Levenshtein distance for string literal spelling suggestions.

@@ -4,6 +4,9 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, RelatedInformationPolicy,
+};
 use crate::state::CheckerState;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
@@ -179,7 +182,8 @@ impl<'a> CheckerState<'a> {
 
     /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
@@ -190,6 +194,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
     pub fn error_type_does_not_satisfy_the_expected_type(
@@ -210,9 +216,9 @@ impl<'a> CheckerState<'a> {
         // For TS1360, point the diagnostic at the `satisfies` keyword position
         // when available, rather than walking up to the enclosing statement.
         let anchor_idx = if keyword_pos.is_some() {
-            idx
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::Exact)
         } else {
-            self.assignment_diagnostic_anchor_idx(idx)
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment)
         };
 
         let mut base_diag = match reason {
@@ -246,19 +252,8 @@ impl<'a> CheckerState<'a> {
         );
 
         if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
-            let mut new_related = vec![];
-
-            new_related.push(tsz_common::diagnostics::DiagnosticRelatedInformation {
-                category: tsz_common::diagnostics::DiagnosticCategory::Error,
-                code: base_diag.code,
-                file: base_diag.file.clone(),
-                start: base_diag.start,
-                length: base_diag.length,
-                message_text: base_diag.message_text.clone(),
-            });
-
-            new_related.extend(base_diag.related_information);
-
+            let new_related =
+                self.related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
             base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
             base_diag.message_text = msg;
             base_diag.related_information = new_related;
@@ -277,7 +272,8 @@ impl<'a> CheckerState<'a> {
 
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
@@ -432,7 +428,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
         self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
     }
 
@@ -442,6 +439,10 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        if source == target {
+            return;
+        }
+
         // Suppress cascade errors from unresolved types
         if source == TypeId::ERROR
             || target == TypeId::ERROR
@@ -564,7 +565,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
-    fn render_failure_reason(
+    pub(super) fn render_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
         source: TypeId,
@@ -574,7 +575,10 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         use tsz_solver::SubtypeFailureReason;
 
-        let (start, length) = self.get_node_span(idx).unwrap_or((0, 0));
+        let (start, length) = self
+            .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
+            .map(|anchor| (anchor.start, anchor.length))
+            .unwrap_or_else(|| self.get_node_span(idx).unwrap_or((0, 0)));
         let file_name = self.ctx.file_name.clone();
 
         match reason {

@@ -2598,3 +2598,51 @@ fn statement_callback_bridge_contextual_type_scoping() {
         "statement_callback_bridge.rs should use get_type_of_node_with_request for export clause typing"
     );
 }
+
+#[test]
+fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fingerprint_policy() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/error_reporter");
+    let fingerprint_policy = fs::read_to_string(base.join("fingerprint_policy.rs"))
+        .expect("failed to read src/error_reporter/fingerprint_policy.rs");
+    assert!(
+        fingerprint_policy.contains("enum DiagnosticAnchorKind"),
+        "fingerprint_policy.rs must define the shared anchor policy"
+    );
+    assert!(
+        fingerprint_policy.contains("resolve_diagnostic_anchor_node"),
+        "fingerprint_policy.rs must provide shared anchor resolution"
+    );
+
+    let files = [
+        "assignability.rs",
+        "call_errors.rs",
+        "properties.rs",
+        "generics.rs",
+    ];
+    let forbidden = [
+        "assignment_diagnostic_anchor_idx(",
+        "call_error_anchor_node(",
+        "ts2769_first_arg_or_call(",
+        "type_assertion_overlap_anchor(",
+        "type_assertion_overlap_anchor_in_expression(",
+        "build_related_from_failure_reason(",
+    ];
+
+    for file in files {
+        let content =
+            fs::read_to_string(base.join(file)).unwrap_or_else(|e| panic!("read {file}: {e}"));
+        assert!(
+            content.contains("DiagnosticAnchorKind::")
+                || content.contains("resolve_diagnostic_anchor(")
+                || content.contains("resolve_diagnostic_anchor_node("),
+            "File {file} must use the shared fingerprint policy for anchor selection"
+        );
+
+        for forbidden_pattern in forbidden {
+            assert!(
+                !content.contains(forbidden_pattern),
+                "File {file} must not reintroduce bespoke primary-anchor helper `{forbidden_pattern}`"
+            );
+        }
+    }
+}
