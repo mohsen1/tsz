@@ -264,9 +264,19 @@ impl<'a> Completions<'a> {
         }
         if has_trailing_ws && !trailing_has_line_break && !last_word.is_empty() {
             let before_word = trimmed[..last_word_start].trim_end();
-            if definition_keywords
-                .iter()
-                .any(|kw| is_whole_word(before_word, kw))
+            // "class Name |" or "interface Name |" - NOT a definition location,
+            // this is where extends/implements goes.
+            let is_heritage_position = matches!(
+                before_word
+                    .rsplit(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                    .next()
+                    .unwrap_or(""),
+                "class" | "interface"
+            ) && !definition_keywords.contains(&last_word);
+            if !is_heritage_position
+                && definition_keywords
+                    .iter()
+                    .any(|kw| is_whole_word(before_word, kw))
             {
                 return true;
             }
