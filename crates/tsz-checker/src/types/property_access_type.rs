@@ -1,8 +1,8 @@
 //! Property access type resolution, global augmentation property lookup,
 //! and expando function pattern detection.
 
-use crate::context::TypingRequest;
 use crate::classes_domain::class_summary::ClassMemberKind;
+use crate::context::TypingRequest;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
