@@ -420,6 +420,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(members) = tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+        {
+            let mut saw_unknown = false;
+            for member in members {
+                match self.contextual_property_presence(member, property_name, depth - 1) {
+                    ContextualPropertyPresence::Present => return ContextualPropertyPresence::Present,
+                    ContextualPropertyPresence::Unknown => saw_unknown = true,
+                    ContextualPropertyPresence::Absent => {}
+                }
+            }
+            if saw_unknown {
+                return ContextualPropertyPresence::Unknown;
+            }
+        }
+
         match crate::query_boundaries::assignability::classify_for_excess_properties(
             self.ctx.types,
             type_id,
@@ -645,6 +660,77 @@ impl<'a> CheckerState<'a> {
                 )
             }
         };
+        let intersection_member_property_type = |this: &mut Self,
+                                                 intersection_type: TypeId,
+                                                 property_name: &str|
+         -> Option<TypeId> {
+            let members = tsz_solver::type_queries::get_intersection_members(
+                this.ctx.types,
+                intersection_type,
+            )?;
+            let mut property_types = Vec::new();
+
+            for &member in &members {
+                let resolved_member = this.resolve_type_for_property_access(member);
+                let evaluated_member = this.evaluate_type_with_env(member);
+                let evaluated_member_for_property_access =
+                    this.resolve_type_for_property_access(evaluated_member);
+                let evaluated_member_for_property_access =
+                    this.resolve_lazy_type(evaluated_member_for_property_access);
+                let evaluated_member_for_property_access =
+                    this.evaluate_application_type(evaluated_member_for_property_access);
+                let mut property_type = this
+                    .ctx
+                    .types
+                    .contextual_property_type(member, property_name);
+
+                if (property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY))
+                    && let Some(pt) = this
+                        .ctx
+                        .types
+                        .contextual_property_type(resolved_member, property_name)
+                    && (pt != tsz_solver::TypeId::ANY || property_type.is_none())
+                {
+                    property_type = Some(pt);
+                }
+
+                if (property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY))
+                    && let Some(pt) = this.ctx.types.contextual_property_type(
+                        evaluated_member_for_property_access,
+                        property_name,
+                    )
+                    && (pt != tsz_solver::TypeId::ANY || property_type.is_none())
+                {
+                    property_type = Some(pt);
+                }
+
+                let mut _alternate_member_for_property_access = None;
+                if property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY) {
+                    use crate::query_boundaries::state::type_environment::evaluate_type_with_resolver;
+
+                    let alternate_member =
+                        evaluate_type_with_resolver(this.ctx.types, &this.ctx, member);
+                    let alternate_member = this.resolve_type_for_property_access(alternate_member);
+                    let alternate_member = this.resolve_lazy_type(alternate_member);
+                    let alternate_member = this.evaluate_application_type(alternate_member);
+                    _alternate_member_for_property_access = Some(alternate_member);
+                    property_type = this
+                        .ctx
+                        .types
+                        .contextual_property_type(alternate_member, property_name);
+                }
+
+                if let Some(property_type) = property_type {
+                    property_types.push(property_type);
+                }
+            }
+
+            if property_types.is_empty() {
+                None
+            } else {
+                Some(this.ctx.types.factory().union_preserve_members(property_types))
+            }
+        };
         let original_contextual_type = contextual_type;
         let mut best_property_type = None;
 
@@ -709,6 +795,19 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: union-member extracted"
+            );
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
+        if let Some(property_type) =
+            intersection_member_property_type(self, original_contextual_type, property_name)
+        {
+            tracing::trace!(
+                contextual_type = original_contextual_type.0,
+                property_name,
+                property_type = property_type.0,
+                "contextual_object_literal_property_type: intersection-member extracted"
             );
             best_property_type = self
                 .prefer_more_specific_contextual_property_type(best_property_type, property_type);

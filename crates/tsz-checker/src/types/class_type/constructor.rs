@@ -58,6 +58,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: NodeIndex,
         value_type: TypeId,
+        request: &TypingRequest,
         static_string_index: &mut Option<IndexSignature>,
         static_number_index: &mut Option<IndexSignature>,
     ) {
@@ -73,7 +74,8 @@ impl<'a> CheckerState<'a> {
 
         let prev = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
-        let key_type = self.get_type_of_node(computed.expression);
+        let key_request = request.read().contextual_opt(None);
+        let key_type = self.get_type_of_node_with_request(computed.expression, &key_request);
         self.ctx.preserve_literal_types = prev;
 
         let Some((wants_string, wants_number)) = self.get_index_key_kind(key_type) else {
@@ -718,6 +720,7 @@ impl<'a> CheckerState<'a> {
                             self.merge_static_late_bound_member_from_computed_name(
                                 method.name,
                                 callable_or_undefined,
+                                request,
                                 &mut static_string_index,
                                 &mut static_number_index,
                             );

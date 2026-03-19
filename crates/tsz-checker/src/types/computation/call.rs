@@ -772,17 +772,38 @@ impl<'a> CheckerState<'a> {
 
                     // Seed inference from non-sensitive object-literal properties.
                     let mut extracted_round1_partials = vec![false; args.len()];
+                    let type_param_names: Vec<tsz_common::Atom> =
+                        shape.type_params.iter().map(|tp| tp.name).collect();
                     for (i, &arg_idx) in args.iter().enumerate() {
-                        if sensitive_args[i]
-                            && let Some(partial) = self.extract_non_sensitive_object_type(arg_idx)
-                        {
+                        if !sensitive_args[i] {
+                            continue;
+                        }
+                        let param_type = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                            let last = shape.params.last()?;
+                            last.rest.then_some(last.type_id)
+                        });
+                        let partial = param_type
+                            .and_then(|param_type| {
+                                self.extract_inference_contributing_object_type(
+                                    arg_idx,
+                                    param_type,
+                                    &type_param_names,
+                                )
+                                .or_else(|| {
+                                    self.extract_inference_contributing_array_type(
+                                        arg_idx,
+                                        param_type,
+                                        &type_param_names,
+                                    )
+                                })
+                            })
+                            .or_else(|| self.extract_non_sensitive_object_type(arg_idx));
+                        if let Some(partial) = partial {
                             round1_arg_types[i] = partial;
                             extracted_round1_partials[i] = true;
                         }
                     }
                     // If only callback members remain, include ones with concrete param context.
-                    let type_param_names: Vec<tsz_common::Atom> =
-                        shape.type_params.iter().map(|tp| tp.name).collect();
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if !sensitive_args[i] || extracted_round1_partials[i] {
                             continue;
@@ -1345,6 +1366,7 @@ impl<'a> CheckerState<'a> {
                                     expected_type,
                                     check_excess_properties,
                                     i,
+                                    args.len(),
                                     true,
                                 )
                             } else {
@@ -1353,6 +1375,7 @@ impl<'a> CheckerState<'a> {
                                     expected_type,
                                     check_excess_properties,
                                     i,
+                                    args.len(),
                                     true,
                                 )
                             };
@@ -1764,8 +1787,7 @@ impl<'a> CheckerState<'a> {
                                     args.len(),
                                 )
                                 .into_iter()
-                                .enumerate()
-                                .map(|(_i, param_type)| {
+                                .map(|param_type| {
                                     param_type.map(|param_type| {
                                         self.normalize_contextual_call_param_type(param_type)
                                     })
@@ -2006,8 +2028,7 @@ impl<'a> CheckerState<'a> {
             let refreshed_contextual_types = self
                 .contextual_param_types_from_instantiated_params(instantiated_params, args.len())
                 .into_iter()
-                .enumerate()
-                .map(|(_i, param_type)| {
+                .map(|param_type| {
                     param_type
                         .map(|param_type| self.normalize_contextual_call_param_type(param_type))
                 })

@@ -988,6 +988,7 @@ impl<'a> CheckerState<'a> {
     /// - Checks array destructuring target types (TS2461)
     /// - Validates default value assignability for binding elements
     /// - Recursively checks nested binding patterns
+    #[allow(dead_code)]
     pub(crate) fn check_binding_pattern(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1129,6 +1130,7 @@ impl<'a> CheckerState<'a> {
     /// - Checks computed property names for unresolved identifiers
     /// - Validates default value type assignability
     /// - Recursively checks nested binding patterns
+    #[allow(dead_code)]
     pub(crate) fn check_binding_element(
         &mut self,
         element_idx: NodeIndex,

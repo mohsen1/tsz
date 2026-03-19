@@ -4,6 +4,7 @@
 //! general variable declaration checking (`check_variable_declaration`).
 
 use crate::state::CheckerState;
+use crate::context::TypingRequest;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -132,6 +133,14 @@ impl<'a> CheckerState<'a> {
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
+                    let binding_request = if declared != TypeId::ANY
+                        && declared != TypeId::UNKNOWN
+                        && declared != TypeId::ERROR
+                    {
+                        TypingRequest::with_contextual_type(declared)
+                    } else {
+                        TypingRequest::NONE
+                    };
                     // TS2488: For array binding patterns, check if the element type is iterable
                     // Example: for (const [,] of []) where [] has type never[] with element type never
                     if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -142,7 +151,11 @@ impl<'a> CheckerState<'a> {
                             NodeIndex::NONE,
                         );
                     }
-                    self.assign_binding_pattern_symbol_types(var_decl.name, declared);
+                    self.assign_binding_pattern_symbol_types_with_request(
+                        var_decl.name,
+                        declared,
+                        &binding_request,
+                    );
                 }
 
                 if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
@@ -163,6 +176,14 @@ impl<'a> CheckerState<'a> {
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
+                    let binding_request = if widened_element_type != TypeId::ANY
+                        && widened_element_type != TypeId::UNKNOWN
+                        && widened_element_type != TypeId::ERROR
+                    {
+                        TypingRequest::with_contextual_type(widened_element_type)
+                    } else {
+                        TypingRequest::NONE
+                    };
                     // TS2488: For array binding patterns, check if the element type is iterable
                     // Example: for (const [,] of []) where [] has type never[] with element type never
                     if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -173,7 +194,11 @@ impl<'a> CheckerState<'a> {
                             NodeIndex::NONE,
                         );
                     }
-                    self.assign_binding_pattern_symbol_types(var_decl.name, widened_element_type);
+                    self.assign_binding_pattern_symbol_types_with_request(
+                        var_decl.name,
+                        widened_element_type,
+                        &binding_request,
+                    );
                 }
 
                 if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {

@@ -741,14 +741,14 @@ impl<'a> FlowAnalyzer<'a> {
             let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
             if let Some(literal) = tsz_solver::visitor::literal_value(self.interner, key_type) {
                 return Some(match literal {
-                    tsz_solver::LiteralValue::String(atom) => atom,
                     tsz_solver::LiteralValue::Number(value) => {
                         self.interner.intern_string(&value.0.to_string())
                     }
                     tsz_solver::LiteralValue::Boolean(value) => self
                         .interner
                         .intern_string(if value { "true" } else { "false" }),
-                    tsz_solver::LiteralValue::BigInt(atom) => atom,
+                    tsz_solver::LiteralValue::String(atom)
+                    | tsz_solver::LiteralValue::BigInt(atom) => atom,
                 });
             }
         }

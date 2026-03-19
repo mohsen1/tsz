@@ -22,6 +22,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
+    #[allow(dead_code)]
     pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_tagged_template_expression_with_request(idx, &TypingRequest::NONE)
     }
@@ -72,7 +73,7 @@ impl<'a> CheckerState<'a> {
 
         // If tag type is `any`, type-check substitutions without context and return `any`
         if tag_type == TypeId::ANY || tag_type == TypeId::ERROR {
-            self.type_check_template_substitutions_no_context(&tagged);
+            self.type_check_template_substitutions_no_context(&tagged, request);
             return tag_type;
         }
 
@@ -96,7 +97,7 @@ impl<'a> CheckerState<'a> {
             && callable.call_signatures.is_empty()
             && !callable.construct_signatures.is_empty()
         {
-            self.type_check_template_substitutions_no_context(&tagged);
+            self.type_check_template_substitutions_no_context(&tagged, request);
             self.error_not_callable_at(tag_type, tagged.tag);
             return TypeId::ERROR;
         }
@@ -124,7 +125,7 @@ impl<'a> CheckerState<'a> {
                         | TypeId::OBJECT
                 ) || tsz_solver::type_queries::is_literal_type(self.ctx.types, resolved_tag_type);
             if is_definitely_not_callable {
-                self.type_check_template_substitutions_no_context(&tagged);
+                self.type_check_template_substitutions_no_context(&tagged, request);
                 self.error_not_callable_at(tag_type, tagged.tag);
                 return TypeId::ERROR;
             }
@@ -210,11 +211,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let ctx_type = ctx_helper
                             .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
-                        let request = match ctx_type {
-                            Some(ty) => TypingRequest::with_contextual_type(ty),
-                            None => TypingRequest::NONE,
-                        };
-                        let arg_type = self.get_type_of_node_with_request(expr_idx, &request);
+                        let arg_request = request.read().contextual_opt(ctx_type);
+                        let arg_type =
+                            self.get_type_of_node_with_request(expr_idx, &arg_request);
                         round1_arg_types.push(arg_type);
                     }
                 }
@@ -263,15 +262,12 @@ impl<'a> CheckerState<'a> {
                             let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
                             self.evaluate_type_with_env(instantiated)
                         });
-                    let request = if is_contextually_sensitive(self, expr_idx) {
-                        match ctx_type {
-                            Some(ty) => TypingRequest::with_contextual_type(ty),
-                            None => TypingRequest::NONE,
-                        }
+                    let arg_request = if is_contextually_sensitive(self, expr_idx) {
+                        request.read().contextual_opt(ctx_type)
                     } else {
-                        TypingRequest::NONE
+                        request.read().contextual_opt(None)
                     };
-                    let actual_type = self.get_type_of_node_with_request(expr_idx, &request);
+                    let actual_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
 
                     // Check argument assignability against expected parameter type (TS2345).
                     // tsc reports only the first argument mismatch per tagged template call.
@@ -309,11 +305,8 @@ impl<'a> CheckerState<'a> {
         let mut reported_arg_error = false;
         for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
             let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
-            let request = match ctx_type {
-                Some(ty) => TypingRequest::with_contextual_type(ty),
-                None => TypingRequest::NONE,
-            };
-            let actual_type = self.get_type_of_node_with_request(expr_idx, &request);
+            let arg_request = request.read().contextual_opt(ctx_type);
+            let actual_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
 
             // Check argument assignability against expected parameter type (TS2345).
             // tsc reports only the first argument mismatch per tagged template call,
@@ -376,6 +369,7 @@ impl<'a> CheckerState<'a> {
     fn type_check_template_substitutions_no_context(
         &mut self,
         tagged: &tsz_parser::parser::node::TaggedTemplateData,
+        request: &TypingRequest,
     ) {
         if let Some(template_node) = self.ctx.arena.get(tagged.template)
             && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
@@ -385,7 +379,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(span_node) = self.ctx.arena.get(span_idx)
                     && let Some(span_data) = self.ctx.arena.get_template_span(span_node).cloned()
                 {
-                    self.get_type_of_node_with_request(span_data.expression, &TypingRequest::NONE);
+                    let expr_request = request.read().contextual_opt(None);
+                    self.get_type_of_node_with_request(span_data.expression, &expr_request);
                 }
             }
         }

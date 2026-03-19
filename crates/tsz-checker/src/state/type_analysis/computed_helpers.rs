@@ -117,19 +117,37 @@ impl<'a> CheckerState<'a> {
         type_id: Option<TypeId>,
         arg_idx: NodeIndex,
     ) -> Option<TypeId> {
-        let Some(type_id) = type_id else {
-            return None;
+        self.contextual_type_option_for_call_argument_at(type_id, arg_idx, None, None)
+    }
+
+    pub(crate) fn contextual_type_option_for_call_argument_at(
+        &mut self,
+        type_id: Option<TypeId>,
+        arg_idx: NodeIndex,
+        arg_index: Option<usize>,
+        arg_count: Option<usize>,
+    ) -> Option<TypeId> {
+        let type_id = type_id?;
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return Some(self.contextual_type_for_expression(type_id));
         };
 
-        let preserve_raw = self.ctx.arena.get(arg_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                k if k == syntax_kind_ext::CALL_EXPRESSION
-                    || k == syntax_kind_ext::NEW_EXPRESSION
-                    || k == syntax_kind_ext::ARROW_FUNCTION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-            )
-        });
+        let preserve_raw = matches!(
+            arg_node.kind,
+            k if k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+        );
+        let preserve_raw_object_context = matches!(
+            arg_node.kind,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) && (tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                type_id,
+            ));
         let needs_resolved_callable_context =
             tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id).is_some()
                 || tsz_solver::type_queries::get_index_access_types(self.ctx.types, type_id)
@@ -138,7 +156,32 @@ impl<'a> CheckerState<'a> {
                 || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
                     .is_some();
 
-        if preserve_raw
+        if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && arg_index.is_some()
+            && arg_count.is_some()
+            && self
+                .ctx
+                .generic_excess_skip
+                .as_ref()
+                .is_some_and(|skip| arg_index.is_some_and(|index| index < skip.len() && skip[index]))
+            && let Some(callable_type) = self.ctx.current_callable_type
+            && let Some(shape) =
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    callable_type,
+                )
+            && let Some(raw_contextual_type) = shape
+                .params
+                .get(arg_index.unwrap())
+                .or_else(|| shape.params.last().filter(|param| param.rest))
+                .map(|param| param.type_id)
+        {
+            return Some(raw_contextual_type);
+        }
+
+        if preserve_raw_object_context {
+            Some(type_id)
+        } else if preserve_raw
             && !needs_resolved_callable_context
             && self.raw_contextual_signature_available(type_id)
         {

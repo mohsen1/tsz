@@ -57,7 +57,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn should_preserve_speculative_call_diagnostic(
+    pub(crate) const fn should_preserve_speculative_call_diagnostic(
         diag: &crate::diagnostics::Diagnostic,
     ) -> bool {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
@@ -1269,8 +1269,34 @@ impl<'a> CheckerState<'a> {
             // Regular (non-spread) argument
             let expected_type = expected_for_index(effective_index, expanded_count);
             let apply_contextual = self.argument_needs_contextual_type(arg_idx);
-            let expected_context_type =
-                self.contextual_type_option_for_call_argument(expected_type, arg_idx);
+            let expected_context_type = self.contextual_type_option_for_call_argument_at(
+                expected_type,
+                arg_idx,
+                Some(effective_index),
+                Some(expanded_count),
+            );
+            let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
+                tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+                    || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                        self.ctx.types,
+                        ty,
+                    )
+            });
+            let callable_context_requires_generic_epc_skip =
+                self.ctx.current_callable_type.is_some_and(|callable_type| {
+                    let ctx =
+                        tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                    ctx.get_parameter_type_for_call(effective_index, expanded_count)
+                        .is_some_and(|param_type| {
+                            tsz_solver::type_queries::contains_type_parameters_db(
+                                self.ctx.types,
+                                param_type,
+                            ) || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                                self.ctx.types,
+                                param_type,
+                            )
+                        })
+                });
 
             // Extract ThisType<T> marker from the unevaluated expected type BEFORE
             // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
@@ -1456,6 +1482,8 @@ impl<'a> CheckerState<'a> {
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
                     effective_index < skip.len() && skip[effective_index]
                 })
+                && !raw_context_requires_generic_epc_skip
+                && !callable_context_requires_generic_epc_skip
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }

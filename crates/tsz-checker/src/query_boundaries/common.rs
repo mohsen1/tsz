@@ -5,7 +5,9 @@
 //! files. This eliminates duplicate function bodies while preserving the
 //! per-module namespace pattern that callers rely on.
 
-use tsz_solver::{CallSignature, CallableShape, ObjectShape, TupleElement, TypeDatabase, TypeId};
+use tsz_solver::{
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeData, TypeDatabase, TypeId,
+};
 
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
@@ -72,6 +74,14 @@ pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
+}
+
+pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::contains_type_matching(
+        db,
+        type_id,
+        |key| matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_)),
+    )
 }
 
 pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

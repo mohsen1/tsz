@@ -1,6 +1,7 @@
 //! Destructuring pattern type resolution and validation.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -695,16 +696,8 @@ impl<'a> CheckerState<'a> {
         // normalization on recursive alias unions. Cases like
         // `['and', ...Expression[]] | ['not', Expression]` can overflow when
         // union simplification tries to compare recursive tuple members.
-        let has_recursive_alias_shape = tsz_solver::visitor::contains_type_matching(
-            self.ctx.types.as_type_database(),
-            parent_type,
-            |key| {
-                matches!(
-                    key,
-                    tsz_solver::TypeData::Lazy(_) | tsz_solver::TypeData::Recursive(_)
-                )
-            },
-        );
+        let has_recursive_alias_shape =
+            common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), parent_type);
         let parent_type = if has_recursive_alias_shape {
             let parent_type = self.resolve_lazy_type(parent_type);
             let parent_type = self.resolve_type_for_property_access(parent_type);
@@ -1322,6 +1315,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn get_binding_element_computed_key_type(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1469,6 +1463,7 @@ impl<'a> CheckerState<'a> {
         self.resolve_identifier_symbol(target_idx) == Some(sym_id)
     }
 
+    #[allow(dead_code)]
     fn get_binding_identifier_initializer_key_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         self.get_binding_identifier_initializer_key_type_with_request(sym_id, &TypingRequest::NONE)
     }
@@ -1801,6 +1796,7 @@ impl<'a> CheckerState<'a> {
     /// When a binding element has a default initializer (e.g., `{ f = (x: string) => x.length }`),
     /// the default's type is used instead of `any`. This enables contextual typing to flow
     /// from binding pattern defaults into generic function return type seeding.
+    #[allow(dead_code)]
     pub(crate) fn build_contextual_type_from_pattern(
         &mut self,
         pattern_idx: NodeIndex,

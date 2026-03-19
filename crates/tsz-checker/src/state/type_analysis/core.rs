@@ -1075,6 +1075,15 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         use_flow: bool,
     ) -> TypeId {
+        self.resolve_typeof_qualified_value_chain_with_request(idx, &TypingRequest::NONE, use_flow)
+    }
+
+    pub(super) fn resolve_typeof_qualified_value_chain_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+        use_flow: bool,
+    ) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1083,7 +1092,8 @@ impl<'a> CheckerState<'a> {
             let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
                 return TypeId::ERROR;
             };
-            let left_type = self.resolve_typeof_qualified_value_chain(qn.left, use_flow);
+            let left_type =
+                self.resolve_typeof_qualified_value_chain_with_request(qn.left, request, use_flow);
             if left_type == TypeId::ANY || left_type == TypeId::ERROR {
                 return left_type;
             }
@@ -1103,12 +1113,12 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // Base case: identifier or other expression — resolve as value
-            let request = if use_flow {
-                TypingRequest::NONE
+            let expr_request = if use_flow {
+                request.read().contextual_opt(None)
             } else {
-                TypingRequest::for_write_context()
+                request.write().contextual_opt(None)
             };
-            self.get_type_of_node_with_request(idx, &request)
+            self.get_type_of_node_with_request(idx, &expr_request)
         }
     }
 
@@ -1794,6 +1804,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         idx: tsz_parser::parser::NodeIndex,
     ) -> tsz_solver::TypeId {
-        self.get_type_from_type_query_flow_sensitive(idx)
+        self.get_type_from_type_query_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_from_type_query_with_request(
+        &mut self,
+        idx: tsz_parser::parser::NodeIndex,
+        request: &TypingRequest,
+    ) -> tsz_solver::TypeId {
+        self.get_type_from_type_query_flow_sensitive_with_request(idx, request)
     }
 }

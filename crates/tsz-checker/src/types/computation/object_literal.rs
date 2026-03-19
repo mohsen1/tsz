@@ -13,7 +13,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    fn implicit_any_like_diagnostic_code(code: u32) -> bool {
+    const fn implicit_any_like_diagnostic_code(code: u32) -> bool {
         matches!(
             code,
             crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
@@ -32,10 +32,11 @@ impl<'a> CheckerState<'a> {
             Some(func.parameters.nodes.as_slice())
         } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
             Some(method.parameters.nodes.as_slice())
-        } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-            Some(accessor.parameters.nodes.as_slice())
         } else {
-            None
+            self.ctx
+                .arena
+                .get_accessor(node)
+                .map(|accessor| accessor.parameters.nodes.as_slice())
         };
 
         params
@@ -460,14 +461,15 @@ impl<'a> CheckerState<'a> {
                                 })
                             })
                     };
-                    let property_is_contextually_absent =
-                        contextual_absent_target.is_some_and(|ctx_type| {
+                    let property_is_contextually_absent = contextual_absent_target.is_some_and(
+                        |ctx_type| {
                             let lookup_type = self.contextual_lookup_type(ctx_type);
                             matches!(
                                 self.named_contextual_property_presence(lookup_type, &name),
                                 ContextualPropertyPresence::Absent
                             )
-                        });
+                        },
+                    ) && !matches!(property_context_type, Some(TypeId::NEVER));
                     let initializer_context_type = if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
                             contextual_type,

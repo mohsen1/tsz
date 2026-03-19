@@ -901,6 +901,13 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
         "explicit generic JSX props alias should not lose the callback member, got: {diags:?}"
     );
     assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "explicit generic JSX props alias should not report excess-property errors for callback, got: {diags:?}"
+    );
+    assert!(
         !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "callback parameter should remain contextually typed through the JSX props alias, got: {diags:?}"
     );
@@ -930,6 +937,13 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
     assert!(
         !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "inferred generic JSX props alias should not lose the callback member, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "inferred generic JSX props alias should not report excess-property errors for callback, got: {diags:?}"
     );
     assert!(
         !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),

@@ -6,6 +6,7 @@
 
 use crate::FlowAnalyzer;
 use crate::context::TypingRequest;
+use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -18,16 +19,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
-        tsz_solver::visitor::contains_type_matching(
-            self.ctx.types.as_type_database(),
-            type_id,
-            |key| {
-                matches!(
-                    key,
-                    tsz_solver::TypeData::Lazy(_) | tsz_solver::TypeData::Recursive(_)
-                )
-            },
-        )
+        common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
 
     /// Get the type of an identifier expression.
@@ -1016,28 +1008,24 @@ impl<'a> CheckerState<'a> {
                     if widened_flow == declared_type {
                         // Flow type is just the initializer literal - use widened declared type
                         declared_type
+                    } else if self.has_recursive_alias_shape_for_flow_compare(declared_type) {
+                        flow_type
                     } else {
-                        if self.has_recursive_alias_shape_for_flow_compare(declared_type) {
-                            flow_type
+                        // Also check the reverse: if declared_type is a non-widened literal
+                        // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
+                        // is its widened form (string), flow is just returning the widened
+                        // version of our literal declared type - use declared_type.
+                        // IMPORTANT: Evaluate the declared type first to expand type aliases
+                        // and lazy references, so widen_type can see the actual union members.
+                        let evaluated_declared =
+                            self.evaluate_type_for_assignability(declared_type);
+                        let widened_declared =
+                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
+                        if widened_declared == flow_type {
+                            declared_type
                         } else {
-                            // Also check the reverse: if declared_type is a non-widened literal
-                            // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
-                            // is its widened form (string), flow is just returning the widened
-                            // version of our literal declared type - use declared_type.
-                            // IMPORTANT: Evaluate the declared type first to expand type aliases
-                            // and lazy references, so widen_type can see the actual union members.
-                            let evaluated_declared =
-                                self.evaluate_type_for_assignability(declared_type);
-                            let widened_declared = tsz_solver::widening::widen_type(
-                                self.ctx.types,
-                                evaluated_declared,
-                            );
-                            if widened_declared == flow_type {
-                                declared_type
-                            } else {
-                                // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
-                                flow_type
-                            }
+                            // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
+                            flow_type
                         }
                     }
                 } else {

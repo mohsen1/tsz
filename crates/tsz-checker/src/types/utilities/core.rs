@@ -597,9 +597,9 @@ impl<'a> CheckerState<'a> {
                 .and_then(|shape| {
                     let required = shape.params.iter().filter(|param| !param.optional).count();
                     let last = shape.params.last();
-                    let accepts_arity = last.is_some_and(|param| param.rest)
-                        && arg_count >= required
-                        || (arg_count >= required && arg_count <= shape.params.len());
+                    let accepts_arity = arg_count >= required
+                        && (arg_count <= shape.params.len()
+                            || last.is_some_and(|param| param.rest));
                     accepts_arity.then_some(shape).and_then(|shape| {
                         shape
                             .params
