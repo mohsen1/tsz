@@ -1611,7 +1611,8 @@ impl ParserState {
                 !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER;
 
-            let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            let has_equals_initializer = self.parse_optional(SyntaxKind::EqualsToken);
+            let initializer = if has_equals_initializer {
                 self.parse_assignment_expression()
             } else if type_annotation != NodeIndex::NONE
                 && !self.is_token(SyntaxKind::SemicolonToken)
@@ -1636,6 +1637,13 @@ impl ParserState {
             };
 
             self.context_flags = init_saved_flags;
+
+            if has_equals_initializer
+                && self.is_token(SyntaxKind::CommaToken)
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
 
             // When a property with an initializer is followed by a line break and
             // a continuation token (`[`, `(`, `.`), report a missing semicolon.
