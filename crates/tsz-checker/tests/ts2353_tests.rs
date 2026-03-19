@@ -289,13 +289,21 @@ b = a;
 
     let diags = get_diagnostics(source);
     let ts2741: Vec<_> = diags.iter().filter(|d| d.0 == 2741).collect();
-    assert_eq!(ts2741.len(), 2, "Expected two TS2741 diagnostics, got: {diags:?}");
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "Expected two TS2741 diagnostics, got: {diags:?}"
+    );
     assert!(
-        ts2741.iter().any(|d| d.1.contains("Property 'a' is missing")),
+        ts2741
+            .iter()
+            .any(|d| d.1.contains("Property 'a' is missing")),
         "Expected missing-property diagnostic for 'a', got: {diags:?}"
     );
     assert!(
-        ts2741.iter().any(|d| d.1.contains("Property 'b' is missing")),
+        ts2741
+            .iter()
+            .any(|d| d.1.contains("Property 'b' is missing")),
         "Expected missing-property diagnostic for 'b', got: {diags:?}"
     );
     assert!(

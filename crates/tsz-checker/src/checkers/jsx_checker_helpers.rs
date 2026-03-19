@@ -393,12 +393,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.check_assignable_or_report_at(
-            actual_child_type,
-            children_type,
-            diag_node,
-            diag_node,
-        );
+        self.check_assignable_or_report_at(actual_child_type, children_type, diag_node, diag_node);
     }
 
     fn report_jsx_single_child_constructor_instance_mismatch(
