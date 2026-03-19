@@ -223,6 +223,36 @@ var value = (Math.random() ? {} : null);
 }
 
 #[test]
+fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
+    let source = "a = (() => { } || a)";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    let missing_close_paren = source.find("||").expect("operator position") as u32;
+    let trailing_close_paren = source.rfind(')').expect("closing paren") as u32;
+
+    assert_eq!(
+        ts1005.len(),
+        2,
+        "Expected both TS1005 recovery diagnostics for malformed parenthesized arrow tail, got {diagnostics:?}"
+    );
+    assert!(
+        ts1005
+            .iter()
+            .any(|diag| diag.start == missing_close_paren && diag.message == "')' expected."),
+        "Expected TS1005 ') expected' at the binary tail, got {diagnostics:?}"
+    );
+    assert!(
+        ts1005
+            .iter()
+            .any(|diag| diag.start == trailing_close_paren && diag.message == "';' expected."),
+        "Expected TS1005 ';' expected at the trailing ')', got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
     let source = r#"
 type T = [first: string, rest: ...string[]?];
