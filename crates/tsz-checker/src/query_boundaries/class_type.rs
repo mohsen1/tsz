@@ -20,8 +20,10 @@ pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
 }
 
-pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter(db, type_id)
+/// Check if a type is type-parameter-like, including `BoundParameter` (de Bruijn
+/// indexed type parameters used inside generic class bodies).
+pub(crate) fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_parameter_like(db, type_id)
 }
 
 /// Check if `undefined` is potentially assignable to the given type.
@@ -46,8 +48,11 @@ pub(crate) fn undefined_is_assignable_to(db: &dyn TypeDatabase, type_id: TypeId)
         return true;
     }
 
-    // For type parameters: check the constraint
-    if is_type_parameter(db, type_id) {
+    // For type parameters (including BoundParameter from de Bruijn indexed
+    // type params in generic class bodies): check the constraint.
+    // BoundParameter arises when e.g. `class C<T> { foo: T; }` — the type of
+    // `foo` is a BoundParameter, not a TypeParameter, inside the class body.
+    if is_type_parameter_like(db, type_id) {
         // Unconstrained type parameter has implicit constraint `unknown`,
         // and `undefined` is assignable to `unknown`.
         let constraint = type_parameter_constraint(db, type_id);
