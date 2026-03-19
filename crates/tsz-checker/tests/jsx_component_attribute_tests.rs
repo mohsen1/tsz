@@ -2014,6 +2014,72 @@ let k = <Comp a={{10}}><div>hi</div></Comp>;
 }
 
 #[test]
+fn jsx_children_fixed_tuple_accepts_exact_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: [JSX.Element, JSX.Element];
+}}
+declare class Comp {{
+    props: Prop;
+    render(): JSX.Element;
+}}
+let ok = <Comp><div /><div /></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Exact tuple children should not emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_fixed_tuple_rejects_extra_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: [JSX.Element, JSX.Element];
+}}
+declare class Comp {{
+    props: Prop;
+    render(): JSX.Element;
+}}
+let err = <Comp><div /><div /><div /></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Extra tuple children should emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_fixed_tuple_rejects_missing_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: [JSX.Element, JSX.Element, JSX.Element];
+}}
+declare class Comp {{
+    props: Prop;
+    render(): JSX.Element;
+}}
+let err = <Comp><div /><div /></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Missing fixed tuple child should emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_whitespace_only_text_ignored() {
     // Whitespace-only text children should not count as children
     let source = format!(

@@ -77,6 +77,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn check_jsx_children_shape(
         &mut self,
         props_type: TypeId,
+        attributes_idx: NodeIndex,
         child_count: usize,
         tag_name_idx: NodeIndex,
     ) {
@@ -101,12 +102,11 @@ impl<'a> CheckerState<'a> {
             }
             _ => {
                 if self.type_allows_multiple_children(children_type) {
-                    return;
-                }
-
-                // Fallback: any[] assignable to children type (handles complex aliases like ReactNode).
-                let any_array = self.ctx.types.factory().array(TypeId::ANY);
-                if self.is_assignable_to(any_array, children_type) {
+                    self.check_jsx_multiple_children_assignable(
+                        attributes_idx,
+                        children_type,
+                        tag_name_idx,
+                    );
                     return;
                 }
 
@@ -132,6 +132,114 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(children_type)
+    }
+
+    fn check_jsx_multiple_children_assignable(
+        &mut self,
+        attributes_idx: NodeIndex,
+        children_type: TypeId,
+        tag_name_idx: NodeIndex,
+    ) {
+        let Some(actual_children_type) =
+            self.get_precise_jsx_children_body_type(attributes_idx, children_type)
+        else {
+            return;
+        };
+
+        if actual_children_type == TypeId::ANY || actual_children_type == TypeId::ERROR {
+            return;
+        }
+        if self.is_assignable_to(actual_children_type, children_type) {
+            return;
+        }
+
+        self.check_assignable_or_report_at(
+            actual_children_type,
+            children_type,
+            tag_name_idx,
+            tag_name_idx,
+        );
+    }
+
+    fn get_precise_jsx_children_body_type(
+        &mut self,
+        attributes_idx: NodeIndex,
+        children_type: TypeId,
+    ) -> Option<TypeId> {
+        let child_nodes = self.get_jsx_body_child_nodes(attributes_idx)?;
+        if child_nodes.len() <= 1 {
+            return None;
+        }
+
+        let child_types: Vec<TypeId> = child_nodes
+            .iter()
+            .map(|&child_idx| self.compute_type_of_node(child_idx))
+            .collect();
+
+        if self.type_has_tuple_like_multiple_children(children_type) {
+            let elements = child_types
+                .into_iter()
+                .map(|type_id| tsz_solver::TupleElement {
+                    type_id,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                })
+                .collect();
+            return Some(self.ctx.types.factory().tuple(elements));
+        }
+
+        let element_type = match child_types.len() {
+            0 => TypeId::NEVER,
+            1 => child_types[0],
+            _ => self.ctx.types.factory().union(child_types),
+        };
+        Some(self.ctx.types.factory().array(element_type))
+    }
+
+    fn get_jsx_body_child_nodes(&self, attributes_idx: NodeIndex) -> Option<Vec<NodeIndex>> {
+        let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
+        let opening_node = self.ctx.arena.get(opening_idx)?;
+        if self.ctx.arena.get_jsx_opening(opening_node).is_none() {
+            return None;
+        }
+
+        let element_idx = self.ctx.arena.get_extended(opening_idx)?.parent;
+        let element_node = self.ctx.arena.get(element_idx)?;
+        let jsx_element = self.ctx.arena.get_jsx_element(element_node)?;
+
+        let mut child_nodes = Vec::new();
+        for &child_idx in &jsx_element.children.nodes {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind == syntax_kind_ext::JSX_EXPRESSION
+                && let Some(expr_data) = self.ctx.arena.get_jsx_expression(child_node)
+                && expr_data.expression == NodeIndex::NONE
+            {
+                continue;
+            }
+            child_nodes.push(child_idx);
+        }
+
+        Some(child_nodes)
+    }
+
+    fn type_has_tuple_like_multiple_children(&mut self, type_id: TypeId) -> bool {
+        let type_id = self.evaluate_type_with_env(type_id);
+
+        if tsz_solver::is_tuple_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&member| self.type_has_tuple_like_multiple_children(member));
+        }
+
+        false
     }
 
     /// Check if a type can accept multiple JSX body children (tuple/array-like or a union with one).
