@@ -643,6 +643,19 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                if !self_refs.is_empty()
+                    && self.ctx.no_implicit_any()
+                    && !self.ctx.has_real_syntax_errors
+                    && param.type_annotation.is_none()
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        param.name,
+                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                        &[&param_name],
+                    );
+                }
+
                 // TS2502: When a typed parameter's effective type includes
                 // `undefined`, the optionality-removal path reads the parameter's
                 // own type while checking its default. A self-referential default

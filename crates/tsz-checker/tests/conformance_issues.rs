@@ -7065,6 +7065,35 @@ var a = { f: a };
     );
 }
 
+#[test]
+fn test_ts7022_emitted_for_self_referential_default_parameter() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(yield = yield) {
+}
+        ",
+        opts,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2372),
+        "Should emit TS2372 for the self-referential default parameter.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 7022
+                && message.contains("'yield'")
+                && message.contains("its own initializer")
+        }),
+        "Should emit TS7022 for the self-referential default parameter under noImplicitAny.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7022 should NOT fire when noImplicitAny is off (like all 7xxx diagnostics).
 #[test]
 fn test_ts7022_not_emitted_without_no_implicit_any() {
