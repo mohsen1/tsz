@@ -392,7 +392,7 @@ fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
 }
 
 #[test]
-fn test_unconstrained_type_parameter_property_is_not_found() {
+fn test_unconstrained_type_parameter_has_object_prototype_methods() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
@@ -404,7 +404,14 @@ fn test_unconstrained_type_parameter_property_is_not_found() {
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
-    assert_property_not_found(&evaluator.resolve_property_access(t_param, "toString"));
+    // tsc: unconstrained T has Object prototype methods (toString, valueOf, etc.)
+    // because the implicit constraint is {} which includes Object methods.
+    assert!(matches!(
+        evaluator.resolve_property_access(t_param, "toString"),
+        PropertyAccessResult::Success { .. }
+    ));
+    // Non-Object properties should still be not found
+    assert_property_not_found(&evaluator.resolve_property_access(t_param, "nonExistentProp"));
 }
 
 #[test]

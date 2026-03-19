@@ -718,18 +718,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.skip_this_binding.set(prev);
                     result
                 } else {
-                    // Unconstrained type parameters: in strict mode (strictNullChecks),
-                    // T without a constraint does NOT have Object prototype methods
-                    // like toString/valueOf. Property access on unconstrained T should
-                    // return PropertyNotFound, matching tsc behavior where the apparent
-                    // type of an unconstrained T is `{}` which doesn't expose Object
-                    // prototype methods for property access checking.
-                    //
-                    // When T extends {} explicitly, the constraint path above handles it
-                    // and Object prototype methods ARE accessible.
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
+                    // Unconstrained type parameters: try apparent Object members as fallback.
+                    // tsc treats unconstrained T as having Object prototype methods
+                    // (toString, valueOf, hasOwnProperty, etc.) because the implicit
+                    // constraint is `{}` which includes Object methods.
+                    match apparent_object_member_kind(prop_name) {
+                        Some(ApparentMemberKind::Value(type_id)) => {
+                            PropertyAccessResult::simple(type_id)
+                        }
+                        Some(ApparentMemberKind::Method(return_type)) => {
+                            PropertyAccessResult::Success {
+                                type_id: return_type,
+                                write_type: None,
+                                from_index_signature: false,
+                            }
+                        }
+                        None => PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        },
                     }
                 }
             }
