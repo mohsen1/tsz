@@ -615,6 +615,157 @@ export class Derived extends getBase()<string, number> {}
 }
 
 #[test]
+fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
+    let source = r#"
+export class ExportedClass<T> {
+    x: T;
+}
+
+class LocalClass<T, U> {
+    x: T;
+    y: U;
+}
+
+export interface ExportedInterface {
+    x: number;
+}
+
+interface LocalInterface {
+    x: number;
+}
+
+declare function getLocalClass<T>(c: T): typeof LocalClass;
+
+export class MyClass extends getLocalClass<LocalInterface>(undefined)<string, number> {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "MyClass",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+    let local_base_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "LocalClass",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let local_base_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(local_base_sym),
+        is_abstract: false,
+    });
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, local_base_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    let local_class_pos = output.find("declare class LocalClass<T, U> {").unwrap();
+    let exported_interface_pos = output.find("export interface ExportedInterface {").unwrap();
+    let my_class_base_pos = output.find("declare const MyClass_base:").unwrap();
+
+    assert!(
+        local_class_pos < exported_interface_pos,
+        "Expected local class dependency to keep source order: {output}"
+    );
+    assert!(
+        local_class_pos < my_class_base_pos,
+        "Expected local dependency to emit before the synthetic base alias: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_extends_expression_keeps_export_modifiers_with_synthetic_alias() {
+    let source = r#"
+namespace Test {
+    export interface IFace {}
+
+    export class SomeClass implements IFace {}
+
+    export class Derived extends getClass<IFace>() {}
+
+    export function getClass<T>(): new () => T {
+        return SomeClass as new () => T;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let derived_idx = find_class_node(
+        &parser,
+        "Derived",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, derived_idx);
+    let iface_sym = find_interface_symbol(&parser, &binder, "IFace");
+
+    let interner = TypeInterner::new();
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(iface_sym),
+    });
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance_type)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(extends_expr_idx.0, ctor_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export interface IFace"),
+        "Expected namespace interface to keep export modifier when synthetic alias is emitted: {output}"
+    );
+    assert!(
+        output.contains("export class SomeClass"),
+        "Expected namespace class to keep export modifier when synthetic alias is emitted: {output}"
+    );
+    assert!(
+        output.contains("export class Derived extends Derived_base"),
+        "Expected derived class to keep export modifier when synthetic alias is emitted: {output}"
+    );
+    assert!(
+        output.contains("export function getClass<T>()"),
+        "Expected namespace function to keep export modifier when synthetic alias is emitted: {output}"
+    );
+    assert!(
+        output.contains("const Derived_base: new () => IFace;"),
+        "Expected synthetic base alias to use constructor type syntax: {output}"
+    );
+}
+
+#[test]
 fn test_non_unique_symbol_computed_method_uses_property_syntax_in_structural_type() {
     let source = r#"
 export const a: symbol = Symbol();
