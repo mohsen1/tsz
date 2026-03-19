@@ -1294,6 +1294,30 @@ mod tests {
     }
 
     #[test]
+    fn inherited_static_member_property_access_emits_ts2576() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                static count = 1;
+                static get size() {
+                    return 2;
+                }
+            }
+            class Derived extends Base {}
+            const value = new Derived();
+            value.count;
+            value.size;
+        "#,
+        );
+
+        assert_eq!(
+            diagnostics.iter().filter(|&&code| code == 2576).count(),
+            2,
+            "Expected TS2576 for inherited static field and accessor property access, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn nested_class_protected_access_through_subclass_instance_is_allowed() {
         // Inside Derived2.method, nested class C accesses protected x through
         // a Derived4 instance (which extends Derived2) — should be allowed.

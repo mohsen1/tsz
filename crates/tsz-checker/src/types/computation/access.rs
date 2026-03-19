@@ -666,12 +666,14 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // TS2576 parity for element access on instance/super with a static member name.
-                    // Use .is_some() — TS2576 fires for any static member (property or method).
+                    // Use the shared class summary so inherited static fields/accessors
+                    // don't rewalk the base chain at each access.
                     if self.is_super_expression(access.expression)
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
                         && self
-                            .is_method_member_in_class_hierarchy(base_idx, &property_name, true)
+                            .summarize_class_chain(base_idx)
+                            .lookup(&property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -697,7 +699,8 @@ impl<'a> CheckerState<'a> {
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && !is_static_access
                         && self
-                            .is_method_member_in_class_hierarchy(class_idx, &property_name, true)
+                            .summarize_class_chain(class_idx)
+                            .lookup(&property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -1956,6 +1959,31 @@ class A {
         assert!(
             errors.iter().all(|code| *code == 2339),
             "Expected only TS2339 diagnostics, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn inherited_static_member_element_access_emits_ts2576() {
+        let diags = check_source_with_default_libs(
+            r#"
+class Base {
+    static count = 1;
+    static get size() {
+        return 2;
+    }
+}
+class Derived extends Base {}
+const value = new Derived();
+value["count"];
+value["size"];
+"#,
+        );
+
+        let errors = semantic_errors(&diags);
+        assert_eq!(
+            errors.iter().filter(|code| **code == 2576).count(),
+            2,
+            "Expected TS2576 for inherited static field and accessor element access, got: {errors:?}"
         );
     }
 }
