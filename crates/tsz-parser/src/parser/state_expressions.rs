@@ -1143,10 +1143,36 @@ impl ParserState {
                 let is_update_operator = operator == SyntaxKind::PlusPlusToken as u16
                     || operator == SyntaxKind::MinusMinusToken as u16;
                 self.next_token();
-                // TS1109: ++await and --await are invalid because await expressions
-                // are not valid left-hand-side expressions for increment/decrement
-                if is_update_operator && self.token() == SyntaxKind::AwaitKeyword {
-                    self.error_expression_expected();
+                if is_update_operator {
+                    match self.token() {
+                        // TSC recovers `++delete foo.bar`/`--delete foo.bar`
+                        // by dropping the outer update and parsing the delete
+                        // expression directly, which keeps the downstream
+                        // unresolved-name diagnostic but avoids an extra TS2356.
+                        SyntaxKind::DeleteKeyword => {
+                            self.error_expression_expected();
+                            return self.parse_unary_expression();
+                        }
+                        // TSC anchors repeated prefix updates like `++ ++x` at
+                        // the outer operator, then keeps the inner update
+                        // expression as the recovered operand statement.
+                        SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken => {
+                            self.parse_error_at(
+                                start_pos,
+                                self.token_end().saturating_sub(start_pos),
+                                "Expression expected.",
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            );
+                            return self.parse_unary_expression();
+                        }
+                        // TS1109: ++await and --await are invalid because await
+                        // expressions are not valid left-hand-side expressions
+                        // for increment/decrement.
+                        SyntaxKind::AwaitKeyword => {
+                            self.error_expression_expected();
+                        }
+                        _ => {}
+                    }
                 }
                 let operand = self.parse_unary_expression();
                 if operand.is_none() {
