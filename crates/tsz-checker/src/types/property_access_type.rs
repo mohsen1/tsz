@@ -1288,8 +1288,11 @@ impl<'a> CheckerState<'a> {
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && is_static_access
                         && matches!(
-                            self.summarize_class_chain(class_idx)
-                                .member_kind(property_name, true, true),
+                            self.summarize_class_chain(class_idx).member_kind(
+                                property_name,
+                                true,
+                                true
+                            ),
                             Some(ClassMemberKind::FieldLike)
                         )
                     {
