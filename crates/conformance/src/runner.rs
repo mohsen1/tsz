@@ -1274,6 +1274,7 @@ impl Runner {
 mod tests {
     use super::*;
     use crate::tsc_results::{DiagnosticFingerprint, FileMetadata, TscResult};
+    use std::sync::{Mutex, OnceLock};
 
     fn fp(code: u32, file: &str, msg: &str) -> DiagnosticFingerprint {
         DiagnosticFingerprint {
@@ -1283,6 +1284,44 @@ mod tests {
             column: 1,
             message_key: msg.to_string(),
         }
+    }
+
+    fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_temp_cwd<F, T>(create_fast_binary: bool, f: F) -> T
+    where
+        F: FnOnce(&Path) -> T,
+    {
+        let _guard = cwd_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let original = std::env::current_dir().expect("current dir should be readable");
+        let temp = std::env::temp_dir().join(format!(
+            "tsz_runner_helper_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp).expect("temp dir should be created");
+
+        if create_fast_binary {
+            let fast_binary = temp.join(".target/dist-fast/tsz");
+            if let Some(parent) = fast_binary.parent() {
+                std::fs::create_dir_all(parent).expect("parent dir should be created");
+            }
+            std::fs::write(&fast_binary, b"tsz").expect("fast binary should be created");
+        }
+
+        std::env::set_current_dir(&temp).expect("cwd should change");
+        let result = f(&temp);
+        std::env::set_current_dir(original).expect("cwd should be restored");
+        let _ = std::fs::remove_dir_all(&temp);
+        result
     }
 
     #[test]
@@ -1409,5 +1448,42 @@ mod tests {
         let filtered = filter_lib_diagnostics_tsz(result);
         assert!(filtered.error_codes.is_empty());
         assert!(filtered.diagnostic_fingerprints.is_empty());
+    }
+
+    #[test]
+    fn relative_display_returns_relative_path_when_possible() {
+        let base = Path::new("/repo/project");
+        let path = Path::new("/repo/project/tests/case.ts");
+        assert_eq!(relative_display(path, base), "tests/case.ts");
+    }
+
+    #[test]
+    fn relative_display_falls_back_to_absolute_path_when_outside_base() {
+        let base = Path::new("/repo/project");
+        let path = Path::new("/other/place/case.ts");
+        assert_eq!(relative_display(path, base), "/other/place/case.ts");
+    }
+
+    #[test]
+    fn sanitize_artifact_name_replaces_filesystem_special_characters() {
+        let sanitized = sanitize_artifact_name(r#"a/b\c:d*e?f"g<h>i|j"#);
+        assert_eq!(sanitized, "a_b_c_d_e_f_g_h_i_j");
+    }
+
+    #[test]
+    fn resolve_tsz_binary_prefers_local_fast_binary_when_present() {
+        with_temp_cwd(true, |temp| {
+            let resolved = Runner::resolve_tsz_binary("tsz");
+            assert_eq!(resolved, "./.target/dist-fast/tsz");
+            assert!(temp.join(".target/dist-fast/tsz").is_file());
+        });
+    }
+
+    #[test]
+    fn resolve_tsz_binary_preserves_configured_binary_when_not_default() {
+        with_temp_cwd(false, |_| {
+            let resolved = Runner::resolve_tsz_binary("/usr/local/bin/tsz-custom");
+            assert_eq!(resolved, "/usr/local/bin/tsz-custom");
+        });
     }
 }
