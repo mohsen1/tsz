@@ -1499,8 +1499,6 @@ impl<'a> CheckerState<'a> {
             self.compute_type_of_node_complex_with_request(idx, request)
         };
 
-        self.validate_regex_literal_flags(idx);
-
         result
     }
 
