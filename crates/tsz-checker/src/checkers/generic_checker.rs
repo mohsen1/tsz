@@ -1336,6 +1336,14 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        // Cross-arena DefId equality alone is not strong enough here: imported
+        // aliases can reuse a Lazy(DefId) shape that collides with boxed lib
+        // DefIds, which falsely classifies constraints like `Key` as `Function`.
+        // Guard the fallback by requiring the rendered type name to actually be
+        // `Function`.
+        if self.format_type(type_id) != "Function" {
+            return false;
+        }
         // Check if the type is Lazy(DefId) with a known Function boxed DefId
         if let Some(def_id) = lazy_def_id(db, type_id)
             && db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Function)

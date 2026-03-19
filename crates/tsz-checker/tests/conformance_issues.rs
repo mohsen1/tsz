@@ -11835,6 +11835,64 @@ type DeepPickWeakSet<Type, Filter> = Type extends WeakSet<infer Values>
 }
 
 #[test]
+fn test_no_false_ts2344_for_imported_record_indexed_access_key_constraint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "Any/Key.ts",
+                r#"
+export type Key = string | number | symbol;
+"#,
+            ),
+            (
+                "Object/_Internal.ts",
+                r#"
+export type Modx = ['?' | '!', 'W' | 'R'];
+"#,
+            ),
+            (
+                "Object/Record.ts",
+                r#"
+import {Modx} from './_Internal';
+import {Key} from '../Any/Key';
+
+export type Record<K extends Key, A extends any = unknown, modx extends Modx = ['!', 'W']> = {
+    '!': {
+        'R': {readonly [P in K]: A};
+        'W': {[P in K]: A};
+    };
+    '?': {
+        'R': {readonly [P in K]?: A};
+        'W': {[P in K]?: A};
+    };
+}[modx[0]][modx[1]];
+"#,
+            ),
+            (
+                "entry.ts",
+                r#"
+import {Record} from './Object/Record';
+import {Key} from './Any/Key';
+
+type Alias<O extends Record<keyof O, Key>, K extends keyof O> = Record<O[K], K>;
+"#,
+            ),
+        ],
+        "entry.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Imported Record aliases should not misclassify `Key` as a callable constraint for generic indexed-access type arguments.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_composite_type_args_with_unresolved_members() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
