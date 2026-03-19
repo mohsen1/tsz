@@ -226,7 +226,7 @@ impl<'a> FlowAnalyzer<'a> {
             if self.contains_optional_chain(predicate_target)
                 && self.is_optional_chain_prefix(predicate_target, target)
             {
-                let narrowing = NarrowingContext::new(self.interner);
+                let narrowing = self.make_narrowing_context();
                 let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                 return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
             }
@@ -460,9 +460,9 @@ impl<'a> FlowAnalyzer<'a> {
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
-            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            self.make_narrowing_context().with_resolver(&*env_borrow)
         } else {
-            NarrowingContext::new(self.interner)
+            self.make_narrowing_context()
         };
 
         if let Some(predicate_type) = predicate.type_id {
@@ -518,9 +518,9 @@ impl<'a> FlowAnalyzer<'a> {
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
-            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            self.make_narrowing_context().with_resolver(&*env_borrow)
         } else {
-            NarrowingContext::new(self.interner)
+            self.make_narrowing_context()
         };
 
         // Delegate all type algebra to solver - it handles all fallback cases:
@@ -683,9 +683,9 @@ impl<'a> FlowAnalyzer<'a> {
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
-            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            self.make_narrowing_context().with_resolver(&*env_borrow)
         } else {
-            NarrowingContext::new(self.interner)
+            self.make_narrowing_context()
         };
 
         narrowing.narrow_type(

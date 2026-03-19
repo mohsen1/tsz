@@ -113,7 +113,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let env_borrow;
-        let mut narrowing = NarrowingContext::new(self.interner);
+        let mut narrowing = self.make_narrowing_context();
         if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
             narrowing = narrowing.with_resolver(&*env_borrow);

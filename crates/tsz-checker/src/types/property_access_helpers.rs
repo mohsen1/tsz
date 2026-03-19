@@ -326,13 +326,13 @@ impl<'a> CheckerState<'a> {
         let Some(member_node) = self.ctx.arena.get(access.name_or_argument) else {
             return false;
         };
-        if member_node.kind != SyntaxKind::Identifier as u16
-            || !self
+        let is_prototype = member_node.kind == SyntaxKind::Identifier as u16
+            && self
                 .ctx
                 .arena
                 .get_identifier(member_node)
-                .is_some_and(|ident| ident.escaped_text == "prototype")
-        {
+                .is_some_and(|ident| ident.escaped_text == "prototype");
+        if !is_prototype {
             return false;
         }
 

@@ -471,9 +471,9 @@ impl<'a> FlowAnalyzer<'a> {
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
-            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            self.make_narrowing_context().with_resolver(&*env_borrow)
         } else {
-            NarrowingContext::new(self.interner)
+            self.make_narrowing_context()
         };
 
         if cond_node.kind == SyntaxKind::Identifier as u16
@@ -1578,9 +1578,9 @@ impl<'a> FlowAnalyzer<'a> {
             let env_borrow;
             let narrowing = if let Some(env) = &self.type_environment {
                 env_borrow = env.borrow();
-                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+                self.make_narrowing_context().with_resolver(&*env_borrow)
             } else {
-                NarrowingContext::new(self.interner)
+                self.make_narrowing_context()
             };
             if is_true_branch {
                 // x holds the truthy result → remove null/undefined
@@ -1728,9 +1728,9 @@ impl<'a> FlowAnalyzer<'a> {
                 let env_borrow;
                 let narrowing = if let Some(env) = &self.type_environment {
                     env_borrow = env.borrow();
-                    NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+                    self.make_narrowing_context().with_resolver(&*env_borrow)
                 } else {
-                    NarrowingContext::new(self.interner)
+                    self.make_narrowing_context()
                 };
                 return Some(narrowing.narrow_type(
                     type_id,
