@@ -334,6 +334,79 @@ NewAjax.prototype.case6_unexpectedlyResolvesPathToNodeModules;
     );
 }
 
+#[test]
+fn test_js_nested_scope_expando_reads_do_not_emit_ts2565() {
+    let source = r#"
+var NS = {};
+NS.K = class {
+    values() {
+        return new NS.K();
+    }
+};
+
+var Host = {};
+Host.UserMetrics = {};
+Host.UserMetrics.Action = {
+    WindowDocked: 1,
+};
+
+class Other {
+    usage() {
+        return Host.UserMetrics.Action.WindowDocked;
+    }
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2565),
+        "Expected nested-scope expando reads to avoid TS2565, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_class_prototype_declared_member_read_has_no_ts2565() {
+    let source = r#"
+class C {
+    foo() {}
+}
+
+class D extends C {
+    foo() {
+        return super.foo();
+    }
+}
+
+D.prototype.foo.call(new D());
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2565),
+        "Expected declared class prototype member reads to avoid TS2565, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_self_defaulting_expando_initializer_has_no_ts2565() {
+    let source = r#"
+var test = {};
+test.K = test.K || function () {};
+test.K.prototype = {
+    add() {}
+};
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2565),
+        "Expected self-defaulting expando initializer reads to avoid TS2565, got: {diagnostics:?}"
+    );
+}
+
 /// `var self = this; self.prop = value` alias pattern in constructor
 #[test]
 fn test_js_self_alias_this_prop_constructor() {

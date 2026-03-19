@@ -283,7 +283,13 @@ impl<'a> CheckerState<'a> {
         if self.property_access_is_write_target_or_base(property_access_idx) {
             return false;
         }
+        if self.expando_read_is_self_default_initializer(property_access_idx) {
+            return false;
+        }
         if self.is_commonjs_module_exports_root(object_expr_idx) {
+            return false;
+        }
+        if !self.expando_read_is_within_initializing_scope(property_access_idx, object_expr_idx) {
             return false;
         }
         if !self.is_js_expando_capable_read_root(object_expr_idx, property_name) {
@@ -305,14 +311,14 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
     ) -> bool {
         self.is_expando_property_read(object_expr_idx, property_name)
-            || self.is_js_prototype_read_root(object_expr_idx)
+            || self.is_js_prototype_read_root(object_expr_idx, property_name)
     }
 
     fn is_commonjs_module_exports_root(&self, object_expr_idx: NodeIndex) -> bool {
         self.expression_text(object_expr_idx).as_deref() == Some("module.exports")
     }
 
-    fn is_js_prototype_read_root(&self, object_expr_idx: NodeIndex) -> bool {
+    fn is_js_prototype_read_root(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {
         let Some(node) = self.ctx.arena.get(object_expr_idx) else {
             return false;
         };
@@ -333,6 +339,14 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(member_node)
                 .is_some_and(|ident| ident.escaped_text == "prototype");
         if !is_prototype {
+            return false;
+        }
+
+        let Some(root_name) = self.expression_text(access.expression) else {
+            return false;
+        };
+
+        if self.class_has_instance_member(&root_name, property_name) {
             return false;
         }
 
@@ -424,6 +438,116 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
         )
+    }
+
+    fn expando_read_is_within_initializing_scope(
+        &self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+    ) -> bool {
+        let use_owner = self.scope_owner_node(property_access_idx);
+        let Some(root_ident) = self.root_identifier_index(object_expr_idx) else {
+            return use_owner.is_none();
+        };
+        let Some(root_sym) = self.resolve_identifier_symbol(root_ident) else {
+            return use_owner.is_none();
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(root_sym) else {
+            return use_owner.is_none();
+        };
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first().unwrap_or(&NodeIndex::NONE)
+        };
+        self.declaration_scope_owner_node(decl_idx) == use_owner
+    }
+
+    fn root_identifier_index(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(idx);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            return self.root_identifier_index(access.expression);
+        }
+        None
+    }
+
+    fn scope_owner_node(&self, idx: NodeIndex) -> NodeIndex {
+        let mut current = Some(idx);
+        while let Some(node_idx) = current {
+            if node_idx.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                return NodeIndex::NONE;
+            };
+            if self.is_scope_owner_kind(node.kind) {
+                return node_idx;
+            }
+            current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        }
+        NodeIndex::NONE
+    }
+
+    fn declaration_scope_owner_node(&self, decl_idx: NodeIndex) -> NodeIndex {
+        let current = self
+            .ctx
+            .arena
+            .get_extended(decl_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        self.scope_owner_node(current)
+    }
+
+    fn is_scope_owner_kind(&self, kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::ARROW_FUNCTION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
+    }
+
+    fn expando_read_is_self_default_initializer(&self, property_access_idx: NodeIndex) -> bool {
+        let mut current = property_access_idx;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+            {
+                if matches!(
+                    binary.operator_token,
+                    op if op == SyntaxKind::BarBarToken as u16
+                        || op == SyntaxKind::QuestionQuestionToken as u16
+                ) && binary.left == current
+                {
+                    current = parent_idx;
+                    continue;
+                }
+
+                return binary.operator_token == SyntaxKind::EqualsToken as u16
+                    && binary.right == current
+                    && self.same_reference(binary.left, property_access_idx);
+            }
+
+            return false;
+        }
+    }
+
+    fn same_reference(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        let analyzer = self.flow_analyzer_for_property_reads();
+        analyzer.is_matching_reference(left, right)
     }
 
     /// Check if a class has an instance member (property, method, or accessor) with the given name.

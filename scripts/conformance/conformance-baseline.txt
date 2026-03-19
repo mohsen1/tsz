@@ -1,7 +1,5 @@
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts | expected:[TS2511,TS2564] actual:[TS2511,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/aliasOnMergedModuleInterface.ts | expected:[TS2708] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayBestCommonTypes.ts | expected:[TS2322,TS2564,TS2769] actual:[TS2322,TS2564]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayConcatMap.ts | expected:[TS2339,TS2769] actual:[TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/assignmentIndexedToPrimitives.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/awaitedTypeStrictNull.ts | expected:[TS2589,TS7010] actual:[TS2347,TS2589,TS7010]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/bindingPatternCannotBeOnlyInferenceSource.ts | expected:[TS2339,TS2488,TS2571] actual:[TS2339,TS2488,TS2571]
@@ -21,7 +19,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/circularReferen
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/circularReferenceInReturnType2.ts | expected:[TS7022,TS7023] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/circularlyConstrainedMappedTypeContainingConditionalNoInfiniteInstantiationDepth.ts | expected:[TS2344] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classExpressionAssignment.ts | expected:[TS2322] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs2.ts | expected:[] actual:[TS2565]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expected:[TS2855] actual:[TS2339,TS7053]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classTypeParametersInStatics.ts | expected:[TS2302,TS2345,TS2564] actual:[TS2302,TS2564]
@@ -30,6 +27,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVari
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences6.ts | expected:[TS2322] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/collectionPatternNoError.ts | expected:[] actual:[TS2339]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2320,TS2344,TS2430]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts | expected:[TS2339,TS2506,TS2554] actual:[TS2339,TS2506,TS2554]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
@@ -45,7 +43,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/conflictingDecl
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/constEnumSyntheticNodesComments.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/constructorOverloads1.ts | expected:[TS2392,TS2769] actual:[TS2392,TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts | expected:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1110,TS1127,TS1128,TS1135] actual:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1128,TS1135,TS1435,TS1472]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/contextualParameterAndSelfReferentialConstraint1.ts | expected:[] actual:[TS2353,TS7006]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/contextualParameterAndSelfReferentialConstraint1.ts | expected:[] actual:[TS2345,TS7006]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts | expected:[TS2353,TS7006] actual:[TS2353,TS7006]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/contextualTypesNegatedTypeLikeConstraintInGenericMappedType2.ts | expected:[TS2322,TS7006] actual:[TS2322,TS7006]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/contextualTypingWithGenericAndNonGenericSignature.ts | expected:[TS7006] actual:[TS2322]
@@ -61,13 +59,14 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowAlia
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowArrayErrors.ts | expected:[TS2345,TS7005,TS7034] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts | expected:[TS2345] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowInstanceof.ts | expected:[] actual:[TS2339]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowInstanceofWithSymbolHasInstance.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/correlatedUnions.ts | expected:[] actual:[TS2345,TS2349]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2502]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/crashInYieldStarInAsyncFunction.ts | expected:[TS1320] actual:[TS7055]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/dataViewConstructor.ts | expected:[TS2345] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitExpressionWithNonlocalPrivateUniqueSymbol.ts | expected:[TS2527] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitForModuleImportingModuleAugmentationRetainsImport.ts | expected:[] actual:[TS2345]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitHigherOrderRetainedGenerics.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts | expected:[TS2304] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitMappedTypeTemplateTypeofSymbol.ts | expected:[TS4118] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[TS4094]
@@ -94,6 +93,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/destructuringUn
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts | expected:[TS2322,TS2345,TS2740,TS2741] actual:[TS2322,TS2345,TS2740]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/didYouMeanStringLiteral.ts | expected:[TS2322,TS2820] actual:[TS2322,TS2820]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/differentTypesWithSameName.ts | expected:[TS2345,TS2564] actual:[TS2345,TS2564]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantsAndPrimitives.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminateWithOptionalProperty2.ts | expected:[TS5024] actual:[TS2322,TS5024]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminateWithOptionalProperty4.ts | expected:[TS5024,TS18048] actual:[TS5024,TS18048]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminatedUnionJsxElement.tsx | expected:[] actual:[TS2322]
@@ -125,7 +125,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/emitCapturingTh
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/enumLiteralAssignableToEnumInsideUnion.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/erasableSyntaxOnly.ts | expected:[TS1294] actual:[TS7055]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts | expected:[TS2339,TS2702,TS2713,TS2749] actual:[TS2694,TS2702]
@@ -182,6 +182,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/extractInferenc
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fallbackToBindingPatternForTypeInference.ts | expected:[TS2345] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fatarrowfunctionsErrors.ts | expected:[TS1005] actual:[TS1005]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fillInMissingTypeArgsOnJSConstructCalls.ts | expected:[TS1005,TS8004,TS8010,TS8011] actual:[TS1005,TS8004,TS8010,TS8011]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/firstMatchRegExpMatchArray.ts | expected:[TS2322] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fixTypeParameterInSignatureWithRestParameters.ts | expected:[TS2345] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/flatArrayNoExcessiveStackDepth.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/forInStrictNullChecksNoError.ts | expected:[TS18049] actual:[TS18049]
@@ -202,7 +203,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericAssignme
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts | expected:[TS2345,TS2488] actual:[TS2488]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts | expected:[TS2345,TS2558] actual:[TS2558]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericChainedCalls.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericClassWithStaticFactory.ts | expected:[TS2322,TS2345,TS2564] actual:[TS2322,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCloneReturnTypes.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCloneReturnTypes2.ts | expected:[TS2322,TS2454] actual:[TS2322]
@@ -212,7 +212,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericConstruc
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericDefaults.ts | expected:[TS2744] actual:[TS2339,TS2345,TS2428,TS2716,TS2744]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericDefaultsErrors.ts | expected:[TS2304,TS2344,TS2345,TS2428,TS2558,TS2706,TS2707,TS2716] actual:[TS2304,TS2344,TS2428,TS2558,TS2706,TS2707,TS2716]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2362,TS2769]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionTypedArgumentsAreFixed.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctions2.ts | expected:[TS2454] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionsWithOptionalParameters1.ts | expected:[TS2345,TS2454] actual:[TS2345,TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericGetter3.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
@@ -285,11 +284,11 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indexedAccessTy
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indexedAccessWithFreshObjectLiteral.ts | expected:[TS2339] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indirectDiscriminantAndExcessProperty.ts | expected:[TS2322] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inexistentPropertyInsideToStringType.ts | expected:[TS2339,TS2394] actual:[]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromAnnotatedReturn1.ts | expected:[TS2322] actual:[TS2322,TS7031]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes1.ts | expected:[TS2339,TS2564] actual:[TS2564]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes2.ts | expected:[TS2564] actual:[TS2322,TS2339,TS2365,TS2564,TS18046]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes3.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345,TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferRestArgumentsMappedTuple.ts | expected:[] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2339,TS2740,TS2741,TS18048]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2339,TS2345,TS2740,TS2741,TS18048]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion3.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferenceExactOptionalProperties2.ts | expected:[TS2345] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts | expected:[TS2345] actual:[TS2322]
@@ -340,7 +339,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/iterableTReturn
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsCheckObjectDefineThisNoCrash.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsElementAccessNoContextualTypeCrash.ts | expected:[TS2741] actual:[TS2741]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsEmitIntersectionProperty.ts | expected:[] actual:[TS2339]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsEnumCrossFileExport.ts | expected:[] actual:[TS2565]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsExpandoObjectDefineProperty.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation.ts | expected:[TS2564,TS2741] actual:[TS2564,TS2741]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation2.ts | expected:[TS2300,TS2551] actual:[]
@@ -477,6 +475,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/namespaceMerged
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/namespaceMergedWithImportAliasNoCrash.ts | expected:[TS2440,TS2694,TS2708] actual:[TS2708]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/namespaceNotMergedWithFunctionDefaultExport.ts | expected:[TS2395] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/namespacesWithTypeAliasOnlyExportsMerge.ts | expected:[] actual:[TS2451,TS2694,TS2749]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue5.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue6.ts | expected:[TS2339] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowSwitchOptionalChainContainmentEvolvingArrayNoCrash1.ts | expected:[TS7005,TS7034] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowingMutualSubtypes.ts | expected:[TS7053] actual:[TS7053]
@@ -487,7 +486,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/nativeToBoxedTy
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/nestedCallbackErrorNotFlattened.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/nestedExcessPropertyChecking.ts | expected:[TS2322,TS2559] actual:[TS2322,TS2559]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/nestedRecursiveArraysOrObjectsError01.ts | expected:[TS2353] actual:[]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/neverAsDiscriminantType.ts | expected:[TS5024] actual:[TS2536,TS5024,TS18048]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/neverAsDiscriminantType.ts | expected:[TS5024] actual:[TS2339,TS2536,TS5024,TS18048]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/neverNullishThroughParentheses.ts | expected:[TS2869] actual:[TS2869]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/newMap.ts | expected:[TS2743] actual:[TS2558]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/noCrashOnImportShadowing.ts | expected:[TS2709] actual:[TS2353]
@@ -567,6 +566,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/parseUnaryExpre
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/parseUnmatchedTypeAssertion.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109,TS1141]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/parserUnparsedTokenCrash2.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partialDiscriminatedUnionMemberHasGoodError.ts | expected:[TS2322] actual:[TS2322]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partiallyDiscriminantedUnions.ts | expected:[TS2564] actual:[TS2322,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pathsValidation2.ts | expected:[TS5064,TS5101] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pathsValidation5.ts | expected:[TS5090] actual:[TS2882]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/primitiveConstraints2.ts | expected:[TS2322,TS2344,TS2345] actual:[TS2322,TS2344,TS2345]
@@ -585,7 +585,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/propertiesAndIn
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/propertyWrappedInTry.ts | expected:[TS1005,TS1068,TS1128] actual:[TS1005,TS1068,TS1128]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/protectedAccessThroughContextualThis.ts | expected:[TS2341] actual:[TS2341]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pushTypeGetTypeOfAlias.ts | expected:[TS2303,TS2339] actual:[TS2339]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts | expected:[TS2339] actual:[TS2322,TS2345]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts | expected:[TS2339] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts | expected:[] actual:[TS2344]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reachabilityChecks8.ts | expected:[TS7027] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts | expected:[TS1005,TS1011,TS1109,TS1128,TS1136,TS1138] actual:[TS1005]
@@ -603,13 +603,13 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveBaseCh
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveBaseConstructorCreation3.ts | expected:[TS2314,TS2351] actual:[TS2314]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts | expected:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564] actual:[TS2300,TS2322,TS2454,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveConditionalCrash4.ts | expected:[TS2304,TS2503,TS2589] actual:[TS2503]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2344,TS2345,TS2589]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts | expected:[TS2322,TS2345,TS2589] actual:[TS2322,TS2345,TS2589]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveFunctionTypes.ts | expected:[TS2322,TS2345,TS2355,TS2394,TS2554,TS2769] actual:[TS2322,TS2355,TS2554,TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveObjectLiteral.ts | expected:[TS7022] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveResolveTypeMembers.ts | expected:[TS2304,TS2577] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveTupleTypeInference.ts | expected:[TS2345] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveTypeParameterConstraintReferenceLacksTypeArgs.ts | expected:[TS2314] actual:[TS2314]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveTypeRelations.ts | expected:[TS2345,TS2391,TS2552] actual:[TS2391]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursiveTypeRelations.ts | expected:[TS2345,TS2391,TS2552] actual:[TS2304,TS2391,TS2552]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/recursivelyExpandingUnionNoStackoverflow.ts | expected:[TS2589,TS2615] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/redefineArray.ts | expected:[TS2739] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/referenceTypesPreferedToPathIfPossible.ts | expected:[TS2580] actual:[TS2307]
@@ -642,7 +642,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedIn
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedPartiallyInferableTypes.ts | expected:[TS18046] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypeNotCircular.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts | expected:[] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening1.ts | expected:[] actual:[TS2314,TS2345]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening1.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts | expected:[TS2322,TS2353] actual:[TS2322,TS2353]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/reverseMappedTypeLimitedConstraint.ts | expected:[TS2353] actual:[TS2353]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/scopeCheckStaticInitializer.ts | expected:[TS2449,TS2729] actual:[TS2449,TS2729]
@@ -668,7 +668,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/spreadOfParamsF
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/spreadUnionPropOverride.ts | expected:[TS2783] actual:[TS2741]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/spuriousCircularityOnTypeImport.ts | expected:[] actual:[TS2344]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/stackDepthLimitCastingType.ts | expected:[] actual:[TS2503]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts | expected:[TS2322,TS2339,TS2454] actual:[TS2322,TS2454]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/staticAnonymousTypeNotReferencingTypeParameter.ts | expected:[TS2322,TS2339,TS2454] actual:[TS2322,TS2349,TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/staticInstanceResolution5.ts | expected:[TS2322,TS2709] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/staticMemberExportAccess.ts | expected:[TS2339,TS2351,TS2576] actual:[TS2351]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/staticOffOfInstance2.ts | expected:[TS2576] actual:[TS2576]
@@ -686,7 +686,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/strictSubtypeAn
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/stringLiteralsErrors.ts | expected:[TS1002,TS1125] actual:[TS1002,TS1125]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2744]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/subtypeReductionWithAnyFunctionType.ts | expected:[TS7006] actual:[TS2322,TS2345]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/subtypeReductionWithAnyFunctionType.ts | expected:[TS7006] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/superWithTypeArgument3.ts | expected:[TS2754] actual:[TS2564,TS2754]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNames.ts | expected:[TS2307,TS2564] actual:[TS2302,TS2307,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions4.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109]
@@ -717,7 +717,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tsxSpreadDoesNo
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx | expected:[] actual:[TS2307,TS2741,TS7026]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts | expected:[TS2322,TS2786] actual:[TS2786]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tsxUnionMemberChecksFilterDataProps.tsx | expected:[] actual:[TS2307]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tupleTypes.ts | expected:[TS2322,TS2403,TS2454,TS2493,TS2540] actual:[TS2322,TS2454,TS2493,TS2540]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/tupleTypes.ts | expected:[TS2322,TS2403,TS2454,TS2493,TS2540] actual:[TS2322,TS2403,TS2454,TS2493,TS2540]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/typeArgInference2.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/typeArgumentInferenceApparentType2.ts | expected:[TS2322,TS2454] actual:[TS2322,TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/typeArgumentsOnFunctionsWithNoTypeParameters.ts | expected:[TS2345,TS2558] actual:[TS2558]
@@ -750,6 +750,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/umdGlobalAugmen
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/umdGlobalConflict.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/umdNamespaceMergedWithGlobalAugmentationIsNotCircular.ts | expected:[TS2451] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional.ts | expected:[TS2774] actual:[TS2774]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional2.ts | expected:[TS2774,TS7006] actual:[TS7006]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/undeclaredModuleError.ts | expected:[TS2304,TS2345,TS2591] actual:[TS2304,TS2307,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/undefinedAssignableToGenericMappedIntersection.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/undefinedTypeAssignment4.ts | expected:[TS2397,TS2414,TS2427,TS2564] actual:[TS2397,TS2414,TS2427,TS2564]
@@ -763,7 +764,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unionSubtypeRed
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uniqueSymbolAllowsIndexInObjectWithIndexSignature.ts | expected:[TS2418] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uniqueSymbolJs2.ts | expected:[TS2367] actual:[TS2367]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownSymbolOffContextualType1.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unmetTypeConstraintInImportCall.ts | expected:[TS2344] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unmetTypeConstraintInJSDocImportCall.ts | expected:[TS2344] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unparenthesizedConstructorTypeInUnionOrIntersection.ts | expected:[TS1386,TS1388] actual:[]
@@ -846,7 +846,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/memb
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameStaticFieldDestructuredBinding.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameUncheckedJsOptionalChain.ts | expected:[TS18030] actual:[TS1111]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts | expected:[TS1005,TS1134] actual:[TS2304,TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts | expected:[TS2339] actual:[TS2339,TS18013]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts | expected:[TS18010] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-4.ts | expected:[TS2564,TS2741] actual:[TS2564,TS2741]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts | expected:[TS2339,TS2341,TS2445,TS2509,TS2564] actual:[TS2341,TS2445,TS2564]
@@ -1024,7 +1023,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/identifiers/scopeResolutionIdentifiers.ts | expected:[] actual:[TS2403]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator1.ts | expected:[TS2869] actual:[TS2869]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator11.ts | expected:[TS18049] actual:[TS2339]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2339,TS2353]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/operators/incrementAndDecrement.ts | expected:[TS1005,TS1109] actual:[TS2357,TS2364,TS2584]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChain.3.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/optionalChaining/privateIdentifierChain/privateIdentifierChain.1.ts | expected:[TS18030] actual:[TS18030]
@@ -1032,8 +1031,8 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/propertyAccess/propertyAccessWidening.ts | expected:[TS2339,TS7053] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/superCalls/errorSuperCalls.ts | expected:[TS2754] actual:[TS2335,TS2337,TS2754]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInObjectLiterals.ts | expected:[TS2339,TS2564,TS7023] actual:[TS2339,TS2403,TS2564]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeAssertions/typeAssertions.ts | expected:[TS1005,TS1128,TS1434] actual:[TS1005,TS1434]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionErrors.ts | expected:[TS1005,TS1128,TS1131,TS1144,TS1434] actual:[TS1005,TS1144,TS1228,TS1434]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardIntersectionTypes.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormInstanceOf.ts | expected:[TS2322,TS2339,TS2454,TS2564] actual:[TS2322,TS2339,TS2454,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormInstanceOfOnInterface.ts | expected:[TS2322,TS2454] actual:[TS2322,TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardOfFormIsType.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
@@ -1055,6 +1054,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/unaryOperators/negateOperator/negateOperatorInvalidOperations.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/unaryOperators/negateOperator/negateOperatorWithAnyOtherType.ts | expected:[TS2454,TS2695,TS18050] actual:[TS2454,TS2695]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/valuesAndReferences/assignmentToParenthesizedIdentifiers.ts | expected:[TS2322,TS2628,TS2629,TS2630,TS2631] actual:[TS2322,TS2628,TS2629,TS2630,TS2631]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importNonStringLiteral.ts | expected:[TS1141] actual:[TS1128,TS1141]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/cjsErrors.ts | expected:[TS2876] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/emit.ts | expected:[TS2307,TS2591,TS2882] actual:[TS2307,TS2846]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/emitModuleCommonJS.ts | expected:[TS2307] actual:[TS2307]
@@ -1076,7 +1076,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/g
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/generatorReturnContextualType.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/generatorReturnTypeFallback.2.ts | expected:[TS2318] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/generatorReturnTypeInferenceNonStrict.ts | expected:[TS7025,TS7055,TS7057] actual:[TS7025,TS7055,TS7057]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/generatorYieldContextualType.ts | expected:[] actual:[TS2322,TS2345,TS7057]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/generators/generatorYieldContextualType.ts | expected:[] actual:[TS2345,TS7057]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/importAttributes/importAttributes10.ts | expected:[TS1005,TS1128,TS1478] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/importAttributes/importAttributes9.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/importDefer/importDeferTypeConflict1.ts | expected:[TS1005,TS1434] actual:[TS1005,TS1434]
@@ -1346,19 +1346,13 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.hexNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.octalNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.unicodeEscape.ts | expected:[TS1125,TS1199] actual:[TS1125,TS1199]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression3.ts | expected:[TS1005] actual:[TS1005]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/IncompleteMemberVariables/parserErrorRecovery_IncompleteMemberVariable2.ts | expected:[TS1442] actual:[TS5107]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ModuleElements/parserErrorRecovery_ModuleElement2.ts | expected:[TS1128] actual:[TS1128]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserErrorRecovery_VariableList1.ts | expected:[TS1009,TS1108] actual:[TS1009,TS1108]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction2.ts | expected:[TS1003,TS1005] actual:[TS1003,TS1005]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserFuzz1.ts | expected:[TS1005,TS1128,TS1434] actual:[TS1005,TS1128,TS1434]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserStatementIsNotAMemberVariableDeclaration1.ts | expected:[TS1108,TS1212,TS5024] actual:[TS1108,TS5024]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ExportAssignments/parserExportAssignment6.ts | expected:[TS2304] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ExportAssignments/parserExportAssignment9.ts | expected:[TS1319] actual:[TS1319]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserConditionalExpression1.ts | expected:[TS2304,TS7017] actual:[TS2304,TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserInvocationOfMemberAccessOffOfObjectCreationExpression1.ts | expected:[TS2304] actual:[TS2693]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserUnaryExpression5.ts | expected:[TS1109] actual:[TS2304,TS2356]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts | expected:[TS1005,TS1068,TS1137,TS1434] actual:[TS1005,TS1068,TS1137,TS1434]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserAmbiguityWithBinaryOperator4.ts | expected:[TS2722,TS2749,TS18048] actual:[TS2347]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericConstraint4.ts | expected:[TS2304] actual:[TS2304]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericConstraint5.ts | expected:[TS2304] actual:[TS2304]
@@ -1398,10 +1392,8 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/assign
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/chainedPrototypeAssignment.ts | expected:[TS2345] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/classCanExtendConstructorFunction.ts | expected:[TS2345,TS2416,TS2417,TS2507,TS2554,TS2683] actual:[TS2345,TS2507,TS2554,TS2683]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSImportClassTypeReference.ts | expected:[] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSImportNestedClassTypeReference.ts | expected:[] actual:[TS2565]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorFunctionMergeWithClass.ts | expected:[] actual:[TS2300,TS7009]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/contextualTypedSpecialAssignment.ts | expected:[] actual:[TS2339,TS7006]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/defaultPropertyAssignedClassWithPrototype.ts | expected:[] actual:[TS2565]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/globalMergeWithCommonJSAssignmentDeclaration.ts | expected:[TS2322] actual:[TS2322,TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/importAliasModuleExports.ts | expected:[TS2339] actual:[]
@@ -1464,16 +1456,16 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/f
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/forStatements/forStatementsMultipleInvalidDecl.ts | expected:[TS2403,TS2564] actual:[TS2322,TS2403,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/forStatements/forStatementsMultipleValidDecl.ts | expected:[TS2322,TS2352] actual:[TS2322,TS2352,TS2403]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/ifDoWhileStatements/ifDoWhileStatements.ts | expected:[TS2322,TS2564,TS2774,TS2872,TS2873] actual:[TS2322,TS2564,TS2774,TS2872,TS2873]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash3.ts | expected:[TS1005,TS1134,TS1135,TS1160] actual:[TS1005,TS1134]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash3.ts | expected:[TS1005,TS1134,TS1135,TS1160] actual:[TS1005,TS1134,TS1160]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash4.ts | expected:[TS1005,TS1134,TS1135,TS1160] actual:[TS1005,TS1160]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/returnStatements/invalidReturnStatements.ts | expected:[TS2355,TS2564,TS2739,TS2741] actual:[TS2355,TS2564,TS2739,TS2741]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/statements/tryStatements/catchClauseWithTypeAnnotation.ts | expected:[TS1196,TS2339,TS2403,TS2492,TS18046] actual:[TS1196,TS2339,TS2403,TS18046]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/narrowFromAnyWithInstanceof.ts | expected:[TS2551] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/conditionalTypes1.ts | expected:[TS2322,TS2339,TS2403,TS2540,TS2542] actual:[TS2322,TS2339,TS2344,TS2403,TS2540,TS2542]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/conditionalTypes2.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2314,TS2322,TS2344]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts | expected:[TS1338,TS2304,TS2322,TS2344] actual:[TS1338,TS2304,TS2322,TS2344]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/variance.ts | expected:[] actual:[TS2341]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionAwaitOperand.ts | expected:[] actual:[TS2353]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionReturnType.ts | expected:[] actual:[TS2322,TS2353,TS2554]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionReturnType.ts | expected:[] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/jsxAttributes/contextuallyTypedStringLiteralsInJsxAttributes02.tsx | expected:[TS2322,TS2683,TS2769] actual:[TS2307,TS2322,TS2503,TS2683,TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/methodDeclarations/contextuallyTypedBindingInitializerNegative.ts | expected:[TS2322] actual:[TS2322,TS2820]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/partiallyAnnotatedFunction/partiallyAnnotatedFunctionInferenceWithTypeParameter.ts | expected:[TS2345,TS2564] actual:[TS2345,TS2551,TS2564]
@@ -1546,7 +1538,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/specif
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/objectSpreadIndexSignature.ts | expected:[TS7053] actual:[TS7053]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/objectSpreadNegativeParse.ts | expected:[TS1005,TS1109,TS1128] actual:[TS1005,TS1109,TS1128]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/objectSpreadStrictNull.ts | expected:[TS2322] actual:[TS2322]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadNonObject1.ts | expected:[TS2698] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadOverwritesPropertyStrict.ts | expected:[TS2783] actual:[TS2783]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadUnion2.ts | expected:[TS2403] actual:[TS2403]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/stringLiteral/stringLiteralTypesOverloadAssignability01.ts | expected:[TS2322] actual:[TS2322]
@@ -1569,7 +1560,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/restTupleElements1.ts | expected:[TS1257,TS2344,TS2345,TS2574,TS17019] actual:[TS1005,TS1257]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/typeInferenceWithTupleType.ts | expected:[TS2322,TS2352,TS2454] actual:[TS2322,TS2352,TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/unionsOfTupleTypes1.ts | expected:[TS2339,TS2493] actual:[TS2339,TS2493]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts | expected:[TS2322,TS2344,TS2345,TS2555,TS4104] actual:[TS2322,TS2344,TS2345,TS2555,TS2684,TS4104]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts | expected:[TS2322,TS2344,TS2345,TS2555,TS4104] actual:[TS2322,TS2344,TS2345,TS2555,TS2684,TS4104,TS7019]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts | expected:[TS1257,TS1265,TS1266,TS2322,TS2345] actual:[TS1257,TS1265,TS1266,TS2322,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeAliases/classDoesNotDependOnBaseTypes.ts | expected:[TS2454,TS2542] actual:[TS2454]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeAliases/directDependenceBetweenTypeAliases.ts | expected:[TS2456,TS2502] actual:[TS2456,TS2502]
@@ -1629,6 +1620,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRe
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedConstructorTypedArguments2.ts | expected:[TS2345] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithTupleType.ts | expected:[TS2322,TS2454,TS2493] actual:[TS2322,TS2454,TS2493]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericClassWithFunctionTypedMemberArguments.ts | expected:[TS2345] actual:[]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes1.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/indexSignatureTypeInference.ts | expected:[TS2345,TS2403] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferences.ts | expected:[TS2322,TS2339] actual:[TS2339,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferencesJsx.tsx | expected:[] actual:[TS2875]
@@ -1640,6 +1632,7 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRe
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/initializersWidened.ts | expected:[TS2873] actual:[TS2873]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeObjectLiteral.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes2.ts | expected:[TS2339,TS2353] actual:[TS2339]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes4.ts | expected:[] actual:[TS2339,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures.ts | expected:[TS2322,TS2345,TS2554,TS2555,TS2769] actual:[TS2322,TS2345,TS2554,TS2555,TS2769]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures5.ts | expected:[TS2684] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures6.ts | expected:[TS2349,TS2684] actual:[TS2684]
@@ -1704,6 +1697,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/SystemModuleFor
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/TransportStream.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractClassInLocalScope.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractClassInLocalScopeIsAbstract.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractIdentifierNameStrict.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractInterfaceIdentifierName.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/abstractPropertyBasics.ts
@@ -1893,6 +1887,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayBufferIsVi
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayCast.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayConcat2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayConcat3.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayConcatMap.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayConstructors1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayDestructuringInSwitch1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/arrayDestructuringInSwitch2.ts
@@ -2380,6 +2375,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classExtendsNul
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classExtensionNameOutput.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperAccessible.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperNotAccessible.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldsBrokenConstructorEmitNoCrash1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFunctionMerging.ts
@@ -2966,8 +2962,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowForC
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowForIndexSignatures.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowForStatementContinueIntoIncrementor1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowInitializedDestructuringVariables.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowInstanceof.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowInstanceofWithSymbolHasInstance.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowJavascript.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowLoopAnalysis.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/controlFlowManyCallExpressionStatementsPerf.ts
@@ -3201,6 +3195,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmit
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitGenericTypeParamerSerialization3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitGlobalThisPreserved.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitHasTypesRefOnNamespaceUse.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitHigherOrderRetainedGenerics.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitImportInExportAssignmentModule.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitIndexTypeArray.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/declarationEmitIndexTypeNotFound.ts
@@ -3501,7 +3496,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantPro
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantPropertyInference.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantUsingEvaluatableTemplateExpression.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantsAndNullOrUndefined.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantsAndPrimitives.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminantsAndTypePredicates.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminateObjectTypesOnly.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/discriminateWithDivergentAccessors1.ts
@@ -4145,7 +4139,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/filesEmittingIn
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/filesEmittingIntoSameOutputWithOutOption.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fillInMissingTypeArgsOnConstructCalls.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/findLast.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/firstMatchRegExpMatchArray.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fixCrashAliasLookupForDefauledImport.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fixingTypeParametersRepeatedly1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/fixingTypeParametersRepeatedly2.ts
@@ -4348,6 +4341,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallWith
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallWithoutArgs.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericCapturingFunctionNarrowing.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericChainedCalls.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericClassImplementingGenericInterfaceFromAnotherModule.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericClassInheritsConstructorFromNonGenericClass.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericClassPropertyInheritanceSpecialization.ts
@@ -4380,6 +4374,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunction
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionHasFreshTypeArgs.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionInference2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionSpecializations1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctionTypedArgumentsAreFixed.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctions0.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctions1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/genericFunctions3.ts
@@ -4681,7 +4676,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indirectSelfRef
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indirectTypeParameterReferences.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/indirectUniqueSymbolDeclarationEmit.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferConditionalConstraintMappedMember.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromAnnotatedReturn1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferFromNestedSameShapeTuple.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferObjectTypeFromStringLiteralToKeyof.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/inferParameterWithMethodCallInitializer.ts
@@ -5013,6 +5008,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsDeclarationsG
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsDeclarationsInheritedTypes.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsDeclarationsWithDefaultAsNamespaceLikeMerge.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsEnumCrossFileExport.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsEnumFunctionLocalNoCrash.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsEnumTagOnObjectFrozen.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/jsExportAssignmentNonMutableLocation.ts
@@ -5576,7 +5572,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseE
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue4.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue5.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue7.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue8.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue9.ts
@@ -6029,7 +6024,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partialOfLargeA
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partialTypeNarrowedToByTypeGuard.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partiallyAmbientClodule.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partiallyAmbientFundule.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/partiallyDiscriminantedUnions.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pathMappingBasedModuleResolution1_amd.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pathMappingBasedModuleResolution1_node.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/pathMappingBasedModuleResolution2_classic.ts
@@ -7104,7 +7098,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/umdNamedAmdMode
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unaryOperators1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unaryOperatorsInStrictMode.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unaryPlus.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditionalPerf.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncaughtCompilerError1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uncaughtCompilerError2.ts
@@ -7158,6 +7151,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/uniqueSymbolPro
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownLikeUnionObjectFlagsNotPropagated.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownPropertiesAreAssignableToObjectUnion.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownSymbolInGenericReturnType.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownSymbolOffContextualType1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownSymbols1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownSymbols2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/unknownTypeArgOnCall.ts
@@ -7894,6 +7888,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/memb
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-2.ts
@@ -9622,6 +9617,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeAssertions/constAssertions.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeAssertions/duplicatePropertiesInTypeAssertions01.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeAssertions/duplicatePropertiesInTypeAssertions02.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeAssertions/typeAssertions.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/TypeGuardWithArrayUnion.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/TypeGuardWithEnumUnion.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/nullOrUndefinedTypeGuardIsOrderIndependent.ts
@@ -9631,7 +9627,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThis.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThisErrors.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardInClass.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardIntersectionTypes.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsPrimitiveIntersection.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsToLiteralType.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardNarrowsToLiteralTypeUnion.ts
@@ -9812,7 +9807,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModu
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/globalAugmentationModuleResolution.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importImportOnlyModule.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importNonExternalModule.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importNonStringLiteral.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importTsBeforeDTs.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/importsImplicitlyReadonly.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/externalModules/initializersInDeclarations.ts
@@ -10767,6 +10761,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList7.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression2.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction4.ts
@@ -10795,6 +10790,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/IncompleteMemberVariables/parserErrorRecovery_IncompleteMemberVariable1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/LeftShifts/parserErrorRecovery_LeftShift1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ModuleElements/parserErrorRecovery_ModuleElement1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ModuleElements/parserErrorRecovery_ModuleElement2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ObjectLiterals/parserErrorRecovery_ObjectLiteral3.ts
@@ -10810,6 +10806,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/SwitchStatements/parserErrorRecovery_SwitchStatement2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists/TypeArgumentList1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists/parserX_TypeArgumentList1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserErrorRecovery_VariableList1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserInvalidIdentifiersInVariableStatements1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserVariableStatement1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/VariableLists/parserVariableStatement2.ts
@@ -10819,10 +10816,12 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserCommaInTypeMemberList2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEmptyParenthesizedExpression1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantAccessibilityModifierInModule1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantSemicolonInClass1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserFuzz1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserMissingLambdaOpenBrace1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnPropertySignature1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnPropertySignature2.ts
@@ -10862,6 +10861,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmas
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/FunctionDeclarations/parserFunctionDeclaration6.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/FunctionDeclarations/parserFunctionDeclaration7.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/FunctionDeclarations/parserFunctionDeclaration8.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser768531.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserAmbiguity1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserAmbiguity2.ts
@@ -11383,6 +11383,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/checkS
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/circularMultipleAssignmentDeclaration.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSAliasedExport.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSImportExportedClassExpression.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSImportNestedClassTypeReference.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSReexport.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/conflictingCommonJSES2015Exports.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorFunctionMethodTypeParameters.ts
@@ -11393,6 +11394,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constr
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorNameInAccessor.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorNameInGenerator.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorNameInObjectLiteralAccessor.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/defaultPropertyAssignedClassWithPrototype.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/enumMergeWithExpando.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/expandoOnAlias.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportDefaultInJsFile01.ts
@@ -11738,7 +11740,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/an
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/assignAnyToEveryType.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/assignEveryTypeToAny.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/narrowExceptionVariableInCatchClause.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/narrowFromAnyWithInstanceof.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/any/narrowFromAnyWithTypePredicate.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/asyncGenerators/types.asyncGenerators.es2018.1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/asyncGenerators/types.asyncGenerators.es2018.2.ts
@@ -11748,6 +11749,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/condit
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/conditional/inferTypesWithExtendsDependingOnTypeVariables.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/asyncFunctions/contextuallyTypeAsyncFunctionAwaitOperand.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator01.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator02.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/contextualTypes/commaOperator/contextuallyTypeCommaOperator03.ts
@@ -12029,6 +12031,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadDuplicateExact.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadExcessProperty.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadMethods.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadNonObject1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadNonPrimitive.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadObjectOrFalsy.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/spread/spreadOverwritesProperty.ts
@@ -12358,7 +12361,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRe
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedFunctionTypedArguments.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedFunctionTypedArguments2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericClassWithObjectTypeArgsAndConstraints.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericFunctionParameters.ts
@@ -12373,7 +12375,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeMembers.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes3.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes4.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures4.ts
