@@ -593,3 +593,244 @@ impl<'de> serde::Deserialize<'de> for PackageExports {
         deserializer.deserialize_any(PackageExportsVisitor)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    #[test]
+    fn types_versions_compiler_version_uses_trimmed_value_and_fallback() {
+        assert_eq!(
+            types_versions_compiler_version(Some(" 5.4 ")),
+            SemVer {
+                major: 5,
+                minor: 4,
+                patch: 0,
+            }
+        );
+        assert_eq!(
+            types_versions_compiler_version(Some("not-a-version")),
+            default_types_versions_compiler_version()
+        );
+        assert_eq!(
+            types_versions_compiler_version(None),
+            TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
+        );
+    }
+
+    #[test]
+    fn select_types_versions_paths_prefers_highest_matching_minimum() {
+        let types_versions = json!({
+            "*": { "*": ["fallback/index.d.ts"] },
+            ">=5.4": { "*": ["modern/index.d.ts"] },
+            ">=5.2 <5.4": { "*": ["mid/index.d.ts"] }
+        });
+
+        let selected = select_types_versions_paths_for_version(
+            &types_versions,
+            SemVer {
+                major: 5,
+                minor: 4,
+                patch: 1,
+            },
+        )
+        .expect("expected a matching typesVersions entry");
+
+        assert_eq!(selected.get("*"), Some(&json!(["modern/index.d.ts"])),);
+    }
+
+    #[test]
+    fn select_types_versions_paths_breaks_equal_score_ties_lexicographically() {
+        let types_versions = json!({
+            "<=6.0": { "*": ["first/index.d.ts"] },
+            "<=5.0": { "*": ["second/index.d.ts"] }
+        });
+
+        let selected = select_types_versions_paths_for_version(
+            &types_versions,
+            SemVer {
+                major: 4,
+                minor: 9,
+                patch: 0,
+            },
+        )
+        .expect("expected a matching typesVersions entry");
+
+        assert_eq!(selected.get("*"), Some(&json!(["second/index.d.ts"])),);
+    }
+
+    #[test]
+    fn parse_range_token_and_compare_range_cover_all_operators() {
+        assert_eq!(
+            parse_range_token(">=5.2"),
+            Some((
+                RangeOp::Gte,
+                SemVer {
+                    major: 5,
+                    minor: 2,
+                    patch: 0,
+                },
+            ))
+        );
+        assert_eq!(
+            parse_range_token("<4.9.1"),
+            Some((
+                RangeOp::Lt,
+                SemVer {
+                    major: 4,
+                    minor: 9,
+                    patch: 1,
+                },
+            ))
+        );
+        assert_eq!(
+            parse_range_token("5.0"),
+            Some((
+                RangeOp::Eq,
+                SemVer {
+                    major: 5,
+                    minor: 0,
+                    patch: 0,
+                },
+            ))
+        );
+        assert_eq!(parse_range_token(""), None);
+        assert_eq!(parse_range_token(">bogus"), None);
+
+        let version = SemVer {
+            major: 5,
+            minor: 3,
+            patch: 0,
+        };
+        assert!(compare_range(
+            version,
+            RangeOp::Gt,
+            SemVer {
+                major: 5,
+                minor: 2,
+                patch: 9,
+            },
+        ));
+        assert!(compare_range(
+            version,
+            RangeOp::Gte,
+            SemVer {
+                major: 5,
+                minor: 3,
+                patch: 0,
+            },
+        ));
+        assert!(compare_range(
+            version,
+            RangeOp::Lt,
+            SemVer {
+                major: 5,
+                minor: 4,
+                patch: 0,
+            },
+        ));
+        assert!(compare_range(
+            version,
+            RangeOp::Lte,
+            SemVer {
+                major: 5,
+                minor: 3,
+                patch: 0,
+            },
+        ));
+        assert!(compare_range(
+            version,
+            RangeOp::Eq,
+            SemVer {
+                major: 5,
+                minor: 3,
+                patch: 0,
+            },
+        ));
+    }
+
+    #[test]
+    fn split_path_extension_prefers_longest_known_declaration_extension() {
+        let (base, extension) =
+            split_path_extension(Path::new("pkg/index.d.mts")).expect("expected known extension");
+        assert_eq!(base, PathBuf::from("pkg/index"));
+        assert_eq!(extension, "d.mts");
+
+        let (base, extension) =
+            split_path_extension(Path::new("pkg/index.d.ts")).expect("expected known extension");
+        assert_eq!(base, PathBuf::from("pkg/index"));
+        assert_eq!(extension, "d.ts");
+    }
+
+    #[test]
+    fn try_file_with_suffixes_and_extension_returns_first_existing_candidate() {
+        let dir = tempdir().expect("create temp dir");
+        let base = dir.path().join("component");
+        let preferred = dir.path().join("component.native.ts");
+        let fallback = dir.path().join("component.web.ts");
+
+        std::fs::write(&preferred, "").expect("write preferred candidate");
+        std::fs::write(&fallback, "").expect("write fallback candidate");
+
+        let resolved = try_file_with_suffixes_and_extension(
+            &base,
+            "ts",
+            &[".native".to_string(), ".web".to_string()],
+        )
+        .expect("expected one suffix candidate to resolve");
+
+        assert_eq!(resolved, preferred);
+    }
+
+    #[test]
+    fn resolve_explicit_unknown_extension_accepts_existing_nonstandard_files_only() {
+        let dir = tempdir().expect("create temp dir");
+        let custom = dir.path().join("entry.custom");
+        let known = dir.path().join("entry.ts");
+        let no_extension = dir.path().join("entry");
+
+        std::fs::write(&custom, "").expect("write custom extension file");
+        std::fs::write(&known, "").expect("write known extension file");
+        std::fs::write(&no_extension, "").expect("write extensionless file");
+
+        assert_eq!(
+            resolve_explicit_unknown_extension(&custom),
+            Some(custom.clone())
+        );
+        assert_eq!(resolve_explicit_unknown_extension(&known), None);
+        assert_eq!(resolve_explicit_unknown_extension(&no_extension), None);
+    }
+
+    #[test]
+    fn node16_and_main_declaration_substitutions_cover_js_family_extensions() {
+        assert_eq!(
+            node16_extension_substitution(Path::new("pkg/index.js"), "js"),
+            Some(vec![
+                PathBuf::from("pkg/index.ts"),
+                PathBuf::from("pkg/index.tsx"),
+                PathBuf::from("pkg/index.d.ts"),
+            ])
+        );
+        assert_eq!(
+            node16_extension_substitution(Path::new("pkg/index.mjs"), "mjs"),
+            Some(vec![
+                PathBuf::from("pkg/index.mts"),
+                PathBuf::from("pkg/index.d.mts"),
+            ])
+        );
+        assert_eq!(
+            declaration_substitution_for_main(Path::new("pkg/index.cjs")),
+            Some(PathBuf::from("pkg/index.d.cts"))
+        );
+        assert_eq!(
+            declaration_substitution_for_main(Path::new("pkg/index.jsx")),
+            Some(PathBuf::from("pkg/index.d.ts"))
+        );
+        assert_eq!(
+            declaration_substitution_for_main(Path::new("pkg/index.ts")),
+            None
+        );
+    }
+}
