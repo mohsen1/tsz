@@ -1866,7 +1866,10 @@ impl<'a> CheckerState<'a> {
                             stmt_idx,
                         )
                 {
-                    if rhs_type == TypeId::UNDEFINED {
+                    if rhs_type == TypeId::UNDEFINED
+                        || rhs_type == TypeId::VOID
+                        || self.js_assignment_rhs_is_void_zero(binary.right)
+                    {
                         if let Some(parent_sym) = parent_sym
                             && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
                         {

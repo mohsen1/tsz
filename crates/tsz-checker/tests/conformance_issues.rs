@@ -1845,7 +1845,6 @@ exports.x;
 }
 
 #[test]
-#[ignore = "pre-existing: JS constructor void 0 assignment member detection"]
 fn test_js_constructor_void_zero_assignment_does_not_create_member() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
