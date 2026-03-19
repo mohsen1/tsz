@@ -477,4 +477,172 @@ mod tests {
         let lodash_imports = tracker.get_imports_from_module("lodash");
         assert_eq!(lodash_imports.len(), 2);
     }
+
+    #[test]
+    fn test_import_tracker_tracks_default_namespace_dynamic_and_require_entries() {
+        let mut tracker = ImportTracker::new();
+
+        tracker.add_declaration(ImportDeclaration {
+            module_specifier: "react".to_string(),
+            node: NodeIndex::NONE,
+            bindings: vec![
+                ImportedBindingBuilder::new("React", "react")
+                    .kind(ImportKind::Default)
+                    .build(),
+            ],
+            is_type_only: false,
+            is_side_effect_only: false,
+            start: 0,
+            end: 0,
+        });
+
+        tracker.add_declaration(ImportDeclaration {
+            module_specifier: "./utils".to_string(),
+            node: NodeIndex::NONE,
+            bindings: vec![
+                ImportedBindingBuilder::new("utils", "./utils")
+                    .kind(ImportKind::Namespace)
+                    .build(),
+            ],
+            is_type_only: false,
+            is_side_effect_only: false,
+            start: 0,
+            end: 0,
+        });
+
+        tracker.add_dynamic_import(DynamicImport {
+            module_specifier: Some("./lazy".to_string()),
+            node: NodeIndex::NONE,
+            is_dynamic_specifier: false,
+            start: 0,
+            end: 0,
+        });
+
+        tracker.add_require_call(RequireCall {
+            module_specifier: Some("./legacy".to_string()),
+            node: NodeIndex::NONE,
+            is_destructuring: false,
+            binding_name: Some("legacy".to_string()),
+            start: 0,
+            end: 0,
+        });
+
+        assert_eq!(
+            tracker
+                .get_default_import("react")
+                .map(|binding| binding.local_name.as_str()),
+            Some("React")
+        );
+        assert_eq!(
+            tracker
+                .get_namespace_import("./utils")
+                .map(|binding| binding.local_name.as_str()),
+            Some("utils")
+        );
+
+        let mut imported_modules: Vec<_> = tracker.get_imported_modules().cloned().collect();
+        imported_modules.sort();
+        assert_eq!(
+            imported_modules,
+            vec![
+                "./lazy".to_string(),
+                "./legacy".to_string(),
+                "./utils".to_string(),
+                "react".to_string(),
+            ]
+        );
+
+        let stats = tracker.stats();
+        assert_eq!(stats.default_imports, 1);
+        assert_eq!(stats.namespace_imports, 1);
+        assert_eq!(stats.dynamic_imports, 1);
+        assert_eq!(stats.require_calls, 1);
+        assert_eq!(stats.total_modules, 4);
+    }
+
+    #[test]
+    fn test_type_only_named_imports_and_builder_metadata_are_preserved() {
+        let binding = ImportedBindingBuilder::new("Foo", "./types")
+            .imported_name("Bar")
+            .kind(ImportKind::TypeOnlyNamed)
+            .declaration_node(NodeIndex(10))
+            .binding_node(NodeIndex(11))
+            .symbol_id(SymbolId(12))
+            .type_only(true)
+            .resolved_path(PathBuf::from("/tmp/types.d.ts"))
+            .build();
+
+        assert_eq!(binding.local_name, "Foo");
+        assert_eq!(binding.imported_name, "Bar");
+        assert_eq!(binding.declaration_node, NodeIndex(10));
+        assert_eq!(binding.binding_node, NodeIndex(11));
+        assert_eq!(binding.symbol_id, SymbolId(12));
+        assert!(binding.is_type_only);
+        assert_eq!(
+            binding.resolved_path,
+            Some(PathBuf::from("/tmp/types.d.ts"))
+        );
+
+        let mut tracker = ImportTracker::new();
+        tracker.add_declaration(ImportDeclaration {
+            module_specifier: "./types".to_string(),
+            node: NodeIndex::NONE,
+            bindings: vec![binding],
+            is_type_only: true,
+            is_side_effect_only: false,
+            start: 0,
+            end: 0,
+        });
+
+        assert!(tracker.is_type_only_import("Foo"));
+        assert_eq!(tracker.stats().type_only_imports, 1);
+    }
+
+    #[test]
+    fn test_import_tracker_clear_resets_all_internal_indexes() {
+        let mut tracker = ImportTracker::new();
+
+        tracker.add_declaration(ImportDeclaration {
+            module_specifier: "react".to_string(),
+            node: NodeIndex::NONE,
+            bindings: vec![
+                ImportedBindingBuilder::new("React", "react")
+                    .kind(ImportKind::Default)
+                    .build(),
+            ],
+            is_type_only: false,
+            is_side_effect_only: false,
+            start: 0,
+            end: 0,
+        });
+        tracker.add_dynamic_import(DynamicImport {
+            module_specifier: Some("./lazy".to_string()),
+            node: NodeIndex::NONE,
+            is_dynamic_specifier: false,
+            start: 0,
+            end: 0,
+        });
+        tracker.add_require_call(RequireCall {
+            module_specifier: Some("./legacy".to_string()),
+            node: NodeIndex::NONE,
+            is_destructuring: true,
+            binding_name: None,
+            start: 0,
+            end: 0,
+        });
+
+        tracker.clear();
+
+        assert!(tracker.declarations.is_empty());
+        assert!(tracker.bindings_by_name.is_empty());
+        assert!(tracker.declarations_by_specifier.is_empty());
+        assert!(tracker.imported_modules.is_empty());
+        assert!(tracker.type_only_imports.is_empty());
+        assert!(tracker.default_imports.is_empty());
+        assert!(tracker.namespace_imports.is_empty());
+        assert!(tracker.dynamic_imports.is_empty());
+        assert!(tracker.require_calls.is_empty());
+        assert!(!tracker.is_imported("React"));
+        assert!(tracker.get_default_import("react").is_none());
+    }
 }
