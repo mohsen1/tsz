@@ -63,6 +63,24 @@ fn test_with_source_content() {
     assert_eq!(map.sources_content.unwrap()[0], "const x = 1;");
 }
 
+#[test]
+fn test_source_root_and_mixed_sources_content() {
+    let mut generator = SourceMapGenerator::new("output.js".to_string());
+    generator.set_source_root("../src".to_string());
+    let _ = generator.add_source_with_content("input.ts".to_string(), "const x = 1;".to_string());
+    let _ = generator.add_source("helper.ts".to_string());
+    generator.add_simple_mapping(0, 0, 0, 0, 0);
+
+    let map = generator.generate();
+
+    assert_eq!(map.source_root, "../src");
+    assert_eq!(map.sources, vec!["input.ts", "helper.ts"]);
+    assert_eq!(
+        map.sources_content,
+        Some(vec!["const x = 1;".to_string(), String::new()])
+    );
+}
+
 // =============================================================================
 // VLQ encode/decode roundtrip
 // =============================================================================
