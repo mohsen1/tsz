@@ -125,7 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             match key {
                 TypeData::Mapped(mapped_id) => {
-                    let mapped = self.interner().mapped_type(mapped_id);
+                    let mapped = self.interner().get_mapped(mapped_id);
                     if let Some(name_type) = mapped.name_type {
                         self.evaluate(name_type)
                     } else {

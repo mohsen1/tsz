@@ -652,7 +652,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Example: { [K in keyof T]: () => unknown }[M] where M extends keyof T
                 // → () => unknown
                 if let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(obj) {
-                    let mapped = self.interner().mapped_type(mapped_id);
+                    let mapped = self.interner().get_mapped(mapped_id);
                     if mapped.name_type.is_none() {
                         let evaluated_template = self.evaluate(mapped.template);
                         if !crate::visitor::contains_type_parameters(
