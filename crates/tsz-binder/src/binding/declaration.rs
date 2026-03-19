@@ -2076,6 +2076,23 @@ impl BinderState {
             return;
         }
 
+        // CommonJS export chains like `module.exports.foo = ...` and
+        // `module.exports.foo.bar = ...` don't resolve through `file_locals`
+        // because `module` is not a user-declared symbol. Track them directly
+        // so the checker can reuse one expando summary path for property reads
+        // and forward-reference TS2565 checks.
+        if obj_key == "module.exports"
+            || obj_key.starts_with("module.exports.")
+            || obj_key == "exports"
+            || obj_key.starts_with("exports.")
+        {
+            self.expando_properties
+                .entry(obj_key)
+                .or_default()
+                .insert(prop_name);
+            return;
+        }
+
         // Look up the root identifier in file_locals (covers hoisted vars/functions/modules)
         let Some(sym_id) = self.file_locals.get(root_name) else {
             return;

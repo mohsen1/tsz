@@ -6,6 +6,38 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+fn check_commonjs_file(file_name: &str, source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 /// Helper to set up a two-file CommonJS checker test.
 /// Returns diagnostics from checking the consumer file.
 fn check_commonjs_two_files(
@@ -294,5 +326,70 @@ b.func20;
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for module.exports = {{}} + direct property, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_function_expando_assignments_no_ts2339() {
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        r#"
+module.exports.b = function b() {};
+module.exports.b.cat = "cat";
+
+module.exports.c = function c() {};
+module.exports.c.Cls = class {};
+
+module.exports.f = function f(a) {
+    return a;
+};
+module.exports.f.self = module.exports.f;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    let ts2565: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2565)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for CommonJS exported function expandos, got: {ts2339:#?}"
+    );
+    assert!(
+        ts2565.is_empty(),
+        "Expected no TS2565 for already-assigned CommonJS export reads, got: {ts2565:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_forward_read_reports_ts2565() {
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        r#"
+module.exports.jj = module.exports.j;
+module.exports.j = function j() {};
+"#,
+    );
+
+    let ts2565: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2565)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2565.len(),
+        1,
+        "Expected one TS2565 for forward CommonJS export read, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for forward CommonJS export read, got: {ts2339:#?}"
     );
 }

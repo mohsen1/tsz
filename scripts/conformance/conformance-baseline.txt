@@ -21,13 +21,13 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/circularlyConst
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classExpressionAssignment.ts | expected:[TS2322] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expected:[TS2855] actual:[TS2339,TS7053]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
+FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classTypeParametersInStatics.ts | expected:[TS2302,TS2345,TS2564] actual:[TS2302,TS2564]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS2344,TS7031]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/coAndContraVariantInferences6.ts | expected:[TS2322] actual:[TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/collectionPatternNoError.ts | expected:[] actual:[TS2339]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2320,TS2344,TS2430]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts | expected:[TS2339,TS2506,TS2554] actual:[TS2339,TS2506,TS2554]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2345]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
@@ -1113,7 +1113,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/checkO
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/constructorTagOnObjectLiteralMethod.ts | expected:[TS2339,TS7009] actual:[TS7009]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/constructorTagWithThisTag.ts | expected:[] actual:[TS7008]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassMethod.ts | expected:[] actual:[TS2551]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionsCjs.ts | expected:[TS2565] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsImportAliasExposedWithinNamespace.ts | expected:[TS18042] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsJSDocRedirectedLookups.ts | expected:[TS2304,TS2552] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReusesExistingNodesMappingJSDocTypes.ts | expected:[TS2322] actual:[TS2322,TS7014]
@@ -1394,7 +1393,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/classC
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/commonJSImportClassTypeReference.ts | expected:[] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/constructorFunctionMergeWithClass.ts | expected:[] actual:[TS2300,TS7009]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/contextualTypedSpecialAssignment.ts | expected:[] actual:[TS2339,TS7006]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/globalMergeWithCommonJSAssignmentDeclaration.ts | expected:[TS2322] actual:[TS2322,TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/importAliasModuleExports.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/importingExportingTypes.ts | expected:[TS2591,TS18043] actual:[TS2304]
@@ -1417,7 +1415,6 @@ FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/module
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias.ts | expected:[TS2722] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias2.ts | expected:[] actual:[TS2322]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias3.ts | expected:[] actual:[TS2322,TS2339,TS2349]
-FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportNestedNamespaces.ts | expected:[] actual:[TS2339]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportWithExportPropertyAssignment.ts | expected:[TS2554] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportWithExportPropertyAssignment2.ts | expected:[TS2339] actual:[]
 FAIL /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportWithExportPropertyAssignment3.ts | expected:[TS2339] actual:[]
@@ -2418,7 +2415,6 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classOverloadFo
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
-PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -7910,6 +7906,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/meth
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAbstractClassesReturnTypeInference.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAccessors1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAccessors2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAccessors4.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/classes/mixinAccessors5.ts
@@ -8175,6 +8172,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImpor
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6System.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6UMD.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit3.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionES5AMD.ts
@@ -10212,6 +10210,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declar
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionPrototypeStatic.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionWithDefaultAssignedMember.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctions.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionsCjs.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsGetterSetter.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsImportAliasExposedWithinNamespaceCjs.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsImportNamespacedType.ts
@@ -11399,6 +11398,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/enumMe
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/expandoOnAlias.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportDefaultInJsFile01.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportDefaultInJsFile02.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces2.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/exportPropertyAssignmentNameResolution.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/inferingFromAny.ts
@@ -11430,6 +11430,7 @@ PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/module
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportAssignment4.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportAssignment5.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportAssignment6.ts
+PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportNestedNamespaces.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportPropertyAssignmentDefault.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportsAliasLoop1.ts
 PASS /Users/mohsenazimi/code/tsz/TypeScript/tests/cases/conformance/salsa/moduleExportsAliasLoop2.ts
