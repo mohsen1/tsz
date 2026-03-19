@@ -287,6 +287,13 @@ impl<'a> Completions<'a> {
             return Some(Vec::new());
         }
 
+        // 5b. Class/interface body member position: return member keywords
+        if !member_request
+            && let Some(context) = self.member_body_context(node_idx, offset)
+        {
+            return Some(self.get_member_keyword_completions(context));
+        }
+
         // 6. Check for object literal property completion (contextual completions)
         if self.interner.is_some()
             && self.file_name.is_some()
@@ -695,6 +702,80 @@ impl<'a> Completions<'a> {
             }
         }
         true
+    }
+
+    /// Check if the cursor is at a class/interface member declaration position
+    /// (after `{`, `;`, or `}` inside a class or interface body).
+    /// Returns Some("class") or Some("interface") if at a member position.
+    fn member_body_context(&self, node_idx: NodeIndex, offset: u32) -> Option<&'static str> {
+        let in_class = self.is_in_class_body_context(node_idx)
+            || self.text_likely_in_class_body(offset);
+        let in_interface = !in_class && self.is_in_interface_body_context(node_idx);
+        if !in_class && !in_interface {
+            return None;
+        }
+        let bytes = self.source_text.as_bytes();
+        let idx = offset as usize;
+        let mut j = idx;
+        while j > 0 && bytes[j - 1].is_ascii_whitespace() {
+            j -= 1;
+        }
+        // Check for member position: after `{`, `;`, `}`, or after
+        // a JSDoc comment (`*/`)
+        if j == 0
+            || matches!(bytes[j - 1], b'{' | b';' | b'}')
+            || (j >= 2 && bytes[j - 2] == b'*' && bytes[j - 1] == b'/')
+        {
+            return Some(if in_class { "class" } else { "interface" });
+        }
+        None
+    }
+
+    /// Check if node is inside an interface body.
+    fn is_in_interface_body_context(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        for _ in 0..15 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    return true;
+                }
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || node.kind == syntax_kind_ext::SOURCE_FILE
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Return keyword completions for class or interface member positions.
+    fn get_member_keyword_completions(&self, context: &str) -> Vec<CompletionItem> {
+        let keywords: &[&str] = if context == "interface" {
+            &["readonly"]
+        } else {
+            &[
+                "abstract", "accessor", "async", "constructor", "declare",
+                "get", "override", "private", "protected", "public",
+                "readonly", "set", "static",
+            ]
+        };
+        keywords
+            .iter()
+            .map(|kw| {
+                let mut item =
+                    CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
+                item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+                item
+            })
+            .collect()
     }
 
     fn variable_completion_type_detail(
