@@ -3546,3 +3546,26 @@ fn test_completions_completion_result_serialization() {
         "entries should have one item"
     );
 }
+
+#[test]
+fn test_completions_function_parameter_in_body() {
+    // function f(myParam: number) { | }
+    let source = "function f(myParam: number) {  }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    // Position inside the function body (line 0, col 30 = between { and })
+    let position = Position::new(0, 30);
+    let completions = Completions::new(arena, &binder, &line_map, source);
+    let items = completions.get_completions(root, position);
+    assert!(items.is_some(), "Should have completions inside function body");
+    let items = items.unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        names.contains(&"myParam"),
+        "Function parameter 'myParam' should appear in completions, got: {names:?}"
+    );
+}
