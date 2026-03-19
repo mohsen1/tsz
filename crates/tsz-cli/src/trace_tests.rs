@@ -39,3 +39,27 @@ fn test_tracer_with_args() {
     assert_eq!(tracer.events().len(), 1);
     assert!(tracer.events()[0].args.contains_key("file"));
 }
+
+#[test]
+fn test_trace_span_records_end_event_on_drop() {
+    let mut tracer = Tracer::new();
+    {
+        let _span = TraceSpan::new(&mut tracer, "Emit", categories::EMIT);
+    }
+
+    let events = tracer.events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].name, "Emit");
+    assert!(matches!(events[0].ph, Phase::Begin));
+    assert!(matches!(events[1].ph, Phase::End));
+}
+
+#[test]
+fn test_tracer_clear_removes_events() {
+    let mut tracer = Tracer::new();
+    tracer.instant("Parse", categories::PARSE);
+    assert_eq!(tracer.events().len(), 1);
+
+    tracer.clear();
+    assert!(tracer.events().is_empty());
+}

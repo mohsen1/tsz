@@ -203,3 +203,37 @@ fn test_build_info_valid_versions_returns_some() {
     assert_eq!(loaded.version, BUILD_INFO_VERSION);
     assert_eq!(loaded.compiler_version, env!("CARGO_PKG_VERSION"));
 }
+
+#[test]
+fn test_build_info_save_creates_parent_dir_and_preserves_optional_fields() {
+    use tempfile::TempDir;
+
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let path = temp.path().join("nested/output/test.tsbuildinfo");
+
+    let build_info = BuildInfo {
+        version: BUILD_INFO_VERSION.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        latest_changed_dts_file: Some("types/index.d.ts".to_string()),
+        options: BuildInfoOptions {
+            target: Some("es2022".to_string()),
+            module: Some("commonjs".to_string()),
+            declaration: Some(true),
+            strict: Some(true),
+        },
+        ..Default::default()
+    };
+
+    build_info.save(&path).unwrap();
+    assert!(path.exists());
+
+    let loaded = BuildInfo::load(&path).unwrap().unwrap();
+    assert_eq!(
+        loaded.latest_changed_dts_file.as_deref(),
+        Some("types/index.d.ts")
+    );
+    assert_eq!(loaded.options.target.as_deref(), Some("es2022"));
+    assert_eq!(loaded.options.module.as_deref(), Some("commonjs"));
+    assert_eq!(loaded.options.declaration, Some(true));
+    assert_eq!(loaded.options.strict, Some(true));
+}

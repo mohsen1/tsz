@@ -1,5 +1,5 @@
-use super::decode_source_text;
 use super::DecodedSourceText;
+use super::decode_source_text;
 
 #[test]
 fn decodes_utf8_bom() {
@@ -42,6 +42,24 @@ fn non_utf8_bytes_become_binary() {
 #[test]
 fn corrupted_bytes_become_binary() {
     let bytes = [0xC6, 0x1F, 0xBC, 0x03, 0x08, 0x19, 0x1F, 0x00];
+    assert!(matches!(
+        decode_source_text(&bytes),
+        DecodedSourceText::Binary(_)
+    ));
+}
+
+#[test]
+fn utf16_bom_with_odd_byte_count_becomes_binary() {
+    let bytes = [0xFF, 0xFE, b'a'];
+    assert!(matches!(
+        decode_source_text(&bytes),
+        DecodedSourceText::Binary(_)
+    ));
+}
+
+#[test]
+fn utf16_bom_with_invalid_surrogate_becomes_binary() {
+    let bytes = [0xFF, 0xFE, 0x00, 0xD8];
     assert!(matches!(
         decode_source_text(&bytes),
         DecodedSourceText::Binary(_)

@@ -1,4 +1,5 @@
 use clap::Parser;
+use tsz::emitter::{ModuleKind, ScriptTarget};
 
 use super::args::{
     CliArgs, ImportsNotUsedAsValues, JsxEmit, Module, ModuleDetection, ModuleResolution, NewLine,
@@ -521,6 +522,27 @@ fn parses_diagnostic_flags() {
         Some(std::path::Path::new("profile.cpuprofile"))
     );
     assert!(args.no_check);
+}
+
+#[test]
+fn target_and_module_aliases_map_to_runtime_kinds() {
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es6", "--module", "common-js"])
+        .expect("alias options should parse");
+
+    assert_eq!(args.target, Some(Target::Es2015));
+    assert_eq!(
+        args.target
+            .expect("target should be present")
+            .to_script_target(),
+        ScriptTarget::ES2015
+    );
+    assert_eq!(args.module, Some(Module::CommonJs));
+    assert_eq!(
+        args.module
+            .expect("module should be present")
+            .to_module_kind(),
+        ModuleKind::CommonJS
+    );
 }
 
 #[test]

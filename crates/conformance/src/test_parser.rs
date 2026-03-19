@@ -249,4 +249,63 @@ mod tests {
             .iter()
             .all(|v| v.get("nolib") == Some(&"true,false".to_string())));
     }
+
+    #[test]
+    fn test_parse_preserves_first_option_order_and_last_value() {
+        let content = r#"
+// @strict: true
+// @target: es5
+// @strict: false
+// @ts-check
+// @ts-nocheck
+function foo() {}
+"#;
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.option_order,
+            vec![
+                "strict".to_string(),
+                "target".to_string(),
+                "checkjs".to_string()
+            ]
+        );
+        assert_eq!(
+            parsed.directives.options.get("strict"),
+            Some(&"false".to_string())
+        );
+        assert_eq!(
+            parsed.directives.options.get("checkjs"),
+            Some(&"false".to_string())
+        );
+    }
+
+    #[test]
+    fn test_should_skip_test_prefers_skip_over_nocheck() {
+        let mut directives = TestDirectives::default();
+        directives
+            .options
+            .insert("nocheck".to_string(), "true".to_string());
+        assert_eq!(should_skip_test(&directives), Some("@noCheck"));
+
+        directives
+            .options
+            .insert("skip".to_string(), "true".to_string());
+        assert_eq!(should_skip_test(&directives), Some("@skip"));
+    }
+
+    #[test]
+    fn test_filter_incompatible_module_resolution_variants_rejects_bundler_mismatch() {
+        let mut accepted = HashMap::new();
+        accepted.insert("moduleresolution".to_string(), " bundler ".to_string());
+        accepted.insert("module".to_string(), " es2022 ".to_string());
+
+        let mut rejected = HashMap::new();
+        rejected.insert("moduleresolution".to_string(), "bundler".to_string());
+        rejected.insert("module".to_string(), "node10".to_string());
+
+        let filtered =
+            filter_incompatible_module_resolution_variants(vec![accepted.clone(), rejected]);
+
+        assert_eq!(filtered, vec![accepted]);
+    }
 }
