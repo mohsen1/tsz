@@ -4,6 +4,7 @@
 
 use crate::TypeDatabase;
 use crate::relations::subtype::TypeResolver;
+use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -124,6 +125,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             match key {
+                TypeData::Union(members) => {
+                    let member_list = self.interner().type_list(members);
+                    let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                    for &member in member_list.iter() {
+                        key_types.push(self.recurse_keyof(member));
+                    }
+                    if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
+                        intersection
+                    } else {
+                        self.interner().intersection(key_types)
+                    }
+                }
                 TypeData::Mapped(mapped_id) => {
                     let mapped = self.interner().get_mapped(mapped_id);
                     if let Some(name_type) = mapped.name_type {
@@ -317,12 +330,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
     pub(crate) fn keyof_intersection(&mut self, members: TypeListId, _operand: TypeId) -> TypeId {
-        let members = self.interner().type_list(members);
+        let members = self.interner().type_list(members).to_vec();
         // Use recurse_keyof to respect depth limits
         // Use loop instead of closure to allow mutable self access
         let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
-        for &m in members.iter() {
-            key_sets.push(self.recurse_keyof(m));
+        for (member_idx, &member) in members.iter().enumerate() {
+            let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
+                self.interner(),
+                member,
+                &members,
+                member_idx,
+            );
+            key_sets.push(self.recurse_keyof(narrowed_member));
         }
         self.interner().union(key_sets)
     }

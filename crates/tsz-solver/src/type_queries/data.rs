@@ -1709,15 +1709,28 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
             Some(())
         }
         Some(TypeData::Intersection(members)) => {
+            let members = db.type_list(members);
             let mut saw_precise_member = false;
-            for &member in db.type_list(members).iter() {
-                if collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)
-                    .is_some()
+            for (member_idx, &member) in members.iter().enumerate() {
+                let narrowed_member =
+                    narrow_keyof_intersection_member_by_literal_discriminants(
+                        db,
+                        member,
+                        &members,
+                        member_idx,
+                    );
+                if collect_exact_literal_property_keys_from_keyof_operand(
+                    db,
+                    narrowed_member,
+                    keys,
+                    visited,
+                )
+                .is_some()
                 {
                     saw_precise_member = true;
                     continue;
                 }
-                if intersection_member_preserves_literal_keys(db, member) {
+                if intersection_member_preserves_literal_keys(db, narrowed_member) {
                     continue;
                 }
                 return None;
@@ -1743,6 +1756,76 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 Some(())
             }
         }
+    }
+}
+
+pub(crate) fn narrow_keyof_intersection_member_by_literal_discriminants(
+    db: &dyn TypeDatabase,
+    member: TypeId,
+    intersection_members: &[TypeId],
+    member_idx: usize,
+) -> TypeId {
+    let evaluated_member = crate::evaluation::evaluate::evaluate_type(db, member);
+    let member = if evaluated_member != member {
+        evaluated_member
+    } else {
+        member
+    };
+
+    let Some(TypeData::Union(list_id)) = db.lookup(member) else {
+        return member;
+    };
+
+    let mut discriminants = Vec::new();
+    for (other_idx, &other_member) in intersection_members.iter().enumerate() {
+        if other_idx == member_idx {
+            continue;
+        }
+        let evaluated_other = crate::evaluation::evaluate::evaluate_type(db, other_member);
+        let other_member = if evaluated_other != other_member {
+            evaluated_other
+        } else {
+            other_member
+        };
+        let Some(shape) = get_object_shape(db, other_member) else {
+            continue;
+        };
+        for prop in &shape.properties {
+            if crate::type_queries::is_unit_type(db, prop.type_id) {
+                discriminants.push((prop.name, prop.type_id));
+            }
+        }
+    }
+
+    if discriminants.is_empty() {
+        return member;
+    }
+
+    let union_members = db.type_list(list_id);
+    let retained: Vec<_> = union_members
+        .iter()
+        .copied()
+        .filter(|&branch| {
+            let Some(shape) = get_object_shape(db, branch) else {
+                return true;
+            };
+
+            discriminants.iter().all(|&(disc_name, disc_type)| {
+                let Some(prop) = shape.properties.iter().find(|prop| prop.name == disc_name) else {
+                    return true;
+                };
+                !crate::type_queries::is_unit_type(db, prop.type_id)
+                    || crate::is_subtype_of(db, disc_type, prop.type_id)
+            })
+        })
+        .collect();
+
+    if retained.is_empty() || retained.len() == union_members.len() {
+        member
+    } else if retained.len() == 1 {
+        retained[0]
+    } else {
+        db.union_preserve_members(retained)
     }
 }
 

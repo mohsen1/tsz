@@ -80,6 +80,81 @@ fn test_mapped_type_as_never_skips_property() {
 }
 
 #[test]
+fn test_mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
+    let interner = TypeInterner::new();
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let literal_a = interner.literal_string("A");
+    let literal_b = interner.literal_string("B");
+
+    let fixed_v_a = interner.object(vec![PropertyInfo::new(v_name, literal_a)]);
+    let branch_a = interner.object(vec![
+        PropertyInfo::new(v_name, literal_a),
+        PropertyInfo::new(a_name, TypeId::STRING),
+    ]);
+    let branch_b = interner.object(vec![
+        PropertyInfo::new(v_name, literal_b),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let discriminated_union = interner.union(vec![branch_a, branch_b]);
+    let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
+
+    let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
+    let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
+        .unwrap_or_else(|| vec![keyof_intersection]);
+
+    assert!(
+        keyof_members.contains(&interner.literal_string("v")),
+        "expected keyof intersection to contain 'v', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        keyof_members.contains(&interner.literal_string("a")),
+        "expected keyof intersection to contain 'a', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !keyof_members.contains(&interner.literal_string("b")),
+        "did not expect keyof intersection to contain 'b', got {:?}",
+        keyof_members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+
+    let key_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(intersection),
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+    let mapped_id = crate::mapped_type_id(&interner, mapped).expect("expected mapped type id");
+
+    let names =
+        collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
+    assert!(names.contains(&v_name), "expected mapped keys to include 'v'");
+    assert!(names.contains(&a_name), "expected mapped keys to include 'a'");
+    assert!(!names.contains(&b_name), "did not expect mapped keys to include 'b'");
+}
+
+#[test]
 fn test_mapped_type_key_remap_to_never_filters_property() {
     let interner = TypeInterner::new();
 
