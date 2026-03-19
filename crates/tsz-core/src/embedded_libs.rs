@@ -430,3 +430,48 @@ static EMBEDDED_LIBS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(||
     );
     m
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_known_embedded_lib_lookup() {
+        let content = get_lib_content("es5.d.ts").expect("es5.d.ts should be embedded");
+        assert!(is_embedded_lib("es5.d.ts"));
+        assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn test_unknown_embedded_lib_lookup() {
+        assert!(get_lib_content("not-a-lib.d.ts").is_none());
+        assert!(!is_embedded_lib("not-a-lib.d.ts"));
+    }
+
+    #[test]
+    fn test_all_lib_filenames_count_matches_constant_and_are_unique() {
+        let mut filenames: Vec<_> = all_lib_filenames().collect();
+        filenames.sort_unstable();
+
+        assert_eq!(filenames.len(), LIB_FILE_COUNT);
+
+        let mut deduped = filenames.clone();
+        deduped.dedup();
+        assert_eq!(deduped, filenames);
+    }
+
+    #[test]
+    fn test_is_embedded_lib_and_get_lib_content_align_for_all_entries() {
+        let mut seen = 0;
+
+        for filename in all_lib_filenames() {
+            seen += 1;
+            assert!(is_embedded_lib(filename), "{filename} should be recognized");
+
+            let content = get_lib_content(filename).expect("embedded lib content missing");
+            assert!(!content.is_empty(), "{filename} should have content");
+        }
+
+        assert_eq!(seen, LIB_FILE_COUNT);
+    }
+}
