@@ -634,3 +634,18 @@ function outer<T>() {
         "Expected no TS2749 for shadowed type parameters, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_symbol_resolution_type_alias_type_param_shadows_global_return_type_with_libs() {
+    let source = r#"
+type AnyFunction<Args extends any[] = any[], ReturnType = any> = (...args: Args) => ReturnType;
+"#;
+
+    let diagnostics = collect_diagnostics_with_libs(source);
+    let ts2314_count = diagnostics.iter().filter(|d| d.code == 2314).count();
+
+    assert_eq!(
+        ts2314_count, 0,
+        "Expected no TS2314 when a type alias-local type parameter shadows global ReturnType<T>, got: {diagnostics:?}"
+    );
+}
