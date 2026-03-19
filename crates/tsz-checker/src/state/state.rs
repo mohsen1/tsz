@@ -1745,9 +1745,11 @@ impl<'a> CheckerState<'a> {
 
         // Clear this node's cache
         self.ctx.node_types.remove(&idx.0);
-        self.ctx
-            .request_node_types
-            .retain(|(node_idx, _), _| *node_idx != idx.0);
+        if !self.ctx.request_node_types.is_empty() {
+            self.ctx
+                .request_node_types
+                .retain(|(node_idx, _), _| *node_idx != idx.0);
+        }
         if self.ctx.implicit_any_contextual_closures.contains(&idx) {
             self.ctx.implicit_any_checked_closures.insert(idx);
         } else {
