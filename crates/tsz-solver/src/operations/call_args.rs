@@ -343,16 +343,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => self.expand_type_param(arg_type_for_check),
             };
 
-            // When the parameter type is an unconstrained type parameter from an outer
-            // generic scope (e.g., `cb: Callback<T>` where `T` is inferred from the call
-            // site), any argument is compatible - type inference will resolve `T` afterward.
-            // This mirrors TSC's overload resolution behavior: inference variables accept
-            // any argument during candidate selection.
-            // Constrained type parameters fall through to the normal assignability path,
-            // where the argument is checked against the constraint.
+            // During candidate selection, unconstrained type-parameter-like parameters are
+            // allowed to accept arbitrary non-nullish arguments and are refined later by
+            // inference or instantiation context. However, under `strictNullChecks`, explicit
+            // nullish arguments must still be checked normally so calls like
+            // `new Box<T>(null)` surface the real mismatch.
+            let arg_is_explicitly_nullish = arg_type_for_check.is_nullish()
+                || crate::type_queries::union_contains(
+                    self.interner.as_type_database(),
+                    arg_type_for_check,
+                    TypeId::NULL,
+                )
+                || crate::type_queries::union_contains(
+                    self.interner.as_type_database(),
+                    arg_type_for_check,
+                    TypeId::UNDEFINED,
+                );
             if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
                 self.interner.lookup(param_type)
                 && info.constraint.is_none()
+                && !arg_is_explicitly_nullish
             {
                 continue;
             }
