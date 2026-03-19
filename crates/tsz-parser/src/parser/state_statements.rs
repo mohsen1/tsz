@@ -1353,7 +1353,7 @@ impl ParserState {
             } else {
                 0
             };
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             left = self.arena.add_qualified_name(
                 syntax_kind_ext::QUALIFIED_NAME,

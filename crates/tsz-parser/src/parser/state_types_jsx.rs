@@ -404,7 +404,7 @@ impl ParserState {
                 } else {
                     self.parse_identifier_name()
                 };
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             current = self.arena.add_qualified_name(
                 syntax_kind_ext::QUALIFIED_NAME,

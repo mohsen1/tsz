@@ -48,25 +48,41 @@ fn get_statements(arena: &NodeArena, root: NodeIndex) -> Vec<NodeIndex> {
     sf.statements.nodes.clone()
 }
 
-/// For `const x = <expr>;` or `let x = <expr>;`, extract the initializer expression.
-/// Structure: `VARIABLE_STATEMENT` -> [`VARIABLE_DECLARATION_LIST`] -> [`VARIABLE_DECLARATION`, ...]
-fn get_var_initializer(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+fn get_first_variable_declaration(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
     let stmt_idx = get_first_statement(arena, root);
     let stmt_node = arena.get(stmt_idx).expect("stmt node");
     let var_stmt = arena.get_variable(stmt_node).expect("variable statement");
-    // var_stmt.declarations contains the VARIABLE_DECLARATION_LIST node(s)
     let decl_list_idx = var_stmt.declarations.nodes[0];
     let decl_list_node = arena.get(decl_list_idx).expect("var decl list node");
     let decl_list = arena
         .get_variable(decl_list_node)
         .expect("variable declaration list");
-    // decl_list.declarations contains the actual VARIABLE_DECLARATION nodes
-    let decl_idx = decl_list.declarations.nodes[0];
+    decl_list.declarations.nodes[0]
+}
+
+/// For `const x = <expr>;` or `let x = <expr>;`, extract the initializer expression.
+/// Structure: `VARIABLE_STATEMENT` -> [`VARIABLE_DECLARATION_LIST`] -> [`VARIABLE_DECLARATION`, ...]
+fn get_var_initializer(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+    let decl_idx = get_first_variable_declaration(arena, root);
     let decl_node = arena.get(decl_idx).expect("var decl node");
     let decl = arena
         .get_variable_declaration(decl_node)
         .expect("var decl data");
     decl.initializer
+}
+
+fn get_var_type_annotation(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+    let decl_idx = get_first_variable_declaration(arena, root);
+    let decl_node = arena.get(decl_idx).expect("var decl node");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("var decl data");
+    decl.type_annotation
+}
+
+fn node_text<'a>(arena: &NodeArena, source: &'a str, idx: NodeIndex) -> &'a str {
+    let node = arena.get(idx).expect("node");
+    &source[node.pos as usize..node.end as usize]
 }
 
 /// For a binary expression node, get its data.
@@ -2174,6 +2190,154 @@ fn type_import() {
     let alias = arena.get_type_alias(stmt_node).expect("alias");
     let type_node = arena.get(alias.type_node).expect("type");
     assert!(type_node.kind != 0, "should have valid kind");
+}
+
+#[test]
+fn type_reference_qualified_name_span_excludes_type_arguments() {
+    let source = "type T = Foo.Bar<Baz>;";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "qualified type reference span");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("alias");
+    let type_node = arena.get(alias.type_node).expect("type");
+    assert_eq!(type_node.kind, syntax_kind_ext::TYPE_REFERENCE);
+
+    let type_ref = arena.get_type_ref(type_node).expect("type ref");
+    assert_eq!(node_text(arena, source, type_ref.type_name), "Foo.Bar");
+    assert_eq!(node_text(arena, source, alias.type_node), "Foo.Bar<Baz>");
+}
+
+#[test]
+fn type_query_qualified_name_span_excludes_type_arguments() {
+    let source = "type T = typeof ns.Foo<Bar>;";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "type query span");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("alias");
+    let type_node = arena.get(alias.type_node).expect("type");
+    assert_eq!(type_node.kind, syntax_kind_ext::TYPE_QUERY);
+
+    let type_query = arena.get_type_query(type_node).expect("type query");
+    assert_eq!(node_text(arena, source, type_query.expr_name), "ns.Foo");
+    assert_eq!(
+        node_text(arena, source, alias.type_node),
+        "typeof ns.Foo<Bar>"
+    );
+}
+
+#[test]
+fn import_type_qualified_name_span_excludes_type_arguments() {
+    let source = "type T = import('m').Foo<Bar>;";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "import type span");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("alias");
+    let type_node = arena.get(alias.type_node).expect("type");
+    assert_eq!(type_node.kind, syntax_kind_ext::TYPE_REFERENCE);
+
+    let type_ref = arena.get_type_ref(type_node).expect("type ref");
+    assert_eq!(
+        node_text(arena, source, type_ref.type_name),
+        "import('m').Foo"
+    );
+    assert_eq!(
+        node_text(arena, source, alias.type_node),
+        "import('m').Foo<Bar>"
+    );
+}
+
+#[test]
+fn intrinsic_type_keyword_recovery_stops_before_qualified_name() {
+    let source = "var v: void.x;";
+    let (parser, root) = parse_source(source);
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 for malformed intrinsic qualified name, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let type_annotation = get_var_type_annotation(arena, root);
+    let type_node = arena.get(type_annotation).expect("type");
+    assert_eq!(type_node.kind, SyntaxKind::VoidKeyword as u16);
+    assert_eq!(node_text(arena, source, type_annotation), "void");
+}
+
+#[test]
+fn unique_symbol_keeps_symbol_as_type_reference() {
+    let source = "type T = unique symbol;";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "unique symbol");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("alias");
+    let type_node = arena.get(alias.type_node).expect("type");
+    assert_eq!(type_node.kind, syntax_kind_ext::TYPE_OPERATOR);
+
+    let type_op = arena.get_type_operator(type_node).expect("type operator");
+    assert_eq!(type_op.operator, SyntaxKind::UniqueKeyword as u16);
+
+    let inner_node = arena.get(type_op.type_node).expect("inner type");
+    assert_eq!(inner_node.kind, syntax_kind_ext::TYPE_REFERENCE);
+    let type_ref = arena.get_type_ref(inner_node).expect("type ref");
+    assert_eq!(node_text(arena, source, type_ref.type_name), "symbol");
+}
+
+#[test]
+fn super_type_arguments_report_parser_error_and_recover_to_call() {
+    let source = "class Derived extends Base { method() { super<T>(0); } }";
+    let (parser, root) = parse_source(source);
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS),
+        "expected TS2754 for super type arguments, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let member_node = arena.get(class.members.nodes[0]).expect("member");
+    let method = arena.get_method_decl(member_node).expect("method");
+    let body_node = arena.get(method.body).expect("body");
+    let block = arena.get_block(body_node).expect("block");
+    let expr_stmt_node = arena
+        .get(block.statements.nodes[0])
+        .expect("expr stmt node");
+    let expr_stmt = arena
+        .get_expression_statement(expr_stmt_node)
+        .expect("expr stmt");
+    let call_node = arena.get(expr_stmt.expression).expect("call");
+    assert_eq!(call_node.kind, syntax_kind_ext::CALL_EXPRESSION);
+
+    let call = arena.get_call_expr(call_node).expect("call data");
+    assert!(
+        call.type_arguments.is_none(),
+        "recovery should not keep type arguments on super calls"
+    );
+    let callee_node = arena.get(call.expression).expect("callee");
+    assert_eq!(callee_node.kind, SyntaxKind::SuperKeyword as u16);
 }
 
 #[test]
