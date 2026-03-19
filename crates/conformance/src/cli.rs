@@ -122,3 +122,39 @@ impl Args {
         self.verbose || self.print_test_files
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use clap::Parser;
+
+    fn parse_args(input: &[&str]) -> Args {
+        Args::try_parse_from(input).expect("argument parsing should succeed in test")
+    }
+
+    #[test]
+    fn is_verbose_uses_explicit_verbose_flag() {
+        let args = parse_args(&["tsz-conformance", "--verbose"]);
+        assert!(args.is_verbose());
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn is_verbose_is_enabled_by_print_test_files() {
+        let args = parse_args(&["tsz-conformance", "--print-test-files"]);
+        assert!(args.is_verbose());
+    }
+
+    #[test]
+    fn is_verbose_stays_false_when_both_flags_are_off() {
+        let args = parse_args(&["tsz-conformance"]);
+        assert!(!args.is_verbose());
+    }
+
+    #[test]
+    fn validate_accepts_all_mode_without_extra_post_processing() {
+        let args = parse_args(&["tsz-conformance", "--all"]);
+        assert!(args.validate().is_ok());
+        assert!(args.is_verbose() == (args.verbose || args.print_test_files));
+    }
+}
