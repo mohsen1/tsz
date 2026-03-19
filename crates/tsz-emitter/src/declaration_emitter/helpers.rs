@@ -4292,6 +4292,78 @@ impl<'a> DeclarationEmitter<'a> {
         text.get(start..end).map(str::to_string)
     }
 
+    pub(crate) fn rescued_asserts_parameter_type_text(
+        &self,
+        param_idx: NodeIndex,
+    ) -> Option<String> {
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let type_node = self.arena.get(param.type_annotation)?;
+        let type_ref = self.arena.get_type_ref(type_node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let type_name = self.arena.get(type_ref.type_name)?;
+        let ident = self.arena.get_identifier(type_name)?;
+        if ident.escaped_text != "asserts" {
+            return None;
+        }
+
+        let rescued = self.scan_asserts_parameter_type_text(type_node.pos)?;
+        let normalized = rescued.split_whitespace().collect::<Vec<_>>().join(" ");
+        (normalized != "asserts").then_some(normalized)
+    }
+
+    fn scan_asserts_parameter_type_text(&self, start: u32) -> Option<String> {
+        let text = self.source_file_text.as_deref()?;
+        let bytes = text.as_bytes();
+        let start = usize::try_from(start).ok()?;
+        if start >= bytes.len() {
+            return None;
+        }
+
+        let mut i = start;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => paren_depth += 1,
+                b')' => {
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                        && angle_depth == 0
+                    {
+                        break;
+                    }
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b',' | b'=' | b';'
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                        && angle_depth == 0 =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        let rescued = text.get(start..i)?.trim().to_string();
+        (!rescued.is_empty()).then_some(rescued)
+    }
+
     fn undefined_identifier_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
         (self.get_identifier_text(expr_idx).as_deref() == Some("undefined"))
             .then(|| "any".to_string())
