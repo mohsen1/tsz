@@ -11,6 +11,15 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn normalize_jsx_component_type_for_resolution(&mut self, component_type: TypeId) -> TypeId {
+        let evaluated = self.evaluate_application_type(component_type);
+        let evaluated = self.evaluate_type_with_env(evaluated);
+        let resolved = self.resolve_type_for_property_access(evaluated);
+        let resolved = self.resolve_lazy_type(resolved);
+        let resolved = self.evaluate_application_type(resolved);
+        self.evaluate_type_with_env(resolved)
+    }
+
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
     #[allow(dead_code)]
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
@@ -227,13 +236,14 @@ impl<'a> CheckerState<'a> {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
-            let evaluated = self.evaluate_type_with_env(component_type);
+            let resolved_component_type =
+                self.normalize_jsx_component_type_for_resolution(component_type);
 
             // If the resolved type is string-like or a keyof type (e.g., `keyof ReactHTML`),
             // treat it as an intrinsic element. tsc allows `<Tag>` where Tag has a string
             // type without emitting TS2604.
-            if self.is_jsx_string_tag_type(evaluated)
-                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, evaluated)
+            if self.is_jsx_string_tag_type(resolved_component_type)
+                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, resolved_component_type)
             {
                 self.check_grammar_jsx_element(jsx_opening.attributes);
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
@@ -254,15 +264,18 @@ impl<'a> CheckerState<'a> {
             let jsx_element_expr_type = self.get_jsx_element_type_for_check();
 
             // TS2786: component return type must be valid JSX element
-            self.check_jsx_component_return_type(evaluated, tag_name_idx);
+            self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
 
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) =
-                self.get_jsx_props_type_for_component(evaluated, Some(idx))
+                self.get_jsx_props_type_for_component(resolved_component_type, Some(idx))
             {
-                let display_target = self.build_jsx_display_target(props_type, Some(evaluated));
+                let props_type =
+                    self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
+                let display_target =
+                    self.build_jsx_display_target(props_type, Some(resolved_component_type));
                 self.check_jsx_attributes_against_props(
                     jsx_opening.attributes,
                     props_type,
@@ -271,11 +284,11 @@ impl<'a> CheckerState<'a> {
                     display_target,
                     request,
                 );
-            } else if self.is_overloaded_sfc(evaluated) {
+            } else if self.is_overloaded_sfc(resolved_component_type) {
                 // JSX overload resolution: try each non-generic call signature against
                 // the provided attributes. If no overload matches, emit TS2769.
                 self.check_jsx_overloaded_sfc(
-                    evaluated,
+                    resolved_component_type,
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
@@ -285,7 +298,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
-                self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
+                self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
 
                 // Even when we can't extract component props (e.g., no ElementAttributesProperty),
                 // check IntrinsicAttributes for required properties (e.g., required `key`).
@@ -301,7 +314,7 @@ impl<'a> CheckerState<'a> {
                 // `IntrinsicAttributes & inferred_props` and emits TS2322 when an
                 // unconstrained type parameter doesn't satisfy IntrinsicAttributes.
                 self.check_generic_sfc_spread_intrinsic_attrs(
-                    evaluated,
+                    resolved_component_type,
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
@@ -310,7 +323,7 @@ impl<'a> CheckerState<'a> {
                 // definite-assignment checks, even when props type is unknown.
                 // For generic components, set UNKNOWN contextual type to prevent
                 // false TS7006 on callback parameters in JSX attributes.
-                let gen_ctx = self.is_generic_jsx_component(evaluated);
+                let gen_ctx = self.is_generic_jsx_component(resolved_component_type);
                 let attr_request = if gen_ctx {
                     request.read().normal_origin().contextual(TypeId::UNKNOWN)
                 } else {
@@ -502,6 +515,7 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
+        let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
             || component_type == TypeId::UNKNOWN
@@ -519,6 +533,61 @@ impl<'a> CheckerState<'a> {
 
         // Skip type parameters — we can't check attributes against unresolved generics
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+            return None;
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+        {
+            let mut candidates = Vec::new();
+            let mut seen = rustc_hash::FxHashSet::default();
+            let mut any_raw_has_type_params = false;
+            for member in members {
+                let Some((props_type, member_raw_has_type_params)) =
+                    self.get_jsx_props_type_for_component_member(member, None)
+                else {
+                    if self.is_generic_jsx_component(member)
+                        || tsz_solver::contains_type_parameters(self.ctx.types, member)
+                    {
+                        continue;
+                    }
+                    return None;
+                };
+                let resolved_props_type = self.resolve_type_for_property_access(props_type);
+                let key = self.format_type(resolved_props_type);
+                if seen.insert(key) {
+                    candidates.push((props_type, member_raw_has_type_params));
+                }
+                any_raw_has_type_params |= member_raw_has_type_params;
+            }
+            match candidates.len() {
+                0 => return None,
+                1 => return candidates.pop(),
+                _ => {
+                    let props_union = self.ctx.types.factory().union(
+                        candidates
+                            .into_iter()
+                            .map(|(props_type, _)| props_type)
+                            .collect(),
+                    );
+                    return Some((props_union, any_raw_has_type_params));
+                }
+            }
+        }
+
+        self.get_jsx_props_type_for_component_member(component_type, element_idx)
+    }
+
+    fn get_jsx_props_type_for_component_member(
+        &mut self,
+        component_type: TypeId,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<(TypeId, bool)> {
+        let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
+        if component_type == TypeId::ANY
+            || component_type == TypeId::ERROR
+            || component_type == TypeId::UNKNOWN
+        {
             return None;
         }
 
@@ -1115,15 +1184,15 @@ impl<'a> CheckerState<'a> {
 
     // JSX Children Contextual Typing
 
-    fn collect_jsx_children_discriminant_attrs(
+    fn collect_jsx_union_resolution_attrs(
         &mut self,
         attributes_idx: NodeIndex,
-    ) -> Vec<(String, TypeId)> {
+    ) -> Option<Vec<(String, Option<TypeId>)>> {
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
 
         let mut provided = Vec::new();
@@ -1131,6 +1200,9 @@ impl<'a> CheckerState<'a> {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
             };
+            if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                return None;
+            }
             if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
                 continue;
             }
@@ -1143,12 +1215,12 @@ impl<'a> CheckerState<'a> {
             let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
                 continue;
             };
-            if matches!(attr_name.as_str(), "key" | "ref" | "children") {
+            if matches!(attr_name.as_str(), "key" | "ref") {
                 continue;
             }
 
             let attr_type = if attr_data.initializer.is_none() {
-                TypeId::BOOLEAN_TRUE
+                Some(TypeId::BOOLEAN_TRUE)
             } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                 let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                     self.ctx
@@ -1165,24 +1237,33 @@ impl<'a> CheckerState<'a> {
                         syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                     )
                 {
-                    continue;
+                    None
+                } else {
+                    let prev = self.ctx.preserve_literal_types;
+                    self.ctx.preserve_literal_types = true;
+                    let ty = self.compute_type_of_node(value_idx);
+                    self.ctx.preserve_literal_types = prev;
+                    Some(ty)
                 }
-                let prev = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let ty = self.compute_type_of_node(value_idx);
-                self.ctx.preserve_literal_types = prev;
-                ty
             } else {
-                TypeId::ANY
+                Some(TypeId::ANY)
             };
 
             provided.push((attr_name, attr_type));
         }
 
-        provided
+        if self
+            .get_jsx_body_child_nodes(attributes_idx)
+            .is_some_and(|children| !children.is_empty())
+            && !provided.iter().any(|(name, _)| name == "children")
+        {
+            provided.push(("children".to_string(), None));
+        }
+
+        Some(provided)
     }
 
-    fn narrow_jsx_props_union_for_children(
+    fn narrow_jsx_props_union_from_attributes(
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
@@ -1192,11 +1273,14 @@ impl<'a> CheckerState<'a> {
             return props_type;
         };
 
-        let provided_attrs = self.collect_jsx_children_discriminant_attrs(attributes_idx);
+        let Some(provided_attrs) = self.collect_jsx_union_resolution_attrs(attributes_idx) else {
+            return props_type;
+        };
         let provided_names: rustc_hash::FxHashSet<&str> = provided_attrs
             .iter()
-            .map(|(name, _)| name.as_str())
+            .map(|(name, _type_id)| name.as_str())
             .collect();
+        let prefer_children_specificity = provided_names.contains("children");
 
         let compatible: Vec<TypeId> = members
             .into_iter()
@@ -1208,9 +1292,14 @@ impl<'a> CheckerState<'a> {
                     match self.resolve_property_access_with_env(member, name) {
                         PropertyAccessResult::Success { type_id, .. } => {
                             let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
-                            *attr_type == TypeId::ANY
-                                || *attr_type == TypeId::ERROR
-                                || self.is_assignable_to(*attr_type, expected)
+                            match attr_type {
+                                Some(attr_type) => {
+                                    *attr_type == TypeId::ANY
+                                        || *attr_type == TypeId::ERROR
+                                        || self.is_assignable_to(*attr_type, expected)
+                                }
+                                None => expected != TypeId::NEVER && expected != TypeId::ERROR,
+                            }
                         }
                         _ => false,
                     }
@@ -1236,10 +1325,33 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
-        if compatible.len() == 1 {
-            compatible[0]
-        } else {
-            props_type
+        match compatible.len() {
+            0 => props_type,
+            1 => {
+                if prefer_children_specificity {
+                    self.normalize_jsx_props_member_for_children_resolution(compatible[0])
+                } else {
+                    compatible[0]
+                }
+            }
+            _ if !prefer_children_specificity => props_type,
+            _ => {
+                let mut normalized_members = Vec::new();
+                let mut seen = rustc_hash::FxHashSet::default();
+                for member in compatible {
+                    let member = self.normalize_jsx_props_member_for_children_resolution(member);
+                    let key = self.format_type(member);
+                    if seen.insert(key) {
+                        normalized_members.push(member);
+                    }
+                }
+
+                match normalized_members.len() {
+                    0 => props_type,
+                    1 => normalized_members[0],
+                    _ => self.ctx.types.factory().union(normalized_members),
+                }
+            }
         }
     }
 
@@ -1306,10 +1418,13 @@ impl<'a> CheckerState<'a> {
         } else {
             // Component: resolve tag name to get component type, extract props
             let component_type = self.compute_type_of_node(tag_name_idx);
-            let evaluated = self.evaluate_type_with_env(component_type);
-            if let Some(props) = self.get_jsx_props_type_for_children_contextual(evaluated) {
-                self.narrow_jsx_props_union_for_children(jsx_opening.attributes, props)
-            } else if self.is_generic_jsx_component(evaluated) {
+            let resolved_component_type =
+                self.normalize_jsx_component_type_for_resolution(component_type);
+            if let Some((props, _raw_has_type_params)) =
+                self.get_jsx_props_type_for_component(resolved_component_type, None)
+            {
+                self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
+            } else if self.is_generic_jsx_component(resolved_component_type) {
                 // Generic component: return UNKNOWN to prevent false TS7006
                 return Some(TypeId::UNKNOWN);
             } else {
@@ -1317,82 +1432,7 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // Get 'children' property from the resolved props type
-        let evaluated_props = self.evaluate_type_with_env(props_type);
-        let resolved_props = self.resolve_type_for_property_access(evaluated_props);
-        use crate::query_boundaries::common::PropertyAccessResult;
-        match self.resolve_property_access_with_env(resolved_props, "children") {
-            PropertyAccessResult::Success { type_id, .. } => {
-                // Don't use ANY or ERROR as contextual type — it provides no information
-                if type_id == TypeId::ANY || type_id == TypeId::ERROR {
-                    None
-                } else {
-                    Some(type_id)
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Extract props type for contextual typing of children.
-    ///
-    /// Like `get_jsx_props_type_for_component` but more permissive:
-    /// - Allows union props types (contextual typing works across union members)
-    /// - Skips generic SFCs (can't resolve type params for contextual typing)
-    fn get_jsx_props_type_for_children_contextual(
-        &mut self,
-        component_type: TypeId,
-    ) -> Option<TypeId> {
-        if component_type == TypeId::ANY
-            || component_type == TypeId::ERROR
-            || component_type == TypeId::UNKNOWN
-        {
-            return None;
-        }
-        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
-            return None;
-        }
-
-        // Try SFC: get call signatures → first parameter is props type
-        if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
-            && !shape.is_constructor
-        {
-            if !shape.type_params.is_empty() {
-                return None; // Can't resolve generic type params for contextual typing
-            }
-            let props = shape
-                .params
-                .first()
-                .map(|p| p.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
-            return Some(self.evaluate_type_with_env(props));
-        }
-
-        // Try Callable (overloaded): pick first non-generic signature
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-            && !sigs.is_empty()
-        {
-            let non_generic: Vec<_> = sigs.iter().filter(|s| s.type_params.is_empty()).collect();
-            if non_generic.len() != 1 {
-                return None;
-            }
-            let sig = non_generic[0];
-            let props = sig
-                .params
-                .first()
-                .map(|p| p.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
-            return Some(self.evaluate_type_with_env(props));
-        }
-
-        // Try class component (no element_idx — don't emit TS2607 from contextual typing)
-        if let Some(props) = self.get_class_component_props_type(component_type, None) {
-            return Some(props);
-        }
-
-        None
+        self.get_jsx_children_prop_type(props_type)
     }
 
     // JSX Attribute Name Extraction
