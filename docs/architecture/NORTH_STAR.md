@@ -1,1326 +1,487 @@
 # tsz North Star Architecture
 
-**Version**: 1.2
-**Status**: Corrected Target Architecture (Enforced)
-**Last Updated**: February 2026
+**Version**: 2.0  
+**Status**: Binding Target Architecture  
+**Last Updated**: March 2026
 
 ---
 
-## 1. Executive Summary
+## 1. Purpose
 
-tsz is a TypeScript compiler implemented in Rust, designed for high performance, maintainability, and correctness. This document describes the **ideal architecture** that all refactoring efforts should converge toward.
+This document defines the architecture that **all substantial refactoring work must converge toward**.
 
-### Core Vision
+It is a target document, not a description of today's code. If the code and this document disagree, the code is carrying transitional debt unless there is an explicit, time-bounded exception recorded elsewhere.
 
-tsz achieves its goals through four fundamental architectural principles:
+The purpose of this document is to keep tsz moving toward a compiler that is:
 
-1. **Solver-First Architecture**: The Solver is the single source of truth for all type computations
-2. **Thin Wrappers**: Components are orchestration layers, not logic containers
-3. **Visitor Patterns**: Systematic traversal over ad-hoc pattern matching
-4. **Arena Allocation**: Memory-efficient, cache-friendly data structures
+- correct enough to match TypeScript closely,
+- fast enough to beat competing implementations on real workloads,
+- maintainable enough that major work reduces complexity instead of relocating it,
+- scalable enough to handle large repositories without keeping the whole world alive in memory.
 
-### Correction Commitments (Binding)
+The core heuristic is simple:
 
-The following architecture corrections are mandatory and supersede any conflicting legacy patterns:
-
-1. **Single semantic type universe**: Solver `TypeId` is canonical. Checker-local semantic type systems must be removed or quarantined behind a non-default legacy surface.
-2. **Sealed type representation**: Checker must not import or construct raw `TypeKey`; it uses solver-owned constructors/query boundaries only.
-3. **Single assignability gateway**: `TS2322`/`TS2345`/`TS2416`-class compatibility checks route through one checker boundary: relation first, reason second, diagnostic rendering last.
-4. **Solver-owned traversal/preconditions**: Type graph traversal and `Lazy(DefId)` precondition discovery live in solver visitors, not checker recursion.
-5. **Cache ownership split**: Checker caches AST/symbol/flow/diagnostic artifacts; solver owns algorithmic type caches and relation memoization.
-6. **CI-enforced boundaries**: Forbidden imports and cross-layer leaks fail CI immediately.
-
-### Execution Tracker (A-F)
-
-- [x] A) Enforce boundary checks (forbidden imports, dependency direction, `TypeKey` leakage scans).
-- [x] B) Remove or quarantine checker-local semantic type primitives.
-- [x] C) Hide raw `TypeKey` behind solver factory/builders.
-- [x] D) Route assignability diagnostics through one compatibility gateway.
-- [x] E) Move `Lazy(DefId)` traversal/preconditions into solver visitors.
-- [x] F) Consolidate algorithmic caches in solver with query-level invalidation behavior.
-
-### CRITIQUE/JOURNAL Alignment
-
-- Milestone status is synchronized with `docs/architecture/CRITIQUE.md` step closures and `docs/architecture/CRITIQUE_EXECUTION_JOURNAL.md` actions through **213**, including:
-  - Type-system boundary migration in checker/scope/solver paths.
-  - `TypeKey` leak prevention plus manifest-level dependency freeze guardrails.
-  - Centralized TS2322/TS2345 routing through `assignability` query-boundary APIs.
-
-### Key Metrics
-
-| Metric | Target |
-|--------|--------|
-| Type equality check | O(1) via interning |
-| Symbol lookup | O(1) via index |
-| Node memory | 16 bytes per node header |
-| File parallelism | Full parallel parsing |
-| Max file size per component | Under 2000 lines |
+> A good architectural change reduces the number of semantic paths, makes context explicit, makes identity stable, makes speculative work transactional, and makes caching more auditable.
 
 ---
 
-## 2. Component Architecture Overview
+## 2. The North Star in One Page
 
-### 2.1 Pipeline Data Flow
+tsz should converge on these ideas:
 
-```
-                           tsz COMPILER PIPELINE
+1. **Stable semantic identity first**  
+   Semantic work must run on stable identities minted early and owned centrally. We should not recover identity ad hoc in hot checker paths.
 
-    Source Text
-         |
-         v
-    +----------+     Tokens      +----------+
-    | Scanner  | --------------> | Parser   |
-    +----------+                 +----------+
-         |                            |
-         | Zero-copy                  | AST (NodeArena)
-         | String interning           | 16-byte thin nodes
-         v                            v
-    +----------+                 +----------+
-    | Interner |                 | Binder   |
-    +----------+                 +----------+
-         |                            |
-         | Atom (u32)                 | Symbols (SymbolArena)
-         |                            | Scopes (persistent tree)
-         |                            | Flow Graph (FlowNodeArena)
-         |                            v
-         |                       +----------+
-         +---------------------> | Checker  | <---- Orchestration
-                                 +----------+       (thin layer)
-                                      |
-                                      | Type queries
-                                      v
-                                 +----------+
-                                 | Solver   | <---- Type Engine
-                                 +----------+       (WHAT)
-                                      |
-                                      | TypeId results
-                                      v
-                                 +----------+
-                                 | Emitter  |
-                                 +----------+
-                                      |
-                                      | JavaScript output
-                                      v
-                                 Output Files
-```
+2. **Explicit requests over ambient mutable state**  
+   Context that changes meaning must be passed explicitly as data, not installed into mutable globals and restored later.
 
-### 2.2 LSP Integration
+3. **Solver owns semantics; checker owns source context**  
+   The checker decides *where* and *when* to ask questions. The solver decides *what the semantic answer is*.
 
-```
-    +-------+     +----------+     +---------+
-    | LSP   | --> | Project  | --> | Checker |
-    +-------+     +----------+     +---------+
-        |              |                |
-        |              |                v
-        |              |          +----------+
-        |              +--------> | Solver   |
-        |                         +----------+
-        |                              |
-        v                              v
-    +---------------+            +----------+
-    | Global Type   | <--------- | Type     |
-    | Interning     |            | Interner |
-    +---------------+            +----------+
-```
+4. **One authoritative relation policy surface**  
+   Assignability, call compatibility, property presence, object-literal freshness, and related compatibility behavior must not be encoded through several competing routes.
 
-### 2.3 Component Responsibility Matrix
+5. **Diagnostics are downstream of semantic facts**  
+   The compiler should decide semantic fact, then failure reason, then rendering. Formatting and anchoring must not be where semantics secretly live.
 
-```
-    +-----------+--------------------------------------------------+
-    | Component | Responsibility                                   |
-    +-----------+--------------------------------------------------+
-    | Scanner   | Lexical analysis, tokenization, string interning |
-    | Parser    | Syntax analysis, AST construction                |
-    | Binder    | WHO - Symbols, scopes, control flow graph        |
-    | Solver    | WHAT - Pure type computations                    |
-    | Checker   | WHERE - AST traversal, diagnostics               |
-    | Emitter   | OUTPUT - Code generation, transforms             |
-    | LSP       | CONSUMER - IDE features using checker output     |
-    +-----------+--------------------------------------------------+
-```
+6. **Speculation is transactional**  
+   Overload probing, dead-branch evaluation, contextual experimentation, and other tentative work must roll back cleanly unless explicitly committed.
+
+7. **Caches are part of the architecture, not incidental optimization**  
+   Request-sensitive computations need request-sensitive caches. Cache invalidation, rollback, ownership, and scope must be designed, not improvised.
+
+8. **Bounded residency and incremental identity are first-class goals**  
+   Large-repo architecture should favor stable semantic skeletons, bounded memory, and incremental invalidation, not permanent AST residency.
+
+These principles are not independent. They reinforce each other.
+
+- Stable identity makes query boundaries and incremental work possible.
+- Explicit requests make caching and rollback safe.
+- Central relation policy reduces false positives, all-missing diagnostics, and drift.
+- Diagnostic separation keeps semantics from leaking into rendering.
 
 ---
 
-## 3. Core Principles (MUST be followed)
+## 3. Canonical System Model
 
-### 3.1 Solver-First Architecture
+### 3.1 High-Level Pipeline
 
-The Solver is the **central type computation engine**. It owns all type-related logic.
-
-**Division of Concerns:**
-
-| Component | Handles | Does NOT Handle |
-|-----------|---------|-----------------|
-| Solver | WHAT - Type computations | Source locations, AST nodes |
-| Checker | WHERE - Source context | Type algorithms |
-| Binder | WHO - Symbol definitions | Type inference |
-| Emitter | OUTPUT - Code generation | Type validation |
-
-**Solver Operations:**
-
-```rust
-// The Solver provides these pure functions:
-trait Solver {
-    // Type relations
-    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool;
-    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool;
-    fn are_types_identical(&self, a: TypeId, b: TypeId) -> bool;
-
-    // Type inference
-    fn infer_type(&self, context: &InferContext) -> TypeId;
-    fn instantiate(&self, generic: TypeId, args: &[TypeId]) -> TypeId;
-
-    // Type evaluation
-    fn evaluate(&self, type_id: TypeId) -> TypeId;
-    fn evaluate_conditional(&self, cond: ConditionalTypeId) -> TypeId;
-    fn evaluate_mapped(&self, mapped: MappedTypeId) -> TypeId;
-    fn evaluate_keyof(&self, type_id: TypeId) -> TypeId;
-    fn evaluate_index_access(&self, object: TypeId, key: TypeId) -> TypeId;
-
-    // Type construction
-    fn union(&self, types: &[TypeId]) -> TypeId;
-    fn intersection(&self, types: &[TypeId]) -> TypeId;
-    fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId;
-}
+```text
+source -> scanner -> parser -> binder -> checker -> solver -> emitter
+                                      \-> diagnostics
+                                      \-> project/lsp consumers
 ```
 
-**RULE**: If an operation involves type computation, it belongs in the Solver.
+### 3.2 Layer Responsibilities
 
-### 3.2 Type System Rules
+| Layer | Owns | Must Not Own |
+|---|---|---|
+| Scanner | Tokenization, text scanning, trivia, interned text handles | Parser recovery policy, semantic interpretation |
+| Parser | Syntax tree construction, syntax recovery | Symbol identity, type semantics |
+| Binder | Declarations, scopes, control-flow skeletons, stable semantic skeleton/input identity | Type inference, compatibility logic |
+| Checker | AST traversal, request construction, source-context decisions, suppression policy, diagnostics orchestration | Ad hoc type algorithms, direct low-level solver internals |
+| Solver | Semantic facts, relations, inference, evaluation, type traversal, compatibility policy | Source-span policy, AST-driven diagnostics |
+| Emitter | Output generation from checked state | Semantic validation, type reasoning |
+| LSP / Project | Orchestration, project graph, incremental invalidation, consumer APIs | Compiler-internal semantic duplication |
 
-#### Rule 1: ALL type computations go through Solver
+### 3.3 WHO / WHAT / WHERE / OUTPUT
 
-```rust
-// CORRECT: Checker delegates to Solver
-impl CheckerState<'_> {
-    fn check_assignment(&mut self, source: TypeId, target: TypeId) -> bool {
-        // Checker asks Solver for the answer
-        self.solver.is_assignable_to(source, target)
-    }
-}
+- **Binder = WHO**: what declaration/symbol/flow entity exists
+- **Solver = WHAT**: what the semantic meaning or relation result is
+- **Checker = WHERE**: where in source the question came from and where to report it
+- **Emitter = OUTPUT**: what files/text should be produced
 
-// WRONG: Checker doing type computation
-impl CheckerState<'_> {
-    fn check_assignment(&mut self, source: TypeId, target: TypeId) -> bool {
-        // Never do this - type logic belongs in Solver
-        match (self.types.lookup(source), self.types.lookup(target)) {
-            (TypeKey::Union(_), _) => { /* manual logic */ }
-            // ...
-        }
-    }
-}
-```
-
-#### Rule 2: Use visitor pattern for ALL type operations
-
-```rust
-// CORRECT: Visitor pattern
-fn get_referenced_types(types: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
-    use crate::solver::visitor::collect_referenced_types;
-    collect_referenced_types(types, type_id)
-}
-
-// WRONG: Direct TypeKey matching
-fn get_referenced_types(types: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
-    match types.lookup(type_id) {
-        Some(TypeKey::Union(list_id)) => { /* manual extraction */ }
-        Some(TypeKey::Object(shape_id)) => { /* manual extraction */ }
-        // Repeating for 24+ variants...
-    }
-}
-```
-
-#### Rule 3: Checker NEVER inspects type internals
-
-```rust
-// CORRECT: Checker uses Solver queries
-fn is_string_type(&self, type_id: TypeId) -> bool {
-    self.solver.is_subtype_of(type_id, TypeId::STRING)
-}
-
-// WRONG: Checker matching on TypeKey
-fn is_string_type(&self, type_id: TypeId) -> bool {
-    matches!(
-        self.types.lookup(type_id),
-        Some(TypeKey::Intrinsic(IntrinsicKind::String))
-    )
-}
-```
-
-### 3.3 Judge vs. Lawyer Architecture
-
-The Solver implements a two-layer design for type compatibility:
-
-**Judge (SubtypeChecker):**
-- Implements strict, sound set-theory semantics
-- Knows nothing about TypeScript legacy behavior
-- Performs structural subtype checking
-
-**Lawyer (AnyPropagationRules + CompatChecker):**
-- Applies TypeScript-specific compatibility rules
-- Handles `any` propagation (the "black hole" that is both top and bottom type)
-- Manages function variance modes (strict vs. bivariant)
-- Tracks object literal freshness for excess property checking
-- Implements the void exception (`() => void` matches `() => T`)
-- Detects weak types (TS2559)
-
-```rust
-// src/solver/lawyer.rs
-pub struct AnyPropagationRules {
-    /// Whether to allow `any` to silence structural mismatches.
-    pub allow_any_suppression: bool,
-}
-
-impl AnyPropagationRules {
-    /// Strict mode: `any` does NOT silence structural mismatches
-    pub fn strict() -> Self { Self { allow_any_suppression: false } }
-
-    /// Legacy mode: `any` suppresses errors for backward compatibility
-    pub fn new() -> Self { Self { allow_any_suppression: true } }
-}
-```
-
-**Key Principle:** `any` should NOT silence structural mismatches. While `any` is TypeScript's escape hatch, the Lawyer layer ensures real errors are still caught.
-
-### 3.3.1 TS2322 Parity Strategy (Primary Workstream)
-
-`TS2322` is the highest-impact parity surface and must follow a strict pipeline:
-
-1. **Relation First (Solver)**  
-   Checker asks Solver relation queries (`Assignable`/`Subtype`) and does not run custom structural checks.
-2. **Reason Second (Solver Explain)**  
-   When relation fails, Checker asks Solver for a structured failure reason and renders diagnostics from it.
-3. **Location/Message Last (Checker)**  
-   Checker owns source span selection, suppression policy, and TS code/message mapping.
-
-**Architecture Requirements for TS2322 paths:**
-
-- All call/new/assignment comparability checks must go through checker `query_boundaries` wrappers.
-- Checker modules must not construct `CallEvaluator` or run ad-hoc compatibility logic directly.
-- Checker must centralize suppression and prioritization policy (e.g. weak unions, excess properties, `ERROR/ANY/UNKNOWN` cascades).
-- `DefId -> TypeEnvironment` resolution must be stabilized before relation checks so `Lazy(DefId)` types resolve consistently.
-
-**Implementation Direction:**
-
-- Keep relation policy configuration in one place (`pack_relation_flags` + query policy).
-- Reuse a single assignability mismatch gate in checker code paths to avoid divergent TS2322 behavior.
-- Expand boundary helpers rather than adding solver-specific constructions in checker files.
-
-### 3.4 Dependency Direction Rules
-
-The architectural direction is strict and one-way. This is the canonical dependency policy.
-
-#### Allowed High-Level Flow
-
-`scanner -> parser -> binder -> checker -> solver -> emitter`
-
-LSP is a consumer/orchestrator around project state and checker results; it does not define type algorithms.
-
-#### Layer Rules
-
-1. Parser/Scanner do not depend on Checker/Solver internals.
-2. Binder owns symbol/scope/control-flow facts (`WHO`), not type computation (`WHAT`).
-3. Checker orchestrates AST traversal and diagnostics (`WHERE`), delegating type algorithms.
-4. Solver owns type relations, inference, narrowing, evaluation, and type queries (`WHAT`).
-5. Emitter consumes checked/transformed representations and does not perform semantic type validation.
-
-#### Forbidden Cross-Layer Shortcuts
-
-1. Checker implementing ad-hoc type algorithms that duplicate Solver logic.
-2. Checker pattern-matching directly on low-level type internals or constructing raw solver internals (`TypeKey`, direct interning).
-3. Binder importing Solver logic for semantic type decisions.
-4. Emitter importing Checker internals for on-the-fly semantic checks.
-5. Any layer bypassing canonical query APIs and reaching into another layer's private representation.
-
-#### Review Heuristic
-
-For every new change, ask:
-
-1. Is this computing `WHAT` (type algorithm) or only deciding `WHERE` to report it?
-2. If `WHAT`, move it to Solver or a Solver query helper.
-3. If `WHERE`, keep it in Checker and call the Solver/queries.
-
-### 3.5 DefId-Centric Type Resolution
-
-tsz's current architecture is **DefId-first** for semantic type references.
-
-#### Canonical Model
-
-1. Binder owns symbol identity (`SymbolId`) and declaration graphs.
-2. Checker creates stable definition identities (`DefId`) for semantic type references.
-3. Solver represents unresolved semantic references as `TypeKey::Lazy(DefId)`.
-4. `TypeEnvironment` resolves `DefId -> TypeId` during evaluation/compatibility.
-5. Checker ensures required `DefId -> TypeId` mappings exist before deep relation checks.
-
-#### Why This Matters
-
-- Eliminates fragile direct symbol-handle type references in the solver type graph.
-- Makes lazy type resolution explicit and queryable.
-- Stabilizes recursive and cross-module type resolution behavior.
-
-#### Rules
-
-1. New semantic type references must use `Lazy(DefId)`, not ad-hoc symbol-backed ref keys.
-2. Checker code must call solver traversal helpers (`collect_lazy_def_ids`, related visitors) instead of implementing type-shape recursion.
-3. Relation/evaluation code paths must guarantee needed `DefId` mappings are available in `TypeEnvironment` before compatibility checks.
-
-| TypeScript Quirk | Judge Behavior | Lawyer Override |
-|------------------|----------------|-----------------|
-| `any` assignability | Strict sets | Both top & bottom type |
-| Function params | Contravariant | Bivariant for methods |
-| Object literals | Width subtyping | Excess property check |
-| Void returns | Normal checking | Allow any return |
-
-### 3.6 Memory Architecture
-
-#### Arena Allocation Model
-
-```
-    ARENA ALLOCATION STRATEGY
-
-    +----------------+     +------------------+     +------------------+
-    | NodeArena      |     | SymbolArena      |     | FlowNodeArena    |
-    | (AST nodes)    |     | (Symbols)        |     | (Control flow)   |
-    +----------------+     +------------------+     +------------------+
-           |                       |                        |
-           v                       v                        v
-    +------+------+         +------+------+          +------+------+
-    | NodeId(u32) |         | SymbolId    |          | FlowNodeId  |
-    |             |         | (u32)       |          | (u32)       |
-    +-------------+         +-------------+          +-------------+
-
-    +----------------------------------------------------------+
-    | TypeInterner (Global)                                     |
-    | +------+------+------+------+------+------+------+-----+ |
-    | |Type 0|Type 1|Type 2| ...  | ...  | ...  | ...  | ... | |
-    | +------+------+------+------+------+------+------+-----+ |
-    |        Deduplication via hash map                        |
-    +----------------------------------------------------------+
-           |
-           v
-    +-------------+
-    | TypeId(u32) |
-    +-------------+
-```
-
-**Key Rules:**
-
-1. **AST Nodes**: Arena-allocated via `NodeArena`, accessed by `NodeIndex`
-2. **Symbols**: Arena-allocated via `SymbolArena`, accessed by `SymbolId`
-3. **Flow Nodes**: Arena-allocated via `FlowNodeArena`, accessed by `FlowNodeId`
-4. **Types**: Globally interned via `TypeInterner`, accessed by `TypeId`
-5. **Strings**: Interned via `Interner`, accessed by `Atom` (u32)
-
-**Benefits:**
-
-- O(1) equality for types: `type_a == type_b`
-- O(1) equality for strings: `atom_a == atom_b`
-- Cache-friendly linear memory layout
-- Zero fragmentation (no individual allocations)
-- Automatic deduplication
+If a piece of code is doing both **WHAT** and **WHERE**, it is a likely architectural smell.
 
 ---
 
-## 4. Detailed Component Specifications
+## 4. Stable Identity Model
 
-### 4.1 Scanner
+Stable identity is the foundation of the architecture.
 
-**Purpose**: Transform source text into tokens.
+### 4.1 Canonical IDs
 
-**Architecture**:
-```
-    Source Text (Arc<str>)
-           |
-           v
-    +------------------+
-    | ScannerState     |
-    |------------------|
-    | pos: usize       |
-    | token: SyntaxKind|
-    | interner: ref    |
-    +------------------+
-           |
-           v
-    Token Stream + Atoms
-```
+- **`SymbolId`**: binder-owned declaration/scope identity
+- **`DefId`**: canonical semantic definition identity used for semantic references and lazy resolution
+- **`TypeId`**: canonical semantic type identity produced by the solver/interner
+- **`NodeIndex` / AST node handles**: local syntax traversal handles, not semantic identity
 
-**Key Properties**:
+### 4.2 Rules
 
-| Property | Implementation |
-|----------|----------------|
-| Zero-copy | `Arc<str>` source, slice references |
-| String interning | All identifiers become `Atom(u32)` |
-| Driver-driven | Parser controls `scan()` calls |
-| Pre-interned keywords | 100+ common words pre-cached |
-| Fast ASCII path | Single-byte optimization for ASCII |
+1. New semantic references must be expressed through stable semantic identities, not recovered from syntax on demand.
+2. Checker code must not invent semantic identity in hot paths when it could be minted earlier.
+3. AST handles are traversal coordinates, not durable semantic keys.
+4. Lazy semantic references should be explicit (`Lazy(DefId)`-style), not hidden behind incidental symbol indirection.
+5. Cross-file and incremental work must be keyed by stable semantic identity, not transient arena position.
 
-**API Surface**:
-```rust
-impl ScannerState {
-    fn scan(&mut self) -> SyntaxKind;
-    fn get_token(&self) -> SyntaxKind;
-    fn get_token_atom(&self) -> Atom;
-    fn get_token_start(&self) -> usize;
-    fn get_token_end(&self) -> usize;
-    fn has_preceding_line_break(&self) -> bool;
+### 4.3 Why This Matters
 
-    // Context-sensitive rescanning
-    fn re_scan_greater_token(&mut self) -> SyntaxKind;
-    fn re_scan_slash_token(&mut self) -> SyntaxKind;
-    fn re_scan_template_token(&mut self) -> SyntaxKind;
-}
-```
+Stable identity is what makes all of the following tractable:
 
-### 4.2 Parser
+- recursion and circularity handling,
+- incremental invalidation,
+- declaration emit naming,
+- request-aware caching,
+- AST eviction / bounded residency,
+- large-repo project graphs,
+- consistent semantic reuse across files.
 
-**Purpose**: Transform tokens into an Abstract Syntax Tree.
-
-**Architecture**:
-```
-    Token Stream
-         |
-         v
-    +------------------+
-    | ParserState      |
-    |------------------|
-    | scanner: ref     |
-    | arena: NodeArena |
-    | context_flags    |
-    +------------------+
-         |
-         v
-    NodeArena (AST)
-```
-
-**16-Byte Thin Node Design**:
-```rust
-pub struct Node {
-    pub kind: u16,        // SyntaxKind enum
-    pub flags: u16,       // NodeFlags
-    pub pos: u32,         // Start byte position
-    pub end: u32,         // End byte position
-    pub data_index: u32,  // Index into typed data pool
-}
-// Total: 16 bytes - 4 nodes per cache line
-```
-
-**Data Pool Organization**:
-```
-    NodeArena
-    +------------------+
-    | nodes: Vec<Node> |  <- All node headers (16 bytes each)
-    +------------------+
-    | identifiers      |  <- IdentifierData pool
-    | binary_exprs     |  <- BinaryExpressionData pool
-    | call_exprs       |  <- CallExpressionData pool
-    | blocks           |  <- BlockData pool
-    | functions        |  <- FunctionData pool
-    | classes          |  <- ClassData pool
-    | ... 40+ pools    |
-    +------------------+
-```
-
-**Key Properties**:
-
-| Property | Value |
-|----------|-------|
-| Node size | 16 bytes (header only) |
-| Cache efficiency | 4 nodes per cache line |
-| Pre-allocation | ~1 node per 20 source characters |
-| Recursion limit | 1000 levels |
-| No type info | Pure syntax tree |
-
-### 4.3 Binder
-
-**Purpose**: Build symbol table, scope tree, and control flow graph.
-
-**Architecture**:
-```
-    NodeArena (AST)
-         |
-         v
-    +------------------+
-    | BinderState      |
-    |------------------|
-    | symbols: Arena   |
-    | scopes: Vec      |
-    | flow_nodes: Arena|
-    +------------------+
-         |
-         +---> Symbols (who declares what)
-         +---> Scopes (persistent tree, not stack)
-         +---> Flow Graph (control flow edges)
-```
-
-**Symbol Structure**:
-```rust
-pub struct Symbol {
-    pub flags: u32,                // Kind + modifiers
-    pub escaped_name: String,      // Symbol name
-    pub declarations: Vec<NodeIndex>,
-    pub value_declaration: NodeIndex,
-    pub parent: SymbolId,
-    pub exports: Option<Box<SymbolTable>>,
-    pub members: Option<Box<SymbolTable>>,
-}
-```
-
-**Scope Tree** (NOT Stack):
-```
-    SourceFile Scope
-         |
-         +-- Function Scope
-         |        |
-         |        +-- Block Scope
-         |        |
-         |        +-- Block Scope
-         |
-         +-- Class Scope
-                  |
-                  +-- Method Scope
-```
-
-**Flow Graph**:
-```
-    START
-      |
-      v
-    [condition] ----TRUE----> [then]
-      |                         |
-      FALSE                     |
-      |                         |
-      v                         v
-    [else] -----------------> [join]
-      |                         |
-      v                         v
-    UNREACHABLE              [next]
-```
-
-**Key Rules**:
-1. Binder does NO type computations
-2. Scope tree is persistent (for incremental updates)
-3. Hoisting handled in two passes (collect, then process)
-4. Flow nodes link via antecedent chains
-
-### 4.4 Solver (Type Engine)
-
-**Purpose**: All pure type computations.
-
-**Architecture**:
-```
-    TypeId Inputs
-         |
-         v
-    +------------------+
-    | Solver           |
-    |------------------|
-    | interner: ref    |  <- TypeInterner (global)
-    | cache: HashMap   |  <- Memoization
-    | cycle_stack      |  <- Coinductive semantics
-    +------------------+
-         |
-         v
-    TypeId Outputs
-```
-
-**Type Representation**:
-```rust
-// TypeId: 4-byte handle (O(1) equality)
-pub struct TypeId(pub u32);
-
-// TypeKey: Actual type structure
-pub enum TypeKey {
-    // Primitives
-    Intrinsic(IntrinsicKind),
-    Literal(LiteralValue),
-
-    // Collections
-    Array(TypeId),
-    Tuple(TupleListId),
-
-    // Objects
-    Object(ObjectShapeId),
-    ObjectWithIndex(ObjectShapeId),
-
-    // Composites
-    Union(TypeListId),
-    Intersection(TypeListId),
-
-    // Functions
-    Function(FunctionShapeId),
-    Callable(CallableShapeId),
-
-    // Generics / semantic references
-    TypeParameter(TypeParamInfo),
-    Lazy(DefId),
-    Application(TypeApplicationId),
-
-    // Advanced
-    Conditional(ConditionalTypeId),
-    Mapped(MappedTypeId),
-    IndexAccess(TypeId, TypeId),  // T[K]
-    KeyOf(TypeId),
-    TemplateLiteral(TemplateLiteralId),
-    TypeQuery(SymbolRef),
-    ThisType,
-    UniqueSymbol(SymbolRef),
-
-    // Modifiers
-    ReadonlyType(TypeId),  // readonly T[]
-
-    // String intrinsics
-    StringIntrinsic {      // Uppercase<T>, Lowercase<T>, etc.
-        kind: StringIntrinsicKind,
-        type_arg: TypeId,
-    },
-
-    // Inference
-    Infer(TypeParamInfo),  // infer R in conditional types
-
-    // Error recovery
-    Error,  // Error type for invalid type expressions
-}
-```
-
-**Subtyping Algorithm** (Coinductive):
-```
-    solve_subtype(source, target):
-        1. Identity check: source == target => true
-        2. Top/bottom: source=NEVER => true, target=UNKNOWN => true
-        3. Cycle check: (source, target) in stack => true (GFP)
-        4. Push (source, target) to stack
-        5. Structural check based on TypeKey
-        6. Pop from stack
-        7. Return result
-```
-
-**Key Properties**:
-
-| Property | Implementation |
-|----------|----------------|
-| Stateless | Takes inputs, returns outputs |
-| Memoized | Query results cached |
-| Coinductive | Greatest Fixed Point for recursion |
-| Visitor-based | TypeVisitor trait for traversal |
-
-**Critical Limits**:
-```rust
-const MAX_SUBTYPE_DEPTH: u32 = 100;
-const MAX_TOTAL_SUBTYPE_CHECKS: u32 = 100_000;
-const MAX_INSTANTIATION_DEPTH: u32 = 50;
-const MAX_EVALUATE_DEPTH: u32 = 50;
-const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
-```
-
-**Narrowing Operations**:
-
-The Solver owns all type narrowing logic through a unified API. The Checker extracts narrowing guards from AST and delegates to Solver for type algebra.
-
-```rust
-// TypeGuard: AST-agnostic representation of narrowing conditions
-pub enum TypeGuard {
-    Typeof(TypeofResult),      // typeof x === "string"
-    Instanceof(TypeId),        // x instanceof Class
-    Equality(TypeId, bool),    // x === value / x !== value
-    Discriminant(Atom, TypeId),// x.kind === "foo"
-    InProperty(Atom),          // "prop" in x
-    Truthiness,                // if (x)
-    Nullishness,               // x ?? default
-    TypePredicate(TypeId),     // x is SomeType
-}
-
-// Unified narrowing entry point
-impl NarrowingContext<'_> {
-    /// Narrows source_type by applying the guard.
-    /// sense=true for positive branch, sense=false for negative branch.
-    pub fn narrow_type(
-        &self,
-        source_type: TypeId,
-        guard: &TypeGuard,
-        sense: bool,
-    ) -> TypeId;
-}
-```
-
-**Narrowing Architecture**:
-
-| Component | Responsibility |
-|-----------|---------------|
-| Checker | Extracts TypeGuard from AST (e.g., binary expressions, type predicates) |
-| Checker | Performs reference matching (`is_matching_reference`) to identify narrowed variable |
-| Solver | Implements `narrow_type(source, guard, sense)` - all type algebra |
-| Solver | Handles union filtering, type parameter constraints, special types (unknown, any) |
-
-**Rule**: If narrowing involves type computation (union filtering, constraint application), it belongs in Solver. Checker only extracts guards from AST and calls `narrow_type`.
-
-### 4.5 Checker
-
-**Purpose**: Thin orchestration layer that walks AST and reports diagnostics.
-
-**Architecture**:
-```
-    NodeArena (AST)
-    SymbolArena (Binder output)
-    FlowGraph (Binder output)
-         |
-         v
-    +------------------+
-    | CheckerState     |
-    |------------------|
-    | solver: ref      |  <- Delegates type ops
-    | ctx: Context     |  <- Shared state
-    +------------------+
-         |
-         +---> Diagnostics (with source locations)
-         +---> Node types (cached TypeId per node)
-```
-
-**Checker Context**:
-```rust
-pub struct CheckerContext<'a> {
-    // Options
-    pub options: &'a CompilerOptions,
-    pub strict_null_checks: bool,
-
-    // Caching
-    pub symbol_types: RefCell<FxHashMap<SymbolId, TypeId>>,
-    pub node_types: RefCell<FxHashMap<NodeIndex, TypeId>>,
-
-    // Recursion guards
-    pub symbol_resolution_stack: RefCell<Vec<SymbolId>>,
-
-    // Diagnostics
-    pub diagnostics: RefCell<Vec<Diagnostic>>,
-
-    // Fuel counter
-    pub fuel: RefCell<u32>,  // MAX: 500,000
-}
-```
-
-**Checker Responsibilities**:
-
-| Does | Does NOT |
-|------|----------|
-| Walk AST nodes | Compute type relations |
-| Extract data from AST | Implement subtyping |
-| Call Solver queries | Match on TypeKey |
-| Report diagnostics | Own type logic |
-| Track source locations | Evaluate meta-types |
-| Apply flow analysis | Implement inference |
-
-**File Size Rule**: Each checker file under 2000 lines.
-
-```
-src/checker/
-├── state.rs          # Orchestration (main entry)
-├── expr.rs           # Expression checking
-├── statements.rs     # Statement checking
-├── declarations.rs   # Declaration checking
-├── type_checking.rs  # Type validation utilities
-├── flow_analysis.rs  # CFA integration
-└── ...
-```
-
-### 4.6 Emitter
-
-**Purpose**: Generate JavaScript output with transforms.
-
-**Architecture**:
-```
-    NodeArena (AST)
-    TransformContext (directives)
-         |
-         v
-    +------------------+
-    | Printer          |
-    |------------------|
-    | arena: ref       |
-    | writer: Writer   |
-    | transforms: ctx  |
-    +------------------+
-         |
-         v
-    JavaScript + Source Maps
-```
-
-**Two-Phase Transform Architecture** (for ES5 downleveling):
-```
-    Phase 1: Transform (AST -> IR)    [src/transforms/]
-    +------------------+
-    | Transformer      |
-    | - transform_*()  |
-    +------------------+
-           |
-           v
-    IRNode (structured)               [src/transforms/ir.rs]
-           |
-           v
-    Phase 2: Print (IR -> String)     [src/transforms/ir_printer.rs]
-    +------------------+
-    | IRPrinter        |
-    | - emit_to_string |
-    +------------------+
-           |
-           v
-    JavaScript String
-```
-
-**Transform Directives**:
-```rust
-pub enum EmitDirective {
-    ES5Class,
-    ES5ClassExpression,
-    ES5Namespace,
-    ES5Enum,
-    ES5ArrowFunction { captures_this: bool },
-    ES5AsyncFunction,
-    ES5ForOf,
-    ES5ObjectLiteral,
-    ES5VariableDeclarationList,
-    ES5FunctionParameters,
-    ES5TemplateLiteral,
-    CommonJSExport,
-    CommonJSExportDefaultExpr,
-    ModuleWrapper { format: ModuleFormat, dependencies: Vec<String> },
-}
-```
-
-### 4.7 LSP
-
-**Purpose**: IDE features consuming checker output.
-
-**Architecture**:
-```
-    +------------------+
-    | LSP Server       |
-    |------------------|
-    | project: Project |  <- Multi-file container
-    +------------------+
-           |
-           v
-    +------------------+
-    | Project          |
-    |------------------|
-    | files: HashMap   |
-    | global_interner  |  <- Shared type interning
-    | reverse_deps     |  <- Incremental updates
-    +------------------+
-           |
-           +---> definition.rs     (Go to Definition)
-           +---> references.rs     (Find References)
-           +---> completions.rs    (Code Completion)
-           +---> hover.rs          (Hover Information)
-           +---> rename.rs         (Symbol Rename)
-           +---> code_actions.rs   (Refactorings)
-           +---> ...
-```
-
-**Key Properties**:
-
-| Property | Implementation |
-|----------|----------------|
-| Global type interning | Shared across files |
-| Incremental updates | Reverse dependency graph |
-| Symbol index | O(1) lookups |
-| Persistent state | Checker state retained |
-| WASM compatible | No filesystem, no threads |
+When identity is weak, the checker becomes a repair layer. That is not the target architecture.
 
 ---
 
-## 5. Data Structures
+## 5. Explicit Request Model
 
-### 5.1 Type System
+### 5.1 Principle
 
-```rust
-// Type identity: 4-byte handle
-pub struct TypeId(pub u32);
+If a semantic answer can change based on context, that context must be represented explicitly in a request object.
 
-// Built-in type IDs (0-99 reserved)
-impl TypeId {
-    pub const NONE: TypeId = TypeId(0);
-    pub const ERROR: TypeId = TypeId(1);
-    pub const NEVER: TypeId = TypeId(2);
-    pub const UNKNOWN: TypeId = TypeId(3);
-    pub const ANY: TypeId = TypeId(4);
-    pub const VOID: TypeId = TypeId(5);
-    pub const UNDEFINED: TypeId = TypeId(6);
-    pub const NULL: TypeId = TypeId(7);
-    pub const BOOLEAN: TypeId = TypeId(8);
-    pub const NUMBER: TypeId = TypeId(9);
-    pub const STRING: TypeId = TypeId(10);
-    pub const BIGINT: TypeId = TypeId(11);
-    pub const SYMBOL: TypeId = TypeId(12);
-    pub const OBJECT: TypeId = TypeId(13);
-    pub const BOOLEAN_TRUE: TypeId = TypeId(14);
-    pub const BOOLEAN_FALSE: TypeId = TypeId(15);
-    pub const FUNCTION: TypeId = TypeId(16);
-    pub const PROMISE_BASE: TypeId = TypeId(17);
-    pub const FIRST_USER: u32 = 100;
-}
+No ambient mutable fields should be required to know the meaning of a computation.
 
-// Interned secondary structures
-pub struct TypeListId(pub u32);       // Union/intersection members
-pub struct ObjectShapeId(pub u32);    // Object properties
-pub struct TupleListId(pub u32);      // Tuple elements
-pub struct FunctionShapeId(pub u32);  // Function signature
-pub struct CallableShapeId(pub u32);  // Overloaded signatures
-pub struct TypeApplicationId(pub u32); // Generic<Args>
-pub struct ConditionalTypeId(pub u32); // T extends U ? X : Y
-pub struct MappedTypeId(pub u32);     // { [K in T]: V }
-pub struct TemplateLiteralId(pub u32); // `prefix${T}suffix`
-```
+### 5.2 Canonical Requests
 
-### 5.2 Symbol System
+At minimum, tsz should converge on explicit request types like these:
 
-```rust
-// Symbol identity
-pub struct SymbolId(pub u32);
+- **`TypingRequest`**: contextual type, contextual origin, flow intent, other expression-meaning inputs
+- **`RelationRequest`**: assignment vs argument vs return vs property read/write, freshness mode, compatibility mode, strictness knobs
+- **`DiagnosticRenderRequest`**: anchor policy, exact-vs-rewritten anchor mode, related-info shaping
 
-impl SymbolId {
-    pub const NONE: SymbolId = SymbolId(u32::MAX);
-}
+The exact names can evolve. The architecture principle should not.
 
-// Symbol flags (bitfield)
-pub const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
-pub const BLOCK_SCOPED_VARIABLE: u32 = 1 << 1;
-pub const PROPERTY: u32 = 1 << 2;
-pub const ENUM_MEMBER: u32 = 1 << 3;
-pub const FUNCTION: u32 = 1 << 4;
-pub const CLASS: u32 = 1 << 5;
-pub const INTERFACE: u32 = 1 << 6;
-pub const TYPE_PARAMETER: u32 = 1 << 18;
-pub const TYPE_ALIAS: u32 = 1 << 19;
-pub const ALIAS: u32 = 1 << 21;  // Imports
+### 5.3 Rules
 
-// Modifier flags
-pub const PRIVATE: u32 = 1 << 28;
-pub const PROTECTED: u32 = 1 << 29;
-pub const ABSTRACT: u32 = 1 << 30;
-pub const STATIC: u32 = 1 << 31;
-```
+1. No global “current request”.
+2. No request stack hidden inside checker context as the primary mechanism.
+3. No save/mutate/restore of ambient context when a request object can be passed.
+4. Request-sensitive results must not be cached as if they were request-free.
+5. A function that changes meaning under context should accept a request or a clearly derived sub-request.
 
-### 5.3 Flow System
+### 5.4 Implication
 
-```rust
-// Flow node identity
-pub struct FlowNodeId(pub u32);
-
-// Flow node flags
-pub const UNREACHABLE: u32 = 1 << 0;
-pub const START: u32 = 1 << 1;
-pub const BRANCH_LABEL: u32 = 1 << 2;
-pub const LOOP_LABEL: u32 = 1 << 3;
-pub const ASSIGNMENT: u32 = 1 << 4;
-pub const TRUE_CONDITION: u32 = 1 << 5;
-pub const FALSE_CONDITION: u32 = 1 << 6;
-pub const SWITCH_CLAUSE: u32 = 1 << 7;
-pub const ARRAY_MUTATION: u32 = 1 << 8;
-pub const CALL: u32 = 1 << 9;
-
-// Flow node structure
-pub struct FlowNode {
-    pub flags: u32,
-    pub id: FlowNodeId,
-    pub antecedent: Vec<FlowNodeId>,  // Predecessor nodes
-    pub node: NodeIndex,               // Associated AST node
-}
-```
+The end-state is not “replace three ambient booleans with one ambient struct.”  
+The end-state is **request-first APIs all the way down the relevant path**.
 
 ---
 
-## 6. Performance Requirements
+## 6. Semantic Ownership Model
 
-### 6.1 Memory
+### 6.1 Solver-First, But With a Better Precision
 
-| Operation | Complexity | Notes |
-|-----------|------------|-------|
-| Type equality | O(1) | Compare TypeId values |
-| Type lookup | O(1) | Index into interner |
-| Symbol lookup | O(1) | Index into arena |
-| Node access | O(1) | Index into arena |
-| String equality | O(1) | Compare Atom values |
+“Solver-first” means more than “put type operations in another crate.” It means:
 
-**Allocation Strategy**:
-- Pre-allocate arenas based on source size
-- Reuse string buffer in scanner
-- Batch allocations in typed pools
-- Zero per-operation heap allocations in hot paths
+- semantic relations are defined in one place,
+- type traversal is solver-owned,
+- compatibility policy is solver-owned,
+- checker uses query boundaries and request objects,
+- checker does not carry shadow semantics in local helper paths.
 
-### 6.2 Speed
+### 6.2 Relation Kernel and Compatibility Policy
 
-| Feature | Implementation |
-|---------|----------------|
-| Parallel parsing | File-level parallelism with rayon |
-| Incremental checking | Reverse dependency tracking |
-| Lazy evaluation | Meta-types evaluated on demand |
-| Query memoization | Salsa-style caching |
-| Fast paths | Identity check before structural |
+tsz should maintain a clear distinction between:
 
-**Target Benchmarks**:
-- Parse: 500K+ lines/second
-- Bind: 300K+ lines/second
-- Check: 100K+ lines/second (incremental: 10x faster)
+- a **relation kernel** that computes semantic relations and facts,
+- a **compatibility policy layer** that models TypeScript-specific behavior,
+- a **checker rendering layer** that turns structured failures into diagnostics.
 
----
+This can be described as “judge and lawyer” if useful, but the binding rule is simpler:
 
-## 7. Code Organization
+> If TypeScript compatibility requires a policy choice, that policy must still be centralized and solver-owned, not spread across call sites.
 
-```
-src/
-├── scanner.rs              # SyntaxKind enum, token types
-├── scanner_impl.rs         # Lexical analysis implementation
-├── interner.rs             # String interning (Atom)
-├── char_codes.rs           # Character code constants
-│
-├── parser/
-│   ├── mod.rs              # Module exports
-│   ├── base.rs             # NodeIndex, NodeList, TextRange
-│   ├── node.rs             # Node struct, NodeArena, typed pools
-│   ├── state.rs            # ParserState, recursive descent
-│   └── flags.rs            # NodeFlags, ModifierFlags
-│
-├── binder.rs               # Symbol struct, SymbolFlags
-├── binder/
-│   └── state.rs            # BinderState, scope tree, flow graph
-│
-├── solver/
-│   ├── mod.rs              # Module exports
-│   ├── types.rs            # TypeId, TypeKey, TypeListId, etc.
-│   ├── intern.rs           # TypeInterner implementation
-│   ├── db.rs               # TypeDatabase, QueryDatabase traits
-│   ├── subtype.rs          # Subtyping algorithm
-│   ├── infer.rs            # Type inference (Union-Find)
-│   ├── instantiate.rs      # Generic substitution
-│   ├── evaluate.rs         # Meta-type evaluation
-│   ├── lower.rs            # AST -> TypeId bridge
-│   ├── visitor.rs          # TypeVisitor trait
-│   ├── compat.rs           # TypeScript compatibility layer
-│   ├── lawyer.rs           # Judge/Lawyer compat layer (any-propagation)
-│   ├── narrowing.rs        # Type narrowing
-│   ├── operations.rs       # Type operations
-│   ├── diagnostics.rs      # Subtype failure reasons
-│   └── tracer.rs           # Zero-cost debug tracing
-│
-├── checker/
-│   ├── mod.rs              # Module exports
-│   ├── state.rs            # CheckerState orchestration
-│   ├── context.rs          # CheckerContext shared state
-│   ├── expr.rs             # Expression checking
-│   ├── statements.rs       # Statement checking
-│   ├── declarations.rs     # Declaration checking
-│   ├── type_checking.rs    # Type validation utilities
-│   ├── flow_analysis.rs    # CFA integration
-│   ├── symbol_resolver.rs  # Symbol resolution
-│   └── types/              # Type-specific modules
-│
-├── emitter/
-│   ├── mod.rs              # Printer, node dispatch
-│   ├── expressions.rs      # Expression emission
-│   ├── statements.rs       # Statement emission
-│   ├── declarations.rs     # Declaration emission
-│   ├── functions.rs        # Function emission
-│   ├── jsx.rs              # JSX emission
-│   ├── types.rs            # Type emission (for .d.ts)
-│   ├── es5_helpers.rs      # ES5 downlevel transforms
-│   ├── module_wrapper.rs   # AMD/UMD/System wrappers
-│   └── module_emission.rs  # Import/export handling
-│
-├── transforms/
-│   ├── mod.rs              # Transform documentation
-│   ├── ir.rs               # IR node definitions
-│   ├── ir_printer.rs       # IR -> String conversion
-│   ├── enum_es5_ir.rs      # Enum ES5 transform
-│   ├── class_es5.rs        # Class ES5 transform
-│   ├── namespace_es5.rs    # Namespace ES5 transform
-│   ├── async_es5.rs        # Async ES5 transform
-│   └── ...                 # Additional transforms
-│
-├── lsp/
-│   ├── mod.rs              # Module exports
-│   ├── project.rs          # Multi-file project container
-│   ├── resolver.rs         # Symbol resolution utilities
-│   ├── definition.rs       # Go to Definition
-│   ├── references.rs       # Find References
-│   ├── completions.rs      # Code Completion
-│   ├── hover.rs            # Hover Information
-│   ├── rename.rs           # Symbol Rename
-│   ├── code_actions.rs     # Refactorings
-│   ├── semantic_tokens.rs  # Syntax highlighting
-│   ├── document_symbols.rs # File outline
-│   ├── folding.rs          # Code folding
-│   ├── signature_help.rs   # Parameter hints
-│   ├── inlay_hints.rs      # Inline hints
-│   └── ...                 # Additional features
-│
-├── diagnostics.rs          # Diagnostic codes and messages
-├── source_file.rs          # SourceFile representation
-├── span.rs                 # TextSpan, TextRange
-└── ...
-```
+### 6.3 The Big Unification Goal
+
+The following must converge on one authoritative semantic kernel:
+
+- assignability,
+- call compatibility,
+- property presence,
+- missing-property classification,
+- fresh object-literal excess-property checking,
+- property access on unions and intersections,
+- write-vs-read property/element access behavior where semantics differ.
+
+If these questions are answered through different local routes, tsz will keep producing the same families of missing and extra diagnostics.
 
 ---
 
-## 8. Anti-Patterns to Avoid
+## 7. Diagnostics Model
 
-### 8.1 Direct TypeKey Matching in Checker
+Diagnostics must be the product of three separate layers:
 
-```rust
-// ANTI-PATTERN: Checker matching on TypeKey
-fn check_string_index(&mut self, type_id: TypeId) {
-    match self.types.lookup(type_id) {
-        Some(TypeKey::Object(shape_id)) => {
-            // Manual logic that should be in Solver
-        }
-        Some(TypeKey::Union(list_id)) => {
-            // Repeated for every type variant
-        }
-        _ => {}
-    }
-}
+1. **Semantic fact**: what failed
+2. **Failure explanation**: why it failed in a structured way
+3. **Rendering policy**: how to anchor, label, and format it
 
-// CORRECT: Use Solver query or visitor
-fn check_string_index(&mut self, type_id: TypeId) {
-    let index_type = self.solver.get_string_index_type(type_id);
-    // Or use visitor pattern
-}
-```
+### 7.1 Rules
 
-### 8.2 Type Computation in Binder
+1. Reporter code must not secretly decide semantics.
+2. Anchor policy must be centralized, not scattered across unrelated reporters.
+3. Related-information ordering and deduplication must be policy-driven.
+4. Speculative paths must not leak committed diagnostics unless explicitly kept.
+5. The same semantic failure should not render through materially different code paths depending on who asked the question.
 
-```rust
-// ANTI-PATTERN: Binder doing type work
-fn bind_variable(&mut self, node: NodeIndex) {
-    // WRONG: Computing type during binding
-    let type_id = if let Some(init) = initializer {
-        self.infer_type(init)  // Type inference!
-    } else {
-        TypeId::ANY
-    };
-}
+### 7.2 Consequence
 
-// CORRECT: Binder only creates symbols
-fn bind_variable(&mut self, node: NodeIndex) {
-    let symbol = self.declare_symbol(name, flags, node);
-    // Type will be computed by Checker later
-}
-```
-
-### 8.3 Per-File Type Interning
-
-```rust
-// ANTI-PATTERN: Each file has its own interner
-struct FileChecker {
-    interner: TypeInterner,  // WRONG: Per-file
-}
-
-// CORRECT: Global shared interner
-struct CheckerState<'a> {
-    interner: &'a TypeInterner,  // Shared reference
-}
-```
-
-### 8.4 Stack-Based Scope Management
-
-```rust
-// ANTI-PATTERN: Scope as mutable stack
-fn enter_scope(&mut self) {
-    self.scope_stack.push(Scope::new());
-}
-fn exit_scope(&mut self) {
-    self.scope_stack.pop();  // Lost after exit!
-}
-
-// CORRECT: Persistent scope tree
-fn enter_scope(&mut self, kind: ContainerKind, node: NodeIndex) -> ScopeId {
-    let scope = Scope { parent: self.current_scope, kind, node, .. };
-    let id = self.scopes.push(scope);  // Persisted
-    self.current_scope = id;
-    id
-}
-```
-
-### 8.5 Duplicated Logic Between Components
-
-```rust
-// ANTI-PATTERN: Same logic in multiple places
-// In checker/expr.rs:
-fn is_string_type(type_id: TypeId) -> bool {
-    type_id == TypeId::STRING
-}
-
-// In solver/subtype.rs:
-fn is_string_type(type_id: TypeId) -> bool {
-    type_id == TypeId::STRING  // Duplicated!
-}
-
-// CORRECT: Single source of truth in Solver
-// solver/mod.rs exports is_string_type
-// Checker imports from solver
-```
-
-### 8.6 God Objects (Files > 3000 Lines)
-
-```rust
-// ANTI-PATTERN: 5000-line state.rs
-pub struct CheckerState { /* everything */ }
-impl CheckerState {
-    // 200+ methods in one file
-}
-
-// CORRECT: Split by responsibility
-// state.rs: Core orchestration (~500 lines)
-// expr.rs: Expression checking (~1500 lines)
-// statements.rs: Statement checking (~1000 lines)
-// declarations.rs: Declaration checking (~1500 lines)
-```
+A “diagnostic fix” that changes semantics is not a real diagnostics fix.  
+A “semantic fix” that depends on renderer-specific branching is also not a real semantic fix.
 
 ---
 
-## 9. Migration Guidelines
+## 8. Transactional Speculation
 
-When refactoring existing code to match this architecture:
+Speculative work is normal in a TypeScript-compatible compiler. Leaky speculation is not.
 
-### Step 1: Identify Misplaced Logic
-- Find TypeKey matches in Checker code
-- Find type computations in Binder
-- Find duplicated logic across components
+### 8.1 Speculative Operations
 
-### Step 2: Extract to Correct Component
-- Type logic -> Solver
-- Symbol logic -> Binder
-- AST traversal -> Checker
-- Code generation -> Emitter
+Examples include:
 
-### Step 3: Add Visitor Support
-- Create visitor method for new operation
-- Replace all TypeKey matches with visitor call
-- Test visitor handles all 24+ type variants
+- overload probing,
+- contextual experimentation,
+- conditional branch probing,
+- tentative generic inference,
+- return-type inference experiments,
+- JSX candidate exploration.
 
-### Step 4: Verify Invariants
-- Checker never imports TypeKey
-- Binder never imports type computation
-- All type equality is O(1)
-- All arenas are properly indexed
+### 8.2 Rules
 
----
+1. Speculation must happen inside an explicit transaction boundary.
+2. Diagnostics, dedup state, request-sensitive caches, and other speculative artifacts must roll back unless committed.
+3. Rollback semantics belong in shared infrastructure, not caller discipline.
+4. Open-coded clone / truncate / restore patterns are transitional debt.
 
-## 10. Glossary
+### 8.3 Desired End-State
 
-| Term | Definition |
-|------|------------|
-| Arena | Contiguous memory pool for efficient allocation |
-| Atom | Interned string identifier (u32) |
-| Coinductive | Greatest Fixed Point semantics for recursive types |
-| Flow Node | Control flow graph node for narrowing |
-| Interning | Deduplication via hash-consing |
-| NodeIndex | Handle to AST node in NodeArena |
-| Solver | Central type computation engine |
-| SymbolId | Handle to symbol in SymbolArena |
-| Thin Node | 16-byte node header (data stored separately) |
-| TypeId | Handle to interned type |
-| TypeKey | Actual type structure/variant |
-| Visitor | Pattern for systematic type traversal |
+The normal shape of speculative code should be:
+
+- begin transaction,
+- do speculative work,
+- either commit or drop,
+- no manual state surgery at the call site.
 
 ---
 
-*This document represents the target architecture. Current implementation may deviate; all changes should move toward this design.*
+## 9. Cache Architecture
+
+Caching is a correctness concern as much as a performance concern.
+
+### 9.1 Ownership Split
+
+- **Checker-owned caches**: AST-local traversal artifacts, source-context artifacts, flow/query orchestration caches, diagnostic shaping caches
+- **Solver-owned caches**: type interning, relation memoization, evaluation caches, semantic summaries
+
+### 9.2 Rules
+
+1. Request-free computations may use request-free caches.
+2. Request-sensitive computations must use request-aware caches or explicit bypass with justification.
+3. Speculative computations must not leak cache entries unless committed.
+4. Cache keys must be explicit and audited.
+5. Recursive cache clearing must not be standard semantic control flow.
+
+### 9.3 Preferred Cache Strategy
+
+The long-term shape should include:
+
+- request-aware caches for request-sensitive expression typing,
+- semantic summary caches for hot repeated work,
+- bounded cache residency,
+- invalidation by stable semantic identity.
+
+### 9.4 Summary Caches We Should Prefer Over Repeated Re-Walks
+
+Examples of desirable summary-style caches:
+
+- optional-chain summaries,
+- union-property summaries,
+- class closure summaries,
+- normalized inference-bounds summaries,
+- stable declaration/visibility summaries for emit.
+
+### 9.5 Anti-Pattern
+
+`clear_type_cache_recursive`-style behavior is a warning sign.  
+It may be necessary during migration, but it is not the target architecture.
+
+---
+
+## 10. Context and State Shape
+
+The checker should not converge on one giant mutable session object.
+
+### 10.1 Preferred State Split
+
+The architecture should move toward distinct layers such as:
+
+- **ProjectSemanticState**: global/shared immutable-ish semantic substrate and long-lived caches
+- **FileCheckSession**: file-local facts and file-scoped cache/view state
+- **CheckScratch**: transient mutable scratch for the current walk
+- **TypingRequest / RelationRequest**: explicit semantic context
+- **DiagnosticTxn / DiagnosticSink**: transactional diagnostic collection
+
+Names can vary. The separation should remain.
+
+### 10.2 Rule
+
+A single `CheckerContext` should not be the place where all of the following mix freely:
+
+- project state,
+- file state,
+- request state,
+- diagnostic state,
+- cache state,
+- speculative state,
+- migration compatibility state.
+
+That shape is acceptable only as a temporary migration structure.
+
+---
+
+## 11. Boundary Enforcement
+
+Architecture should be enforced by the code structure first, and by tests second.
+
+### 11.1 Rules
+
+1. Checker must depend on solver through canonical query surfaces, not direct internal construction.
+2. Checker must not pattern-match on low-level solver internals as a normal practice.
+3. Binder must not import semantic relation logic.
+4. Emitter must not perform semantic validation.
+5. Forbidden dependency directions should fail CI.
+
+### 11.2 Important Principle
+
+Grep-based architecture tests are useful. They are not the ideal final enforcement mechanism.
+
+The preferred trajectory is:
+
+- crate/module visibility makes the wrong thing hard or impossible,
+- architecture tests catch regressions and migration leaks,
+- social discipline is the last line of defense, not the first.
+
+---
+
+## 12. Large-Repo and IDE Architecture
+
+tsz should aim for bounded residency and stable incremental work, not permanent full-program residency.
+
+### 12.1 North Star
+
+1. Binder produces a stable global semantic skeleton/index.
+2. Semantic queries operate on stable identity, not direct AST reachability.
+3. Files can be reparsed/rechecked without rebuilding the world.
+4. ASTs and heavy arenas can eventually be evicted when derived facts are sufficient.
+5. Incremental invalidation happens by semantic/API fingerprint, not by broad whole-project churn.
+
+### 12.2 Consequences
+
+This means we should prefer:
+
+- stable declaration summaries,
+- file-scoped semantic products,
+- queryable project indexes,
+- memory ownership that allows eviction,
+- APIs designed around identity and facts rather than direct AST borrowing.
+
+It also means we should not prematurely optimize for a scheduler over unstable identity.
+
+---
+
+## 13. Migration Priorities
+
+When choosing major architectural work, prefer this order:
+
+1. **Strengthen stable identity**  
+   Make semantic identity earlier, cleaner, and more canonical.
+
+2. **Make context explicit**  
+   Remove ambient mutable context in favor of request-first APIs.
+
+3. **Make speculation transactional**  
+   Rollback semantics should be infrastructure, not call-site discipline.
+
+4. **Unify semantic policy surfaces**  
+   Especially property presence, object-literal freshness, call compatibility, and assignability.
+
+5. **Make caches explicit and request-aware**  
+   Replace blanket bypasses and recursive invalidation with designed cache keys and ownership.
+
+6. **Bound memory and enable incrementalism**  
+   Build toward global semantic skeletons and bounded residency.
+
+7. **Normalize diagnostics after semantic stabilization**  
+   Rendering policy should be centralized once semantic paths are stable.
+
+Not every local bug fix must follow this order. Major architectural work should.
+
+---
+
+## 14. Anti-Goals
+
+The following are explicitly not the north star:
+
+1. Re-implementing solver logic locally in checker helpers.
+2. Fixing correctness by adding more ambient mutable state.
+3. Fixing cache unsoundness by permanently bypassing caches.
+4. Fixing semantics in reporter formatting code.
+5. Using recursive cache clearing as a normal compatibility mechanism.
+6. Building large-repo scheduling before stable identity and bounded residency exist.
+7. Treating arena layout or micro-optimizations as the primary architecture story.
+8. Relying on architecture tests alone when module visibility could enforce the boundary directly.
+
+Arena allocation, thin wrappers, and performance matter. They are means, not the north star.
+
+---
+
+## 15. Review Checklist
+
+For any non-trivial PR, reviewers should ask:
+
+1. Does this reduce the number of semantic paths or add another one?
+2. Does this make context more explicit or more ambient?
+3. Does this strengthen stable identity or recover it later in hot paths?
+4. Does this centralize policy or scatter it?
+5. Does this make speculative work more transactional or more caller-disciplined?
+6. Does this improve cache ownership and audibility or add another bypass/clear path?
+7. Does this move semantics downstream of requests and upstream of diagnostics?
+8. Does this make the wrong architectural move harder in code, not just less polite?
+
+If a change improves correctness but increases architectural duplication, it should usually be treated as a temporary patch and called out explicitly.
+
+---
+
+## 16. Success Metrics
+
+We should measure progress with architecture-sensitive metrics, not only pass rate.
+
+### 16.1 Structural Metrics
+
+- Direct checker access to solver internals outside approved query boundaries trends to zero.
+- Ambient contextual-state mutations trend to zero in checker hot paths.
+- Speculative state rollback is infrastructure-backed, not open-coded.
+- Recursive cache-clear sites trend toward zero.
+- Long-lived caches have explicit ownership and rollback/invalidation rules.
+
+### 16.2 Semantic Metrics
+
+- The major compatibility families (`TS2322`, `TS2339`, `TS2345`, related property/freshness codes) stop showing both high missing and high extra counts.
+- Object-literal, property-presence, and call-compatibility behavior converge on one semantic kernel.
+- Diagnostic fingerprint drift drops after semantic stabilization.
+
+### 16.3 Throughput Metrics
+
+- Request-aware cache hit rates improve on contextual/object/property-heavy workloads.
+- Optional-chain, union-property, and class-heavy workloads improve through summary/cache design rather than ad hoc shortcuts.
+- Large-repo work reduces peak residency and recheck cost through stable semantic identity and bounded derived-state reuse.
+
+---
+
+## 17. Final Rule
+
+When there is uncertainty, prefer the design that:
+
+- has **one** semantic truth source,
+- passes **explicit requests** instead of mutating ambient state,
+- uses **stable identity** instead of reconstructing it,
+- treats **speculation as transactional**,
+- treats **caching as an architectural contract**,
+- and keeps **diagnostics downstream of semantic facts**.
+
+That is the direction tsz should keep converging toward.
