@@ -9,7 +9,10 @@
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::test_fixtures::TestContext;
+use std::path::Path;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -237,12 +240,69 @@ const r = new Promise<number>((resolve) => resolve(1));
 
 // Tests with lib.d.ts loaded - these should NOT emit errors
 
+fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let search_roots: Vec<&Path> = {
+        let mut roots = vec![manifest_dir];
+        let mut parent = manifest_dir.parent();
+        while let Some(dir) = parent {
+            roots.push(dir);
+            parent = dir.parent();
+        }
+        roots
+    };
+    let candidates = [
+        (
+            "lib.es5.d.ts",
+            [
+                "scripts/node_modules/typescript/lib/lib.es5.d.ts",
+                "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
+                "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
+                "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
+                "TypeScript/src/lib/es5.d.ts",
+            ],
+        ),
+        (
+            "lib.es2015.d.ts",
+            [
+                "scripts/node_modules/typescript/lib/lib.es2015.d.ts",
+                "scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts",
+                "scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts",
+                "TypeScript/node_modules/typescript/lib/lib.es2015.d.ts",
+                "TypeScript/src/lib/es2015.d.ts",
+            ],
+        ),
+        (
+            "lib.es2015.symbol.d.ts",
+            [
+                "scripts/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+                "scripts/conformance/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+                "scripts/emit/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+                "TypeScript/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
+                "TypeScript/src/lib/es2015.symbol.d.ts",
+            ],
+        ),
+    ];
+
+    let mut lib_files = Vec::new();
+    for (file_name, suffixes) in candidates {
+        let maybe_path = search_roots
+            .iter()
+            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
+            .find(|path| path.exists());
+        if let Some(path) = maybe_path
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            lib_files.push(Arc::new(LibFile::from_source(file_name.to_string(), content)));
+        }
+    }
+    lib_files
+}
+
 /// Helper function to create a checker WITH lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly and loads lib files.
 fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    use std::sync::Arc;
-
-    let ctx = TestContext::new(); // This loads lib files
+    let ctx = TestContext::new_with_libs(load_lib_files_for_global_type_tests());
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -279,6 +339,7 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> 
             })
             .collect();
         checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(ctx.lib_files.len());
     }
 
     checker.check_source_file(root);
@@ -490,9 +551,6 @@ fn test_symbol_constructor_returns_symbol_type() {
     );
 }
 
-/// TODO: The lib-loaded test harness still emits TS2583 for inferred
-/// `Symbol()` values even though the explicit `symbol` annotation path now
-/// succeeds. Keep the current expectation until that harness gap is closed.
 #[test]
 fn test_symbol_inferred_type_is_symbol() {
     let source = r#"
@@ -501,9 +559,8 @@ const x: symbol = s;
 "#;
     let diagnostics = check_with_lib(source);
 
-    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
     assert!(
-        !ts2583_errors.is_empty(),
-        "Expected TS2583 for Symbol in the current test harness, got: {diagnostics:?}"
+        diagnostics.is_empty(),
+        "Expected inferred Symbol values to resolve with lib files loaded, got: {diagnostics:?}"
     );
 }

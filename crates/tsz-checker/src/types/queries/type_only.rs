@@ -12,6 +12,92 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn report_namespace_value_access_for_type_only_import_equals_expr(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if !self.is_type_only_import_equals_namespace_expr(expr_idx) {
+            return false;
+        }
+
+        let current_alias = self.resolve_identifier_symbol(expr_idx);
+        let has_scoped_value_or_alias = self
+            .entity_name_text(expr_idx)
+            .map(|entity_name| {
+                let lib_binders = self.get_lib_binders();
+                self.ctx
+                    .binder
+                    .resolve_identifier_with_filter(self.ctx.arena, expr_idx, &lib_binders, |sid| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sid, &lib_binders)
+                            .is_some_and(|s| {
+                                Some(sid) != current_alias
+                                    && ((s.flags & symbol_flags::VALUE) != 0
+                                        || ((s.flags & symbol_flags::ALIAS) != 0
+                                            && !s.is_type_only
+                                            && s.escaped_name == entity_name))
+                            })
+                    })
+                    .is_some()
+            })
+            .unwrap_or(false);
+
+        if has_scoped_value_or_alias {
+            return false;
+        }
+
+        if let Some(ns_name) = self.entity_name_text(expr_idx) {
+            self.error_namespace_used_as_value_at(&ns_name, expr_idx);
+            if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+                && self.alias_resolves_to_type_only(sym_id)
+            {
+                self.error_type_only_value_at(&ns_name, expr_idx);
+            }
+        }
+
+        true
+    }
+
+    fn find_import_equals_export_equals_symbol(
+        &self,
+        module_name: &str,
+    ) -> Option<(&tsz_binder::BinderState, SymbolId)> {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let quoted = format!("\"{normalized}\"");
+        let single_quoted = format!("'{normalized}'");
+        let candidates = [
+            module_name,
+            normalized,
+            quoted.as_str(),
+            single_quoted.as_str(),
+        ];
+
+        for candidate in candidates {
+            if let Some(exports) = self.ctx.binder.module_exports.get(candidate)
+                && let Some(sym_id) = exports.get("export=")
+            {
+                return Some((self.ctx.binder, sym_id));
+            }
+        }
+
+        let Some(all_binders) = self.ctx.all_binders.as_ref() else {
+            return None;
+        };
+
+        for binder in all_binders.iter() {
+            for candidate in candidates {
+                if let Some(exports) = binder.module_exports.get(candidate)
+                    && let Some(sym_id) = exports.get("export=")
+                {
+                    return Some((binder, sym_id));
+                }
+            }
+        }
+
+        None
+    }
+
     /// Returns true when an expression is an `import x = require("...")` alias
     /// whose target module has `export =` bound to a pure type (interface or
     /// type alias) — i.e., NOT a namespace/module.
@@ -68,46 +154,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let normalized = module_name.trim_matches('"').trim_matches('\'');
-        let quoted = format!("\"{normalized}\"");
-        let single_quoted = format!("'{normalized}'");
-
-        let export_equals_sym = self
-            .ctx
-            .binder
-            .module_exports
-            .get(module_name)
-            .and_then(|exports| exports.get("export="))
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(normalized)
-                    .and_then(|exports| exports.get("export="))
-            })
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(&quoted)
-                    .and_then(|exports| exports.get("export="))
-            })
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(&single_quoted)
-                    .and_then(|exports| exports.get("export="))
-            });
-
-        let Some(export_equals_sym) = export_equals_sym else {
+        let Some((export_equals_binder, export_equals_sym)) =
+            self.find_import_equals_export_equals_symbol(module_name)
+        else {
             return false;
         };
 
-        let resolved_export_equals = if let Some(export_sym) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+        let resolved_export_equals = if let Some(export_sym) =
+            export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
             let mut visited_aliases = Vec::new();
@@ -119,11 +173,13 @@ impl<'a> CheckerState<'a> {
             export_equals_sym
         };
 
-        if let Some(export_symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        if let Some(export_symbol) =
+            export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
         {
+            let has_namespace_exports = export_symbol
+                .exports
+                .as_ref()
+                .is_some_and(|exports| !exports.is_empty());
             // Pure type: has INTERFACE or TYPE_ALIAS flags but no VALUE or NAMESPACE flags
             let is_pure_type = (export_symbol.flags
                 & (symbol_flags::INTERFACE
@@ -134,7 +190,7 @@ impl<'a> CheckerState<'a> {
                 & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                 != 0;
             let has_value = (export_symbol.flags & symbol_flags::VALUE) != 0;
-            return is_pure_type && !is_namespace_or_module && !has_value;
+            return is_pure_type && !is_namespace_or_module && !has_namespace_exports && !has_value;
         }
 
         false
@@ -207,46 +263,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let normalized = module_name.trim_matches('"').trim_matches('\'');
-        let quoted = format!("\"{normalized}\"");
-        let single_quoted = format!("'{normalized}'");
-
-        let export_equals_sym = self
-            .ctx
-            .binder
-            .module_exports
-            .get(module_name)
-            .and_then(|exports| exports.get("export="))
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(normalized)
-                    .and_then(|exports| exports.get("export="))
-            })
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(&quoted)
-                    .and_then(|exports| exports.get("export="))
-            })
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .module_exports
-                    .get(&single_quoted)
-                    .and_then(|exports| exports.get("export="))
-            });
-
-        let Some(export_equals_sym) = export_equals_sym else {
+        let Some((export_equals_binder, export_equals_sym)) =
+            self.find_import_equals_export_equals_symbol(module_name)
+        else {
             return false;
         };
 
-        let resolved_export_equals = if let Some(export_sym) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+        let resolved_export_equals = if let Some(export_sym) =
+            export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
             let mut visited_aliases = Vec::new();
@@ -265,19 +289,15 @@ impl<'a> CheckerState<'a> {
         // to avoid false TS2708 errors. This handles cases like:
         //   declare module 'M' { import X = C; export = X; }
         // where the export= -> X -> C chain can't be resolved across module boundaries.
-        if let Some(resolved_sym) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        if let Some(resolved_sym) =
+            export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
             && resolved_sym.flags == symbol_flags::ALIAS
         {
             return false;
         }
 
-        if let Some(export_symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        if let Some(export_symbol) =
+            export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
         {
             if (export_symbol.flags & symbol_flags::VALUE) == 0 {
                 return true;
@@ -297,10 +317,8 @@ impl<'a> CheckerState<'a> {
 
                 if !has_runtime_value_member && let Some(exports) = export_symbol.exports.as_ref() {
                     for (_, member_id) in exports.iter() {
-                        if let Some(member_symbol) = self
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(*member_id, &lib_binders)
+                        if let Some(member_symbol) =
+                            export_equals_binder.get_symbol_with_libs(*member_id, &lib_binders)
                             && (member_symbol.flags & symbol_flags::VALUE) != 0
                             && !self.symbol_member_is_type_only(*member_id, None)
                         {
@@ -312,10 +330,8 @@ impl<'a> CheckerState<'a> {
 
                 if !has_runtime_value_member && let Some(members) = export_symbol.members.as_ref() {
                     for (_, member_id) in members.iter() {
-                        if let Some(member_symbol) = self
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(*member_id, &lib_binders)
+                        if let Some(member_symbol) =
+                            export_equals_binder.get_symbol_with_libs(*member_id, &lib_binders)
                             && (member_symbol.flags & symbol_flags::VALUE) != 0
                             && !self.symbol_member_is_type_only(*member_id, None)
                         {

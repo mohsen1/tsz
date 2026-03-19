@@ -581,9 +581,10 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .get_symbol_with_libs(sid, &lib_binders)
                             .is_some_and(|s| {
-                                (s.flags & tsz_binder::symbol_flags::VALUE) != 0
-                                    || ((s.flags & tsz_binder::symbol_flags::ALIAS) != 0
-                                        && !s.is_type_only)
+                                sid != sym_id
+                                    && ((s.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                        || ((s.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                                            && !s.is_type_only))
                             })
                     })
                     .is_some();

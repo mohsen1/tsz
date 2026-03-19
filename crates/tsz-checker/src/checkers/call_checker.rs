@@ -61,6 +61,7 @@ impl<'a> CheckerState<'a> {
         diag: &crate::diagnostics::Diagnostic,
     ) -> bool {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+            || diag.code == diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE
     }
 
     pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(
@@ -303,6 +304,34 @@ impl<'a> CheckerState<'a> {
             })
             .cloned()
             .collect()
+    }
+
+    fn preserved_speculative_call_diagnostics(
+        &self,
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        self.ctx.diagnostics[snap.diagnostics_len..]
+            .iter()
+            .filter(|diag| Self::should_preserve_speculative_call_diagnostic(diag))
+            .cloned()
+            .collect()
+    }
+
+    fn extend_unique_diagnostics(
+        &self,
+        dest: &mut Vec<crate::diagnostics::Diagnostic>,
+        source: impl IntoIterator<Item = crate::diagnostics::Diagnostic>,
+    ) {
+        let mut seen = rustc_hash::FxHashSet::default();
+        for diag in dest.iter() {
+            seen.insert(self.ctx.diagnostic_dedup_key(diag));
+        }
+        for diag in source {
+            let key = self.ctx.diagnostic_dedup_key(&diag);
+            if seen.insert(key) {
+                dest.push(diag);
+            }
+        }
     }
 
     /// Nested calls/new expressions should infer from their own callee shapes during
@@ -2100,10 +2129,13 @@ impl<'a> CheckerState<'a> {
                             );
                         let kept_candidate_diags =
                             self.ctx.diagnostics.split_off(diagnostics_checkpoint);
-                        // Merge: roll back first-pass diags, keep non-callback ones,
-                        // then append the candidate's diagnostics.
-                        let mut merged = preserved_first_pass_diags;
-                        merged.extend(kept_candidate_diags);
+                        // Merge: preserve hard speculative call diagnostics
+                        // (e.g. TS2302/TS2708), then append first-pass and
+                        // candidate diagnostics without duplication.
+                        let mut merged =
+                            self.preserved_speculative_call_diagnostics(&overload_snap.diag);
+                        self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
+                        self.extend_unique_diagnostics(&mut merged, kept_candidate_diags);
                         self.ctx
                             .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                         let sig_node_types = std::mem::take(&mut self.ctx.node_types);
@@ -2128,10 +2160,13 @@ impl<'a> CheckerState<'a> {
                     );
                     let kept_candidate_diags =
                         self.ctx.diagnostics.split_off(diagnostics_checkpoint);
-                    // Merge: roll back first-pass diags, keep non-callback ones,
-                    // then append the candidate's diagnostics.
-                    let mut merged = preserved_first_pass_diags;
-                    merged.extend(kept_candidate_diags);
+                    // Merge: preserve hard speculative call diagnostics
+                    // (e.g. TS2302/TS2708), then append first-pass and
+                    // candidate diagnostics without duplication.
+                    let mut merged =
+                        self.preserved_speculative_call_diagnostics(&overload_snap.diag);
+                    self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
+                    self.extend_unique_diagnostics(&mut merged, kept_candidate_diags);
                     self.ctx
                         .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
@@ -2211,8 +2246,10 @@ impl<'a> CheckerState<'a> {
                     );
                     let kept_candidate_diags =
                         self.ctx.diagnostics.split_off(diagnostics_checkpoint);
-                    let mut merged = preserved_first_pass_diags;
-                    merged.extend(kept_candidate_diags);
+                    let mut merged =
+                        self.preserved_speculative_call_diagnostics(&overload_snap.diag);
+                    self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
+                    self.extend_unique_diagnostics(&mut merged, kept_candidate_diags);
                     self.ctx
                         .rollback_and_replace_diagnostics(&overload_snap.diag, merged);
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);

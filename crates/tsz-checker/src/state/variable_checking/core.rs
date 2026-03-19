@@ -765,6 +765,7 @@ impl<'a> CheckerState<'a> {
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });
+                        checker.ctx.rebuild_emitted_diagnostics_from_current();
                     }
                     let init_snap = checker.ctx.snapshot_diagnostics();
                     let init_type =

@@ -596,7 +596,6 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2708: Cannot use namespace '{0}' as a value.
     pub fn error_namespace_used_as_value_at(&mut self, name: &str, idx: NodeIndex) {
-        tracing::debug!("error_namespace_used_as_value_at: {name}");
         self.error_at_node_msg(
             idx,
             diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,

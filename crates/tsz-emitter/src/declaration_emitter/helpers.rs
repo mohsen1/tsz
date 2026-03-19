@@ -6564,7 +6564,10 @@ impl<'a> DeclarationEmitter<'a> {
                     // Bare identifier referencing an enum/module → emit typeof
                     self.write(": ");
                     self.write(&typeof_text);
-                } else if let Some(type_text) = self.preferred_expression_type_text(initializer) {
+                } else if (type_id != tsz_solver::types::TypeId::ANY
+                    || !self.initializer_is_new_expression(initializer))
+                    && let Some(type_text) = self.preferred_expression_type_text(initializer)
+                {
                     self.write(": ");
                     self.write(&type_text);
                 } else {
@@ -6676,6 +6679,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn initializer_is_new_expression(&self, initializer: NodeIndex) -> bool {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        self.arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
     }
 
     fn synthetic_class_extends_alias_type_id(

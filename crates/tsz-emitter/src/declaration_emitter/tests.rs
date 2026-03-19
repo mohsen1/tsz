@@ -2926,6 +2926,61 @@ var e = new E(1);
 }
 
 #[test]
+fn test_construct_signature_new_initializer_keeps_inferred_any() {
+    let source = r#"
+interface Input {}
+interface Factory {
+    new (value: Input);
+}
+declare var ctor: Factory;
+declare var value: Input;
+var instance = new ctor(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+
+    let instance_stmt_idx = source_file.statements.nodes[4];
+    let instance_decl = parser
+        .arena
+        .get(instance_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing instance declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(instance_decl.name.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var instance: any;"),
+        "Expected construct-signature new initializer to preserve inferred any: {output}"
+    );
+    assert!(
+        !output.contains("declare var instance: ctor;"),
+        "Did not expect constructor variable name to leak into the emitted type: {output}"
+    );
+}
+
+#[test]
 fn test_constructor_type_no_double_semicolon() {
     let source = "export type Ctor = new (...args: any[]) => void;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

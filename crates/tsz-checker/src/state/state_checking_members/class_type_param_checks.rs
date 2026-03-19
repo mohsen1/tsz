@@ -262,22 +262,31 @@ impl<'a> CheckerState<'a> {
                 if let Some(method) = self.ctx.arena.get_method_decl(node)
                     && self.has_static_modifier(&method.modifiers)
                 {
+                    let own_params = self.collect_type_param_names(&method.type_parameters);
+                    let filtered: Vec<String> = class_type_param_names
+                        .iter()
+                        .filter(|name| !own_params.contains(name))
+                        .cloned()
+                        .collect();
                     self.check_callable_for_class_type_param_refs(
                         class_type_param_names,
                         &method.type_parameters,
                         &method.parameters,
                         method.type_annotation,
                     );
-                    self.check_static_member_body_for_class_type_param_refs(
-                        method.body,
-                        class_type_param_names,
-                    );
+                    self.check_static_member_body_for_class_type_param_refs(method.body, &filtered);
                 }
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
                     && self.has_static_modifier(&accessor.modifiers)
                 {
+                    let own_params = self.collect_type_param_names(&accessor.type_parameters);
+                    let filtered: Vec<String> = class_type_param_names
+                        .iter()
+                        .filter(|name| !own_params.contains(name))
+                        .cloned()
+                        .collect();
                     self.check_callable_for_class_type_param_refs(
                         class_type_param_names,
                         &accessor.type_parameters,
@@ -286,7 +295,7 @@ impl<'a> CheckerState<'a> {
                     );
                     self.check_static_member_body_for_class_type_param_refs(
                         accessor.body,
-                        class_type_param_names,
+                        &filtered,
                     );
                 }
             }
