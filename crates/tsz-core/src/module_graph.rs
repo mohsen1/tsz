@@ -603,6 +603,7 @@ pub struct ModuleGraphStats {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use crate::module_resolver::ModuleExtension;
 
     fn create_test_path(name: &str) -> PathBuf {
         // Use a temp directory structure for testing
@@ -621,6 +622,17 @@ mod tests {
     }
 
     #[test]
+    fn test_module_id_is_none_and_external_marker() {
+        assert!(ModuleId::NONE.is_none());
+        assert!(!ModuleId(0).is_none());
+
+        let info = ModuleInfo::new(ModuleId(7), create_test_path("pkg/index.ts"))
+            .external("pkg".to_string());
+        assert!(info.is_external);
+        assert_eq!(info.specifier.as_deref(), Some("pkg"));
+    }
+
+    #[test]
     fn test_module_graph_dedup() {
         let mut graph = ModuleGraph::new();
 
@@ -629,6 +641,27 @@ mod tests {
         let a2 = graph.add_module(&path);
 
         assert_eq!(a1, a2);
+        assert_eq!(graph.len(), 1);
+    }
+
+    #[test]
+    fn test_add_external_module_dedups_by_canonical_path() {
+        let mut graph = ModuleGraph::new();
+        let resolved = ResolvedModule {
+            resolved_path: create_test_path("node_modules/pkg/index.js"),
+            is_external: true,
+            package_name: Some("pkg".to_string()),
+            original_specifier: "pkg".to_string(),
+            extension: ModuleExtension::Js,
+        };
+
+        let first = graph.add_external_module("pkg", &resolved);
+        let second = graph.add_external_module("pkg", &resolved);
+
+        assert_eq!(first, second);
+        let module = graph.get_module(first).unwrap();
+        assert!(module.is_external);
+        assert_eq!(module.specifier.as_deref(), Some("pkg"));
         assert_eq!(graph.len(), 1);
     }
 
@@ -646,6 +679,31 @@ mod tests {
 
         let module_b = graph.get_module(b).unwrap();
         assert!(module_b.dependents.contains(&a));
+    }
+
+    #[test]
+    fn test_entry_points_deduplicate_and_clear_resets_state() {
+        let mut graph = ModuleGraph::new();
+        let a = graph.add_module(&create_test_path("a.ts"));
+        let b = graph.add_module(&create_test_path("b.ts"));
+
+        graph.add_entry_point(a);
+        graph.add_entry_point(a);
+        graph.add_entry_point(b);
+
+        assert_eq!(graph.entry_points(), &[a, b]);
+
+        graph.add_simple_dependency(a, b, "./b");
+        assert_eq!(graph.edges().len(), 1);
+
+        graph.clear();
+
+        assert!(graph.is_empty());
+        assert_eq!(graph.len(), 0);
+        assert!(graph.entry_points().is_empty());
+        assert!(graph.edges().is_empty());
+        assert!(graph.circular_deps().is_empty());
+        assert_eq!(graph.stats().total_modules, 0);
     }
 
     #[test]
@@ -788,5 +846,53 @@ mod tests {
         assert_eq!(stats.internal_modules, 2);
         assert_eq!(stats.total_edges, 1);
         assert_eq!(stats.entry_points, 1);
+    }
+
+    #[test]
+    fn test_module_graph_views_and_stats_on_empty_and_mixed_graph() {
+        let graph = ModuleGraph::new();
+        let empty_stats = graph.stats();
+        assert_eq!(empty_stats.total_modules, 0);
+        assert_eq!(empty_stats.internal_modules, 0);
+        assert_eq!(empty_stats.external_modules, 0);
+        assert_eq!(empty_stats.total_edges, 0);
+        assert_eq!(empty_stats.entry_points, 0);
+        assert_eq!(empty_stats.circular_dependencies, 0);
+        assert_eq!(empty_stats.max_depth, 0);
+        assert_eq!(empty_stats.average_dependencies, 0.0);
+        assert!(graph.modules().next().is_none());
+        assert!(graph.edges().is_empty());
+        assert!(graph.entry_points().is_empty());
+        assert!(graph.circular_deps().is_empty());
+
+        let mut graph = ModuleGraph::new();
+        let internal = graph.add_module(&create_test_path("src/a.ts"));
+        let external = graph.add_external_module(
+            "pkg",
+            &ResolvedModule {
+                resolved_path: create_test_path("node_modules/pkg/index.js"),
+                is_external: true,
+                package_name: Some("pkg".to_string()),
+                original_specifier: "pkg".to_string(),
+                extension: ModuleExtension::Js,
+            },
+        );
+        graph.add_entry_point(internal);
+        graph.add_simple_dependency(internal, external, "pkg");
+
+        let stats = graph.stats();
+        assert_eq!(stats.total_modules, 2);
+        assert_eq!(stats.internal_modules, 1);
+        assert_eq!(stats.external_modules, 1);
+        assert_eq!(stats.total_edges, 1);
+        assert_eq!(stats.entry_points, 1);
+        assert_eq!(stats.average_dependencies, 0.5);
+        assert_eq!(stats.max_depth, 2);
+
+        let mut modules: Vec<_> = graph.modules().map(|m| m.id).collect();
+        modules.sort_by_key(|id| id.0);
+        assert_eq!(modules, vec![internal, external]);
+        assert_eq!(graph.edges().len(), 1);
+        assert_eq!(graph.entry_points(), &[internal]);
     }
 }
