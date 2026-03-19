@@ -8,6 +8,28 @@ fn parse_source(source: &str) -> (ParserState, NodeIndex) {
     (parser, root)
 }
 
+fn assert_function_body_recovery_uses_statement_errors(source: &str) {
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 for the missing `(`, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected downstream TS1109 from the malformed body statement, got {diags:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 from `static` statement recovery, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED),
+        "should not parse the function body as an object/parameter list, got {diags:?}"
+    );
+}
+
 #[test]
 fn parse_statement_recovery_on_malformed_top_level_diagnostics() {
     let (parser, root) = parse_source("const x = 1\nconst y = ;\nconst z = 3;");
@@ -29,6 +51,53 @@ fn parse_static_block_statement_is_supported() {
 fn parse_with_statement_with_recovery_when_expression_missing() {
     let (parser, _root) = parse_source("with () {}\nconst ok = 1;");
     assert!(!parser.get_diagnostics().is_empty());
+}
+
+#[test]
+fn function_declaration_missing_open_paren_recovers_into_body() {
+    assert_function_body_recovery_uses_statement_errors(
+        "function boo {\n  static test()\n  static test(name: string)\n  static test(name?: any) {}\n}\nconst ok = 1;",
+    );
+}
+
+#[test]
+fn function_declaration_missing_open_paren_keeps_downstream_ts1005s() {
+    let source = "function boo {\n  static test()\n  static test(name: string)\n  static test(name?: any) {}\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let colon_pos = source.find(": string").expect("type annotation") as u32;
+    let body_pos = source.rfind('{').expect("body brace") as u32;
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == colon_pos
+                && diag.message == "',' expected."),
+        "expected TS1005 ',' expected at the parameter type annotation, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == body_pos
+                && diag.message == "';' expected."),
+        "expected TS1005 ';' expected at the trailing body brace, got {diags:?}"
+    );
+}
+
+#[test]
+fn function_expression_missing_open_paren_recovers_into_body() {
+    assert_function_body_recovery_uses_statement_errors(
+        "const f = function boo {\n  static test()\n  static test(name: string)\n  static test(name?: any) {}\n};\nconst ok = 1;",
+    );
+}
+
+#[test]
+fn export_default_function_missing_open_paren_recovers_into_body() {
+    assert_function_body_recovery_uses_statement_errors(
+        "export default function {\n  static test()\n  static test(name: string)\n  static test(name?: any) {}\n}\nconst ok = 1;",
+    );
 }
 
 #[test]

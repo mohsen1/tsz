@@ -789,6 +789,7 @@ impl ParserState {
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
             self.next_token();
+            let downstream_start = self.token_pos();
             let preserve_downstream_expected = matches!(
                 self.token(),
                 SyntaxKind::BreakKeyword
@@ -808,7 +809,9 @@ impl ParserState {
             if !preserve_downstream_expected {
                 let mut i = diag_count;
                 while i < self.parse_diagnostics.len() {
-                    if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
+                    if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED
+                        && self.parse_diagnostics[i].start == downstream_start
+                    {
                         self.parse_diagnostics.remove(i);
                     } else {
                         i += 1;
@@ -2004,10 +2007,17 @@ impl ParserState {
         // The function name was already parsed above in the static block context.
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
 
-        // Parse parameters
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        // Parse parameters. If `(` is missing and we're already at `{`, recover
+        // straight into the body instead of parsing the body as a destructuring
+        // parameter list.
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
+            NodeList::new()
+        } else {
+            let params = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        };
 
         // Parse optional return type (may be a type predicate: param is T)
         // Note: Type annotations are not in async/generator context
@@ -2104,9 +2114,14 @@ impl ParserState {
         // new scope where 'await' is a valid identifier (unless the function is async).
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
+            NodeList::new()
+        } else {
+            let params = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        };
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
@@ -2245,10 +2260,17 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        // Parse parameters
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        // Parse parameters. If the opening `(` is missing and we're already at
+        // `{`, treat it as the function body so statement recovery can produce
+        // the downstream errors instead of parameter-list/object-literal noise.
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
+            NodeList::new()
+        } else {
+            let params = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        };
 
         // Parse optional return type (may be a type predicate: param is T)
         // Note: Type annotations are not in async/generator context
