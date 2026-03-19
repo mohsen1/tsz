@@ -1852,6 +1852,23 @@ impl ParserState {
                 // Type arguments followed by call: expr<T>() or expr<T, U>()
                 // Also handles `<<` for nested generics: foo<<T>(x: T) => number>(fn)
                 SyntaxKind::LessThanToken | SyntaxKind::LessThanLessThanToken => {
+                    if self
+                        .arena
+                        .get(expr)
+                        .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
+                    {
+                        let type_arg_start = self.token_pos();
+                        let _ = self.parse_type_arguments();
+                        let type_arg_end = self.token_full_start();
+                        self.parse_error_at(
+                            type_arg_start,
+                            (type_arg_end.saturating_sub(type_arg_start)).max(1),
+                            tsz_common::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+                            tsz_common::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+                        );
+                        continue;
+                    }
+
                     // Try to parse as type arguments for a call expression
                     // This is tricky because < could be comparison operator
                     if let Some(type_args) = self.try_parse_type_arguments_for_call() {

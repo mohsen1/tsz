@@ -436,6 +436,13 @@ impl ParserState {
             return self.parse_import_type();
         }
 
+        if self.is_intrinsic_type_keyword() {
+            let kind = self.token();
+            let end_pos = self.token_end();
+            self.next_token();
+            return self.arena.add_token(kind as u16, start_pos, end_pos);
+        }
+
         let first_name = self.parse_type_identifier_or_keyword();
         let type_name = self.parse_qualified_name_rest(first_name);
         // Only parse type arguments if `<` is on the same line (no preceding line break).
@@ -449,12 +456,16 @@ impl ParserState {
         self.arena.add_type_ref(
             syntax_kind_ext::TYPE_REFERENCE,
             start_pos,
-            self.token_end(),
+            self.token_full_start(),
             crate::parser::node::TypeRefData {
                 type_name,
                 type_arguments,
             },
         )
+    }
+
+    fn is_intrinsic_type_keyword(&self) -> bool {
+        matches!(self.token(), SyntaxKind::VoidKeyword)
     }
 
     fn parse_primary_type_array_suffix(
@@ -809,7 +820,7 @@ impl ParserState {
             } else {
                 start_pos
             };
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             expr_name = self.arena.add_qualified_name(
                 syntax_kind_ext::QUALIFIED_NAME,
@@ -884,7 +895,7 @@ impl ParserState {
             } else {
                 start_pos
             };
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             qualifier = self.arena.add_qualified_name(
                 syntax_kind_ext::QUALIFIED_NAME,
@@ -903,7 +914,7 @@ impl ParserState {
             && !self.scanner.has_preceding_line_break())
         .then(|| self.parse_type_arguments());
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Return as a type reference with the import expression as the type name
         self.arena.add_type_ref(
