@@ -283,15 +283,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn js_expando_property_read_before_assignment(
+    pub(super) fn expando_property_read_before_assignment(
         &self,
         property_access_idx: NodeIndex,
         object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> bool {
-        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
-            return false;
-        }
         if self.property_access_is_write_target_or_base(property_access_idx) {
             return false;
         }
@@ -299,12 +296,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self.is_current_file_commonjs_export_base_for_expando(object_expr_idx) {
+            if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+                return false;
+            }
             return self.commonjs_export_read_before_assignment(property_access_idx, property_name);
         }
         if !self.expando_read_is_within_initializing_scope(property_access_idx, object_expr_idx) {
             return false;
         }
-        if !self.is_js_expando_capable_read_root(object_expr_idx, property_name) {
+        if !self.is_expando_capable_read_root(object_expr_idx, property_name) {
             return false;
         }
 
@@ -317,13 +317,14 @@ impl<'a> CheckerState<'a> {
             .is_definitely_assigned(property_access_idx, flow_node)
     }
 
-    fn is_js_expando_capable_read_root(
+    fn is_expando_capable_read_root(
         &self,
         object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> bool {
         self.is_expando_property_read(object_expr_idx, property_name)
-            || self.is_js_prototype_read_root(object_expr_idx, property_name)
+            || ((self.is_js_file() && self.ctx.compiler_options.check_js)
+                && self.is_js_prototype_read_root(object_expr_idx, property_name))
     }
 
     fn current_file_commonjs_export_member_name(&self, idx: NodeIndex) -> Option<String> {

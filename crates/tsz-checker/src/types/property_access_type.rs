@@ -700,11 +700,8 @@ impl<'a> CheckerState<'a> {
         let mut js_expando_before_assignment = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
-            js_expando_before_assignment = self.js_expando_property_read_before_assignment(
-                idx,
-                access.expression,
-                property_name,
-            );
+            js_expando_before_assignment =
+                self.expando_property_read_before_assignment(idx, access.expression, property_name);
             if js_expando_before_assignment {
                 use crate::diagnostics::format_message;
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

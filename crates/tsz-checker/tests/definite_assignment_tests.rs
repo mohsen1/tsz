@@ -241,6 +241,47 @@ fn test_parameter_property_chain_summary_preserves_optional_base_param_property_
 }
 
 #[test]
+fn test_ts_function_expando_summary_reports_ts2565_and_keeps_returned_members() {
+    let source = r"
+        function f(flag: boolean) {
+            function d() {}
+            if (flag) {
+                d.q = false;
+            }
+            d.q;
+            if (flag) {
+                d.s = 'hi';
+            }
+            return d;
+        }
+
+        const value = f(true).s;
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+        ),
+        1,
+        "TS2565 should apply to function expando reads inside the initializing scope, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2339),
+        "Returned function expandos should stay visible through the shared summary, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_parameter_property_chain_summary_preserves_optional_base_property_override_type() {
     let source = r"
         class Base {
