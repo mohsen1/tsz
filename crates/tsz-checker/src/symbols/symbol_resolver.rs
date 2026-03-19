@@ -30,6 +30,103 @@ pub enum TypeSymbolResolution {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn resolve_enclosing_type_parameter_symbol(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            let type_params = self
+                .ctx
+                .arena
+                .get_function(parent_node)
+                .and_then(|data| data.type_parameters.as_ref())
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_class(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_interface(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_type_alias(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_signature(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_method_decl(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_accessor(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_constructor(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                })
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_function_type(parent_node)
+                        .and_then(|data| data.type_parameters.as_ref())
+                });
+
+            if let Some(type_params) = type_params {
+                for &param_idx in &type_params.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param_data) = self.ctx.arena.get_type_parameter(param_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(param_data.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == name {
+                        if let Some(sym_id) = self.ctx.binder.get_node_symbol(param_idx) {
+                            return Some(sym_id);
+                        }
+                    }
+                }
+            }
+
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+
+        None
+    }
+
     // =========================================================================
     // Symbol Type Resolution
     // =========================================================================
@@ -440,9 +537,11 @@ impl<'a> CheckerState<'a> {
         };
         let name = ident.escaped_text.as_str();
 
-        if self.lookup_type_parameter(name).is_none()
-            && let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
-        {
+        if let Some(sym_id) = self.resolve_enclosing_type_parameter_symbol(idx, name) {
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
+        if let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name) {
             return TypeSymbolResolution::Type(sym_id);
         }
 
@@ -808,6 +907,14 @@ impl<'a> CheckerState<'a> {
             let lib_binders = self.get_lib_binders();
             return match self.resolve_identifier_symbol_in_type_position(idx) {
                 TypeSymbolResolution::Type(sym_id) => {
+                    if self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .is_some_and(|symbol| (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                    {
+                        return TypeSymbolResolution::Type(sym_id);
+                    }
                     // Preserve unresolved alias symbols in type position.
                     // `import X = require("...")` aliases may not resolve to a concrete
                     // target symbol, but `X` is still a valid namespace-like type query

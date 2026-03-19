@@ -273,7 +273,9 @@ impl BinderState {
                         type_param_name = %name,
                         "Binding type parameter"
                     );
-                    self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
+                    let sym_id =
+                        self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
+                    self.node_symbols.insert(type_param.name.0, sym_id);
                 }
             }
         }
@@ -882,6 +884,10 @@ impl BinderState {
             } else {
                 self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
             }
+
+            self.enter_scope(ContainerKind::Block, idx);
+            self.bind_type_parameters(arena, alias.type_parameters.as_ref());
+            self.exit_scope(arena);
         }
     }
 

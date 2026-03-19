@@ -4981,6 +4981,20 @@ type _DeepReadonlyObject<T> = {
 }
 
 #[test]
+fn test_type_alias_type_param_shadows_global_return_type_utility() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type AnyFunction<Args extends any[] = any[], ReturnType = any> = (...args: Args) => ReturnType;
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2314),
+        "Type alias-local type parameters must shadow the global ReturnType<T> utility. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
         r"
