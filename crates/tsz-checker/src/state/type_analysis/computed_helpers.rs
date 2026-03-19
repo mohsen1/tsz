@@ -176,11 +176,10 @@ impl<'a> CheckerState<'a> {
             return Some(raw_contextual_type);
         }
 
-        if preserve_raw_object_context {
-            Some(type_id)
-        } else if preserve_raw
-            && !needs_resolved_callable_context
-            && self.raw_contextual_signature_available(type_id)
+        if preserve_raw_object_context
+            || (preserve_raw
+                && !needs_resolved_callable_context
+                && self.raw_contextual_signature_available(type_id))
         {
             Some(type_id)
         } else {
