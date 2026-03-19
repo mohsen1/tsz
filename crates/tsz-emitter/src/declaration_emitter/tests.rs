@@ -1,12 +1,13 @@
 use super::*;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use tsz_binder::BinderState;
+use tsz_binder::{BinderState, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_solver::{
     CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
-    SymbolRef, TupleElement, TypeId, TypeInterner,
+    DefId, SymbolRef, TupleElement, TypeId, TypeInterner,
 };
 
 // =============================================================================
@@ -366,6 +367,54 @@ fn test_structural_setter_only_property_uses_write_type() {
         !printed.contains("x: undefined;"),
         "Did not expect setter-only structural property to use undefined read type: {printed}"
     );
+}
+
+#[test]
+fn test_foreign_global_lazy_type_application_keeps_alias_name() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+
+    let mut foreign_parser = ParserState::new(
+        "lib.es2019.array.d.ts".to_string(),
+        "type FlatArray<T, D> = T;".to_string(),
+    );
+    let _foreign_root = foreign_parser.parse_source_file();
+    let foreign_decl = foreign_parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing foreign type alias declaration");
+
+    let mut binder = BinderState::new();
+    let flat_array_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "FlatArray".to_string());
+    binder
+        .symbols
+        .get_mut(flat_array_sym)
+        .expect("missing synthetic symbol")
+        .declarations
+        .push(foreign_decl);
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(42);
+    let flat_array_type = interner.application(
+        interner.lazy(def_id),
+        vec![TypeId::STRING, TypeId::NUMBER],
+    );
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(def_id, flat_array_sym);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(flat_array_type);
+
+    assert_eq!(printed, "FlatArray<string, number>");
 }
 
 #[test]
