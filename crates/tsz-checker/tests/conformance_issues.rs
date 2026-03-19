@@ -11802,6 +11802,39 @@ type T2<U extends Record<PropertyKey, number>> = T1<Same<U>>;
 }
 
 #[test]
+fn test_no_false_ts2344_for_weak_collection_infer_constraints_in_true_branch() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type DeepPickWeakMap<Type, Filter> = Type extends WeakMap<infer Keys, infer Values>
+    ? Filter extends WeakMap<Keys, infer FilterValues>
+        ? WeakMap<Keys, Values>
+        : Type
+    : never;
+
+type DeepPickWeakSet<Type, Filter> = Type extends WeakSet<infer Values>
+    ? Filter extends WeakSet<infer FilterValues>
+        ? WeakSet<Values>
+        : Type
+    : never;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Infer variables from WeakMap/WeakSet true branches should inherit their hidden WeakKey constraints.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_composite_type_args_with_unresolved_members() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
