@@ -1,5 +1,6 @@
 use super::*;
 use std::fs;
+use std::path::Path;
 
 #[test]
 fn test_parse_single_file() {
@@ -94,6 +95,70 @@ fn test_large_batch_parsing() {
             "Each file should have at least 5 nodes"
         );
     }
+}
+
+#[test]
+fn test_parse_lib_references_stops_at_first_non_comment_line() {
+    let references = parse_lib_references(
+        r#"
+/// <reference lib="ES2016" />
+// a normal comment is still part of the header scan
+/// <reference lib='lib.dom.d.ts' />
+let not_a_header_line = true;
+/// <reference lib="es2023.collection" />
+"#,
+    );
+
+    assert_eq!(references, vec!["es2016", "lib.dom.d.ts"]);
+}
+
+#[test]
+fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
+    assert_eq!(normalize_lib_reference_name("lib.d.ts"), "es5");
+    assert_eq!(normalize_lib_reference_name("LIB.ES7.D.TS"), "es2016");
+    assert_eq!(normalize_lib_reference_name("lib.dom.d.ts"), "dom");
+    assert_eq!(
+        normalize_lib_reference_name("lib.dom.iterable.d.ts"),
+        "dom.iterable"
+    );
+    assert_eq!(
+        normalize_lib_reference_name("lib.dom.asynciterable.d.ts"),
+        "dom.asynciterable"
+    );
+}
+
+#[test]
+fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let lib_dir = temp_dir.path();
+
+    fs::write(lib_dir.join("lib.custom.d.ts"), "").expect("write custom lib");
+    fs::write(lib_dir.join("custom.d.ts"), "").expect("write custom bare lib");
+
+    let base_path = lib_dir.join("lib.esnext.d.ts");
+    let base_path: &Path = base_path.as_path();
+
+    let custom_path = resolve_lib_reference_path(&base_path, "CUSTOM").expect("resolve custom");
+    assert_eq!(custom_path, lib_dir.join("lib.custom.d.ts"));
+
+    let wrapped_path =
+        resolve_lib_reference_path(&base_path, "lib.custom.d.ts").expect("resolve wrapped");
+    assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
+
+    assert!(resolve_lib_reference_path(&base_path, "nonexistent").is_none());
+}
+
+#[test]
+fn test_parse_and_bind_single_uses_json_synthetic_bind_path() {
+    let result = parse_and_bind_single(
+        "settings.json".to_string(),
+        r#"{ "compilerOptions": { "strict": true } }"#.to_string(),
+    );
+
+    assert_eq!(result.file_name, "settings.json");
+    assert!(!result.source_file.is_none());
+    assert!(result.parse_diagnostics.is_empty());
+    assert!(!result.arena.is_empty());
 }
 
 // =========================================================================
