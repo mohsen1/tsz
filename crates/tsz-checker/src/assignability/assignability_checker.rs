@@ -845,7 +845,11 @@ impl<'a> CheckerState<'a> {
 
     /// Prepare inputs common to all non-bivariant assignability checks:
     /// resolve lazy refs, substitute `ThisType`, and evaluate both sides.
-    fn prepare_assignability_inputs(&mut self, source: TypeId, target: TypeId) -> (TypeId, TypeId) {
+    pub(crate) fn prepare_assignability_inputs(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (TypeId, TypeId) {
         self.ensure_relation_inputs_ready(&[source, target]);
         let source = self.substitute_this_type_if_needed(source);
         let target = self.substitute_this_type_if_needed(target);

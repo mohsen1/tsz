@@ -839,6 +839,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
+
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
         // (CheckerContext resolver + checker overrides) so mismatch suppression and
         // diagnostic rendering observe identical compatibility semantics.
@@ -846,15 +848,16 @@ impl<'a> CheckerState<'a> {
         let inputs = AssignabilityQueryInputs {
             db: self.ctx.types,
             resolver: &self.ctx,
-            source,
-            target,
+            source: prepared_source,
+            target: prepared_target,
             flags: self.ctx.pack_relation_flags(),
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
         };
         let gate = check_assignable_gate_with_overrides(&inputs, &overrides, Some(&self.ctx), true);
         if gate.related
-            && let Some(reason) = self.checker_only_assignability_failure_reason(source, target)
+            && let Some(reason) =
+                self.checker_only_assignability_failure_reason(prepared_source, prepared_target)
         {
             return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,

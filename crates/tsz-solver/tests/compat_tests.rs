@@ -5303,3 +5303,90 @@ fn test_explain_intersection_source_single_missing_property() {
         other => panic!("Expected MissingProperty for 'b', got {other:?}"),
     }
 }
+
+#[test]
+fn test_explain_normalized_mapped_application_missing_property() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let enum_def = DefId(1000);
+    let enum_member_a = interner.intern(crate::TypeData::Enum(
+        enum_def,
+        interner.literal_number(0.0),
+    ));
+    let enum_member_b = interner.intern(crate::TypeData::Enum(
+        enum_def,
+        interner.literal_number(1.0),
+    ));
+
+    let t_name = interner.intern_string("T");
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.intern(crate::TypeData::TypeParameter(t_param_info));
+
+    let v_name = interner.intern_string("v");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    let gen_body = interner.intersection(vec![
+        interner.object(vec![PropertyInfo::new(v_name, t_param)]),
+        interner.union(vec![
+            interner.object(vec![
+                PropertyInfo::new(v_name, enum_member_a),
+                PropertyInfo::new(a_name, TypeId::STRING),
+            ]),
+            interner.object(vec![
+                PropertyInfo::new(v_name, enum_member_b),
+                PropertyInfo::new(b_name, TypeId::STRING),
+            ]),
+        ]),
+    ]);
+
+    let gen_def = DefId(1001);
+    env.insert_def_with_params(gen_def, gen_body, vec![t_param_info]);
+
+    let key_param_name = interner.intern_string("K");
+    let key_param_info = TypeParamInfo {
+        name: key_param_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info));
+    let gen_t = interner.application(interner.lazy(gen_def), vec![t_param]);
+    let gen2_body = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(gen_t),
+        name_type: None,
+        template: interner.index_access(gen_t, key_param),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let gen2_def = DefId(1002);
+    env.insert_def_with_params(gen2_def, gen2_body, vec![t_param_info]);
+
+    let source = interner.application(interner.lazy(gen2_def), vec![enum_member_b]);
+    let target = interner.application(interner.lazy(gen2_def), vec![enum_member_a]);
+
+    let mut checker = CompatChecker::with_resolver(&interner, &env);
+    assert!(!checker.is_assignable(source, target));
+
+    let reason = checker.explain_failure(source, target);
+    match reason {
+        Some(SubtypeFailureReason::MissingProperty {
+            property_name,
+            source_type,
+            target_type,
+        }) => {
+            assert_eq!(property_name, a_name);
+            assert_eq!(source_type, source);
+            assert_eq!(target_type, target);
+        }
+        other => panic!("Expected MissingProperty for mapped application 'a', got {other:?}"),
+    }
+}

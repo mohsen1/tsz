@@ -263,6 +263,62 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         )
     }
 
+    fn uses_generic_failure_surface(reason: &SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            SubtypeFailureReason::TypeMismatch { .. }
+                | SubtypeFailureReason::NoCommonProperties { .. }
+                | SubtypeFailureReason::NoUnionMemberMatches { .. }
+                | SubtypeFailureReason::NoIntersectionMemberMatches { .. }
+        )
+    }
+
+    fn remap_failure_surface(
+        reason: SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+    ) -> SubtypeFailureReason {
+        match reason {
+            SubtypeFailureReason::MissingProperty { property_name, .. } => {
+                SubtypeFailureReason::MissingProperty {
+                    property_name,
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::MissingProperties { property_names, .. } => {
+                SubtypeFailureReason::MissingProperties {
+                    property_names,
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::NoCommonProperties { .. } => {
+                SubtypeFailureReason::NoCommonProperties {
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::NoUnionMemberMatches {
+                target_union_members, ..
+            } => SubtypeFailureReason::NoUnionMemberMatches {
+                source_type: source,
+                target_union_members,
+            },
+            SubtypeFailureReason::NoIntersectionMemberMatches { .. } => {
+                SubtypeFailureReason::NoIntersectionMemberMatches {
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::TypeMismatch { .. } => SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            },
+            other => other,
+        }
+    }
+
     /// Detect whether a type is the global `Object` interface from lib.d.ts.
     ///
     /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
@@ -1241,7 +1297,26 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         self.configure_subtype(self.strict_function_types);
-        let structural_result = self.subtype.explain_failure(source, target);
+        let mut structural_result = self.subtype.explain_failure(source, target);
+
+        if structural_result
+            .as_ref()
+            .is_none_or(Self::uses_generic_failure_surface)
+        {
+            let (normalized_source, normalized_target) =
+                self.normalize_assignability_operands(source, target);
+            if normalized_source != source || normalized_target != target {
+                let normalized_result = self
+                    .subtype
+                    .explain_failure(normalized_source, normalized_target);
+                if let Some(normalized_reason) = normalized_result
+                    && !Self::uses_generic_failure_surface(&normalized_reason)
+                {
+                    structural_result =
+                        Some(Self::remap_failure_surface(normalized_reason, source, target));
+                }
+            }
+        }
 
         // If the structural path found a useful reason, use it.
         // Otherwise, fall back to the brand mismatch result.
