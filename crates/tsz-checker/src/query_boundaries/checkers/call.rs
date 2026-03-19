@@ -1,7 +1,7 @@
 use tsz_solver::operations::CallResult;
 use tsz_solver::{
-    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeData,
-    TypeDatabase, TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
+    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase,
+    TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
 };
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
@@ -171,13 +171,8 @@ pub(crate) fn expanded_this_type_from_application(
     type_id: TypeId,
     no_implicit_any: bool,
 ) -> Option<TypeId> {
-    let TypeData::Application(app_id) = db.lookup(type_id)? else {
-        return None;
-    };
-    let app = db.type_application(app_id);
-    let TypeData::Lazy(def_id) = db.lookup(app.base)? else {
-        return None;
-    };
+    let app = tsz_solver::type_queries::get_type_application(db, type_id)?;
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(db, app.base)?;
     let body = env.resolve_lazy(def_id, db)?;
     let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
     let expanded = tsz_solver::instantiate_generic(db, body, &type_params, &app.args);

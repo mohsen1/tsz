@@ -209,6 +209,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
+    fn can_apply_contextual_return_substitution(
+        &mut self,
+        infer_ctx: &mut InferenceContext<'_>,
+        var: InferenceVar,
+        inferred: TypeId,
+    ) -> bool {
+        let has_non_return_candidates =
+            infer_ctx.var_has_candidates(var) && !infer_ctx.all_candidates_are_return_type(var);
+
+        if !has_non_return_candidates {
+            return true;
+        }
+
+        matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || crate::visitor::contains_type_parameters(self.interner.as_type_database(), inferred)
+            || crate::type_queries::contains_infer_types_db(
+                self.interner.as_type_database(),
+                inferred,
+            )
+    }
+
     fn collect_return_context_substitution(
         &self,
         source: TypeId,
@@ -1585,7 +1606,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let type_param_name = self.interner.resolve_atom(tp.name);
             let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
-                if self.should_use_contextual_return_substitution(ty, contextual_ty) {
+                if self.can_apply_contextual_return_substitution(&mut infer_ctx, var, ty)
+                    && self.should_use_contextual_return_substitution(ty, contextual_ty)
+                {
                     contextual_ty
                 } else {
                     ty
@@ -3246,7 +3269,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let resolved = if !has_context_sensitive_args
                     && let Some(contextual_ty) = structural_return_subst.get(tp.name)
                 {
-                    if self.should_use_contextual_return_substitution(resolved, contextual_ty) {
+                    if self.can_apply_contextual_return_substitution(
+                        &mut infer_ctx,
+                        type_param_vars[i],
+                        resolved,
+                    ) && self.should_use_contextual_return_substitution(resolved, contextual_ty)
+                    {
                         contextual_ty
                     } else {
                         resolved

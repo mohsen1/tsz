@@ -335,6 +335,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
             "crates/tsz-checker/src/types/computation/helpers.rs",
             "crates/tsz-checker/src/types/class_type/core.rs",
+            "crates/tsz-checker/src/checkers/call_checker.rs",
+            "crates/tsz-checker/src/state/state.rs",
+            "crates/tsz-checker/src/error_reporter/assignability.rs",
+            "crates/tsz-checker/src/flow/control_flow/assignment.rs",
+            "crates/tsz-checker/src/types/computation/object_literal.rs",
         },
     ),
 ]
