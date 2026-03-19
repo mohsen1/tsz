@@ -266,10 +266,50 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(members) = visitor::union_list_id(interner, evaluated)
-            .or_else(|| visitor::intersection_list_id(interner, evaluated))
-        {
-            let members = interner.type_list(members);
+        if let Some(members_id) = visitor::union_list_id(interner, evaluated) {
+            // For unions, only include properties that exist on ALL members (intersection).
+            // E.g., `string | number` should only show `toString`, `valueOf`, `toLocaleString`
+            // — not all string methods or all number methods.
+            let members = interner.type_list(members_id);
+            if members.len() > 1 {
+                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> = Vec::new();
+                for &member in members.iter() {
+                    let mut member_props = FxHashMap::default();
+                    let mut member_visited = visited.clone();
+                    self.collect_properties_for_type(
+                        member,
+                        interner,
+                        checker,
+                        &mut member_visited,
+                        &mut member_props,
+                    );
+                    per_member_props.push(member_props);
+                }
+                // Intersect: keep only properties present in ALL members
+                if let Some(first) = per_member_props.first() {
+                    for (name, info) in first {
+                        if per_member_props[1..].iter().all(|m| m.contains_key(name)) {
+                            self.add_property_completion(
+                                props,
+                                interner,
+                                name.clone(),
+                                info.type_id,
+                                info.is_method,
+                            );
+                        }
+                    }
+                }
+            } else {
+                for &member in members.iter() {
+                    self.collect_properties_for_type(member, interner, checker, visited, props);
+                }
+            }
+            return;
+        }
+
+        if let Some(members_id) = visitor::intersection_list_id(interner, evaluated) {
+            // For intersections, include properties from ALL members (union of properties).
+            let members = interner.type_list(members_id);
             for &member in members.iter() {
                 self.collect_properties_for_type(member, interner, checker, visited, props);
             }
