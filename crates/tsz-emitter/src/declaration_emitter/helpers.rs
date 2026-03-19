@@ -6425,10 +6425,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(shape_id) = tsz_solver::visitor::object_shape_id(interner, type_id)
             .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id))
+            && let Some(sym_id) = interner.object_shape(shape_id).symbol
         {
-            if let Some(sym_id) = interner.object_shape(shape_id).symbol {
-                mark(sym_id);
-            }
+            mark(sym_id);
         }
 
         if let Some(shape_id) = tsz_solver::visitor::callable_shape_id(interner, type_id)
