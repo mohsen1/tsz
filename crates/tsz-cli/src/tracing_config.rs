@@ -116,3 +116,100 @@ pub fn init_tracing() {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct TestEnv {
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl TestEnv {
+        fn new() -> Self {
+            Self {
+                previous: Vec::new(),
+            }
+        }
+
+        fn remember(&mut self, key: &'static str) {
+            if self.previous.iter().any(|(existing, _)| *existing == key) {
+                return;
+            }
+            self.previous.push((key, env::var_os(key)));
+        }
+
+        fn set(&mut self, key: &'static str, value: &str) {
+            self.remember(key);
+            unsafe { env::set_var(key, value) };
+        }
+
+        fn unset(&mut self, key: &'static str) {
+            self.remember(key);
+            unsafe { env::remove_var(key) };
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                match value {
+                    Some(value) => unsafe { env::set_var(key, value) },
+                    None => unsafe { env::remove_var(key) },
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn log_format_from_env_defaults_to_text_and_normalizes_case() {
+        let _guard = env_lock().lock().unwrap();
+        let mut env = TestEnv::new();
+
+        env.unset("TSZ_LOG_FORMAT");
+        assert_eq!(LogFormat::from_env(), LogFormat::Text);
+
+        env.set("TSZ_LOG_FORMAT", "TrEe");
+        assert_eq!(LogFormat::from_env(), LogFormat::Tree);
+
+        env.set("TSZ_LOG_FORMAT", "JSON");
+        assert_eq!(LogFormat::from_env(), LogFormat::Json);
+    }
+
+    #[test]
+    fn build_filter_prefers_tsz_log_over_rust_log() {
+        let _guard = env_lock().lock().unwrap();
+        let mut env = TestEnv::new();
+
+        env.set("TSZ_LOG", "wasm::checker=trace");
+        env.set("RUST_LOG", "wasm::solver=debug");
+
+        let filter = build_filter();
+        let expected = EnvFilter::builder().parse_lossy("wasm::checker=trace");
+
+        assert_eq!(filter.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn build_filter_falls_back_to_rust_log_when_tsz_log_is_missing() {
+        let _guard = env_lock().lock().unwrap();
+        let mut env = TestEnv::new();
+
+        env.unset("TSZ_LOG");
+        env.set("RUST_LOG", "wasm::solver=debug");
+
+        let filter = build_filter();
+        let expected = EnvFilter::from_default_env();
+
+        assert_eq!(filter.to_string(), expected.to_string());
+    }
+}
