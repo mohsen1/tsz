@@ -7,6 +7,44 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    fn identifier_is_non_value_name_position(&self, node_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+
+        match parent_node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .ctx
+                .arena
+                .get_access_expr(parent_node)
+                .is_some_and(|access| access.name_or_argument == node_idx),
+            syntax_kind_ext::QUALIFIED_NAME => self
+                .ctx
+                .arena
+                .get_qualified_name(parent_node)
+                .is_some_and(|qualified| qualified.right == node_idx),
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_property_assignment(parent_node)
+                .is_some_and(|prop| prop.name == node_idx),
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(parent_node)
+                .is_some_and(|method| method.name == node_idx),
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(parent_node)
+                .is_some_and(|accessor| accessor.name == node_idx),
+            _ => false,
+        }
+    }
+
     pub(super) fn take_pending_circular_return_sites(
         &mut self,
         sym_id: SymbolId,
@@ -208,6 +246,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if this node is an identifier referencing the target symbol
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if self.identifier_is_non_value_name_position(node_idx) {
+                return false;
+            }
             let ref_sym = self
                 .ctx
                 .binder
@@ -234,6 +275,45 @@ impl<'a> CheckerState<'a> {
         // Recurse into children
         for child_idx in self.ctx.arena.get_children(node_idx) {
             if self.initializer_has_non_deferred_self_reference(child_idx, sym_id) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(super) fn initializer_has_non_deferred_self_reference_by_name(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            if self.identifier_is_non_value_name_position(node_idx) {
+                return false;
+            }
+            return ident.escaped_text == name;
+        }
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.initializer_has_non_deferred_self_reference_by_name(child_idx, name) {
                 return true;
             }
         }
