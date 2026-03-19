@@ -665,10 +665,21 @@ impl TypeInterner {
             return false;
         }
 
+        // Handle Top/Bottom types (no lookup needed)
+        if target.is_any_or_unknown() {
+            return true;
+        }
+        if source.is_never() {
+            return true;
+        }
+
+        // Single lookup per type — reuse throughout the function
+        let s_data = self.lookup(source);
+        let t_data = self.lookup(target);
+
         // Skip reduction for type parameters and lazy types
-        // These need full type resolution to determine subtyping
         if matches!(
-            (self.lookup(source), self.lookup(target)),
+            (&s_data, &t_data),
             (
                 Some(TypeData::TypeParameter(_)) | _,
                 Some(TypeData::TypeParameter(_))
@@ -677,32 +688,16 @@ impl TypeInterner {
             return false;
         }
 
-        // Handle Top/Bottom types
-        if target.is_any_or_unknown() {
-            return true;
-        }
-        if source.is_never() {
-            return true;
-        }
-
         // Handle Literal to Primitive (including unions containing primitives)
-        // Only if target is NOT a literal (we don't want "a" <: "b")
-        if self
-            .lookup(source)
-            .is_some_and(|k| matches!(k, TypeData::Literal(_)))
-        {
-            if self
-                .lookup(target)
-                .is_some_and(|k| matches!(k, TypeData::Literal(_)))
-            {
+        if matches!(s_data, Some(TypeData::Literal(_))) {
+            if matches!(t_data, Some(TypeData::Literal(_))) {
                 // Both are literals - only subtype if identical (handled above)
                 return false;
             }
 
             // Check if target is a union containing a compatible primitive
-            if let Some(TypeData::Union(members)) = self.lookup(target) {
+            if let Some(TypeData::Union(members)) = t_data {
                 let members = self.type_list(members);
-                // A literal is a subtype of a union if it's a subtype of ANY member
                 for &member in members.iter() {
                     if self.is_subtype_shallow_depth(source, member, depth) {
                         return true;
@@ -721,25 +716,19 @@ impl TypeInterner {
         }
 
         // Handle source as member of target union (for built-in/primitive types only).
-        // This is safe for primitives but not for complex types (functions, objects)
-        // where aggressive union matching could cause incorrect reductions.
         if self.is_builtin_type(source)
-            && let Some(TypeData::Union(members)) = self.lookup(target)
+            && let Some(TypeData::Union(members)) = t_data
         {
             let members = self.type_list(members);
             return members.contains(&source);
         }
 
         // Handle structural type comparisons
-        let s_key = self.lookup(source);
-        let t_key = self.lookup(target);
-        match (s_key, t_key) {
-            // Object <: Object (width subtyping, TypeId equality for property types)
+        match (s_data, t_data) {
             (
                 Some(TypeData::Object(s_id) | TypeData::ObjectWithIndex(s_id)),
                 Some(TypeData::Object(t_id) | TypeData::ObjectWithIndex(t_id)),
             ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0),
-            // Function <: Function (callback param compat, optional/required handling)
             (Some(TypeData::Function(s_id)), Some(TypeData::Function(t_id))) => {
                 self.is_function_subtype_shallow(s_id, t_id, depth)
             }
@@ -1102,8 +1091,19 @@ impl TypeInterner {
         // returns false for them — they require full type resolution. Including them here
         // avoids O(N²) wasted work in unions of class types (which are Lazy at this stage).
         {
+            let mut has_primitive = false;
             let all_non_reducible = flat.iter().all(|&ty| {
                 if self.is_identity_comparable_type(ty) {
+                    // Track whether a widened primitive is present.
+                    // If so, literals of that kind ARE reducible (absorbed by the primitive).
+                    if ty == TypeId::STRING
+                        || ty == TypeId::NUMBER
+                        || ty == TypeId::BOOLEAN
+                        || ty == TypeId::BIGINT
+                        || ty == TypeId::SYMBOL
+                    {
+                        has_primitive = true;
+                    }
                     return true;
                 }
                 matches!(
@@ -1117,10 +1117,13 @@ impl TypeInterner {
                             | TypeData::Lazy(_)
                             | TypeData::Application(_)
                             | TypeData::Callable(_)
+                            // Literals without a widened primitive peer are non-reducible
+                            // (no literal is a subtype of a different literal).
+                            | TypeData::Literal(_)
                     )
                 )
             });
-            if all_non_reducible {
+            if all_non_reducible && !has_primitive {
                 return;
             }
         }

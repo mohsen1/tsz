@@ -537,20 +537,46 @@ impl<'a> TypeInstantiator<'a> {
                 }
             }
 
-            // Union: instantiate all members
+            // Union: instantiate all members, skip re-intern if nothing changed
             TypeData::Union(members) => {
                 let members = self.interner.type_list(*members);
-                let instantiated: Vec<TypeId> =
-                    members.iter().map(|&m| self.instantiate(m)).collect();
-                self.interner.union(instantiated)
+                let mut changed = false;
+                let instantiated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let inst = self.instantiate(m);
+                        if inst != m {
+                            changed = true;
+                        }
+                        inst
+                    })
+                    .collect();
+                if changed {
+                    self.interner.union(instantiated)
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
-            // Intersection: instantiate all members
+            // Intersection: instantiate all members, skip re-intern if nothing changed
             TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
-                let instantiated: Vec<TypeId> =
-                    members.iter().map(|&m| self.instantiate(m)).collect();
-                self.interner.intersection(instantiated)
+                let mut changed = false;
+                let instantiated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let inst = self.instantiate(m);
+                        if inst != m {
+                            changed = true;
+                        }
+                        inst
+                    })
+                    .collect();
+                if changed {
+                    self.interner.intersection(instantiated)
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
             // Array: instantiate element type
