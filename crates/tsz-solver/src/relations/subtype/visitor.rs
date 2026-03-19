@@ -483,6 +483,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_enum(&mut self, def_id: u32, member_type: TypeId) -> Self::Output {
         // Enums are nominal types - nominal identity matters for enum-to-enum
         if let Some((t_def, _t_members)) = enum_components(self.checker.interner, self.target) {
+            if DefId(def_id) == t_def
+                && self.source != self.target
+                && crate::type_queries::is_literal_enum_member(self.checker.interner, self.source)
+                && crate::type_queries::is_literal_enum_member(self.checker.interner, self.target)
+            {
+                return SubtypeResult::False;
+            }
+
             // Enum to Enum: Nominal check - DefIds must match
             return if DefId(def_id) == t_def {
                 SubtypeResult::True

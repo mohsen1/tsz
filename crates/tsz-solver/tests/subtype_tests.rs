@@ -14485,6 +14485,21 @@ fn test_enum_member_access_numeric() {
 }
 
 #[test]
+fn test_literal_enum_members_with_same_def_id_are_distinct_subtypes() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let enum_def = DefId(42);
+    let enum_a = interner.intern(TypeData::Enum(enum_def, interner.literal_number(0.0)));
+    let enum_b = interner.intern(TypeData::Enum(enum_def, interner.literal_number(1.0)));
+
+    assert!(checker.is_subtype_of(enum_a, enum_a));
+    assert!(checker.is_subtype_of(enum_b, enum_b));
+    assert!(!checker.is_subtype_of(enum_a, enum_b));
+    assert!(!checker.is_subtype_of(enum_b, enum_a));
+}
+
+#[test]
 fn test_enum_member_access_string() {
     // enum E { A = "a", B = "b" }
     let interner = TypeInterner::new();

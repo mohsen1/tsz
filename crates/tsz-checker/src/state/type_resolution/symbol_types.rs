@@ -213,13 +213,17 @@ impl<'a> CheckerState<'a> {
                     // Return structural type directly for type aliases (not Lazy) so
                     // conditional types are fully resolved during assignability checking.
                     let structural_type = self.get_type_of_symbol(sym_id);
+                    let preserve_deferred_keyof =
+                        tsz_solver::type_queries::get_keyof_type(self.ctx.types, structural_type)
+                            .is_some();
                     let structural_type = if structural_type != TypeId::ERROR
                         && structural_type != TypeId::UNKNOWN
+                        && !preserve_deferred_keyof
                         && !tsz_solver::type_queries::contains_type_parameters_db(
                             self.ctx.types,
                             structural_type,
                         ) {
-                        self.evaluate_type_with_env(structural_type)
+                        self.evaluate_type_with_resolution(structural_type)
                     } else {
                         structural_type
                     };

@@ -8,7 +8,7 @@
 //! without directly matching on `TypeData`.
 
 use crate::def::DefId;
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -539,6 +539,22 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
         Some(TypeData::Enum(_, member_type)) => classify_literal_key(db, member_type),
         _ => LiteralKeyKind::Other,
     }
+}
+
+/// Check whether a type is a concrete enum member backed by a string or number literal.
+///
+/// This is intentionally narrower than "is enum-like": it excludes whole-enum wrappers
+/// whose inner type is a union of members. Callers use it when same-enum members must
+/// remain distinct for subtype/discriminant logic.
+pub fn is_literal_enum_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Enum(_, member_type))
+            if matches!(
+                db.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
+            )
+    )
 }
 
 /// Widen a literal type to its corresponding primitive type.

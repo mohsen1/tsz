@@ -10,7 +10,7 @@ use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
 // =============================================================================
@@ -763,6 +763,60 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
         return Some(TypeId::NEVER);
     }
     Some(crate::utils::union_or_single(db, key_types))
+}
+
+/// Detect intersections that should preserve a discriminated object-union shape
+/// instead of being eagerly collapsed by downstream evaluators.
+///
+/// This matches the interner-side preservation rule used for intersections like
+/// `{ v: T } & ({ v: A, a: string } | { v: B, b: string })`.
+pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(members) = get_intersection_members(db, type_id) else {
+        return false;
+    };
+
+    let mut candidate_names = FxHashSet::default();
+    for &member in &members {
+        if get_union_members(db, member).is_some() {
+            continue;
+        }
+        let Some(shape) = get_object_shape(db, member) else {
+            continue;
+        };
+        for prop in &shape.properties {
+            candidate_names.insert(prop.name);
+        }
+    }
+
+    if candidate_names.is_empty() {
+        return false;
+    }
+
+    members.iter().copied().any(|member| {
+        let Some(union_members) = get_union_members(db, member) else {
+            return false;
+        };
+        if union_members.len() < 2 {
+            return false;
+        }
+
+        candidate_names.iter().copied().any(|prop_name| {
+            let mut seen = FxHashSet::default();
+            for branch in &union_members {
+                let Some(shape) = get_object_shape(db, *branch) else {
+                    return false;
+                };
+                let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_name) else {
+                    return false;
+                };
+                if !crate::type_queries::is_unit_type(db, prop.type_id) {
+                    return false;
+                }
+                seen.insert(prop.type_id);
+            }
+            seen.len() > 1
+        })
+    })
 }
 
 /// Get the applicable contextual type for an array literal from a (possibly union) type.
@@ -1658,7 +1712,7 @@ fn collect_exact_literal_property_keys_inner(
     }
 }
 
-fn collect_exact_literal_property_keys(
+pub fn collect_exact_literal_property_keys(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FxHashSet<Atom>> {
@@ -1702,8 +1756,20 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
             }
             Some(())
         }
-        Some(TypeData::Union(members)) => {
-            for &member in db.type_list(members).iter() {
+        Some(TypeData::Union(_members)) => {
+            let narrowed_operand = prune_impossible_object_union_members(db, operand);
+            let members = match db.lookup(narrowed_operand) {
+                Some(TypeData::Union(members)) => db.type_list(members).to_vec(),
+                _ => {
+                    return collect_exact_literal_property_keys_from_keyof_operand(
+                        db,
+                        narrowed_operand,
+                        keys,
+                        visited,
+                    );
+                }
+            };
+            for member in members {
                 collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)?;
             }
             Some(())
@@ -1822,6 +1888,125 @@ pub(crate) fn narrow_keyof_intersection_member_by_literal_discriminants(
         retained[0]
     } else {
         db.union_preserve_members(retained)
+    }
+}
+
+fn intersection_has_impossible_literal_discriminants(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
+        return false;
+    };
+
+    let mut discriminants: FxHashMap<Atom, Vec<TypeId>> = FxHashMap::default();
+    for &member in db.type_list(list_id).iter() {
+        let evaluated_member = crate::evaluation::evaluate::evaluate_type(db, member);
+        let member = if evaluated_member != member {
+            evaluated_member
+        } else {
+            member
+        };
+        let Some(shape) = get_object_shape(db, member) else {
+            continue;
+        };
+
+        for prop in &shape.properties {
+            if !crate::type_queries::is_unit_type(db, prop.type_id) {
+                continue;
+            }
+
+            let seen = discriminants.entry(prop.name).or_default();
+            if seen.iter().any(|&other| {
+                !crate::is_subtype_of(db, prop.type_id, other)
+                    && !crate::is_subtype_of(db, other, prop.type_id)
+            }) {
+                return true;
+            }
+            if !seen.contains(&prop.type_id) {
+                seen.push(prop.type_id);
+            }
+        }
+    }
+
+    false
+}
+
+fn object_member_has_impossible_required_property(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let evaluated_type = crate::evaluation::evaluate::evaluate_type(db, type_id);
+    let type_id = if evaluated_type != type_id {
+        evaluated_type
+    } else {
+        type_id
+    };
+    let Some(shape) = get_object_shape(db, type_id) else {
+        return false;
+    };
+
+    shape.properties.iter().any(|prop| {
+        !prop.optional
+            && (crate::evaluation::evaluate::evaluate_type(db, prop.type_id) == TypeId::NEVER
+                || unit_intersection_is_impossible(db, prop.type_id))
+    })
+}
+
+fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+    let type_id = if evaluated != type_id { evaluated } else { type_id };
+    let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
+        return false;
+    };
+
+    let mut units = Vec::new();
+    for &member in db.type_list(list_id).iter() {
+        let evaluated_member = crate::evaluation::evaluate::evaluate_type(db, member);
+        let member = if evaluated_member != member {
+            evaluated_member
+        } else {
+            member
+        };
+        if !crate::type_queries::is_unit_type(db, member) {
+            continue;
+        }
+        if units.iter().any(|&other| {
+            !crate::is_subtype_of(db, member, other) && !crate::is_subtype_of(db, other, member)
+        }) {
+            return true;
+        }
+        if !units.contains(&member) {
+            units.push(member);
+        }
+    }
+
+    false
+}
+
+pub fn prune_impossible_object_union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(TypeData::Union(list_id)) = db.lookup(type_id) else {
+        return type_id;
+    };
+
+    let members = db.type_list(list_id);
+    let retained: Vec<_> = members
+        .iter()
+        .copied()
+        .filter(|&member| {
+            !intersection_has_impossible_literal_discriminants(db, member)
+                && !object_member_has_impossible_required_property(db, member)
+        })
+        .collect();
+
+    match retained.len() {
+        0 => TypeId::NEVER,
+        len if len == members.len() => type_id,
+        1 => retained[0],
+        _ => db.union_preserve_members(retained),
     }
 }
 

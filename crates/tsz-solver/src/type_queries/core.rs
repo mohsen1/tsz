@@ -11,6 +11,9 @@ use super::data::get_type_parameter_constraint;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
 
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
+    if let Some(exact) = super::data::collect_exact_literal_property_keys(db, type_id) {
+        return exact.into_iter().map(|a| db.resolve_atom(a)).collect();
+    }
     let atoms = collect_property_name_atoms_for_diagnostics(db, type_id, 10);
     atoms.into_iter().map(|a| db.resolve_atom(a)).collect()
 }

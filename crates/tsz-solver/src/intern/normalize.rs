@@ -38,6 +38,17 @@ enum LiteralDomain {
     Bigint,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum UnitValueKey {
+    Null,
+    Undefined,
+    String(Atom),
+    Number(u64),
+    Boolean(bool),
+    BigInt(Atom),
+    Enum(crate::def::DefId, Box<UnitValueKey>),
+}
+
 /// Primitive kind for disjoint intersection checking.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum PrimitiveKind {
@@ -437,6 +448,70 @@ impl TypeInterner {
             // Template literals are string-like
             _ => None,
         }
+    }
+
+    fn get_unit_value_key(&self, type_id: TypeId) -> Option<UnitValueKey> {
+        match self.lookup(type_id) {
+            Some(TypeData::Literal(LiteralValue::String(atom))) => Some(UnitValueKey::String(atom)),
+            Some(TypeData::Literal(LiteralValue::Number(num))) => {
+                Some(UnitValueKey::Number(num.0.to_bits()))
+            }
+            Some(TypeData::Literal(LiteralValue::Boolean(value))) => {
+                Some(UnitValueKey::Boolean(value))
+            }
+            Some(TypeData::Literal(LiteralValue::BigInt(atom))) => Some(UnitValueKey::BigInt(atom)),
+            Some(TypeData::Enum(def_id, member_type)) => self
+                .get_unit_value_key(member_type)
+                .map(|key| UnitValueKey::Enum(def_id, Box::new(key))),
+            Some(TypeData::Intrinsic(IntrinsicKind::Null)) => Some(UnitValueKey::Null),
+            Some(TypeData::Intrinsic(IntrinsicKind::Undefined | IntrinsicKind::Void)) => {
+                Some(UnitValueKey::Undefined)
+            }
+            _ => None,
+        }
+    }
+
+    fn unit_values_are_disjoint(&self, left: &UnitValueKey, right: &UnitValueKey) -> bool {
+        use UnitValueKey::*;
+
+        match (left, right) {
+            (Null, Null) | (Undefined, Undefined) => false,
+            (Null, _) | (_, Null) | (Undefined, _) | (_, Undefined) => true,
+            (String(a), String(b)) => a != b,
+            (Number(a), Number(b)) => a != b,
+            (Boolean(a), Boolean(b)) => a != b,
+            (BigInt(a), BigInt(b)) => a != b,
+            (Enum(def_a, key_a), Enum(def_b, key_b)) => {
+                if def_a != def_b {
+                    true
+                } else {
+                    self.unit_values_are_disjoint(key_a, key_b)
+                }
+            }
+            (Enum(_, key), other) | (other, Enum(_, key)) => self.unit_values_are_disjoint(key, other),
+            _ => true,
+        }
+    }
+
+    pub(crate) fn intersection_has_disjoint_unit_values(&self, members: &[TypeId]) -> bool {
+        let mut seen = Vec::new();
+
+        for &member in members {
+            let Some(key) = self.get_unit_value_key(member) else {
+                continue;
+            };
+            if seen
+                .iter()
+                .any(|existing| self.unit_values_are_disjoint(existing, &key))
+            {
+                return true;
+            }
+            if !seen.contains(&key) {
+                seen.push(key);
+            }
+        }
+
+        false
     }
 
     /// Check if two primitive kinds are disjoint (their intersection is never).

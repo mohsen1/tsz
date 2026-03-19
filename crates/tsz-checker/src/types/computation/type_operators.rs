@@ -123,6 +123,17 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_keyof_type(&mut self, operand: TypeId) -> TypeId {
         use tsz_solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
 
+        let deferred_keyof = self.ctx.types.keyof(operand);
+
+        // Prefer the shared solver `keyof` evaluator so intersections, unions, and
+        // instantiated discriminated shapes follow the same semantics everywhere.
+        // Fall back to the legacy shallow property collection only when evaluation
+        // cannot reduce the operator.
+        let evaluated = self.evaluate_type_with_env(deferred_keyof);
+        if evaluated != deferred_keyof {
+            return evaluated;
+        }
+
         // Handle Lazy types by attempting to resolve them first
         // This allows keyof Lazy(DefId) to work correctly for circular dependencies
         match classify_for_type_resolution(self.ctx.types, operand) {

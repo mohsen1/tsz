@@ -94,7 +94,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::TemplateLiteral(_)) => {
                 return self.apparent_primitive_keyof(IntrinsicKind::String);
             }
-            Some(TypeData::Union(members)) => {
+            Some(TypeData::Union(_members)) => {
+                let narrowed_operand =
+                    crate::type_queries::prune_impossible_object_union_members(
+                        self.interner(),
+                        operand,
+                    );
+                let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand) else {
+                    return self.recurse_keyof(narrowed_operand);
+                };
                 let member_list = self.interner().type_list(members);
 
                 // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
@@ -125,7 +133,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             match key {
-                TypeData::Union(members) => {
+                TypeData::Union(_members) => {
+                    let narrowed_operand =
+                        crate::type_queries::prune_impossible_object_union_members(
+                            self.interner(),
+                            evaluated_operand,
+                        );
+                    let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand)
+                    else {
+                        return self.recurse_keyof(narrowed_operand);
+                    };
                     let member_list = self.interner().type_list(members);
                     let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
                     for &member in member_list.iter() {
