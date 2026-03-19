@@ -162,6 +162,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
                 arg_index.is_some_and(|index| index < skip.len() && skip[index])
             })
+            && let Some(arg_index) = arg_index
             && let Some(callable_type) = self.ctx.current_callable_type
             && let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
                 self.ctx.types,
@@ -169,7 +170,7 @@ impl<'a> CheckerState<'a> {
             )
             && let Some(raw_contextual_type) = shape
                 .params
-                .get(arg_index.unwrap())
+                .get(arg_index)
                 .or_else(|| shape.params.last().filter(|param| param.rest))
                 .map(|param| param.type_id)
         {

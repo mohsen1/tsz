@@ -124,6 +124,16 @@ pub fn contains_non_infer_type_parameters_db(db: &dyn TypeDatabase, type_id: Typ
     })
 }
 
+/// Check if a type contains any lazy or recursive references.
+///
+/// This is used by checker query boundaries that need to reason about deferred
+/// or cyclic types without matching on `TypeData` directly.
+pub fn contains_lazy_or_recursive_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::Lazy(_) | TypeData::Recursive(_))
+    })
+}
+
 /// Check whether a type is itself a bare unresolved infer placeholder, not a
 /// larger structural type that merely contains placeholders.
 pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
