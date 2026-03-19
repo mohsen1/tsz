@@ -878,62 +878,17 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        let excess_target = self.contextual_absent_property_excess_target(effective_param_type);
-        let mut had_excess_property = false;
-        if let Some(excess_target) = excess_target {
-            for &elem_idx in &obj.elements.nodes {
-                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                    continue;
-                };
-                let prop_name_idx = match elem_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
-                            continue;
-                        };
-                        prop.name
-                    }
-                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                        let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
-                            continue;
-                        };
-                        prop.name
-                    }
-                    _ => continue,
-                };
-
-                let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
-                    continue;
-                };
-
-                let property_presence =
-                    self.named_contextual_property_presence(excess_target, &prop_name);
-                if !matches!(
-                    property_presence,
-                    crate::computation::object_literal_context::ContextualPropertyPresence::Absent
-                ) {
-                    continue;
-                }
-
-                let already_reported = self
-                    .resolve_diagnostic_anchor(prop_name_idx, DiagnosticAnchorKind::PropertyToken)
-                    .is_some_and(|anchor| {
-                        let end = anchor.start.saturating_add(anchor.length);
-                        self.has_diagnostic_code_within_span(
-                            anchor.start,
-                            end,
-                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-                        ) || self.has_diagnostic_code_within_span(
-                            anchor.start,
-                            end,
-                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                        )
-                    });
-                if !already_reported {
-                    self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
-                }
-                had_excess_property = true;
-            }
-        }
+        let diagnostics_before_epc = self.ctx.diagnostics.len();
+        self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
+        let had_excess_property = self.ctx.diagnostics[diagnostics_before_epc..]
+            .iter()
+            .any(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+                )
+            });
         if had_excess_property {
             return true;
         }
@@ -966,35 +921,6 @@ impl<'a> CheckerState<'a> {
             let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
                 continue;
             };
-
-            let property_presence = excess_target
-                .map(|target| self.named_contextual_property_presence(target, &prop_name));
-            if matches!(
-                property_presence,
-                Some(
-                    crate::computation::object_literal_context::ContextualPropertyPresence::Absent
-                )
-            ) {
-                let already_reported = self
-                    .resolve_diagnostic_anchor(prop_name_idx, DiagnosticAnchorKind::PropertyToken)
-                    .is_some_and(|anchor| {
-                        let end = anchor.start.saturating_add(anchor.length);
-                        self.has_diagnostic_code_within_span(
-                            anchor.start,
-                            end,
-                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-                        ) || self.has_diagnostic_code_within_span(
-                            anchor.start,
-                            end,
-                            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                        )
-                    });
-                if !already_reported && let Some(excess_target) = excess_target {
-                    self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
-                }
-                elaborated = true;
-                continue;
-            }
 
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
                 .object_literal_target_property_type(

@@ -179,7 +179,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let source_props = source_shape.properties.as_slice();
-        let resolved_target = self.resolve_type_for_property_access(target);
+        let effective_target = self.normalized_target_for_excess_properties(target);
+        let resolved_target = effective_target;
 
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
@@ -305,8 +306,11 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         target_prop_types.clone(),
                     );
-                    let nested_target =
-                        self.nested_property_target_type(target, source_prop.name, nested_target);
+                    let nested_target = self.nested_property_target_type(
+                        effective_target,
+                        source_prop.name,
+                        nested_target,
+                    );
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -434,7 +438,7 @@ impl<'a> CheckerState<'a> {
                         let nested_target =
                             tsz_solver::utils::intersection_or_single(self.ctx.types, all_nested);
                         let nested_target = self.nested_property_target_type(
-                            target,
+                            effective_target,
                             source_prop.name,
                             nested_target,
                         );
@@ -477,8 +481,11 @@ impl<'a> CheckerState<'a> {
                     }
                     let nested_target =
                         tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
-                    let nested_target =
-                        self.nested_property_target_type(target, source_prop.name, nested_target);
+                    let nested_target = self.nested_property_target_type(
+                        effective_target,
+                        source_prop.name,
+                        nested_target,
+                    );
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
@@ -531,7 +538,7 @@ impl<'a> CheckerState<'a> {
                     // =============================================================
                     // For nested object literals, recursively check for excess properties
                     let nested_target = self.nested_property_target_type(
-                        target,
+                        effective_target,
                         source_prop.name,
                         target_prop.type_id,
                     );
