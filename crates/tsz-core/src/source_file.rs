@@ -472,6 +472,13 @@ mod tests {
     }
 
     #[test]
+    fn test_source_file_char_at_rejects_non_char_boundary() {
+        let source = SourceFile::new("unicode.ts", "🚀!");
+        assert_eq!(source.char_at(1), None);
+        assert_eq!(source.char_at(4), Some('!'));
+    }
+
+    #[test]
     fn test_source_file_byte_at() {
         let source = SourceFile::new("test.ts", "hello");
         assert_eq!(source.byte_at(0), Some(b'h'));
@@ -497,6 +504,14 @@ mod tests {
     }
 
     #[test]
+    fn test_source_file_slice_range_from_and_to_handle_invalid_bounds() {
+        let source = SourceFile::new("test.ts", "hello");
+        assert_eq!(source.slice_range(4, 2), "");
+        assert_eq!(source.slice_from(99), "");
+        assert_eq!(source.slice_to(99), "hello");
+    }
+
+    #[test]
     fn test_source_file_lines() {
         let mut source = SourceFile::new("test.ts", "line1\nline2\nline3");
 
@@ -505,6 +520,15 @@ mod tests {
         assert_eq!(source.line_text(1), Some("line2"));
         assert_eq!(source.line_text(2), Some("line3"));
         assert_eq!(source.line_text(3), None);
+    }
+
+    #[test]
+    fn test_source_file_line_text_strips_crlf_and_cr() {
+        let mut source = SourceFile::new("test.ts", "line1\r\nline2\rline3");
+        assert_eq!(source.line_count(), 3);
+        assert_eq!(source.line_text(0), Some("line1"));
+        assert_eq!(source.line_text(1), Some("line2"));
+        assert_eq!(source.line_text(2), Some("line3"));
     }
 
     #[test]
@@ -537,6 +561,21 @@ mod tests {
     }
 
     #[test]
+    fn test_source_file_range_to_span_handles_invalid_and_clamped_positions() {
+        let mut source = SourceFile::new("test.ts", "abc\nxyz");
+
+        assert_eq!(
+            source.range_to_span(Range::new(Position::new(9, 0), Position::new(9, 1))),
+            None
+        );
+
+        let span = source
+            .range_to_span(Range::new(Position::new(0, 99), Position::new(1, 99)))
+            .unwrap();
+        assert_eq!(span, Span::new(3, 7));
+    }
+
+    #[test]
     fn test_source_file_with_line_map() {
         let source = SourceFile::with_line_map("test.ts", "a\nb\nc");
         assert!(source.line_map.is_some());
@@ -550,6 +589,16 @@ mod tests {
         assert_eq!(source_ref.file_name, "test.ts");
         assert_eq!(source_ref.text, "hello world");
         assert_eq!(source_ref.len(), 11);
+    }
+
+    #[test]
+    fn test_source_file_ref_new_slice_and_empty() {
+        let source_ref = SourceFileRef::new("empty.ts", "");
+        assert!(source_ref.is_empty());
+        assert_eq!(source_ref.slice(Span::new(0, 1)), "");
+
+        let populated = SourceFileRef::new("test.ts", "abcdef");
+        assert_eq!(populated.slice(Span::new(1, 4)), "bcd");
     }
 
     #[test]
@@ -572,6 +621,12 @@ mod tests {
         assert_eq!(location.start_column, 6);
         assert_eq!(location.to_string_short(), "test.ts:1:7");
         assert_eq!(location.to_string_visual_studio(), "test.ts(1,7)");
+    }
+
+    #[test]
+    fn test_source_location_display_uses_short_format() {
+        let location = SourceLocation::new("test.ts".to_string(), Span::new(0, 1), 1, 2, 1, 3);
+        assert_eq!(format!("{location}"), "test.ts:2:3");
     }
 
     #[test]
