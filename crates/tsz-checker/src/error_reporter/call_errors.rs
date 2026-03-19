@@ -1359,14 +1359,12 @@ impl<'a> CheckerState<'a> {
         let (start, length) =
             if let Some((s, l)) = self.resolve_excess_argument_span(args, expected_max) {
                 (s, l)
+            } else if let Some(anchor) =
+                self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
+            {
+                (anchor.start, anchor.length)
             } else {
-                if let Some(anchor) =
-                    self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::CallPrimary)
-                {
-                    (anchor.start, anchor.length)
-                } else {
-                    return;
-                }
+                return;
             };
 
         let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
