@@ -350,15 +350,27 @@ impl<'a> Completions<'a> {
                     );
                     per_member_props.push(member_props);
                 }
-                // Intersect: keep only properties present in ALL members
+                // Intersect: keep only properties present in ALL members,
+                // and create a union of each member's property type.
                 if let Some(first) = per_member_props.first() {
                     for (name, info) in first {
                         if per_member_props[1..].iter().all(|m| m.contains_key(name)) {
+                            let mut member_types = vec![info.type_id];
+                            for member_props in &per_member_props[1..] {
+                                if let Some(mi) = member_props.get(name) {
+                                    member_types.push(mi.type_id);
+                                }
+                            }
+                            let union_type = if member_types.len() > 1 {
+                                interner.union(member_types)
+                            } else {
+                                info.type_id
+                            };
                             self.add_property_completion(
                                 props,
                                 interner,
                                 name.clone(),
-                                info.type_id,
+                                union_type,
                                 info.is_method,
                             );
                         }
