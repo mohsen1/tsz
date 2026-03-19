@@ -24,6 +24,29 @@ use tsz_common::Atom;
 /// signature-index parameters) as type parameters. This is the correct semantic
 /// for checker use cases that need to decide whether a type requires instantiation.
 pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Fast path: intrinsic types never contain type parameters
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    // Fast path: check top-level type directly before creating ContainsTypeChecker
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_),
+        ) => return true,
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Recursive(_)
+            | TypeData::Enum(_, _),
+        ) => return false,
+        _ => {}
+    }
     contains_type_matching(db, type_id, |key| {
         matches!(
             key,
@@ -121,6 +144,25 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
 pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::ERROR {
         return true;
+    }
+    // Fast path: intrinsic and leaf types can't contain Error
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Literal(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::ThisType
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::Recursive(_)
+        )
+    ) {
+        return false;
     }
     contains_type_matching(db, type_id, |key| matches!(key, TypeData::Error))
 }
