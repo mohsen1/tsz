@@ -1304,6 +1304,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBracketToken);
 
         let mut elements = Vec::new();
+        let mut emit_semicolon_expected_at_close_bracket = false;
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -1364,6 +1365,7 @@ impl ParserState {
                             "',' expected.",
                             diagnostic_codes::EXPECTED,
                         );
+                        emit_semicolon_expected_at_close_bracket = true;
                         self.next_token(); // skip `;`
                         continue;
                     }
@@ -1404,6 +1406,12 @@ impl ParserState {
                     break;
                 }
             }
+        }
+
+        if emit_semicolon_expected_at_close_bracket && self.is_token(SyntaxKind::CloseBracketToken)
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
         }
 
         let end_pos = self.token_end();
