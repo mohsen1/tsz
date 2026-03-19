@@ -404,6 +404,15 @@ fn test_get_jsdoc_content_non_jsdoc_returns_text() {
     assert_eq!(content, source);
 }
 
+#[test]
+fn test_get_jsdoc_content_trims_indentation_and_keeps_plain_lines() {
+    let source = "/**\n * first\n   second\n * third\n */";
+    let cr = CommentRange::new(0, source.len() as u32, true, false);
+
+    let content = get_jsdoc_content(&cr, source);
+    assert_eq!(content, "first\nsecond\nthird");
+}
+
 // =============================================================================
 // get_leading_comments
 // =============================================================================
@@ -467,6 +476,19 @@ fn test_get_trailing_comments_excludes_multi_line() {
     // Multi-line comments are filtered out by the implementation
     assert_eq!(trailing.len(), 1);
     assert!(!trailing[0].is_multi_line);
+}
+
+#[test]
+fn test_get_trailing_comments_respects_crlf_boundaries_and_out_of_range_positions() {
+    let source = "code // first\r\nnext // second";
+    let all = get_comment_ranges(source);
+
+    let trailing = get_trailing_comments(source, 4, &all);
+    assert_eq!(trailing.len(), 1);
+    assert_eq!(trailing[0].get_text(source), "// first");
+
+    let past_end = get_trailing_comments(source, source.len() as u32 + 10, &all);
+    assert!(past_end.is_empty());
 }
 
 // =============================================================================
