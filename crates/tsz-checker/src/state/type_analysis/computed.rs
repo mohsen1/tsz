@@ -431,6 +431,9 @@ impl<'a> CheckerState<'a> {
                 TypeId::UNKNOWN
             };
 
+            let function_type =
+                self.augment_callable_type_with_expandos(&escaped_name, sym_id, function_type);
+
             // If function is merged with namespace, merge namespace exports into function type
             // This allows accessing namespace members through the function name: Model.Options
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
@@ -1085,6 +1088,11 @@ impl<'a> CheckerState<'a> {
                         {
                             inferred_type = self.evaluate_application_type(inferred_type);
                         }
+                        inferred_type = self.augment_callable_type_with_expandos(
+                            &escaped_name,
+                            sym_id,
+                            inferred_type,
+                        );
                         let init_is_direct_empty_array = self
                             .ctx
                             .arena

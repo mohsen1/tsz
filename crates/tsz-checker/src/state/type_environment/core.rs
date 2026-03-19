@@ -1891,26 +1891,13 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         base_type: TypeId,
     ) -> TypeId {
-        use rustc_hash::FxHashSet;
         use tsz_solver::{ObjectShape, PropertyInfo};
 
         if !self.is_js_file() || !self.ctx.compiler_options.check_js {
             return base_type;
         }
 
-        let mut expando_props: FxHashSet<String> = FxHashSet::default();
-
-        if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
-            expando_props.extend(props.iter().cloned());
-        }
-
-        if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if let Some(props) = binder.expando_properties.get(root_name) {
-                    expando_props.extend(props.iter().cloned());
-                }
-            }
-        }
+        let expando_props = self.collect_expando_properties_for_root(root_name);
 
         if expando_props.is_empty() {
             return base_type;
@@ -1957,6 +1944,117 @@ impl<'a> CheckerState<'a> {
             number_index: shape.number_index.clone(),
             symbol: shape.symbol.or(Some(sym_id)),
         })
+    }
+
+    pub(crate) fn collect_expando_properties_for_root(&self, root_name: &str) -> FxHashSet<String> {
+        let mut expando_props: FxHashSet<String> = FxHashSet::default();
+
+        if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
+            expando_props.extend(props.iter().cloned());
+        }
+
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if let Some(props) = binder.expando_properties.get(root_name) {
+                    expando_props.extend(props.iter().cloned());
+                }
+            }
+        }
+
+        expando_props
+    }
+
+    pub(crate) fn augment_callable_type_with_expandos(
+        &mut self,
+        root_name: &str,
+        sym_id: SymbolId,
+        base_type: TypeId,
+    ) -> TypeId {
+        use rustc_hash::FxHashMap;
+        use tsz_solver::PropertyInfo;
+
+        let expando_props = self.collect_expando_properties_for_root(root_name);
+        if expando_props.is_empty() {
+            return base_type;
+        }
+
+        let (mut callable_shape, mut property_count) = if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, base_type)
+        {
+            ((*shape).clone(), shape.properties.len())
+        } else if let Some(function_shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, base_type)
+        {
+            let signature = CallSignature {
+                type_params: function_shape.type_params.clone(),
+                params: function_shape.params.clone(),
+                this_type: function_shape.this_type,
+                return_type: function_shape.return_type,
+                type_predicate: function_shape.type_predicate.clone(),
+                is_method: function_shape.is_method,
+            };
+            (
+                CallableShape {
+                    call_signatures: if function_shape.is_constructor {
+                        Vec::new()
+                    } else {
+                        vec![signature.clone()]
+                    },
+                    construct_signatures: if function_shape.is_constructor {
+                        vec![signature]
+                    } else {
+                        Vec::new()
+                    },
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: Some(sym_id),
+                    is_abstract: false,
+                },
+                0,
+            )
+        } else {
+            return base_type;
+        };
+
+        let mut properties: FxHashMap<Atom, PropertyInfo> = callable_shape
+            .properties
+            .iter()
+            .map(|prop| (prop.name, prop.clone()))
+            .collect();
+        let mut changed = false;
+
+        for prop_name in expando_props {
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if properties.contains_key(&prop_atom) {
+                continue;
+            }
+
+            properties.insert(
+                prop_atom,
+                PropertyInfo {
+                    name: prop_atom,
+                    type_id: TypeId::ANY,
+                    write_type: TypeId::ANY,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: Some(sym_id),
+                    declaration_order: property_count as u32,
+                },
+            );
+            property_count += 1;
+            changed = true;
+        }
+
+        if !changed {
+            return base_type;
+        }
+
+        callable_shape.properties = properties.into_values().collect();
+        self.ctx.types.factory().callable(callable_shape)
     }
 
     pub(crate) fn resolve_global_this_property_type(

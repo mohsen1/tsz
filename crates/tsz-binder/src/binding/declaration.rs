@@ -1948,6 +1948,18 @@ impl BinderState {
             None
         }
 
+        fn root_identifier_index(arena: &NodeArena, idx: NodeIndex) -> Option<NodeIndex> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return Some(idx);
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                return root_identifier_index(arena, access.expression);
+            }
+            None
+        }
+
         fn resolved_const_expando_key(
             binder: &BinderState,
             arena: &NodeArena,
@@ -2093,8 +2105,12 @@ impl BinderState {
             return;
         }
 
-        // Look up the root identifier in file_locals (covers hoisted vars/functions/modules)
-        let Some(sym_id) = self.file_locals.get(root_name) else {
+        // Resolve the root identifier through the enclosing scope chain so nested
+        // function/value roots share the same expando summary path as top-level ones.
+        let Some(root_ident) = root_identifier_index(arena, access.expression) else {
+            return;
+        };
+        let Some(sym_id) = self.resolve_identifier(arena, root_ident) else {
             return;
         };
         let Some(symbol) = self.symbols.get(sym_id) else {
