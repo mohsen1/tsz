@@ -1200,7 +1200,7 @@ fn test_non_null_assertion_does_not_emit_ts2454() {
 
 #[test]
 fn test_ts2564_no_error_for_unconstrained_type_parameter() {
-    // Matches superWithTypeArgument3.ts: `foo: T` where T is unconstrained
+    // tsc now requires initialization for unconstrained type parameters too.
     let source = r"
         class C<T> {
             foo: T;
@@ -1219,8 +1219,8 @@ fn test_ts2564_no_error_for_unconstrained_type_parameter() {
             &diags,
             diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
         ),
-        0,
-        "TS2564 should not be emitted for property typed as unconstrained type parameter T, got: {diags:?}"
+        1,
+        "TS2564 should be emitted for property typed as unconstrained type parameter T, got: {diags:?}"
     );
 }
 
@@ -1252,7 +1252,7 @@ fn test_ts2564_error_for_constrained_type_parameter_excluding_undefined() {
 
 #[test]
 fn test_ts2564_no_error_for_type_parameter_constrained_to_undefined() {
-    // T extends string | undefined → undefined IS assignable → no TS2564
+    // tsc still requires initialization for T extends string | undefined.
     let source = r"
         class C<T extends string | undefined> {
             foo: T;
@@ -1271,8 +1271,8 @@ fn test_ts2564_no_error_for_type_parameter_constrained_to_undefined() {
             &diags,
             diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
         ),
-        0,
-        "TS2564 should not be emitted for T extends string | undefined, got: {diags:?}"
+        1,
+        "TS2564 should be emitted for T extends string | undefined, got: {diags:?}"
     );
 }
 
@@ -1339,11 +1339,8 @@ fn test_ts2564_no_error_without_strict_mode() {
 
 #[test]
 fn test_ts2564_no_false_positive_generic_class_with_base() {
-    // Mirrors superWithTypeArgument3.ts: generic class C<T> with field `foo: T`,
-    // derived class D<T> extends C<T>. The field `foo` has type parameter T
-    // (unconstrained), so undefined is assignable to T and TS2564 must NOT fire
-    // for C. D inherits `foo` but declares no new properties, so TS2564 must
-    // not fire for D either.
+    // Matches current superWithTypeArgument3-style behavior: the base class field
+    // still requires initialization even when it is typed as unconstrained T.
     let source = r"
         class C<T> {
             foo: T;
@@ -1372,16 +1369,16 @@ fn test_ts2564_no_false_positive_generic_class_with_base() {
             &diags,
             diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
         ),
-        0,
-        "TS2564 must not fire for property typed as unconstrained type parameter T (superWithTypeArgument3 parity), got: {diags:?}"
+        1,
+        "TS2564 should fire once for the generic base-class field in the superWithTypeArgument3-style case, got: {diags:?}"
     );
 }
 
 #[test]
 fn test_ts2564_multiple_type_parameters_mixed_constraints() {
-    // Multiple type parameters: K extends string → TS2564, V unconstrained → no TS2564
+    // tsc now requires initialization for both constrained and unconstrained type params.
     let source = r"
-        class Map<K extends string, V> {
+        class Store<K extends string, V> {
             key: K;
             value: V;
         }
@@ -1394,14 +1391,14 @@ fn test_ts2564_multiple_type_parameters_mixed_constraints() {
             ..CheckerOptions::default()
         },
     );
-    // key: K (extends string) → TS2564 (undefined not assignable to string)
-    // value: V (unconstrained) → no TS2564 (undefined assignable to V)
+    // key: K (extends string) → TS2564
+    // value: V (unconstrained) → TS2564 as well
     assert_eq!(
         count_code(
             &diags,
             diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
         ),
-        1,
-        "Only constrained type parameter K should get TS2564, not unconstrained V, got: {diags:?}"
+        2,
+        "Both constrained K and unconstrained V should get TS2564, got: {diags:?}"
     );
 }

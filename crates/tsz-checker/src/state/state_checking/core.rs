@@ -1219,6 +1219,7 @@ impl<'a> CheckerState<'a> {
                 Some(flags)
             }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
+            syntax_kind_ext::TYPE_PARAMETER => Some(symbol_flags::TYPE_PARAMETER),
             syntax_kind_ext::PARAMETER => Some(symbol_flags::FUNCTION_SCOPED_VARIABLE),
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             | syntax_kind_ext::IMPORT_CLAUSE
