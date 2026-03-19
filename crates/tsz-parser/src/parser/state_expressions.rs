@@ -444,22 +444,34 @@ impl ParserState {
             // 2. The else separator of a conditional: a ? (x) : y
             // Disambiguate by checking for `=>` after a return type.
             self.next_token();
+            if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
-            let _ = self.parse_return_type();
+            let type_start = self.token_pos();
+            let type_node = self.parse_return_type();
+            let parsed_return_type = self.token_pos() != type_start
+                || self
+                    .arena
+                    .get(type_node)
+                    .is_some_and(|node| node.end > node.pos);
             // After parsing the return type, check for `=>` or `{`. Line breaks
             // between the return type and `=>` are allowed here — TS1200 will be
             // emitted during actual parsing. The `(params): type` prefix is
             // unambiguous, so we don't need the line break check.
-            let mut result = self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                || self.is_token(SyntaxKind::OpenBraceToken)
-                || matches!(
-                    self.token(),
-                    SyntaxKind::SemicolonToken
-                        | SyntaxKind::CommaToken
-                        | SyntaxKind::CloseBraceToken
-                        | SyntaxKind::EndOfFileToken
-                );
+            let mut result = parsed_return_type
+                && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                    || self.is_token(SyntaxKind::OpenBraceToken)
+                    || matches!(
+                        self.token(),
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBraceToken
+                            | SyntaxKind::EndOfFileToken
+                    ));
 
             // In the true branch of a conditional expression, only accept
             // `(x): T => ...` as an arrow function when the simulated body

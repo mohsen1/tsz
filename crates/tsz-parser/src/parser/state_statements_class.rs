@@ -1,14 +1,50 @@
 //! Parser state - class expression and class declaration parsing.
 
 use super::state::{
-    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_IN_CLASS,
-    CONTEXT_FLAG_PARAMETER_DEFAULT, ParserState,
+    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
+    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_DEFAULT, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::ClassData, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    fn report_missing_close_paren_after_body_recovery(&mut self) {
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        let mut brace_depth = 0u32;
+        let mut missing_pos = None;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenBraceToken => {
+                    brace_depth += 1;
+                }
+                SyntaxKind::CloseBraceToken => {
+                    if brace_depth == 0 {
+                        missing_pos = Some(self.token_end());
+                        break;
+                    }
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        missing_pos = Some(self.token_end());
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+
+        if let Some(pos) = missing_pos {
+            self.parse_error_at(pos, 0, "')' expected.", diagnostic_codes::EXPECTED);
+            self.suppress_next_missing_close_paren_error_once = true;
+        }
+    }
+
     /// Parse class expression: class {} or class Name {}
     ///
     /// Unlike class declarations, class expressions can be anonymous.
@@ -151,6 +187,11 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    if self.is_token(SyntaxKind::OpenBraceToken)
+                        && (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) == 0
+                    {
+                        self.report_missing_close_paren_after_body_recovery();
+                    }
                     // Recovery: skip tokens until we find `)` or `{` so that the
                     // caller's parse_expected(CloseParenToken) succeeds and the
                     // class body parses normally.  Without this, stray tokens

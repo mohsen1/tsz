@@ -1487,6 +1487,14 @@ impl ParserState {
                     self.error_comma_expected();
                     self.next_token();
 
+                    if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                        self.parse_error_at_current_token(
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        break;
+                    }
+
                     let recover_start = self.token_pos();
                     let _ = self.parse_type();
                     if self.token_pos() == recover_start

@@ -1425,6 +1425,12 @@ impl ParserState {
 
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.suppress_object_literal_comma_once && self.is_property_start() {
+                    self.suppress_object_literal_comma_once = false;
+                    continue;
+                }
+                self.suppress_object_literal_comma_once = false;
+
                 if self.is_token(SyntaxKind::SemicolonToken) {
                     // Semicolons in object literals: look ahead to decide whether to
                     // treat as a mistyped comma (continue) or abort the list (break).
@@ -1453,7 +1459,7 @@ impl ParserState {
                         );
                         self.next_token(); // skip `;`
                     } else if follows_eof {
-                        self.error_comma_expected();
+                        self.next_token(); // let missing `}` report at EOF
                         break;
                     } else {
                         // `;` followed by non-property → abort the list
@@ -1711,6 +1717,9 @@ impl ParserState {
             let initializer = if expr.is_none() {
                 // Emit TS1109 for missing property value: { prop: }
                 self.error_expression_expected();
+                if self.scanner.has_preceding_line_break() && self.is_property_start() {
+                    self.suppress_object_literal_comma_once = true;
+                }
                 name // Use property name as fallback for error recovery
             } else {
                 expr
@@ -1730,7 +1739,7 @@ impl ParserState {
             )
         } else {
             // Shorthand property - but certain property names require `:` syntax
-            if requires_colon && !self.is_token(SyntaxKind::SemicolonToken) {
+            if requires_colon {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
             }
