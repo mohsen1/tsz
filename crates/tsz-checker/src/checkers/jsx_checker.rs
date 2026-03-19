@@ -1598,6 +1598,28 @@ impl<'a> CheckerState<'a> {
                 // Checking them against the props type produces false positives when the
                 // props type is an unevaluated application (e.g. DetailedHTMLProps<...>).
                 if attr_name == "key" || attr_name == "ref" {
+                    let attr_value_type = if attr_data.initializer.is_none() {
+                        TypeId::BOOLEAN_TRUE
+                    } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                        let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                            self.ctx
+                                .arena
+                                .get_jsx_expression(init_node)
+                                .map(|e| e.expression)
+                                .unwrap_or(attr_data.initializer)
+                        } else {
+                            attr_data.initializer
+                        };
+                        tsz_solver::widening::widen_type(
+                            self.ctx.types,
+                            self.compute_type_of_node(value_idx),
+                        )
+                    } else {
+                        TypeId::ANY
+                    };
+                    if let Some(entry) = provided_attrs.last_mut() {
+                        entry.1 = attr_value_type;
+                    }
                     continue;
                 }
 
@@ -1892,6 +1914,40 @@ impl<'a> CheckerState<'a> {
             }
 
             provided_attrs.push(("children".to_string(), synthesized_type));
+            if child_count > 0
+                && !has_explicit_children_attr
+                && !skip_prop_checks
+                && !has_excess_property_error
+                && !has_string_index
+                && !props_has_type_params
+                && !display_target.is_empty()
+            {
+                let has_intrinsic_key_or_ref = provided_attrs
+                    .iter()
+                    .any(|(name, _)| name == "key" || name == "ref");
+                use crate::query_boundaries::common::PropertyAccessResult;
+                let props_has_children = matches!(
+                    self.resolve_property_access_with_env(props_type, "children"),
+                    PropertyAccessResult::Success { .. }
+                );
+                let intrinsic_has_children = self
+                    .get_intrinsic_attributes_type()
+                    .is_some_and(|ia_type| {
+                        let resolved_ia = self.resolve_type_for_property_access(ia_type);
+                        matches!(
+                            self.resolve_property_access_with_env(resolved_ia, "children"),
+                            PropertyAccessResult::Success { .. }
+                        )
+                    });
+                if has_intrinsic_key_or_ref && !props_has_children && !intrinsic_has_children {
+                    self.report_jsx_body_children_excess_property(
+                        tag_name_idx,
+                        &display_target,
+                        &provided_attrs,
+                    );
+                    has_excess_property_error = true;
+                }
+            }
             // TS2745/TS2746: route JSX body children through one normalized
             // classifier so union/tuple shapes don't drift by component path.
             if child_count > 0 && !skip_prop_checks {
@@ -1900,6 +1956,7 @@ impl<'a> CheckerState<'a> {
                     attributes_idx,
                     child_count,
                     has_text_child,
+                    synthesized_type,
                     tag_name_idx,
                 );
             }
@@ -1929,6 +1986,53 @@ impl<'a> CheckerState<'a> {
                 tag_name_idx,
             );
         }
+    }
+
+    fn report_jsx_body_children_excess_property(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        display_target: &str,
+        provided_attrs: &[(String, TypeId)],
+    ) {
+        let mut ordered_attrs: Vec<(String, TypeId)> = Vec::with_capacity(provided_attrs.len());
+        if let Some((_, children_type)) = provided_attrs.iter().find(|(name, _)| name == "children") {
+            ordered_attrs.push(("children".to_string(), *children_type));
+        }
+        ordered_attrs.extend(
+            provided_attrs
+                .iter()
+                .filter(|(name, _)| name != "children")
+                .cloned(),
+        );
+
+        let properties: Vec<tsz_solver::PropertyInfo> = ordered_attrs
+            .iter()
+            .map(|(name, type_id)| {
+                let name_atom = self.ctx.types.intern_string(name);
+                tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: *type_id,
+                    write_type: *type_id,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: tsz_solver::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                }
+            })
+            .collect();
+        let source_type = self.format_type(self.ctx.types.factory().object(properties));
+        let message = format!(
+            "Type '{source_type}' is not assignable to type '{display_target}'.\n  Property 'children' does not exist on type '{display_target}'."
+        );
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node(
+            tag_name_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
     }
 
     /// Mark a JSX factory or fragment factory name as referenced for

@@ -1863,6 +1863,41 @@ declare namespace JSX {
 "#;
 
 #[test]
+fn jsx_body_children_excess_property_checks_use_intrinsic_attributes() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_WITH_IA}
+const Tag = (x: {{}}) => <div></div>;
+const k3 = <Tag children={{<div></div>}} />;
+const k4 = <Tag key="1"><div></div></Tag>;
+const k5 = <Tag key="1"><div></div><div></div></Tag>;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected explicit and body-children excess-property TS2322s, got: {diags:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, _, message)| message.contains(
+            "Type '{ children: Element; key: string; }' is not assignable to type 'IntrinsicAttributes'."
+        )),
+        "Expected body children with key to synthesize '{{ children: Element; key: string; }}', got: {diags:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, _, message)| message.contains(
+            "Type '{ children: Element[]; key: string; }' is not assignable to type 'IntrinsicAttributes'."
+        )),
+        "Expected multi-body children with key to synthesize '{{ children: Element[]; key: string; }}', got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_sfc_spread_unconstrained_emits_ts2322() {
     // <Component {...props} /> where Component<T>(props: T) and props: U (unconstrained)
     // should emit TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'"
@@ -2176,6 +2211,79 @@ let k = <Comp a={{10}}><div>hi</div></Comp>;
             diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
         ),
         "Tuple-only children should still emit TS2745 for a single child, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_single_child_component_instance_mismatch_emits_ts2740() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+declare namespace React {
+    class Component<P, S = {}> {
+        props: P & { children?: any };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+        setState(state: any): void;
+        forceUpdate(): void;
+    }
+}
+interface Prop {
+    children: Button;
+}
+
+class Button extends React.Component<any, any> {
+    render() {
+        return (<div>My Button</div>);
+    }
+}
+
+function Comp(p: Prop) {
+    return <div />;
+}
+
+let k1 =
+    <Comp>
+        <Button />
+    </Comp>;
+let k2 =
+    <Comp>
+        {Button}
+    </Comp>;
+"#;
+    let diags = jsx_diagnostics(source);
+    let ts2740_msgs: Vec<&str> = diags
+        .iter()
+        .filter(|(code, _)| {
+            matches!(
+                *code,
+                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            )
+        })
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+    assert_eq!(
+        ts2740_msgs.len(),
+        2,
+        "Expected two TS2740 diagnostics for single-child JSX body mismatches, got: {diags:?}"
+    );
+    assert!(
+        ts2740_msgs
+            .iter()
+            .any(|msg| msg.contains("Type 'Element'") || msg.contains("Type 'ReactElement<any>'")),
+        "Expected JSX element child mismatch to report the rendered element source type, got: {ts2740_msgs:?}"
+    );
+    assert!(
+        ts2740_msgs.iter().any(|msg| msg.contains("typeof Button")),
+        "Expected expression child mismatch to mention typeof Button, got: {ts2740_msgs:?}"
     );
 }
 

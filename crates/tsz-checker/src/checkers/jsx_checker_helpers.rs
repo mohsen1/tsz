@@ -81,6 +81,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         child_count: usize,
         has_text_child: bool,
+        synthesized_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
         let Some(children_type) = self.get_jsx_children_prop_type(props_type) else {
@@ -91,6 +92,12 @@ impl<'a> CheckerState<'a> {
             0 => {}
             1 => {
                 if !self.type_requires_multiple_children(children_type) {
+                    self.check_jsx_single_child_assignable(
+                        attributes_idx,
+                        children_type,
+                        synthesized_children_type,
+                        has_text_child,
+                    );
                     return;
                 }
 
@@ -335,6 +342,152 @@ impl<'a> CheckerState<'a> {
             tag_name_idx,
             tag_name_idx,
         );
+    }
+
+    fn check_jsx_single_child_assignable(
+        &mut self,
+        attributes_idx: NodeIndex,
+        children_type: TypeId,
+        actual_child_type: TypeId,
+        has_text_child: bool,
+    ) {
+        if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
+            return;
+        }
+
+        if has_text_child && !self.children_type_accepts_text(children_type) {
+            return;
+        }
+
+        if self.is_assignable_to(actual_child_type, children_type) {
+            return;
+        }
+
+        let Some(child_idx) = self
+            .get_jsx_body_child_nodes(attributes_idx)
+            .and_then(|children| children.into_iter().next())
+        else {
+            return;
+        };
+
+        let diag_node = if let Some(child_node) = self.ctx.arena.get(child_idx) {
+            if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_jsx_expression(child_node)
+                    .map(|expr_data| expr_data.expression)
+                    .filter(|&expr_idx| expr_idx != NodeIndex::NONE)
+                    .unwrap_or(child_idx)
+            } else {
+                child_idx
+            }
+        } else {
+            child_idx
+        };
+
+        if self.report_jsx_single_child_constructor_instance_mismatch(
+            diag_node,
+            actual_child_type,
+            children_type,
+        ) {
+            return;
+        }
+
+        self.check_assignable_or_report_at(
+            actual_child_type,
+            children_type,
+            diag_node,
+            diag_node,
+        );
+    }
+
+    fn report_jsx_single_child_constructor_instance_mismatch(
+        &mut self,
+        diag_node: NodeIndex,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        let instance_type_from_symbol = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, diag_node)
+            .and_then(|sym_id| {
+                let lib_binders = self.get_lib_binders();
+                let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                ((symbol.flags & tsz_binder::symbol_flags::CLASS) != 0)
+                    .then(|| self.class_instance_type_from_symbol(sym_id))
+                    .flatten()
+            });
+        let Some(instance_type) = instance_type_from_symbol.or_else(|| {
+            crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                self.ctx.types,
+                source_type,
+            )
+        }) else {
+            return false;
+        };
+
+        let resolved_target = self.resolve_type_for_property_access(target_type);
+        let resolved_instance = self.resolve_type_for_property_access(instance_type);
+        if !(self.is_assignable_to(resolved_instance, resolved_target)
+            && self.is_assignable_to(resolved_target, resolved_instance))
+        {
+            return false;
+        }
+
+        let resolved_source = self.resolve_type_for_property_access(source_type);
+        let Some(target_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_target)
+        else {
+            return false;
+        };
+        let source_props: rustc_hash::FxHashSet<_> =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_source)
+                .map(|shape| shape.properties.iter().map(|prop| prop.name).collect())
+                .unwrap_or_default();
+        let missing_names: Vec<_> = target_shape
+            .properties
+            .iter()
+            .filter(|prop| !prop.optional && !source_props.contains(&prop.name))
+            .map(|prop| prop.name)
+            .collect();
+        if missing_names.len() <= 1 {
+            return false;
+        }
+
+        let source_str = self.format_type(source_type);
+        let target_str = self.format_type(target_type);
+        let props_joined = missing_names
+            .iter()
+            .take(4)
+            .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        if missing_names.len() > 4 {
+            let more_count = (missing_names.len() - 4).to_string();
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                &[&source_str, &target_str, &props_joined, &more_count],
+            );
+            self.error_at_node(
+                diag_node,
+                &message,
+                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+            );
+        } else {
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                &[&source_str, &target_str, &props_joined],
+            );
+            self.error_at_node(
+                diag_node,
+                &message,
+                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+            );
+        }
+        true
     }
 
     fn get_precise_jsx_children_body_type(
