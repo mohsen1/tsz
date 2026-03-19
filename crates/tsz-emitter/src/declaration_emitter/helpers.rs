@@ -5488,6 +5488,100 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn print_synthetic_class_extends_alias_type(&self, type_id: tsz_solver::types::TypeId) -> String {
+        let Some(interner) = self.type_interner else {
+            return self.print_type_id(type_id);
+        };
+        let Some(callable_id) = tsz_solver::visitor::callable_shape_id(interner, type_id) else {
+            return self.print_type_id(type_id);
+        };
+        let callable = interner.callable_shape(callable_id);
+        let has_properties = callable.properties.iter().any(|prop| {
+            let name = interner.resolve_atom(prop.name);
+            name != "prototype" && !name.starts_with("__private_brand_")
+        });
+
+        if callable.symbol.is_none()
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+            && callable.construct_signatures[0].type_predicate.is_none()
+        {
+            return self.print_construct_signature_arrow_text(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+        }
+
+        self.print_type_id(type_id)
+    }
+
+    fn print_construct_signature_arrow_text(
+        &self,
+        sig: &tsz_solver::types::CallSignature,
+        is_abstract: bool,
+    ) -> String {
+        let Some(interner) = self.type_interner else {
+            return self.print_type_id(sig.return_type);
+        };
+
+        let type_params = if sig.type_params.is_empty() {
+            String::new()
+        } else {
+            let params = sig
+                .type_params
+                .iter()
+                .map(|tp| {
+                    let mut text = String::new();
+                    if tp.is_const {
+                        text.push_str("const ");
+                    }
+                    text.push_str(&interner.resolve_atom(tp.name));
+                    if let Some(constraint) = tp.constraint {
+                        text.push_str(" extends ");
+                        text.push_str(&self.print_type_id(constraint));
+                    }
+                    if let Some(default) = tp.default {
+                        text.push_str(" = ");
+                        text.push_str(&self.print_type_id(default));
+                    }
+                    text
+                })
+                .collect::<Vec<_>>();
+            format!("<{}>", params.join(", "))
+        };
+
+        let params = sig
+            .params
+            .iter()
+            .map(|param| {
+                let mut text = String::new();
+                if param.rest {
+                    text.push_str("...");
+                }
+                if let Some(name) = param.name {
+                    text.push_str(&interner.resolve_atom(name));
+                    if param.optional {
+                        text.push('?');
+                    }
+                    text.push_str(": ");
+                }
+                text.push_str(&self.print_type_id(param.type_id));
+                text
+            })
+            .collect::<Vec<_>>();
+
+        let prefix = if is_abstract { "abstract new " } else { "new " };
+        format!(
+            "{prefix}{}({}) => {}",
+            type_params,
+            params.join(", "),
+            self.print_type_id(sig.return_type)
+        )
+    }
+
     /// Resolve a foreign symbol to its module path.
     ///
     /// Returns the module specifier (e.g., "./utils") for importing the symbol.
@@ -6367,7 +6461,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn non_nameable_extends_heritage_type(
+    pub(crate) fn non_nameable_extends_heritage_type(
         &self,
         clauses: &NodeList,
     ) -> Option<(NodeIndex, NodeIndex)> {
@@ -6393,6 +6487,89 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn synthetic_class_extends_alias_type_id(
+        &self,
+        heritage: Option<&NodeList>,
+    ) -> Option<tsz_solver::TypeId> {
+        let heritage = heritage?;
+        let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
+        self.get_node_type_or_names(&[expr_idx, type_idx])
+    }
+
+    pub(crate) fn retain_synthetic_class_extends_alias_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            self.retain_synthetic_class_extends_alias_dependencies_for_statement(stmt_idx);
+        }
+    }
+
+    fn retain_synthetic_class_extends_alias_dependencies_for_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(stmt_node)
+                    && self.statement_has_effective_export(stmt_idx)
+                    && let Some(type_id) =
+                        self.synthetic_class_extends_alias_type_id(class.heritage_clauses.as_ref())
+                {
+                    self.retain_direct_type_symbols_for_public_api(type_id);
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                    if let Some(clause_node) = self.arena.get(export.export_clause) {
+                        if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                            && let Some(class) = self.arena.get_class(clause_node)
+                            && let Some(type_id) = self
+                                .synthetic_class_extends_alias_type_id(class.heritage_clauses.as_ref())
+                        {
+                            self.retain_direct_type_symbols_for_public_api(type_id);
+                        } else if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            self.retain_synthetic_module_extends_alias_dependencies(
+                                export.export_clause,
+                            );
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.retain_synthetic_module_extends_alias_dependencies(stmt_idx);
+            }
+            _ => {}
+        }
+    }
+
+    fn retain_synthetic_module_extends_alias_dependencies(&mut self, module_idx: NodeIndex) {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+
+        let mut current_body = module.body;
+        loop {
+            let Some(body_node) = self.arena.get(current_body) else {
+                return;
+            };
+            if let Some(nested_mod) = self.arena.get_module(body_node) {
+                current_body = nested_mod.body;
+                continue;
+            }
+            if let Some(block) = self.arena.get_module_block(body_node)
+                && let Some(ref statements) = block.statements
+            {
+                self.retain_synthetic_class_extends_alias_dependencies_in_statements(statements);
+            }
+            return;
+        }
     }
 
     fn retain_direct_type_symbols_for_public_api(&mut self, type_id: tsz_solver::TypeId) {
@@ -6526,11 +6703,11 @@ impl<'a> DeclarationEmitter<'a> {
         heritage: Option<&NodeList>,
         is_default_export: bool,
     ) -> Option<String> {
-        let heritage = heritage?;
-        let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
-        let type_id = self.get_node_type_or_names(&[expr_idx, type_idx])?;
+        let type_id = self.synthetic_class_extends_alias_type_id(heritage)?;
         self.retain_direct_type_symbols_for_public_api(type_id);
-        self.emit_direct_symbol_dependency_for_type(type_id);
+        if self.used_symbols.is_none() {
+            self.emit_direct_symbol_dependency_for_type(type_id);
+        }
         let alias_name = if is_default_export {
             "default_base".to_string()
         } else {
@@ -6545,7 +6722,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("const ");
         self.write(&alias_name);
         self.write(": ");
-        self.write(&self.print_type_id(type_id));
+        self.write(&self.print_synthetic_class_extends_alias_type(type_id));
         self.write(";");
         self.write_line();
         self.emitted_non_exported_declaration = true;

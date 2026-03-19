@@ -595,10 +595,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // Prepare aliases and build the import plan before emitting anything
-        self.prepare_import_aliases(root_idx);
-        self.prepare_import_plan();
-
         let Some(root_node) = self.arena.get(root_idx) else {
             return String::new();
         };
@@ -606,6 +602,16 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(source_file) = self.arena.get_source_file(root_node) else {
             return String::new();
         };
+
+        if !self.source_file_is_js(source_file) {
+            self.retain_synthetic_class_extends_alias_dependencies_in_statements(
+                &source_file.statements,
+            );
+        }
+
+        // Prepare aliases and build the import plan before emitting anything
+        self.prepare_import_aliases(root_idx);
+        self.prepare_import_plan();
 
         self.source_file_text = Some(source_file.text.clone());
         self.source_is_declaration_file = source_file.is_declaration_file;

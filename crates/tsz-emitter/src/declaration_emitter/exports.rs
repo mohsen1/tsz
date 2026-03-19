@@ -1934,6 +1934,19 @@ impl<'a> DeclarationEmitter<'a> {
                                 || ck == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                             {
                                 has_exported = true;
+                                if non_ambient
+                                    && ck == syntax_kind_ext::CLASS_DECLARATION
+                                    && let Some(class) = self.arena.get_class(clause_node)
+                                    && class
+                                        .heritage_clauses
+                                        .as_ref()
+                                        .and_then(|heritage| {
+                                            self.non_nameable_extends_heritage_type(heritage)
+                                        })
+                                        .is_some()
+                                {
+                                    has_non_exported = true;
+                                }
                             } else {
                                 // Named exports like `export { a, b }` — scope marker
                                 return true;
@@ -1948,6 +1961,17 @@ impl<'a> DeclarationEmitter<'a> {
                 _ => {
                     if self.stmt_has_export_modifier(stmt_node) {
                         has_exported = true;
+                        if non_ambient
+                            && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                            && let Some(class) = self.arena.get_class(stmt_node)
+                            && class
+                                .heritage_clauses
+                                .as_ref()
+                                .and_then(|heritage| self.non_nameable_extends_heritage_type(heritage))
+                                .is_some()
+                        {
+                            has_non_exported = true;
+                        }
                     } else {
                         // Skip ImportDeclaration and ImportEqualsDeclaration
                         // as they don't count as non-exported members
