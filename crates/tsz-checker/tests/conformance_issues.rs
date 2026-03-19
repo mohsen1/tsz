@@ -7547,6 +7547,142 @@ func(x);
 }
 
 #[test]
+fn test_ts7034_emitted_for_evolving_array_same_scope_read() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f() {
+    let x = [];
+    let y = x;
+}
+        ",
+        opts,
+    );
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 for evolving array same-scope read.\nActual errors: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7005_count, 1,
+        "Should emit exactly one TS7005 at the unsafe evolving-array read.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7034_emitted_after_empty_array_assignment_before_read() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f() {
+    let x;
+    x = [];
+    let y = x;
+}
+        ",
+        opts,
+    );
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 once an unannotated variable is read as an evolving array.\nActual errors: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7005_count, 1,
+        "Should emit exactly one TS7005 at the unsafe read after `x = []`.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7034_evolving_array_same_scope_read_after_push_is_stable() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r"
+function f() {
+    let x = [];
+    x.push(1);
+    let y = x;
+}
+        ",
+        opts,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 after same-scope array mutation stabilizes the element type.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7005),
+        "Should NOT emit TS7005 after same-scope array mutation stabilizes the element type.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7034_evolving_array_skips_length_and_push_sites() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r"
+let bar = [];
+bar?.length;
+bar.push('baz');
+        ",
+        opts,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 for `.length`/`push`-only evolving-array usage.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7005),
+        "Should NOT emit TS7005 for `.length`/`push`-only evolving-array usage.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7034_evolving_array_reports_element_read_not_length_probe() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+let foo = [];
+foo?.length;
+foo[0];
+        ",
+        opts,
+    );
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 once an evolving array is read through an element access.\nActual errors: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7005_count, 1,
+        "Should emit TS7005 only for the element access, not the `.length` probe.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_control_flow_unannotated_loop_incrementor_reads_assignment_union() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

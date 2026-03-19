@@ -5,7 +5,7 @@
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
 use crate::FlowAnalyzer;
-use crate::context::TypingRequest;
+use crate::context::{PendingImplicitAnyKind, TypingRequest};
 use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
@@ -15,6 +15,7 @@ use tracing::trace;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -255,28 +256,38 @@ impl<'a> CheckerState<'a> {
             // from a nested function scope (i.e., the variable is captured by a closure).
             // If so, emit TS7034 at the declaration site.
             let mut emit_ts7005 = false;
-            if self.ctx.pending_implicit_any_vars.contains_key(&sym_id) {
-                let ref_fn = self.find_enclosing_function(idx);
-                let decl_name_node = self.ctx.pending_implicit_any_vars[&sym_id];
-                let decl_fn = self.find_enclosing_function(decl_name_node);
-                if ref_fn != decl_fn
-                    && self.should_emit_pending_implicit_any_capture_diagnostic(idx, sym_id)
-                {
-                    // Variable is captured by a nested function — emit TS7034 at declaration.
-                    let decl_name_node =
-                        self.ctx.pending_implicit_any_vars.remove(&sym_id).expect("sym_id was verified present via should_emit_pending_implicit_any_capture_diagnostic");
-                    self.ctx.reported_implicit_any_vars.insert(sym_id);
-                    if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
-                            decl_name_node,
-                            diagnostic_codes::VARIABLE_IMPLICITLY_HAS_TYPE_IN_SOME_LOCATIONS_WHERE_ITS_TYPE_CANNOT_BE_DETERMIN,
-                            &[&sym.escaped_name, "any"],
-                        );
+            if let Some(pending) = self.ctx.pending_implicit_any_vars.get(&sym_id).copied() {
+                if pending.kind == PendingImplicitAnyKind::CaptureOnly {
+                    let ref_fn = self.find_enclosing_function(idx);
+                    let decl_name_node = pending.name_node;
+                    let decl_fn = self.find_enclosing_function(decl_name_node);
+                    if ref_fn != decl_fn
+                        && self.should_emit_pending_implicit_any_capture_diagnostic(idx, sym_id)
+                    {
+                        // Variable is captured by a nested function — emit TS7034 at declaration.
+                        let decl_name_node = self
+                            .ctx
+                            .pending_implicit_any_vars
+                            .remove(&sym_id)
+                            .expect("sym_id was verified present via should_emit_pending_implicit_any_capture_diagnostic")
+                            .name_node;
+                        self.ctx
+                            .reported_implicit_any_vars
+                            .insert(sym_id, PendingImplicitAnyKind::CaptureOnly);
+                        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                decl_name_node,
+                                diagnostic_codes::VARIABLE_IMPLICITLY_HAS_TYPE_IN_SOME_LOCATIONS_WHERE_ITS_TYPE_CANNOT_BE_DETERMIN,
+                                &[&sym.escaped_name, "any"],
+                            );
+                        }
+                        emit_ts7005 = true;
                     }
-                    emit_ts7005 = true;
                 }
-            } else if self.ctx.reported_implicit_any_vars.contains(&sym_id) {
+            } else if self.ctx.reported_implicit_any_vars.get(&sym_id)
+                == Some(&PendingImplicitAnyKind::CaptureOnly)
+            {
                 let ref_fn = self.find_enclosing_function(idx);
                 let decl_node = self
                     .ctx
@@ -915,6 +926,7 @@ impl<'a> CheckerState<'a> {
             // Use check_flow_usage to integrate both DAA and type narrowing
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
+            self.maybe_emit_pending_evolving_array_diagnostic(idx, sym_id, flow_type);
             trace!(
                 ?flow_type,
                 ?declared_type,
@@ -1640,6 +1652,310 @@ impl<'a> CheckerState<'a> {
             .retain(|&(a, b), _| a != idx.0 && b != idx.0);
 
         !analyzer.is_definitely_assigned(idx, outer_flow)
+    }
+
+    fn maybe_emit_pending_evolving_array_diagnostic(
+        &mut self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+        flow_type: TypeId,
+    ) {
+        let pending = self.ctx.pending_implicit_any_vars.get(&sym_id).copied();
+        let reported = self.ctx.reported_implicit_any_vars.get(&sym_id).copied();
+        if pending.is_none() && reported.is_none() {
+            return;
+        }
+
+        let array_kind = common_query::array_element_type(self.ctx.types, flow_type)
+            .filter(|&elem| elem == TypeId::ANY)
+            .and_then(|_| {
+                let pending_kind = pending.map(|info| info.kind);
+                if pending_kind == Some(PendingImplicitAnyKind::EvolvingArray)
+                    || reported == Some(PendingImplicitAnyKind::EvolvingArray)
+                    || self.symbol_has_direct_empty_array_initializer(sym_id)
+                    || self.reference_has_reachable_empty_array_assignment(idx, sym_id)
+                {
+                    Some(PendingImplicitAnyKind::EvolvingArray)
+                } else {
+                    None
+                }
+            });
+        if array_kind != Some(PendingImplicitAnyKind::EvolvingArray)
+            || !self.should_emit_evolving_array_implicit_any_usage(idx)
+        {
+            return;
+        }
+        if self.is_same_function_scope_as_declaration(idx, sym_id)
+            && self.reference_has_reachable_array_mutation(idx)
+        {
+            return;
+        }
+
+        let Some(sym_name) = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|sym| sym.escaped_name.clone())
+        else {
+            return;
+        };
+
+        use crate::diagnostics::diagnostic_codes;
+        if let Some(pending) = pending {
+            self.ctx.pending_implicit_any_vars.remove(&sym_id);
+            self.ctx
+                .reported_implicit_any_vars
+                .insert(sym_id, PendingImplicitAnyKind::EvolvingArray);
+            self.error_at_node_msg(
+                pending.name_node,
+                diagnostic_codes::VARIABLE_IMPLICITLY_HAS_TYPE_IN_SOME_LOCATIONS_WHERE_ITS_TYPE_CANNOT_BE_DETERMIN,
+                &[&sym_name, "any[]"],
+            );
+        }
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+            &[&sym_name, "any[]"],
+        );
+    }
+
+    fn should_emit_evolving_array_implicit_any_usage(&self, idx: NodeIndex) -> bool {
+        !self.is_in_type_query_position(idx)
+            && !self.is_non_null_assertion_operand(idx)
+            && !self.is_for_in_of_initializer(idx)
+            && !self.is_destructuring_assignment_target(idx)
+            && !self.is_simple_assignment_target(idx)
+            && !self.is_identifier_array_mutation_receiver(idx)
+            && !self.is_identifier_array_length_receiver(idx)
+    }
+
+    fn is_simple_assignment_target(&self, idx: NodeIndex) -> bool {
+        let Some(info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
+        {
+            return bin.left == idx && bin.operator_token == SyntaxKind::EqualsToken as u16;
+        }
+
+        if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+        {
+            return unary.operand == idx
+                && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16);
+        }
+
+        false
+    }
+
+    fn is_identifier_array_mutation_receiver(&self, idx: NodeIndex) -> bool {
+        let Some(parent_info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = parent_info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && parent_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(parent_node) else {
+            return false;
+        };
+        if access.expression != idx || access.question_dot_token {
+            return false;
+        }
+        let Some(grand_info) = self.ctx.arena.node_info(parent) else {
+            return false;
+        };
+        let grand = grand_info.parent;
+        let Some(grand_node) = self.ctx.arena.get(grand) else {
+            return false;
+        };
+        if grand_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(grand_node) else {
+            return false;
+        };
+        if call.expression != parent {
+            return false;
+        }
+        matches!(
+            self.identifier_member_name(access.name_or_argument),
+            Some(
+                "copyWithin"
+                    | "fill"
+                    | "pop"
+                    | "push"
+                    | "reverse"
+                    | "shift"
+                    | "sort"
+                    | "splice"
+                    | "unshift"
+            )
+        )
+    }
+
+    fn is_identifier_array_length_receiver(&self, idx: NodeIndex) -> bool {
+        let Some(parent_info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = parent_info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && parent_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(parent_node) else {
+            return false;
+        };
+        access.expression == idx
+            && self.identifier_member_name(access.name_or_argument) == Some("length")
+    }
+
+    fn identifier_member_name(&self, idx: NodeIndex) -> Option<&str> {
+        let node = self.ctx.arena.get(idx)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return Some(ident.escaped_text.as_str());
+        }
+        let literal = self.ctx.arena.get_literal(node)?;
+        (node.kind == SyntaxKind::StringLiteral as u16).then_some(literal.text.as_str())
+    }
+
+    fn symbol_has_direct_empty_array_initializer(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let value_decl = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(value_decl) else {
+            return false;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        decl.initializer.is_some() && self.node_is_empty_array_literal(decl.initializer)
+    }
+
+    fn is_same_function_scope_as_declaration(&self, idx: NodeIndex, sym_id: SymbolId) -> bool {
+        let decl_node = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|sym| sym.declarations.first().copied());
+        self.find_enclosing_function(idx)
+            == decl_node.and_then(|decl| self.find_enclosing_function(decl))
+    }
+
+    fn reference_has_reachable_empty_array_assignment(
+        &self,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(flow_node) = self.flow_node_for_identifier_usage(idx) else {
+            return false;
+        };
+
+        let analyzer = self.flow_analyzer();
+        analyzer
+            .reference_symbol_cache
+            .borrow_mut()
+            .insert(idx.0, Some(sym_id));
+        self.ctx
+            .flow_reference_match_cache
+            .borrow_mut()
+            .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+
+        let mut worklist = vec![flow_node];
+        let mut visited = FxHashSet::default();
+        while let Some(current) = worklist.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::ASSIGNMENT)
+                && let Some(rhs) = analyzer.assignment_rhs_for_reference(flow.node, idx)
+                && self.node_is_empty_array_literal(rhs)
+            {
+                return true;
+            }
+            for &antecedent in flow.antecedent.iter().rev() {
+                if antecedent.is_some() {
+                    worklist.push(antecedent);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn reference_has_reachable_array_mutation(&self, idx: NodeIndex) -> bool {
+        let Some(flow_node) = self.flow_node_for_identifier_usage(idx) else {
+            return false;
+        };
+
+        let analyzer = self.flow_analyzer();
+        let mut worklist = vec![flow_node];
+        let mut visited = FxHashSet::default();
+        while let Some(current) = worklist.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::ARRAY_MUTATION)
+                && let Some(node) = self.ctx.arena.get(flow.node)
+                && let Some(call) = self.ctx.arena.get_call_expr(node)
+                && analyzer.array_mutation_affects_reference(call, idx)
+            {
+                return true;
+            }
+            for &antecedent in flow.antecedent.iter().rev() {
+                if antecedent.is_some() {
+                    worklist.push(antecedent);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn node_is_empty_array_literal(&self, idx: NodeIndex) -> bool {
+        self.ctx.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
     }
 
     fn has_non_initializer_assignment_for_reference(

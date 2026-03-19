@@ -3,7 +3,7 @@
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
 use crate::computation::complex::is_contextually_sensitive;
-use crate::context::TypingRequest;
+use crate::context::{PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -1330,10 +1330,48 @@ impl<'a> CheckerState<'a> {
                         // TS7034 fires when the variable is captured by a nested function.
                         // Detection happens in get_type_of_identifier when a reference
                         // to this variable is found inside a nested function scope.
-                        self.ctx
-                            .pending_implicit_any_vars
-                            .insert(sym_id, var_decl.name);
+                        self.ctx.pending_implicit_any_vars.insert(
+                            sym_id,
+                            PendingImplicitAnyVar {
+                                name_node: var_decl.name,
+                                kind: PendingImplicitAnyKind::CaptureOnly,
+                            },
+                        );
                     }
+                }
+            }
+            let direct_empty_array_implicit_any = self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && !sym_already_cached
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init_node| {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && self
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    })
+                && query::array_element_type(self.ctx.types, final_type) == Some(TypeId::ANY);
+            if direct_empty_array_implicit_any {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if !is_destructuring_pattern {
+                    self.ctx.pending_implicit_any_vars.insert(
+                        sym_id,
+                        PendingImplicitAnyVar {
+                            name_node: var_decl.name,
+                            kind: PendingImplicitAnyKind::EvolvingArray,
+                        },
+                    );
                 }
             }
 

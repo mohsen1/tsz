@@ -761,7 +761,7 @@ impl<'a> CheckerState<'a> {
     /// Check if an identifier is inside a `typeof` type query (type position).
     /// e.g., `let b: typeof a;` — the `a` is in type-query position.
     /// This is a compile-time type query, not a runtime value read.
-    fn is_in_type_query_position(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_in_type_query_position(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         for _ in 0..20 {
             let Some(info) = self.ctx.arena.node_info(current) else {
@@ -810,7 +810,7 @@ impl<'a> CheckerState<'a> {
             || class_node.kind == syntax_kind_ext::CLASS_EXPRESSION
     }
 
-    fn is_non_null_assertion_operand(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_non_null_assertion_operand(&self, idx: NodeIndex) -> bool {
         let Some(info) = self.ctx.arena.node_info(idx) else {
             return false;
         };
@@ -905,7 +905,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is a for-in/for-of initializer (assignment target).
     /// For `for (x of items)`, the identifier `x` is the initializer and is
     /// being assigned to, not read from.
-    fn is_for_in_of_initializer(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_for_in_of_initializer(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::node::NodeAccess;
 
         let Some(info) = self.ctx.arena.node_info(idx) else {
@@ -927,7 +927,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an identifier is an assignment target in a destructuring assignment.
     /// e.g., `[x] = a` or `({x} = a)` — the `x` is being written to, not read.
-    fn is_destructuring_assignment_target(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_destructuring_assignment_target(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         for _ in 0..10 {
             let Some(info) = self.ctx.arena.node_info(current) else {

@@ -22,7 +22,7 @@ use tsz_solver::TypeId;
 
 use crate::diagnostics::Diagnostic;
 
-use super::{CheckerContext, RequestCacheKey};
+use super::{CheckerContext, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey};
 
 // ---------------------------------------------------------------------------
 // Snapshot types
@@ -47,6 +47,8 @@ pub(crate) struct FullSnapshot {
     pub diag: DiagnosticSnapshot,
     pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
     pub modules_with_ts2307_emitted: FxHashSet<String>,
+    pub pending_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyVar>,
+    pub reported_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyKind>,
     pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 }
@@ -96,6 +98,8 @@ impl CheckerContext<'_> {
             diag: self.snapshot_diagnostics(),
             emitted_ts2454_errors: self.emitted_ts2454_errors.clone(),
             modules_with_ts2307_emitted: self.modules_with_ts2307_emitted.clone(),
+            pending_implicit_any_vars: self.pending_implicit_any_vars.clone(),
+            reported_implicit_any_vars: self.reported_implicit_any_vars.clone(),
             implicit_any_checked_closures: self.implicit_any_checked_closures.clone(),
             request_node_types: self.request_node_types.clone(),
         }
@@ -136,6 +140,10 @@ impl CheckerContext<'_> {
             .clone_from(&snap.emitted_ts2454_errors);
         self.modules_with_ts2307_emitted
             .clone_from(&snap.modules_with_ts2307_emitted);
+        self.pending_implicit_any_vars
+            .clone_from(&snap.pending_implicit_any_vars);
+        self.reported_implicit_any_vars
+            .clone_from(&snap.reported_implicit_any_vars);
         self.implicit_any_checked_closures
             .clone_from(&snap.implicit_any_checked_closures);
         self.request_node_types.clone_from(&snap.request_node_types);
