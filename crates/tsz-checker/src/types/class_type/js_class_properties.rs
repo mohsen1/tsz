@@ -183,6 +183,37 @@ impl CheckerState<'_> {
         self.get_type_of_node(rhs_idx)
     }
 
+    pub(crate) fn js_assignment_rhs_is_void_zero(&self, rhs_idx: NodeIndex) -> bool {
+        let rhs_idx = self.ctx.arena.skip_parenthesized(rhs_idx);
+        let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+            return false;
+        };
+
+        if rhs_node.kind != syntax_kind_ext::VOID_EXPRESSION
+            && rhs_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(unary) = self.ctx.arena.get_unary_expr(rhs_node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::VoidKeyword as u16 {
+            return false;
+        }
+
+        let operand_idx = self.ctx.arena.skip_parenthesized(unary.operand);
+        let Some(operand_node) = self.ctx.arena.get(operand_idx) else {
+            return false;
+        };
+        operand_node.kind == SyntaxKind::NumericLiteral as u16
+            && self
+                .ctx
+                .arena
+                .get_literal(operand_node)
+                .is_some_and(|lit| lit.text == "0")
+    }
+
     /// Scan a body (constructor or method) for `this.prop = value` assignments
     /// and add them as instance properties. This implements the JS/checkJs
     /// pattern where assignments serve as implicit property declarations.
@@ -232,6 +263,22 @@ impl CheckerState<'_> {
             }
 
             let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
+
+            if !rhs_idx.is_none() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
+                if let Some(parent_sym) = parent_sym
+                    && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                {
+                    self.error_at_node(
+                        report_idx,
+                        &format!(
+                            "Property '{prop_name}' does not exist on type '{}'.",
+                            symbol.escaped_name
+                        ),
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                continue;
+            }
 
             // Determine type: JSDoc @type annotation > inferred from RHS
             // Track whether the resulting `any` type came from an explicit source
@@ -369,7 +416,7 @@ impl CheckerState<'_> {
                 }
             }
 
-            if type_id == TypeId::UNDEFINED {
+            if type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
                 if let Some(parent_sym) = parent_sym
                     && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
                 {

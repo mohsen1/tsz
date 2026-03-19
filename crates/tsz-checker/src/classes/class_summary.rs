@@ -697,6 +697,9 @@ impl<'a> CheckerState<'a> {
             if binary.operator_token != SyntaxKind::EqualsToken as u16 {
                 return None;
             }
+            if self.js_assignment_rhs_is_void_zero(binary.right) {
+                return None;
+            }
             let lhs_node = self.ctx.arena.get(binary.left)?;
             if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
