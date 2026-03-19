@@ -2,6 +2,7 @@
 //! member/declaration/private identifier/parameter property validation,
 //! destructuring, import/return/await/variable/using declaration validation.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -993,6 +994,21 @@ impl<'a> CheckerState<'a> {
         pattern_type: TypeId,
         check_default_assignability: bool,
     ) {
+        self.check_binding_pattern_with_request(
+            pattern_idx,
+            pattern_type,
+            check_default_assignability,
+            &TypingRequest::NONE,
+        );
+    }
+
+    pub(crate) fn check_binding_pattern_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        pattern_type: TypeId,
+        check_default_assignability: bool,
+        request: &TypingRequest,
+    ) {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -1087,12 +1103,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.check_binding_element(
+            self.check_binding_element_with_request(
                 element_idx,
                 pattern_idx,
                 i,
                 pattern_type,
                 check_default_assignability,
+                request,
             );
         }
     }
@@ -1120,6 +1137,25 @@ impl<'a> CheckerState<'a> {
         parent_type: TypeId,
         check_default_assignability: bool,
     ) {
+        self.check_binding_element_with_request(
+            element_idx,
+            pattern_idx,
+            element_index,
+            parent_type,
+            check_default_assignability,
+            &TypingRequest::NONE,
+        );
+    }
+
+    pub(crate) fn check_binding_element_with_request(
+        &mut self,
+        element_idx: NodeIndex,
+        pattern_idx: NodeIndex,
+        element_index: usize,
+        parent_type: TypeId,
+        check_default_assignability: bool,
+        request: &TypingRequest,
+    ) {
         let Some(element_node) = self.ctx.arena.get(element_idx) else {
             return;
         };
@@ -1143,7 +1179,13 @@ impl<'a> CheckerState<'a> {
         let element_type = if parent_type != TypeId::ANY {
             // For object binding patterns, look up the property type
             // For array binding patterns, look up the tuple element type
-            self.get_binding_element_type(pattern_idx, element_index, parent_type, element_data)
+            self.get_binding_element_type_with_request(
+                pattern_idx,
+                element_index,
+                parent_type,
+                element_data,
+                request,
+            )
         } else {
             TypeId::ANY
         };
@@ -1155,7 +1197,7 @@ impl<'a> CheckerState<'a> {
         // This must happen unconditionally (not gated on assignability checks)
         // because the initializer's type is computed and cached on first access.
         if element_data.initializer.is_some() && element_type != TypeId::ANY {
-            let request = crate::context::TypingRequest::with_contextual_type(element_type);
+            let request = request.read().contextual(element_type);
             let default_value_type =
                 self.get_type_of_node_with_request(element_data.initializer, &request);
 
@@ -1199,7 +1241,13 @@ impl<'a> CheckerState<'a> {
             } else {
                 element_type
             };
-            self.check_binding_pattern(element_data.name, nested_type, check_default_assignability);
+            let nested_request = request.read().contextual(nested_type);
+            self.check_binding_pattern_with_request(
+                element_data.name,
+                nested_type,
+                check_default_assignability,
+                &nested_request,
+            );
         }
     }
 
@@ -1213,6 +1261,14 @@ impl<'a> CheckerState<'a> {
 impl<'a> CheckerState<'a> {
     /// Check a variable statement by iterating through declaration lists.
     pub(crate) fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
+        self.check_variable_statement_with_request(stmt_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_variable_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -1220,7 +1276,7 @@ impl<'a> CheckerState<'a> {
         if let Some(var) = self.ctx.arena.get_variable(node) {
             // VariableStatement.declarations contains VariableDeclarationList nodes
             for &list_idx in &var.declarations.nodes {
-                self.check_variable_declaration_list(list_idx);
+                self.check_variable_declaration_list_with_request(list_idx, request);
             }
         }
     }
@@ -1233,6 +1289,14 @@ impl<'a> CheckerState<'a> {
     /// ## Parameters:
     /// - `list_idx`: The variable declaration list node index to check
     pub(crate) fn check_variable_declaration_list(&mut self, list_idx: NodeIndex) {
+        self.check_variable_declaration_list_with_request(list_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_variable_declaration_list_with_request(
+        &mut self,
+        list_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         let Some(node) = self.ctx.arena.get(list_idx) else {
             return;
         };
@@ -1250,7 +1314,7 @@ impl<'a> CheckerState<'a> {
         if let Some(var_list) = self.ctx.arena.get_variable(node) {
             // Now these are actual VariableDeclaration nodes
             for &decl_idx in &var_list.declarations.nodes {
-                self.check_variable_declaration(decl_idx);
+                self.check_variable_declaration_with_request(decl_idx, request);
 
                 // Check using/await using declarations have Symbol.dispose
                 if is_using || is_await_using {
@@ -1378,6 +1442,54 @@ impl<'a> CheckerState<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn type_alias_reaches_resolving_alias(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return false;
+        }
+
+        let resolving_defs: rustc_hash::FxHashSet<_> = self
+            .ctx
+            .symbol_resolution_set
+            .iter()
+            .filter_map(|sid| self.ctx.symbol_to_def.borrow().get(sid).copied())
+            .collect();
+        if resolving_defs.is_empty() {
+            return false;
+        }
+
+        let Some(start_def_id) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied() else {
+            return false;
+        };
+
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut pending = vec![start_def_id];
+        let mut steps = 0usize;
+        while let Some(def_id) = pending.pop() {
+            if !visited.insert(def_id) {
+                continue;
+            }
+            if resolving_defs.contains(&def_id) {
+                return true;
+            }
+            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                continue;
+            };
+            steps += 1;
+            if steps > 64 {
+                break;
+            }
+            pending.extend(tsz_solver::visitor::collect_lazy_def_ids(
+                self.ctx.types,
+                body,
+            ));
+        }
+
+        false
+    }
+
     /// Check a type alias declaration.
     pub(crate) fn check_type_alias_declaration(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1503,6 +1615,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_type_node(alias.type_node);
+        self.check_type_for_missing_names(alias.type_node);
 
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);
@@ -1707,6 +1820,15 @@ impl<'a> CheckerState<'a> {
                     for &arg_idx in &type_arguments.nodes {
                         self.check_type_node(arg_idx);
                     }
+                }
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(sym_id) = self
+                        .resolve_type_symbol_for_lowering(type_ref.type_name)
+                        .map(tsz_binder::SymbolId)
+                    && (self.ctx.symbol_resolution_set.contains(&sym_id)
+                        || self.type_alias_reaches_resolving_alias(sym_id))
+                {
+                    return;
                 }
                 let _ = self.get_type_from_type_node(node_idx);
             }

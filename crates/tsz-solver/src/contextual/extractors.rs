@@ -968,6 +968,9 @@ fn extract_param_type_at_inner(
             // If out of bounds of the tuple constraint without rest, return undefined/unknown?
             // Fall through
         } else if let Some(TypeData::TypeParameter(param_info)) = db.lookup(last_param.type_id) {
+            if arg_count.is_some() {
+                return Some(last_param.type_id);
+            }
             if let Some(constraint) = param_info.constraint {
                 let mut mock_params = params.to_vec();
                 mock_params
@@ -999,6 +1002,12 @@ fn extract_param_type_at_inner(
             // If all returned generic types, just fall through
         }
         // If we still didn't extract a specific type, check constraint
+        if arg_count.is_some()
+            && (crate::type_queries::is_type_parameter_like(db, last_param.type_id)
+                || crate::type_queries::contains_type_parameters_db(db, last_param.type_id))
+        {
+            return Some(last_param.type_id);
+        }
         if let Some(constraint) =
             crate::type_queries::get_type_parameter_constraint(db, last_param.type_id)
         {

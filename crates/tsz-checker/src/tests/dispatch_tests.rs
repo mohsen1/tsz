@@ -1,4 +1,4 @@
-use crate::context::CheckerOptions;
+use crate::context::{CheckerOptions, ScriptTarget};
 use crate::test_utils::check_source;
 use crate::test_utils::check_source_diagnostics;
 use tsz_common::checker_options::JsxMode;
@@ -314,7 +314,6 @@ takes({
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn iife_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"
@@ -365,6 +364,307 @@ declare function Comp(props: { render: (s: string) => JSX.Element }): JSX.Elemen
         relevant.len(),
         0,
         "Expected JSX request-path contextual typing to work, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn destructuring_request_path_stays_stable_in_switch_parameter_and_variable_positions() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(cb: (arg: { value: string }) => string): void;
+
+switch (0) {
+    case 0: {
+        const inferred = ({ value = "ok" } = {}) => value;
+        const annotated: typeof inferred = ({ value = "ok" } = {}) => value;
+        takes(({ value = "x" }) => value.toUpperCase());
+        break;
+    }
+}
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2322 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected destructuring request transport to survive switch/parameter/variable paths, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn catch_finally_and_logical_assignment_preserve_request_intent() {
+    let diags = check_source_diagnostics(
+        r#"
+let box: { text?: string } = {};
+
+try {
+    box.text ||= "x";
+} catch ({ message = "err" }) {
+    message.toUpperCase();
+} finally {
+    box.text &&= box.text.trim();
+}
+
+box.text = box.text || "ok";
+box.text!.toUpperCase();
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2322 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected catch/finally and logical assignment request flow to stay stable, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn nonnull_assertion_context_stays_local_to_asserted_expression() {
+    let diags = check_source_diagnostics(
+        r#"
+const ok: (s: string) => string = ((x) => x)!;
+const bad: (s: string) => number = x => x;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one non-null-containment TS2322, got: {diags:?}"
+    );
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected non-null assertion contextual typing to stay local, got: {diags:?}"
+    );
+}
+
+#[test]
+fn generic_contextual_function_inference_uses_request_path() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function mapValue<T, U>(value: T, fn: (x: T) => U): U;
+
+const result = mapValue({ text: "ok" }, ({ text }) => text.toUpperCase());
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 7031 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected generic contextual inference to remain request-aware, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn generic_mapped_method_contextual_typing_uses_request_path() {
+    let diags = check_source(
+        r#"
+declare function f<T extends object>(
+    data: T,
+    handlers: { [P in keyof T]: (value: T[P], prop: P) => void },
+): void;
+
+f({ data: 0 }, {
+    data(value, key) {
+        value.toFixed();
+        key.toUpperCase();
+    },
+});
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2339 | 2345))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected generic mapped method shorthand to stay contextually typed, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn computed_mapped_callback_context_uses_callable_fallback() {
+    let diags = check_source(
+        r#"
+declare function tag(): "d";
+
+declare function forceMatch<T>(matched: {
+    [K in keyof T]: ({ key }: { key: K }) => void;
+}): void;
+
+forceMatch({
+    [tag()]: ({ key }) => {
+        const exact: "d" = key;
+    },
+});
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7031 | 7006 | 2322))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected computed mapped callbacks to keep callable context, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn return_context_substitution_preserves_rest_tuple_callback_args() {
+    let diags = check_source(
+        r#"
+interface Generator<Y, R, N> {}
+type Covariant<A> = (_: never) => A;
+interface Effect<out A> {
+    readonly _A: Covariant<A>;
+}
+
+declare function lift<AEff, Args extends Array<any>>(
+    body: (...args: Args) => Generator<never, AEff, never>,
+): (...args: Args) => Effect<AEff>;
+
+declare function takes(handler: (a: string) => Effect<void>): void;
+
+takes(lift(function* (a) {
+    a.toUpperCase();
+}));
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2339 | 2345))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected return-context substitution to preserve rest-tuple callback args, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn contextual_this_for_class_expression_flows_through_request_path() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function takes(ctor: new () => { value: string; read(): string }): void;
+
+takes(class {
+    value = "ok";
+    read() {
+        return this.value.toUpperCase();
+    }
+});
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected contextual `this` in class expressions to use request transport, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsx_children_contextual_typing_uses_request_path() {
+    let diags = check_source(
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+    interface ElementChildrenAttribute {
+        children: {};
+    }
+}
+
+declare function Panel(props: { children: (s: string) => JSX.Element }): JSX.Element;
+
+<Panel>{s => { s.toUpperCase(); return <div />; }}</Panel>;
+"#,
+        "test.tsx",
+        CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JSX children contextual typing to stay on the request path, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_template_and_param_resolution_stay_stable_through_request_path() {
+    let diags = check_source(
+        r#"
+/** @template T
+ * @param {(value: T) => T} fn
+ * @param {T} value
+ */
+function apply(fn, value) {
+    return fn(value);
+}
+
+/** @template T */
+class Box {
+    /** @param {T} value */
+    constructor(value) {
+        this.value = value;
+    }
+}
+
+/** @param {{ text: string }} value */
+const useText = (value) => value.text.toUpperCase();
+
+apply(useText, { text: "ok" });
+new Box("ok");
+"#,
+        "test.js",
+        CheckerOptions::default(),
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7006 | 7031 | 2304 | 2314 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JSDoc template/param resolution to stay stable, got: {relevant:?}"
     );
 }
 

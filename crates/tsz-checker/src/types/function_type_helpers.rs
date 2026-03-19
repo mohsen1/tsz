@@ -54,6 +54,31 @@ impl<'a> CheckerState<'a> {
         tsz_solver::type_queries::extract_contextual_type_params(self.ctx.types, expected)
     }
 
+    pub(crate) fn push_contextual_type_parameter_infos(
+        &mut self,
+        type_params: &[TypeParamInfo],
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        let mut updates = Vec::with_capacity(type_params.len());
+        let factory = self.ctx.types.factory();
+
+        for info in type_params {
+            let name = self.ctx.types.resolve_atom_ref(info.name).to_string();
+            let mut shadowed_class_param = false;
+            if let Some(ref mut c) = self.ctx.enclosing_class
+                && let Some(pos) = c.type_param_names.iter().position(|x| *x == name)
+            {
+                c.type_param_names.remove(pos);
+                shadowed_class_param = true;
+            }
+
+            let type_id = factory.type_param(info.clone());
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous, shadowed_class_param));
+        }
+
+        updates
+    }
+
     /// Check if a function body references the `arguments` object.
     /// Walks the AST recursively but stops at nested function boundaries.
     /// Used by JS files to determine if a function needs an implicit rest parameter.

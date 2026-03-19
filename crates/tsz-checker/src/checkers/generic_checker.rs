@@ -521,6 +521,7 @@ impl<'a> CheckerState<'a> {
             .nodes
             .iter()
             .map(|&arg_idx| {
+                self.check_type_node_for_static_member_class_type_param_refs(arg_idx);
                 self.check_type_node(arg_idx);
                 self.get_type_from_type_node(arg_idx)
             })

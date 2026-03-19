@@ -1329,6 +1329,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_callable_to_function_subtype(s_callable_id, t_fn_id);
         }
 
+        if function_shape_id(self.interner, source).is_some()
+            && matches!(
+                self.interner.lookup(target),
+                Some(TypeData::Application(_) | TypeData::Lazy(_))
+            )
+        {
+            let mut evaluated_target = self.evaluate_type(target);
+            if evaluated_target == target {
+                let raw_evaluated =
+                    crate::evaluation::evaluate::evaluate_type(self.interner, target);
+                if raw_evaluated != target {
+                    evaluated_target = raw_evaluated;
+                }
+            }
+            if evaluated_target != target {
+                if let (Some(s_fn_id), Some(t_fn_id)) = (
+                    function_shape_id(self.interner, source),
+                    function_shape_id(self.interner, evaluated_target),
+                ) {
+                    let s_fn = self.interner.function_shape(s_fn_id);
+                    let t_fn = self.interner.function_shape(t_fn_id);
+                    return self.check_function_subtype(&s_fn, &t_fn);
+                }
+                if let (Some(s_fn_id), Some(t_callable_id)) = (
+                    function_shape_id(self.interner, source),
+                    callable_shape_id(self.interner, evaluated_target),
+                ) {
+                    return self.check_function_to_callable_subtype(s_fn_id, t_callable_id);
+                }
+            }
+        }
+
+        if matches!(
+            self.interner.lookup(source),
+            Some(TypeData::Application(_) | TypeData::Lazy(_))
+        ) && function_shape_id(self.interner, target).is_some()
+        {
+            let mut evaluated_source = self.evaluate_type(source);
+            if evaluated_source == source {
+                let raw_evaluated =
+                    crate::evaluation::evaluate::evaluate_type(self.interner, source);
+                if raw_evaluated != source {
+                    evaluated_source = raw_evaluated;
+                }
+            }
+            if evaluated_source != source {
+                if let (Some(s_fn_id), Some(t_fn_id)) = (
+                    function_shape_id(self.interner, evaluated_source),
+                    function_shape_id(self.interner, target),
+                ) {
+                    let s_fn = self.interner.function_shape(s_fn_id);
+                    let t_fn = self.interner.function_shape(t_fn_id);
+                    return self.check_function_subtype(&s_fn, &t_fn);
+                }
+                if let (Some(s_callable_id), Some(t_fn_id)) = (
+                    callable_shape_id(self.interner, evaluated_source),
+                    function_shape_id(self.interner, target),
+                ) {
+                    return self.check_callable_to_function_subtype(s_callable_id, t_fn_id);
+                }
+            }
+        }
+
         if let (Some(s_app_id), Some(t_app_id)) = (
             application_id(self.interner, source),
             application_id(self.interner, target),

@@ -90,6 +90,92 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         })
     }
 
+    fn is_assignable_via_contextual_signatures_strict(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let normalize = |shape: crate::types::FunctionShape| {
+            use crate::type_queries::unpack_tuple_rest_parameter;
+
+            let mut normalized = shape.clone();
+            normalized.params = shape
+                .params
+                .iter()
+                .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+                .collect();
+            normalized
+        };
+        let source = self.instantiate_generic_function_argument_against_target(source, target);
+        let Some(source_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), source)
+        else {
+            return false;
+        };
+        let Some(target_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), target)
+        else {
+            return false;
+        };
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
+
+        self.checker.is_assignable_to_strict(
+            self.interner.function(source_fn),
+            self.interner.function(target_fn),
+        )
+    }
+
+    fn callback_requires_more_fixed_params_than_generic_rest_allows(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let normalize = |shape: crate::types::FunctionShape| {
+            use crate::type_queries::unpack_tuple_rest_parameter;
+
+            let mut normalized = shape.clone();
+            normalized.params = shape
+                .params
+                .iter()
+                .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+                .collect();
+            normalized
+        };
+
+        let Some(source_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), source)
+        else {
+            return false;
+        };
+        let Some(target_fn) =
+            Self::get_contextual_signature(self.interner.as_type_database(), target)
+        else {
+            return false;
+        };
+
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
+        let Some(target_rest) = target_fn.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+
+        let target_rest_is_generic =
+            crate::type_queries::is_type_parameter_like(self.interner, target_rest.type_id)
+                || crate::type_queries::contains_type_parameters_db(
+                    self.interner,
+                    target_rest.type_id,
+                );
+
+        if !target_rest_is_generic {
+            return false;
+        }
+
+        let source_required = crate::utils::required_param_count(&source_fn.params);
+        let target_fixed_count = target_fn.params.len().saturating_sub(1);
+        source_required > target_fixed_count
+    }
+
     fn type_uses_inference_placeholders(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
             Some(TypeData::TypeParameter(info)) => {
@@ -312,6 +398,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 || self.force_bivariant_callbacks)
                 && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
                 && crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            if self.callback_requires_more_fixed_params_than_generic_rest_allows(
+                expanded_arg_type,
+                effective_param_type,
+            ) {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: param_type,
+                    actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
 
             let assignable = if use_bivariant_callbacks {
                 self.checker
@@ -329,6 +426,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
                 result
+                    || self.is_assignable_via_contextual_signatures_strict(
+                        expanded_arg_type,
+                        effective_param_type,
+                    )
             } else {
                 self.checker
                     .is_assignable_to(expanded_arg_type, effective_param_type)

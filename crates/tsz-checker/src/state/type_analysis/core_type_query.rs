@@ -1,5 +1,6 @@
 //! Type query (typeof) resolution — `get_type_from_type_query` and helpers.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
@@ -57,11 +58,12 @@ impl<'a> CheckerState<'a> {
         let use_flow_sensitive_query =
             !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
         let query_expr_type = |state: &mut Self, use_flow: bool| {
-            let prev_skip = state.ctx.skip_flow_narrowing;
-            state.ctx.skip_flow_narrowing = !use_flow;
-            let ty = state.get_type_of_node(type_query.expr_name);
-            state.ctx.skip_flow_narrowing = prev_skip;
-            ty
+            let request = if use_flow {
+                TypingRequest::NONE
+            } else {
+                TypingRequest::for_write_context()
+            };
+            state.get_type_of_node_with_request(type_query.expr_name, &request)
         };
 
         // `typeof default` is not valid — `default` is a keyword and is not visible

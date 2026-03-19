@@ -4,6 +4,7 @@
 //! shorthand properties, method shorthands, getters/setters, spread properties,
 //! duplicate property detection, and contextual type inference.
 
+use super::object_literal_context::ContextualPropertyPresence;
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -12,6 +13,194 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn implicit_any_like_diagnostic_code(code: u32) -> bool {
+        matches!(
+            code,
+            crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+        )
+    }
+
+    pub(crate) fn function_like_param_spans_for_node(&self, idx: NodeIndex) -> Vec<(u32, u32)> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return Vec::new();
+        };
+
+        let params = if let Some(func) = self.ctx.arena.get_function(node) {
+            Some(func.parameters.nodes.as_slice())
+        } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            Some(method.parameters.nodes.as_slice())
+        } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+            Some(accessor.parameters.nodes.as_slice())
+        } else {
+            None
+        };
+
+        params
+            .into_iter()
+            .flatten()
+            .filter_map(|&param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .map(|param| (param.pos, param.end))
+            })
+            .collect()
+    }
+
+    fn request_has_concrete_contextual_type(&self, request: &TypingRequest) -> bool {
+        request.contextual_type.is_some_and(|type_id| {
+            type_id != TypeId::UNKNOWN
+                && type_id != TypeId::ERROR
+                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
+                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+        })
+    }
+
+    fn clear_stale_function_like_implicit_any_diagnostics(
+        &mut self,
+        spans: &[(u32, u32)],
+        refresh_diag_start: usize,
+    ) {
+        if spans.is_empty() {
+            return;
+        }
+
+        let refreshed_still_has_implicit_any = self.ctx.diagnostics[refresh_diag_start..]
+            .iter()
+            .any(|diag| {
+                Self::implicit_any_like_diagnostic_code(diag.code)
+                    && spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+            });
+
+        if refreshed_still_has_implicit_any {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            !Self::implicit_any_like_diagnostic_code(diag.code)
+                || !spans
+                    .iter()
+                    .any(|(start, end)| diag.start >= *start && diag.start < *end)
+        });
+    }
+
+    fn contextual_object_receiver_this_type(
+        &mut self,
+        contextual_type: Option<TypeId>,
+        marker_this_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        marker_this_type.or_else(|| contextual_type.map(|ty| self.evaluate_contextual_type(ty)))
+    }
+
+    fn substitute_contextual_this_type(
+        &self,
+        type_id: Option<TypeId>,
+        receiver_this_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        type_id.map(|type_id| {
+            if let Some(receiver_this_type) = receiver_this_type
+                && tsz_solver::contains_this_type(self.ctx.types, type_id)
+            {
+                tsz_solver::substitute_this_type(self.ctx.types, type_id, receiver_this_type)
+            } else {
+                type_id
+            }
+        })
+    }
+
+    pub(crate) fn contextual_lookup_type(&mut self, contextual_type: TypeId) -> TypeId {
+        self.resolve_type_for_property_access(self.evaluate_contextual_type(contextual_type))
+    }
+
+    fn contextual_object_property_type_for_lookup(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let direct = self.contextual_object_literal_property_type(contextual_type, property_name);
+        if direct.is_some() {
+            return direct;
+        }
+
+        let lookup_type = self.contextual_lookup_type(contextual_type);
+        if lookup_type != contextual_type {
+            self.contextual_object_literal_property_type(lookup_type, property_name)
+        } else {
+            None
+        }
+    }
+
+    fn contextual_callable_property_fallback_for_lookup(
+        &mut self,
+        contextual_type: TypeId,
+        property_context_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let fallback =
+            self.contextual_callable_property_fallback_type(contextual_type, property_context_type);
+        if fallback.is_some() {
+            return fallback;
+        }
+
+        let lookup_type = self.contextual_lookup_type(contextual_type);
+        if lookup_type != contextual_type {
+            self.contextual_callable_property_fallback_type(lookup_type, property_context_type)
+        } else {
+            None
+        }
+    }
+
+    fn contextual_method_context_type_for_lookup(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let allows_callable_fallback =
+            self.named_contextual_property_allows_callable_fallback(contextual_type, property_name);
+        let direct = match self.resolve_property_access_with_env(contextual_type, property_name) {
+            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
+                self.precise_callable_context_type(type_id)
+            }
+            _ => None,
+        }
+        .or_else(|| self.contextual_object_property_type_for_lookup(contextual_type, property_name))
+        .or_else(|| {
+            allows_callable_fallback
+                .then(|| {
+                    self.contextual_callable_property_fallback_for_lookup(contextual_type, None)
+                })
+                .flatten()
+        });
+
+        if direct.is_some() {
+            return direct;
+        }
+
+        let lookup_type = self.contextual_lookup_type(contextual_type);
+        if lookup_type != contextual_type {
+            let allows_lookup_callable_fallback =
+                self.named_contextual_property_allows_callable_fallback(lookup_type, property_name);
+            match self.resolve_property_access_with_env(lookup_type, property_name) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id, ..
+                } => self.precise_callable_context_type(type_id),
+                _ => None,
+            }
+            .or_else(|| self.contextual_object_literal_property_type(lookup_type, property_name))
+            .or_else(|| {
+                allows_lookup_callable_fallback
+                    .then(|| self.contextual_callable_property_fallback_type(lookup_type, None))
+                    .flatten()
+            })
+        } else {
+            None
+        }
+    }
+
     /// Get the type of an object literal expression.
     ///
     /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.
@@ -183,6 +372,8 @@ impl<'a> CheckerState<'a> {
                 contextual_type = Some(narrowed);
             }
         }
+        let contextual_receiver_this_type =
+            self.contextual_object_receiver_this_type(contextual_type, marker_this_type);
         let base_request = request.contextual_opt(contextual_type);
 
         for &elem_idx in &obj.elements.nodes {
@@ -203,6 +394,17 @@ impl<'a> CheckerState<'a> {
 
                 let name_opt = self.get_property_name_resolved(prop.name);
                 if let Some(name) = name_opt.clone() {
+                    let initializer_is_function_like = self
+                        .ctx
+                        .arena
+                        .get(prop.initializer)
+                        .is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                            )
+                        });
                     // JSDoc @type on object literal properties acts as the declared
                     // type for the property. When present:
                     // - The property type in the resulting object is the @type type
@@ -216,10 +418,56 @@ impl<'a> CheckerState<'a> {
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = contextual_type {
-                        self.contextual_object_literal_property_type(ctx_type, &name)
+                        let lookup_type = self.contextual_lookup_type(ctx_type);
+                        let lookup_presence =
+                            self.named_contextual_property_presence(lookup_type, &name);
+                        let allows_callable_fallback =
+                            matches!(lookup_presence, ContextualPropertyPresence::Present);
+                        let mut property_context_type =
+                            self.contextual_object_property_type_for_lookup(ctx_type, &name);
+                        if initializer_is_function_like
+                            && property_context_type.is_none()
+                            && !allows_callable_fallback
+                        {
+                            property_context_type = Some(TypeId::NEVER);
+                        }
+                        let needs_callable_fallback = property_context_type.is_none()
+                            || matches!(property_context_type, Some(TypeId::ANY | TypeId::UNKNOWN));
+                        if allows_callable_fallback
+                            && needs_callable_fallback
+                            && initializer_is_function_like
+                        {
+                            self.contextual_callable_property_fallback_for_lookup(
+                                ctx_type,
+                                property_context_type,
+                            )
+                        } else {
+                            property_context_type
+                        }
                     } else {
                         None
                     };
+                    let contextual_absent_target = if original_contextual_type != contextual_type {
+                        None
+                    } else {
+                        original_contextual_type
+                            .and_then(|ctx_type| {
+                                self.contextual_absent_property_excess_target(ctx_type)
+                            })
+                            .or_else(|| {
+                                contextual_type.and_then(|ctx_type| {
+                                    self.contextual_absent_property_excess_target(ctx_type)
+                                })
+                            })
+                    };
+                    let property_is_contextually_absent =
+                        contextual_absent_target.is_some_and(|ctx_type| {
+                            let lookup_type = self.contextual_lookup_type(ctx_type);
+                            matches!(
+                                self.named_contextual_property_presence(lookup_type, &name),
+                                ContextualPropertyPresence::Absent
+                            )
+                        });
                     let initializer_context_type = if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
                             contextual_type,
@@ -230,21 +478,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         jsdoc_declared_type
                     };
-                    let property_context_type = if property_context_type.is_none()
-                        && let Some(ctx_type) = contextual_type
-                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                        && matches!(
-                            init_node.kind,
-                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        ) {
-                        self.contextual_object_literal_property_type(ctx_type, "*")
-                            .or_else(|| {
-                                self.fallback_contextual_callable_property_type(ctx_type, 6)
-                            })
-                    } else {
-                        property_context_type
-                    };
-
                     // Set contextual type for property value.
                     // When a JSDoc @type is present, use it as the contextual type
                     // so that literal values like `"a"` preserve their literal type
@@ -259,26 +492,19 @@ impl<'a> CheckerState<'a> {
                     // Skip the fallback in that case.
                     let suppress_function_ctx = jsdoc_declared_type.is_none()
                         && initializer_context_type.is_none()
-                        && self
-                            .ctx
-                            .arena
-                            .get(prop.initializer)
-                            .is_some_and(|init_node| {
-                                matches!(
-                                    init_node.kind,
-                                    syntax_kind_ext::ARROW_FUNCTION
-                                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                                )
-                            })
+                        && initializer_is_function_like
                         && original_contextual_type.is_some_and(|ctx_type| {
                             self.contextual_type_has_primitive_union_member(ctx_type)
                         });
-                    let resolved_prop_ctx = jsdoc_declared_type.or(initializer_context_type).or(
-                        if suppress_function_ctx {
-                            None
-                        } else {
-                            property_context_type
-                        },
+                    let resolved_prop_ctx = self.substitute_contextual_this_type(
+                        jsdoc_declared_type.or(initializer_context_type).or(
+                            if suppress_function_ctx {
+                                None
+                            } else {
+                                property_context_type
+                            },
+                        ),
+                        contextual_receiver_this_type,
                     );
                     let property_request = base_request.contextual_opt(
                         self.contextual_type_option_for_expression(resolved_prop_ctx)
@@ -310,7 +536,42 @@ impl<'a> CheckerState<'a> {
                     } else if self.ctx.in_destructuring_target {
                         self.destructuring_target_type_from_initializer(prop.initializer)
                     } else {
-                        self.get_type_of_node_with_request(prop.initializer, &property_request)
+                        if initializer_is_function_like
+                            && (property_request.contextual_type == Some(TypeId::NEVER)
+                                || property_is_contextually_absent)
+                        {
+                            self.ctx
+                                .implicit_any_contextual_closures
+                                .remove(&prop.initializer);
+                            self.ctx
+                                .implicit_any_checked_closures
+                                .remove(&prop.initializer);
+                            self.clear_type_cache_recursive(prop.initializer);
+                        }
+                        let refresh_diag_start = self.ctx.diagnostics.len();
+                        let value_type =
+                            self.get_type_of_node_with_request(prop.initializer, &property_request);
+                        if initializer_is_function_like
+                            && (property_request.contextual_type == Some(TypeId::NEVER)
+                                || property_is_contextually_absent)
+                        {
+                            self.ctx
+                                .implicit_any_contextual_closures
+                                .remove(&prop.initializer);
+                            self.ctx
+                                .implicit_any_checked_closures
+                                .remove(&prop.initializer);
+                        }
+                        if self.request_has_concrete_contextual_type(&property_request)
+                            && property_request.contextual_type != Some(TypeId::NEVER)
+                        {
+                            let spans = self.function_like_param_spans_for_node(prop.initializer);
+                            self.clear_stale_function_like_implicit_any_diagnostics(
+                                &spans,
+                                refresh_diag_start,
+                            );
+                        }
+                        value_type
                     };
 
                     // TS2779: The left-hand side of an assignment expression may not be
@@ -393,6 +654,27 @@ impl<'a> CheckerState<'a> {
 
                         final_type
                     };
+
+                    if property_is_contextually_absent
+                        && !self.ctx.in_destructuring_target
+                        && let Some(excess_target) = contextual_absent_target
+                    {
+                        let excess_property_name = self
+                            .ctx
+                            .arena
+                            .get(prop.name)
+                            .and_then(|name_node| {
+                                (name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                                    .then(|| self.computed_property_display_name(prop.name))
+                                    .flatten()
+                            })
+                            .unwrap_or_else(|| name.clone());
+                        self.error_excess_property_at(
+                            &excess_property_name,
+                            excess_target,
+                            prop.name,
+                        );
+                    }
 
                     // Note: TS7008 is NOT emitted for object literal properties.
                     // tsc only emits TS7008 for class properties, property signatures,
@@ -571,7 +853,9 @@ impl<'a> CheckerState<'a> {
                             ctx_type,
                             resolved_computed_name.as_deref().unwrap_or("__@computed"),
                         );
-                        if property_context_type.is_none()
+                        let needs_callable_fallback = property_context_type.is_none()
+                            || matches!(property_context_type, Some(TypeId::ANY | TypeId::UNKNOWN));
+                        if needs_callable_fallback
                             && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                             && matches!(
                                 init_node.kind,
@@ -579,10 +863,10 @@ impl<'a> CheckerState<'a> {
                                     | syntax_kind_ext::FUNCTION_EXPRESSION
                             )
                         {
-                            self.contextual_object_literal_property_type(ctx_type, "*")
-                                .or_else(|| {
-                                    self.fallback_contextual_callable_property_type(ctx_type, 6)
-                                })
+                            self.contextual_callable_property_fallback_type(
+                                ctx_type,
+                                property_context_type,
+                            )
                         } else {
                             property_context_type
                         }
@@ -614,7 +898,7 @@ impl<'a> CheckerState<'a> {
 
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = contextual_type {
-                        self.contextual_object_literal_property_type(ctx_type, &name)
+                        self.contextual_object_property_type_for_lookup(ctx_type, &name)
                     } else {
                         None
                     };
@@ -875,8 +1159,12 @@ impl<'a> CheckerState<'a> {
                     // Set contextual type for method
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
                     let method_context_type = contextual_type.and_then(|ctx_type| {
-                        self.contextual_object_literal_property_type(ctx_type, &name)
+                        self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
+                    let method_context_type = self.substitute_contextual_this_type(
+                        method_context_type,
+                        contextual_receiver_this_type,
+                    );
                     let method_request =
                         base_request.contextual_opt(self.contextual_type_option_for_expression(
                             jsdoc_declared_type.or(method_context_type),
@@ -1110,7 +1398,76 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    let contextual_method_param_types =
+                        method_request.contextual_type.map(|ctx_ty| {
+                            let ctx_helper =
+                                tsz_solver::ContextualTypeContext::with_expected_and_options(
+                                    self.ctx.types,
+                                    ctx_ty,
+                                    self.ctx.compiler_options.no_implicit_any,
+                                );
+                            let this_atom = self.ctx.types.intern_string("this");
+                            let mut contextual_index = 0usize;
+                            method
+                                .parameters
+                                .nodes
+                                .iter()
+                                .map(|&param_idx| {
+                                    let param = self.ctx.arena.get_parameter_at(param_idx)?;
+                                    let is_this_param = self
+                                        .ctx
+                                        .arena
+                                        .get(param.name)
+                                        .and_then(|name_node| {
+                                            self.ctx.arena.get_identifier(name_node)
+                                        })
+                                        .is_some_and(|ident| ident.atom == this_atom);
+                                    let contextual_param_type = if is_this_param {
+                                        ctx_helper
+                                            .get_this_type()
+                                            .or_else(|| ctx_helper.get_this_type_from_marker())
+                                    } else if param.dot_dot_dot_token {
+                                        ctx_helper.get_rest_parameter_type(contextual_index)
+                                    } else {
+                                        ctx_helper.get_parameter_type(contextual_index)
+                                    };
+                                    if !is_this_param {
+                                        contextual_index += 1;
+                                    }
+                                    contextual_param_type
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                    self.cache_parameter_types(
+                        &method.parameters.nodes,
+                        contextual_method_param_types.as_deref(),
+                    );
+                    if let Some(contextual_types) = contextual_method_param_types.as_ref() {
+                        for (&param_idx, contextual_type) in method
+                            .parameters
+                            .nodes
+                            .iter()
+                            .zip(contextual_types.iter().copied())
+                        {
+                            let Some(contextual_type) = contextual_type else {
+                                continue;
+                            };
+                            self.ctx.node_types.insert(param_idx.0, contextual_type);
+                            if let Some(param) = self.ctx.arena.get_parameter_at(param_idx) {
+                                self.ctx.node_types.insert(param.name.0, contextual_type);
+                            }
+                        }
+                    }
+
+                    let refresh_diag_start = self.ctx.diagnostics.len();
                     let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
+                    if self.request_has_concrete_contextual_type(&method_request) {
+                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                        self.clear_stale_function_like_implicit_any_diagnostics(
+                            &spans,
+                            refresh_diag_start,
+                        );
+                    }
 
                     if pushed_contextual_this || pushed_synthetic_this {
                         self.ctx.this_type_stack.pop();
@@ -1204,17 +1561,40 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let computed_context_type = contextual_type.and_then(|ctx_type| {
-                        self.contextual_object_literal_property_type(
-                            ctx_type,
-                            resolved_computed_name.as_deref().unwrap_or("__@computed"),
-                        )
-                        .or_else(|| self.contextual_object_literal_property_type(ctx_type, "*"))
-                        .or_else(|| self.fallback_contextual_callable_property_type(ctx_type, 6))
+                        let property_context_type = self
+                            .contextual_object_property_type_for_lookup(
+                                ctx_type,
+                                resolved_computed_name.as_deref().unwrap_or("__@computed"),
+                            );
+                        if matches!(property_context_type, Some(TypeId::ANY | TypeId::UNKNOWN)) {
+                            self.contextual_callable_property_fallback_for_lookup(
+                                ctx_type,
+                                property_context_type,
+                            )
+                        } else {
+                            property_context_type.or_else(|| {
+                                self.contextual_callable_property_fallback_for_lookup(
+                                    ctx_type, None,
+                                )
+                            })
+                        }
                     });
+                    let computed_context_type = self.substitute_contextual_this_type(
+                        computed_context_type,
+                        contextual_receiver_this_type,
+                    );
                     let method_request = base_request.contextual_opt(
                         self.contextual_type_option_for_expression(computed_context_type),
                     );
+                    let refresh_diag_start = self.ctx.diagnostics.len();
                     let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
+                    if self.request_has_concrete_contextual_type(&method_request) {
+                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                        self.clear_stale_function_like_implicit_any_diagnostics(
+                            &spans,
+                            refresh_diag_start,
+                        );
+                    }
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(method_type);

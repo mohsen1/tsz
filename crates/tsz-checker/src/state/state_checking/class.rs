@@ -1,6 +1,7 @@
 //! Class declaration, expression, property initialization, and decorator checking.
 
 use crate::EnclosingClassInfo;
+use crate::context::TypingRequest;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::query_boundaries::class_type as class_query;
 use crate::query_boundaries::definite_assignment::{
@@ -630,14 +631,45 @@ impl<'a> CheckerState<'a> {
 
         self.pop_type_parameters(type_param_updates);
 
+        let mut refresh_symbols = Vec::new();
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
+            refresh_symbols.push(sym_id);
+        }
+        if class.name.is_some()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
+            && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
+            && !refresh_symbols.contains(&name_sym)
+        {
+            refresh_symbols.push(name_sym);
+        }
+
         self.ctx.checked_classes.insert(stmt_idx);
         self.ctx.checking_classes.remove(&stmt_idx);
+
+        // Class value-side constructor shapes may be cached during
+        // build_type_environment before JSDoc/template/member inference stabilizes.
+        // Refresh them after the checked pass so following statements observe the
+        // finalized constructor signatures and instance return types.
+        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        for sym_id in refresh_symbols {
+            self.ctx.symbol_types.remove(&sym_id);
+            let _ = self.get_type_of_symbol(sym_id);
+        }
     }
 
     pub(crate) fn check_class_expression(
         &mut self,
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
+    ) {
+        self.check_class_expression_with_request(class_idx, class, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_class_expression_with_request(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        request: &TypingRequest,
     ) {
         // TS1206: With --experimentalDecorators, decorators on class expressions
         // are not valid. Only ES decorators (TC39 Stage 3) support class expressions.
@@ -708,7 +740,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.async_depth = 0;
 
         for &member_idx in &class.members.nodes {
-            self.check_class_member(member_idx);
+            self.check_class_member_with_request(member_idx, request);
         }
 
         self.ctx.async_depth = saved_async_depth;

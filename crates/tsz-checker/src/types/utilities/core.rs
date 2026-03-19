@@ -23,6 +23,79 @@ impl<'a> CheckerState<'a> {
     // Section 52: Parameter Type Utilities
     // ============================================================================
 
+    fn contextual_rest_tuple_parameter_type(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+        is_rest: bool,
+    ) -> Option<TypeId> {
+        let shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        )?;
+        let rest_param = shape.params.last().filter(|param| param.rest)?;
+        if is_rest {
+            return Some(rest_param.type_id);
+        }
+
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, rest_param.type_id)
+            || tsz_solver::type_queries::contains_type_parameters_db(
+                self.ctx.types,
+                rest_param.type_id,
+            )
+        {
+            return None;
+        }
+
+        if let Some(tuple_elements) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param.type_id)
+        {
+            if let Some(element) = tuple_elements.get(index) {
+                return Some(element.type_id);
+            }
+            if let Some(last) = tuple_elements.last()
+                && last.rest
+            {
+                return Some(last.type_id);
+            }
+        }
+
+        tsz_solver::type_queries::get_array_element_type(self.ctx.types, rest_param.type_id)
+    }
+
+    fn should_skip_contextual_signature_fallback_for_parameter(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+        arg_count: Option<usize>,
+    ) -> bool {
+        if tsz_solver::is_union_type(self.ctx.types, expected)
+            || tsz_solver::is_intersection_type(self.ctx.types, expected)
+        {
+            return true;
+        }
+
+        let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        ) else {
+            return false;
+        };
+        let Some(rest_param) = shape.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let rest_start = shape.params.len().saturating_sub(1);
+        index >= rest_start
+            && arg_count.is_some()
+            && (tsz_solver::type_queries::is_type_parameter_like(
+                self.ctx.types,
+                rest_param.type_id,
+            ) || tsz_solver::type_queries::contains_type_parameters_db(
+                self.ctx.types,
+                rest_param.type_id,
+            ))
+    }
+
     pub(crate) fn parameter_symbol_ids(
         &self,
         param_idx: NodeIndex,
@@ -430,6 +503,11 @@ impl<'a> CheckerState<'a> {
         if expected == TypeId::ERROR {
             return None;
         }
+        if let Some(rest_tuple_type) =
+            self.contextual_rest_tuple_parameter_type(expected, index, is_rest)
+        {
+            return Some(rest_tuple_type);
+        }
         let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
@@ -437,9 +515,40 @@ impl<'a> CheckerState<'a> {
         );
 
         if is_rest {
-            helper.get_rest_parameter_type(index)
+            helper.get_rest_parameter_type(index).or_else(|| {
+                if self
+                    .should_skip_contextual_signature_fallback_for_parameter(expected, index, None)
+                {
+                    return None;
+                }
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    expected,
+                )
+                .and_then(|shape| {
+                    shape
+                        .params
+                        .get(index)
+                        .map(|param| param.type_id)
+                        .or_else(|| {
+                            let last = shape.params.last()?;
+                            last.rest.then_some(last.type_id)
+                        })
+                })
+            })
         } else {
-            helper.get_parameter_type(index)
+            helper.get_parameter_type(index).or_else(|| {
+                if self
+                    .should_skip_contextual_signature_fallback_for_parameter(expected, index, None)
+                {
+                    return None;
+                }
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    expected,
+                )
+                .and_then(|shape| shape.params.get(index).map(|param| param.type_id))
+            })
         }
     }
 
@@ -453,13 +562,56 @@ impl<'a> CheckerState<'a> {
         if expected == TypeId::ERROR {
             return None;
         }
+        if let Some(rest_tuple_type) =
+            self.contextual_rest_tuple_parameter_type(expected, index, false)
+        {
+            return Some(rest_tuple_type);
+        }
+        if self.should_skip_contextual_signature_fallback_for_parameter(
+            expected,
+            index,
+            Some(arg_count),
+        ) {
+            return None;
+        }
         let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
             self.ctx.compiler_options.no_implicit_any,
         );
 
-        helper.get_parameter_type_for_call(index, arg_count)
+        helper
+            .get_parameter_type_for_call(index, arg_count)
+            .or_else(|| {
+                if self.should_skip_contextual_signature_fallback_for_parameter(
+                    expected,
+                    index,
+                    Some(arg_count),
+                ) {
+                    return None;
+                }
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    expected,
+                )
+                .and_then(|shape| {
+                    let required = shape.params.iter().filter(|param| !param.optional).count();
+                    let last = shape.params.last();
+                    let accepts_arity = last.is_some_and(|param| param.rest)
+                        && arg_count >= required
+                        || (arg_count >= required && arg_count <= shape.params.len());
+                    accepts_arity.then_some(shape).and_then(|shape| {
+                        shape
+                            .params
+                            .get(index)
+                            .map(|param| param.type_id)
+                            .or_else(|| {
+                                let last = shape.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
+                    })
+                })
+            })
     }
 
     pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
@@ -469,6 +621,15 @@ impl<'a> CheckerState<'a> {
         ) -> bool {
             // Delegate to solver query: checks if any union member is constructor-like
             tsz_solver::type_queries::data::is_constructor_like_type(db, ty)
+        }
+
+        if let Some(constraint) =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, expected)
+            && constraint != expected
+            && constraint != TypeId::UNKNOWN
+            && constraint != TypeId::ERROR
+        {
+            return self.normalize_contextual_signature_with_env(constraint);
         }
 
         if tsz_solver::is_union_type(self.ctx.types, expected)
@@ -486,6 +647,16 @@ impl<'a> CheckerState<'a> {
 
         let mut changed = false;
         for param in &mut shape.params {
+            if param.rest
+                && (tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, param.type_id)
+                    || tsz_solver::type_queries::contains_type_parameters_db(
+                        self.ctx.types,
+                        param.type_id,
+                    ))
+            {
+                continue;
+            }
+
             let resolved = self.resolve_type_query_type(param.type_id);
             let evaluated = if should_preserve_contextual_param_type(self.ctx.types, resolved) {
                 resolved
@@ -561,7 +732,10 @@ impl<'a> CheckerState<'a> {
 
             if let Some(ctx_type) = contextual_type {
                 // Assign the contextual type to the binding pattern elements
-                self.assign_binding_pattern_symbol_types(param.name, ctx_type);
+                let request = crate::context::TypingRequest::with_contextual_type(ctx_type);
+                self.assign_binding_pattern_symbol_types_with_request(
+                    param.name, ctx_type, &request,
+                );
             }
         }
     }

@@ -23,7 +23,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::visitors::visitor_predicates::is_primitive_type;
+use crate::visitors::visitor_predicates::{contains_type_matching, is_primitive_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -124,6 +124,25 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn has_nested_complex_marker(&self, type_id: TypeId) -> bool {
+        contains_type_matching(self.interner, type_id, |key| {
+            matches!(
+                key,
+                TypeData::Conditional(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::IndexAccess(_, _)
+                    | TypeData::KeyOf(_)
+                    | TypeData::TypeQuery(_)
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::ReadonlyType(_)
+                    | TypeData::StringIntrinsic { .. }
+                    | TypeData::ThisType
+                    | TypeData::Lazy(_)
+                    | TypeData::Application(_)
+            )
+        })
+    }
+
     /// Maximum recursive expansion depth for a single `DefId`.
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
     const MAX_DEF_DEPTH: u32 = 100;
@@ -974,6 +993,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner.type_list(list_id);
                 members.iter().any(|&m| self.is_complex_type(m))
             }
+            TypeData::Array(_) | TypeData::Tuple(_) => self.has_nested_complex_marker(type_id),
             // Function types with Application return types are complex because
             // bypass_evaluation doesn't prevent check_return_compat from fully
             // evaluating Application return types. This causes structurally similar

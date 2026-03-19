@@ -425,11 +425,19 @@ impl<'a> CheckerState<'a> {
 
         // If the `new` expression provides explicit type arguments (`new Foo<T>()`),
         // instantiate the constructor signatures with those args so we don't fall back to
-        // inference (and so we match tsc behavior).
-        constructor_type = self.apply_type_arguments_to_constructor_type(
-            constructor_type,
-            new_expr.type_arguments.as_ref(),
-        );
+        // inference (and so we match tsc behavior). For implicit calls in JS/checkJs,
+        // keep generic constructors intact so `new Foo(1)` can still infer `T = number`
+        // instead of defaulting missing type arguments to `any`.
+        if new_expr
+            .type_arguments
+            .as_ref()
+            .is_some_and(|type_args| !type_args.nodes.is_empty())
+        {
+            constructor_type = self.apply_type_arguments_to_constructor_type(
+                constructor_type,
+                new_expr.type_arguments.as_ref(),
+            );
+        }
 
         // Check if the constructor type contains any abstract classes (for union types)
         // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
@@ -553,7 +561,12 @@ impl<'a> CheckerState<'a> {
         constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
         // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
         // apply to synthetic `"new"` member call signatures as well.
-        constructor_type = if synthetic_new_constructor.is_some() {
+        constructor_type = if synthetic_new_constructor.is_some()
+            && new_expr
+                .type_arguments
+                .as_ref()
+                .is_some_and(|type_args| !type_args.nodes.is_empty())
+        {
             self.apply_type_arguments_to_callable_type(
                 constructor_type,
                 new_expr.type_arguments.as_ref(),

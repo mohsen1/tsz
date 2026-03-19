@@ -335,6 +335,102 @@ fn test_ts2454_not_emitted_when_switch_discriminant_is_flow_literal() {
     );
 }
 
+#[test]
+fn test_recursive_array_destructuring_in_switch_does_not_overflow() {
+    let source = r#"
+        declare class Error {
+            constructor(message?: string);
+        }
+        interface ArrayConstructor {
+            isArray(arg: unknown): arg is unknown[];
+        }
+        declare var Array: ArrayConstructor;
+        interface Array<T> {
+            every(
+                predicate: (value: T, index: number, array: T[]) => boolean,
+            ): boolean;
+        }
+
+        type Expression = BooleanLogicExpression | 'true' | 'false';
+        type BooleanLogicExpression = ['and', ...Expression[]] | ['not', Expression];
+
+        function evaluate(expression: Expression): boolean {
+            if (Array.isArray(expression)) {
+                const [operator, ...operands] = expression;
+                switch (operator) {
+                    case 'and':
+                        return operands.every(child => evaluate(child));
+                    case 'not':
+                        return !evaluate(operands[0]);
+                    default:
+                        throw new Error(`${operator} is not a supported operator`);
+                }
+            }
+            return expression === 'true';
+        }
+    "#;
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let relevant: Vec<_> = diags
+        .into_iter()
+        .filter(|(code, _)| *code != 2318 && *code != 2339)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected recursive destructuring switch to type-check without crashing, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn test_destructured_switch_default_narrows_sibling_binding_to_never() {
+    let source = r#"
+        type X = { kind: "a", a: [1] } | { kind: "b", a: [] };
+
+        function foo(x: X): 1 {
+            const { kind, a } = x;
+            switch (kind) {
+                case "a":
+                    return a[0];
+                case "b":
+                    return 1;
+                default: {
+                    const [n] = a;
+                    return a;
+                }
+            }
+        }
+    "#;
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        ),
+        1,
+        "Expected default-clause destructured sibling narrowing to produce TS2488, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        0,
+        "Did not expect the stale non-never return mismatch in the default clause, got: {diags:?}"
+    );
+}
+
 /// TS2454 should not fire when the type includes `undefined` (assignment is not required).
 #[test]
 fn test_ts2454_skipped_for_undefined_type() {

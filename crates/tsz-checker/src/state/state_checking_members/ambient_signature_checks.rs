@@ -10,7 +10,29 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn contextual_class_member_type_from_request(
+        &mut self,
+        request: &TypingRequest,
+        member_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let ctx_type = request.contextual_type?;
+        let prop_name = self.get_property_name(member_name)?;
+        let resolved_ctx = self.evaluate_type_for_assignability(ctx_type);
+        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, resolved_ctx);
+        ctx_helper
+            .get_property_type(&prop_name)
+            .filter(|&ty| ty != TypeId::ANY && !self.type_contains_error(ty))
+    }
+
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
+        self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_property_declaration_with_request(
+        &mut self,
+        member_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -261,6 +283,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
+        let contextual_member_type =
+            self.contextual_class_member_type_from_request(request, prop.name);
 
         // If property has a semantic declared type and initializer, check type compatibility.
         if prop.initializer.is_some()
@@ -312,20 +336,12 @@ impl<'a> CheckerState<'a> {
             // class-member `this` context is available, especially for arrow initializers
             // that reference `this`. Re-check under member context to avoid stale `any`.
             self.clear_type_cache_recursive(prop.initializer);
-            let mut request = TypingRequest::NONE;
-            if let Some(ctx_type) = self.ctx.contextual_type
-                && let Some(prop_name) = self.get_property_name(prop.name)
-            {
-                let resolved_ctx = self.evaluate_type_for_assignability(ctx_type);
-                let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, resolved_ctx);
-                if let Some(member_type) = ctx_helper.get_property_type(&prop_name)
-                    && member_type != TypeId::ANY
-                    && !self.type_contains_error(member_type)
-                {
-                    request = TypingRequest::with_contextual_type(member_type);
-                    self.clear_type_cache_recursive(prop.initializer);
-                }
-            }
+            let request = if let Some(member_type) = contextual_member_type {
+                self.clear_type_cache_recursive(prop.initializer);
+                request.read().contextual(member_type)
+            } else {
+                request.read().contextual_opt(None)
+            };
             self.get_type_of_node_with_request(prop.initializer, &request);
         }
 
@@ -378,8 +394,11 @@ impl<'a> CheckerState<'a> {
         // Get type: either from annotation or inferred from initializer
         let prop_type = if let Some(declared_type) = effective_declared_type {
             declared_type
+        } else if let Some(member_type) = contextual_member_type {
+            member_type
         } else if prop.initializer.is_some() {
-            let init_type = self.get_type_of_node(prop.initializer);
+            let request = request.read().contextual_opt(None);
+            let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
             let init_type =
                 if init_type == TypeId::ANY && self.has_accessor_modifier(&prop.modifiers) {
                     self.this_access_name_node(prop.initializer)
@@ -414,6 +433,10 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.node_types.insert(member_idx.0, prop_type);
 
+        if is_static {
+            self.check_static_member_for_class_type_param_refs(member_idx);
+        }
+
         // Restore static property initializer context
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_static_property_initializer = prev_static_prop_init;
@@ -422,6 +445,14 @@ impl<'a> CheckerState<'a> {
 
     /// Check a method declaration.
     pub(crate) fn check_method_declaration(&mut self, member_idx: NodeIndex) {
+        self.check_method_declaration_with_request(member_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_method_declaration_with_request(
+        &mut self,
+        member_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -516,7 +547,9 @@ impl<'a> CheckerState<'a> {
         // Extract parameter types from contextual type (for object literal methods)
         // This enables shorthand method parameter type inference
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
-        if let Some(ctx_type) = self.ctx.contextual_type {
+        let contextual_method_type =
+            self.contextual_class_member_type_from_request(request, method.name);
+        if let Some(ctx_type) = contextual_method_type {
             let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 ctx_type,
@@ -542,6 +575,13 @@ impl<'a> CheckerState<'a> {
         let has_type_annotation = method.type_annotation.is_some();
         let mut return_type = if has_type_annotation {
             self.get_type_from_type_node(method.type_annotation)
+        } else if let Some(ctx_type) = contextual_method_type {
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                ctx_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            ctx_helper.get_return_type().unwrap_or(TypeId::ANY)
         } else {
             TypeId::ANY
         };
@@ -768,7 +808,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.enter_async_context();
             }
 
-            self.check_statement(method.body);
+            let body_request = request.read().contextual_opt(None);
+            self.clear_type_cache_recursive(method.body);
+            self.check_statement_with_request(method.body, &body_request);
 
             // Exit async context
             if is_async {
@@ -855,11 +897,23 @@ impl<'a> CheckerState<'a> {
             self.check_overload_modifier_agreement(member_idx);
         }
 
+        if self.has_static_modifier(&method.modifiers) {
+            self.check_static_member_for_class_type_param_refs(member_idx);
+        }
+
         self.pop_type_parameters(type_param_updates);
     }
 
     /// Check a constructor declaration.
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
+        self.check_constructor_declaration_with_request(member_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_constructor_declaration_with_request(
+        &mut self,
+        member_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -1075,7 +1129,9 @@ impl<'a> CheckerState<'a> {
 
             // Set expected return type to class instance type
             self.push_return_type(instance_type);
-            self.check_statement(ctor.body);
+            let body_request = request.read().contextual_opt(None);
+            self.clear_type_cache_recursive(ctor.body);
+            self.check_statement_with_request(ctor.body, &body_request);
             self.pop_return_type();
 
             // TS2377: Constructors for derived classes must contain a super() call.
@@ -1312,6 +1368,14 @@ impl<'a> CheckerState<'a> {
 
     /// Check an accessor declaration (getter/setter).
     pub(crate) fn check_accessor_declaration(&mut self, member_idx: NodeIndex) {
+        self.check_accessor_declaration_with_request(member_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_accessor_declaration_with_request(
+        &mut self,
+        member_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -1508,7 +1572,9 @@ impl<'a> CheckerState<'a> {
             };
             self.push_return_type(effective_return_type);
 
-            self.check_statement(accessor.body);
+            let body_request = request.read().contextual_opt(None);
+            self.clear_type_cache_recursive(accessor.body);
+            self.check_statement_with_request(accessor.body, &body_request);
             if is_getter {
                 // Check if this is an async getter
                 let is_async = self.has_async_modifier(&accessor.modifiers);
@@ -1573,6 +1639,10 @@ impl<'a> CheckerState<'a> {
             }
 
             self.pop_return_type();
+        }
+
+        if self.has_static_modifier(&accessor.modifiers) {
+            self.check_static_member_for_class_type_param_refs(member_idx);
         }
     }
 

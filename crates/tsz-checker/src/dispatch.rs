@@ -1040,17 +1040,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
             // Binary expressions
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                self.checker.get_type_of_binary_expression_with_request(idx, request)
-            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self
+                .checker
+                .get_type_of_binary_expression_with_request(idx, request),
             // Call expressions
             k if k == syntax_kind_ext::CALL_EXPRESSION => self
                 .checker
                 .get_type_of_call_expression_with_request(idx, request),
             // Tagged template expressions (e.g., `tag\`hello ${x}\``)
-            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                self.checker.get_type_of_tagged_template_expression(idx)
-            }
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => self
+                .checker
+                .get_type_of_tagged_template_expression_with_request(idx, request),
             // New expressions
             k if k == syntax_kind_ext::NEW_EXPRESSION => self
                 .checker
@@ -1058,27 +1058,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
-                    // Wrap check_class_expression in a typing context to prevent it
-                    // from leaking contextual_type mutations to the outer scope.
-                    self.checker.run_with_typing_context(request, |checker| {
-                        checker.check_class_expression(idx, &class)
-                    });
-
-                    // When a contextual type has properties (i.e., it's an
-                    // interface/object type like `I` in `let c: I = class { ... }`),
-                    // the cached constructor type (from build-type-environment) may
-                    // have widened literal types for static properties. Invalidate
-                    // the cache so the constructor type is recomputed with contextual
-                    // typing, preserving literal types when the interface requires them.
-                    if let Some(ctx_type) = request.contextual_type {
-                        let resolved = self.checker.evaluate_type_for_assignability(ctx_type);
-                        if tsz_solver::type_queries::has_properties(
-                            self.checker.ctx.types,
-                            resolved,
-                        ) {
-                            self.checker.ctx.class_constructor_type_cache.remove(&idx);
-                        }
-                    }
+                    self.checker
+                        .check_class_expression_with_request(idx, &class, request);
 
                     // When a class extends a type parameter and adds no new instance members,
                     // type it as the type parameter to maintain generic compatibility
@@ -1088,7 +1069,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     {
                         base_type_param
                     } else {
-                        self.checker.get_class_constructor_type(idx, &class)
+                        self.checker
+                            .get_class_constructor_type_with_request(idx, &class, request)
                     }
                 } else {
                     // Return ANY to prevent cascading TS2571 errors
@@ -1114,6 +1096,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Function declaration
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.checker.get_type_of_function(idx)
+            }
+            // Method / constructor declarations can still reach expression typing
+            // from JS/JSDoc helper paths that query declaration nodes directly.
+            k if k == syntax_kind_ext::METHOD_DECLARATION || k == syntax_kind_ext::CONSTRUCTOR => {
+                self.checker.get_type_of_function_with_request(idx, request)
             }
             // Function expression
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
@@ -1515,8 +1502,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // so we resolve it here to the enclosing class type.
                                     // Skip in static context — `this` is invalid there
                                     // (TS2526 handles that) so no overlap check needed.
+                                    let is_static_this_context =
+                                        self.checker.find_enclosing_static_block(idx).is_some()
+                                            || self.checker.is_this_in_static_class_member(idx);
                                     if let Some(class_info) = &self.checker.ctx.enclosing_class
-                                        && !class_info.in_static_member
+                                        && !is_static_this_context
                                     {
                                         let class_idx = class_info.class_idx;
                                         if let Some(node) = self.checker.ctx.arena.get(class_idx)
@@ -1905,7 +1895,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
                     let result = self
                         .checker
-                        .get_type_of_jsx_opening_element(jsx.opening_element);
+                        .get_type_of_jsx_opening_element_with_request(jsx.opening_element, request);
 
                     // Restore previous children info (for nested JSX elements)
                     self.checker.ctx.jsx_children_info = prev_children_info;
@@ -1914,9 +1904,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ERROR
                 }
             }
-            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
-                self.checker.get_type_of_jsx_opening_element(idx)
-            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => self
+                .checker
+                .get_type_of_jsx_opening_element_with_request(idx, request),
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_fragment(node) {
                     for &child in &jsx.children.nodes {
@@ -1952,7 +1942,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 // Get the operand type (strip the ! assertion — removes null/undefined)
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
-                    let operand_type = self.checker.get_type_of_node(unary.expression);
+                    let needs_context = request.contextual_type.is_some()
+                        && self.checker.argument_needs_contextual_type(
+                            self.checker
+                                .ctx
+                                .arena
+                                .skip_parenthesized_and_assertions(unary.expression),
+                        );
+                    if needs_context {
+                        self.checker.clear_type_cache_recursive(unary.expression);
+                    }
+                    let operand_type = self
+                        .checker
+                        .get_type_of_node_with_request(unary.expression, request);
                     let evaluated_operand = self.checker.evaluate_type_with_env(operand_type);
                     let db = self.checker.ctx.types.as_type_database();
                     let result = tsz_solver::remove_nullish(db, evaluated_operand);

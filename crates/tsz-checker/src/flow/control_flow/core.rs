@@ -962,13 +962,33 @@ impl<'a> FlowAnalyzer<'a> {
                     // No symbol ID - must do full check
                     self.assignment_targets_reference_node(flow.node, reference)
                 };
-
                 if targets_reference {
                     let is_control_flow_typed_any = control_flow_typed_any_symbol;
                     let preserve_unknown_catch_type = initial_type == TypeId::UNKNOWN
                         && symbol_id
                             .or_else(|| self.reference_symbol(reference))
                             .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
+                    if self.assignment_reads_reference_before_write(flow.node, reference) {
+                        if let Some(&ant) = flow.antecedent.first() {
+                            if let Some(&ant_type) = results.get(&ant) {
+                                ant_type
+                            } else if !visited.contains(&ant) {
+                                if !in_worklist.contains(&ant) {
+                                    worklist.push_front((ant, current_type));
+                                    in_worklist.insert(ant);
+                                }
+                                if !in_worklist.contains(&current_flow) {
+                                    worklist.push_back((current_flow, current_type));
+                                    in_worklist.insert(current_flow);
+                                }
+                                continue;
+                            } else {
+                                current_type
+                            }
+                        } else {
+                            current_type
+                        }
+                    } else
                     // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
                     // These types should preserve their identity across assignments to match tsc behavior
                     //
@@ -1015,6 +1035,8 @@ impl<'a> FlowAnalyzer<'a> {
                             // (e.g., arrow with different return type).
                             if self.is_logical_assignment(flow.node) {
                                 assigned_type
+                            } else if self.is_access_reference(reference) {
+                                query::widen_literal_to_primitive(self.interner, assigned_type)
                             } else if is_control_flow_typed_any {
                                 // Unannotated mutable locals such as `let x;` evolve from
                                 // their writes rather than staying explicit `any`.

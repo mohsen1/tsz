@@ -881,7 +881,8 @@ impl<'a> CheckerState<'a> {
 
             // Delegate to check_binding_pattern which handles element type resolution,
             // contextual type for function-like initializers, and assignability checks.
-            self.check_binding_pattern(param.name, param_type, true);
+            let request = TypingRequest::with_contextual_type(param_type);
+            self.check_binding_pattern_with_request(param.name, param_type, true, &request);
         }
     }
 

@@ -40,6 +40,7 @@ impl<'a> CheckerState<'a> {
                 return ctor_type;
             }
             for &arg_idx in &type_arguments.nodes {
+                self.check_type_node_for_static_member_class_type_param_refs(arg_idx);
                 type_args.push(self.get_type_from_type_node(arg_idx));
             }
         }
@@ -157,6 +158,7 @@ impl<'a> CheckerState<'a> {
 
         let mut type_args: Vec<TypeId> = Vec::with_capacity(type_arguments.nodes.len());
         for &arg_idx in &type_arguments.nodes {
+            self.check_type_node_for_static_member_class_type_param_refs(arg_idx);
             type_args.push(self.get_type_from_type_node(arg_idx));
         }
 

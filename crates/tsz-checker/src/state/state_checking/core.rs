@@ -1,6 +1,6 @@
 //! Core declaration and statement checking implementation.
 
-use crate::context::is_declaration_file_name;
+use crate::context::{TypingRequest, is_declaration_file_name};
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
 use tracing::{Level, span};
@@ -377,6 +377,7 @@ impl<'a> CheckerState<'a> {
             // cycles can only be detected post-hoc because the DefinitionStore
             // bodies aren't available during the initial build_type_environment pass.
             self.check_cross_file_circular_type_aliases();
+            self.recheck_static_member_class_type_param_refs_in_source_file(&sf.statements.nodes);
 
             // Check for TS1148: module none errors
             if matches!(
@@ -1983,5 +1984,13 @@ impl<'a> CheckerState<'a> {
     /// while providing actual implementations via the `StatementCheckCallbacks` trait.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
         StatementChecker::check(stmt_idx, self);
+    }
+
+    pub(crate) fn check_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        StatementChecker::check_with_request(stmt_idx, self, request);
     }
 }

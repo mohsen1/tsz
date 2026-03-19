@@ -147,13 +147,25 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
+        self.get_class_constructor_type_with_request(class_idx, class, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_class_constructor_type_with_request(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        request: &TypingRequest,
+    ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
-        if let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx) {
+        if request.is_empty()
+            && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
+        {
             return cached;
         }
-        let can_use_cache = current_sym
-            .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
-            .unwrap_or(true);
+        let can_use_cache = request.is_empty()
+            && current_sym
+                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
+                .unwrap_or(true);
 
         // Cycle detection: prevent infinite recursion on circular class hierarchies
         // (e.g. class C extends C {}, or A extends B extends A)
@@ -183,7 +195,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        let result = self.get_class_constructor_type_inner(class_idx, class);
+        let result = self.get_class_constructor_type_inner(class_idx, class, request);
 
         // Cleanup: remove from resolution set
         if did_insert && let Some(sym_id) = current_sym {
@@ -242,6 +254,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
+        request: &TypingRequest,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
@@ -489,7 +502,7 @@ impl<'a> CheckerState<'a> {
                         // Without this, `(arg) => {}` initializers would see the whole
                         // interface as contextual type instead of the specific member type.
                         let mut has_contextual_member = false;
-                        let member_ctx_type = self.ctx.contextual_type.and_then(|ctx_type| {
+                        let member_ctx_type = request.contextual_type.and_then(|ctx_type| {
                             let resolved = self.evaluate_type_for_assignability(ctx_type);
                             let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
                                 self.ctx.types,
@@ -555,8 +568,8 @@ impl<'a> CheckerState<'a> {
                         // literal type for the constructor type's static properties.
                         self.clear_type_cache_recursive(prop.initializer);
                         let member_request = member_ctx_type
-                            .map(TypingRequest::with_contextual_type)
-                            .unwrap_or(TypingRequest::NONE);
+                            .map(|ty| request.read().contextual(ty))
+                            .unwrap_or_else(|| request.read().contextual_opt(None));
                         let init_type =
                             self.get_type_of_node_with_request(prop.initializer, &member_request);
                         self.ctx.this_type_stack.pop();

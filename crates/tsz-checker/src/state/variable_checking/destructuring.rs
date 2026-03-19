@@ -42,6 +42,7 @@ impl<'a> CheckerState<'a> {
         &self,
         pattern_idx: NodeIndex,
         element_data: &tsz_parser::parser::node::BindingElementData,
+        request: &TypingRequest,
     ) -> bool {
         if element_data.initializer.is_none() {
             return false;
@@ -77,7 +78,7 @@ impl<'a> CheckerState<'a> {
                 };
                 if param.name != pattern_idx
                     || param.type_annotation.is_some()
-                    || self.ctx.contextual_type.is_some()
+                    || request.contextual_type.is_some()
                 {
                     return false;
                 }
@@ -252,6 +253,19 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) {
+        self.assign_binding_pattern_symbol_types_with_request(
+            pattern_idx,
+            parent_type,
+            &TypingRequest::NONE,
+        );
+    }
+
+    pub(crate) fn assign_binding_pattern_symbol_types_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+        request: &TypingRequest,
+    ) {
         // Skip nested pattern processing for ERROR types to prevent cascading
         // diagnostics. When a parent element resolves to ERROR (e.g., from
         // destructuring `unknown`), nested patterns should not emit further errors.
@@ -287,7 +301,13 @@ impl<'a> CheckerState<'a> {
             let mut element_type = if parent_type == TypeId::ANY {
                 TypeId::ANY
             } else {
-                self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
+                self.get_binding_element_type_with_request(
+                    pattern_idx,
+                    i,
+                    parent_type,
+                    element_data,
+                    request,
+                )
             };
 
             // If there's an initializer, the type incorporates it.
@@ -316,9 +336,9 @@ impl<'a> CheckerState<'a> {
                     && element_type != TypeId::UNKNOWN
                     && element_type != TypeId::ERROR
                 {
-                    TypingRequest::with_contextual_type(element_type)
+                    request.read().contextual(element_type)
                 } else {
-                    TypingRequest::NONE
+                    request.read().contextual_opt(None)
                 };
                 let init_type =
                     self.get_type_of_node_with_request(element_data.initializer, &request);
@@ -362,9 +382,33 @@ impl<'a> CheckerState<'a> {
                     element_type,
                     NodeIndex::NONE,
                 );
-                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
+                let nested_request = if element_type != TypeId::ANY
+                    && element_type != TypeId::UNKNOWN
+                    && element_type != TypeId::ERROR
+                {
+                    request.read().contextual(element_type)
+                } else {
+                    request.read().contextual_opt(None)
+                };
+                self.assign_binding_pattern_symbol_types_with_request(
+                    element_data.name,
+                    element_type,
+                    &nested_request,
+                );
             } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
+                let nested_request = if element_type != TypeId::ANY
+                    && element_type != TypeId::UNKNOWN
+                    && element_type != TypeId::ERROR
+                {
+                    request.read().contextual(element_type)
+                } else {
+                    request.read().contextual_opt(None)
+                };
+                self.assign_binding_pattern_symbol_types_with_request(
+                    element_data.name,
+                    element_type,
+                    &nested_request,
+                );
             }
         }
     }
@@ -629,14 +673,53 @@ impl<'a> CheckerState<'a> {
         parent_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> TypeId {
+        self.get_binding_element_type_with_request(
+            pattern_idx,
+            element_index,
+            parent_type,
+            element_data,
+            &TypingRequest::NONE,
+        )
+    }
+
+    pub(crate) fn get_binding_element_type_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        element_index: usize,
+        parent_type: TypeId,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+        request: &TypingRequest,
+    ) -> TypeId {
         let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
-        // Resolve Application/Lazy types to their concrete form so that
-        // union members, object shapes, and tuple elements are accessible.
-        let parent_type = self.evaluate_type_for_assignability(parent_type);
+        // Resolve binding-parent shapes without forcing full assignability
+        // normalization on recursive alias unions. Cases like
+        // `['and', ...Expression[]] | ['not', Expression]` can overflow when
+        // union simplification tries to compare recursive tuple members.
+        let has_recursive_alias_shape = tsz_solver::visitor::contains_type_matching(
+            self.ctx.types.as_type_database(),
+            parent_type,
+            |key| {
+                matches!(
+                    key,
+                    tsz_solver::TypeData::Lazy(_) | tsz_solver::TypeData::Recursive(_)
+                )
+            },
+        );
+        let parent_type = if has_recursive_alias_shape {
+            let parent_type = self.resolve_lazy_type(parent_type);
+            let parent_type = self.resolve_type_for_property_access(parent_type);
+            self.evaluate_application_type(parent_type)
+        } else {
+            self.evaluate_type_for_assignability(parent_type)
+        };
         let defer_property_not_found = self
             .should_defer_property_not_found_for_contextual_destructuring(pattern_idx, parent_type);
-        let suppress_missing_property_for_literal_default =
-            self.should_suppress_missing_property_for_literal_default(pattern_idx, element_data);
+        let suppress_missing_property_for_literal_default = self
+            .should_suppress_missing_property_for_literal_default(
+                pattern_idx,
+                element_data,
+                request,
+            );
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -840,7 +923,11 @@ impl<'a> CheckerState<'a> {
             .map(|computed| computed.expression);
 
         if let Some(computed_expr) = computed_expr {
-            let key_type = self.get_binding_element_computed_key_type(pattern_idx, computed_expr);
+            let key_type = self.get_binding_element_computed_key_type_with_request(
+                pattern_idx,
+                computed_expr,
+                request,
+            );
             if let Some(property_type) = self.get_binding_element_literal_key_type(
                 parent_type,
                 key_type,
@@ -897,7 +984,11 @@ impl<'a> CheckerState<'a> {
             // Unique symbol keys are also treated as dynamic.
             if computed_expr.is_some() && property_name.is_none() {
                 let key_type = computed_expr.map_or(TypeId::ANY, |expr_idx| {
-                    self.get_binding_element_computed_key_type(pattern_idx, expr_idx)
+                    self.get_binding_element_computed_key_type_with_request(
+                        pattern_idx,
+                        expr_idx,
+                        request,
+                    )
                 });
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
@@ -991,7 +1082,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if element_data.dot_dot_dot_token {
-            if self.is_untyped_parameter_binding_pattern_without_context(pattern_idx) {
+            if self.is_untyped_parameter_binding_pattern_without_context(pattern_idx, request) {
                 return TypeId::ANY;
             }
             return self.compute_object_rest_type(pattern_idx, parent_type);
@@ -1197,12 +1288,11 @@ impl<'a> CheckerState<'a> {
         };
 
         if !string_keys.is_empty() {
-            let keys_result =
-                self.get_element_access_type_for_literal_keys(
-                    literal_parent_type,
-                    string_keys,
-                    false,
-                );
+            let keys_result = self.get_element_access_type_for_literal_keys(
+                literal_parent_type,
+                string_keys,
+                false,
+            );
             if let Some(result_type) = keys_result.result_type {
                 key_types.push(result_type);
             }
@@ -1214,12 +1304,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if !number_keys.is_empty()
-            && let Some(result_type) = self
-                .get_element_access_type_for_literal_number_keys(
-                    literal_parent_type,
-                    number_keys,
-                    false,
-                )
+            && let Some(result_type) = self.get_element_access_type_for_literal_number_keys(
+                literal_parent_type,
+                number_keys,
+                false,
+            )
         {
             key_types.push(result_type);
         }
@@ -1238,11 +1327,25 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         expr_idx: NodeIndex,
     ) -> TypeId {
+        self.get_binding_element_computed_key_type_with_request(
+            pattern_idx,
+            expr_idx,
+            &TypingRequest::NONE,
+        )
+    }
+
+    fn get_binding_element_computed_key_type_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        expr_idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
         let prev_checking = self.ctx.checking_computed_property_name.take();
         self.ctx.checking_computed_property_name = Some(expr_idx);
-        let mut key_type = self.get_type_of_node(expr_idx);
+        let key_request = request.read().contextual_opt(None);
+        let mut key_type = self.get_type_of_node_with_request(expr_idx, &key_request);
         self.ctx.checking_computed_property_name = prev_checking;
         self.ctx.preserve_literal_types = prev_preserve;
 
@@ -1253,13 +1356,14 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
         if is_identifier && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) {
             let base_key_type = self
-                .get_binding_identifier_initializer_key_type(sym_id)
+                .get_binding_identifier_initializer_key_type_with_request(sym_id, request)
                 .unwrap_or(key_type);
             let mut key_types = vec![base_key_type];
             self.collect_enclosing_default_assignment_key_types(
                 pattern_idx,
                 sym_id,
                 &mut key_types,
+                request,
             );
             if key_types.len() > 1 {
                 key_type = self.ctx.types.factory().union(key_types);
@@ -1276,6 +1380,7 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         sym_id: SymbolId,
         key_types: &mut Vec<TypeId>,
+        request: &TypingRequest,
     ) {
         let mut current = pattern_idx;
         let mut visited = 0usize;
@@ -1295,7 +1400,12 @@ impl<'a> CheckerState<'a> {
                 && let Some(binding) = self.ctx.arena.get_binding_element(parent_node)
                 && binding.initializer.is_some()
             {
-                self.collect_assignment_types_for_symbol(binding.initializer, sym_id, key_types);
+                self.collect_assignment_types_for_symbol(
+                    binding.initializer,
+                    sym_id,
+                    key_types,
+                    request,
+                );
             }
 
             current = parent_idx;
@@ -1307,6 +1417,7 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         sym_id: SymbolId,
         key_types: &mut Vec<TypeId>,
+        request: &TypingRequest,
     ) {
         let mut stack = vec![expr_idx];
 
@@ -1329,7 +1440,9 @@ impl<'a> CheckerState<'a> {
                     {
                         let prev_preserve = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
-                        let assigned_type = self.get_type_of_node(binary.right);
+                        let request = request.read().contextual_opt(None);
+                        let assigned_type =
+                            self.get_type_of_node_with_request(binary.right, &request);
                         self.ctx.preserve_literal_types = prev_preserve;
                         key_types.push(assigned_type);
                     }
@@ -1357,6 +1470,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_binding_identifier_initializer_key_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        self.get_binding_identifier_initializer_key_type_with_request(sym_id, &TypingRequest::NONE)
+    }
+
+    fn get_binding_identifier_initializer_key_type_with_request(
+        &mut self,
+        sym_id: SymbolId,
+        request: &TypingRequest,
+    ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
@@ -1371,7 +1492,8 @@ impl<'a> CheckerState<'a> {
 
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
-        let init_type = self.get_type_of_node(var_decl.initializer);
+        let request = request.read().contextual_opt(None);
+        let init_type = self.get_type_of_node_with_request(var_decl.initializer, &request);
         self.ctx.preserve_literal_types = prev_preserve;
         Some(init_type)
     }
@@ -1639,8 +1761,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_untyped_parameter_binding_pattern_without_context(&self, pattern_idx: NodeIndex) -> bool {
-        if self.ctx.contextual_type.is_some() {
+    fn is_untyped_parameter_binding_pattern_without_context(
+        &self,
+        pattern_idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> bool {
+        if request.contextual_type.is_some() {
             return false;
         }
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
@@ -1679,6 +1805,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {
+        self.build_contextual_type_from_pattern_with_request(pattern_idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn build_contextual_type_from_pattern_with_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> Option<TypeId> {
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
         let pattern_data = self.ctx.arena.get_binding_pattern(pattern_node)?;
         let elem_indices: Vec<NodeIndex> = pattern_data.elements.nodes.clone();
@@ -1704,7 +1838,7 @@ impl<'a> CheckerState<'a> {
                         }
                     });
                 let elem_type = if let Some(pattern_name) = elem_type {
-                    self.build_contextual_type_from_pattern(pattern_name)
+                    self.build_contextual_type_from_pattern_with_request(pattern_name, request)
                         .unwrap_or(TypeId::ANY)
                 } else {
                     TypeId::ANY
@@ -1766,10 +1900,11 @@ impl<'a> CheckerState<'a> {
                     ) if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
                         || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 ) {
-                    self.build_contextual_type_from_pattern(name_idx)
+                    self.build_contextual_type_from_pattern_with_request(name_idx, request)
                         .unwrap_or(TypeId::ANY)
                 } else if initializer.is_some() {
-                    let init_type = self.get_type_of_node(initializer);
+                    let request = request.read().contextual_opt(None);
+                    let init_type = self.get_type_of_node_with_request(initializer, &request);
                     if init_type != TypeId::ANY
                         && init_type != TypeId::UNKNOWN
                         && init_type != TypeId::ERROR

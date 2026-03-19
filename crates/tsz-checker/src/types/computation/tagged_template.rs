@@ -23,6 +23,14 @@ impl<'a> CheckerState<'a> {
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
     pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_tagged_template_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_tagged_template_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         use crate::query_boundaries::checkers::iterable::{
             call_signatures_for_type, function_shape_for_type,
         };
@@ -59,7 +67,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the tag function
-        let tag_type = self.get_type_of_node(tagged.tag);
+        let tag_request = request.read().contextual_opt(None);
+        let tag_type = self.get_type_of_node_with_request(tagged.tag, &tag_request);
 
         // If tag type is `any`, type-check substitutions without context and return `any`
         if tag_type == TypeId::ANY || tag_type == TypeId::ERROR {
@@ -240,7 +249,7 @@ impl<'a> CheckerState<'a> {
                         &env,
                         &evaluated_shape,
                         &round1_arg_types,
-                        self.ctx.contextual_type,
+                        request.contextual_type,
                     )
                 };
 
@@ -376,7 +385,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(span_node) = self.ctx.arena.get(span_idx)
                     && let Some(span_data) = self.ctx.arena.get_template_span(span_node).cloned()
                 {
-                    self.get_type_of_node(span_data.expression);
+                    self.get_type_of_node_with_request(span_data.expression, &TypingRequest::NONE);
                 }
             }
         }

@@ -72,6 +72,49 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn hoist_resolved_type_params_into_return_type(
+        &self,
+        func: &FunctionShape,
+        final_subst: &TypeSubstitution,
+        return_type: TypeId,
+    ) -> TypeId {
+        let Some(TypeData::Function(shape_id)) = self.interner.lookup(return_type) else {
+            return return_type;
+        };
+
+        let mut shape = self.interner.function_shape(shape_id).as_ref().clone();
+        if !shape.type_params.is_empty() {
+            return return_type;
+        }
+
+        let mut hoisted = Vec::new();
+        let mut seen = FxHashSet::default();
+        for tp in &func.type_params {
+            let Some(resolved) = final_subst.get(tp.name) else {
+                continue;
+            };
+            let Some(TypeData::TypeParameter(info)) = self.interner.lookup(resolved) else {
+                continue;
+            };
+            if seen.insert(info.name)
+                && crate::contains_type_parameter_named(
+                    self.interner.as_type_database(),
+                    return_type,
+                    info.name,
+                )
+            {
+                hoisted.push(info);
+            }
+        }
+
+        if hoisted.is_empty() {
+            return return_type;
+        }
+
+        shape.type_params = hoisted;
+        self.interner.function(shape)
+    }
+
     fn normalize_function_shape_params_for_context(&self, shape: &FunctionShape) -> FunctionShape {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
@@ -136,9 +179,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn should_use_contextual_return_substitution(
-        &self,
+        &mut self,
         inferred: TypeId,
-        _contextual: TypeId,
+        contextual: TypeId,
     ) -> bool {
         if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
             return true;
@@ -149,6 +192,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.interner.as_type_database(),
                 inferred,
             )
+        {
+            return true;
+        }
+
+        // If the inferred result only reached a broad fallback (typically the
+        // declared constraint/default) and the contextual return substitution is
+        // strictly narrower, prefer the contextual result. This keeps round-2
+        // contextual typing from being discarded for deferred callback arguments.
+        if self.checker.is_assignable_to(contextual, inferred)
+            && !self.checker.is_assignable_to(inferred, contextual)
         {
             return true;
         }
@@ -172,10 +225,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
-            && !crate::type_queries::contains_non_infer_type_parameters_db(
-                self.interner.as_type_database(),
-                target,
-            )
             && substitution.get(tp.name).is_none()
         {
             substitution.insert(tp.name, target);
@@ -1432,7 +1481,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // falling back to the constraint and reporting TS2345 on the
                             // whole callback argument.
                             let use_inferred = matches!(&e, InferenceError::BoundsViolation { .. })
-                                && infer_ctx.all_candidates_are_return_type(var);
+                                && infer_ctx.all_candidates_are_return_type(var)
+                                && saw_deferred_arg;
 
                             let fallback = if use_inferred {
                                 // Use the inferred type (lower bound from BoundsViolation)
@@ -1534,9 +1584,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
 
             let type_param_name = self.interner.resolve_atom(tp.name);
-            let ty = if !saw_deferred_arg
-                && let Some(contextual_ty) = structural_return_subst.get(tp.name)
-            {
+            let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
                 if self.should_use_contextual_return_substitution(ty, contextual_ty) {
                     contextual_ty
                 } else {
@@ -1738,6 +1786,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         );
         let return_type =
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
+        let return_type =
+            self.hoist_resolved_type_params_into_return_type(func, &final_subst, return_type);
         let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
             instantiated_params
         } else {

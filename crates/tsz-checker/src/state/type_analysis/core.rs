@@ -1,6 +1,7 @@
 //! Core type analysis implementation: qualified name resolution, symbol type computation,
 //! type queries, and contextual literal type analysis.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashSet;
@@ -17,6 +18,44 @@ type TypeParamPushResult = (
 );
 
 impl<'a> CheckerState<'a> {
+    fn can_register_evaluated_alias_form(
+        &self,
+        alias_def_id: tsz_solver::def::DefId,
+        type_id: TypeId,
+    ) -> bool {
+        let mut pending = tsz_solver::visitor::collect_lazy_def_ids(self.ctx.types, type_id);
+        if pending.is_empty() {
+            return true;
+        }
+
+        let mut visited = FxHashSet::default();
+        let mut steps = 0usize;
+        while let Some(def_id) = pending.pop() {
+            if !visited.insert(def_id) {
+                continue;
+            }
+            if def_id == alias_def_id {
+                return false;
+            }
+
+            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                return false;
+            };
+
+            steps += 1;
+            if steps > 64 {
+                return false;
+            }
+
+            pending.extend(tsz_solver::visitor::collect_lazy_def_ids(
+                self.ctx.types,
+                body,
+            ));
+        }
+
+        true
+    }
+
     // Nested generic declarations can be re-evaluated out of context (for example during
     // application-type expansion), so recover the nearest enclosing generic scope when the
     // current type-parameter list is missing its outer captures.
@@ -1064,11 +1103,12 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // Base case: identifier or other expression — resolve as value
-            let prev = self.ctx.skip_flow_narrowing;
-            self.ctx.skip_flow_narrowing = !use_flow;
-            let ty = self.get_type_of_node(idx);
-            self.ctx.skip_flow_narrowing = prev;
-            ty
+            let request = if use_flow {
+                TypingRequest::NONE
+            } else {
+                TypingRequest::for_write_context()
+            };
+            self.get_type_of_node_with_request(idx, &request)
         }
     }
 
@@ -1731,11 +1771,13 @@ impl<'a> CheckerState<'a> {
                 // producing a new TypeId.  Register this evaluated TypeId too so
                 // diagnostic formatting can display the alias name regardless of
                 // whether the raw or evaluated form is referenced.
-                let evaluated = self.evaluate_type_with_env(result);
-                if evaluated != result {
-                    self.ctx
-                        .definition_store
-                        .register_type_to_def(evaluated, def_id);
+                if self.can_register_evaluated_alias_form(def_id, result) {
+                    let evaluated = self.evaluate_type_with_env(result);
+                    if evaluated != result {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(evaluated, def_id);
+                    }
                 }
             }
         }

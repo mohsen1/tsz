@@ -1329,10 +1329,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params_unpacked
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
-        if !self.allow_bivariant_param_count
-            && ((!target_has_rest && source_required > target_fixed_count)
-                || (guard_target_rest_arity
-                    && source_required > target_fixed_count + target_rest_min_required))
+        if ((!self.allow_bivariant_param_count && !target_has_rest) || guard_target_rest_arity)
+            && source_required
+                > target_fixed_count
+                    + if target_has_rest {
+                        target_rest_min_required
+                    } else {
+                        0
+                    }
         {
             let extra_are_void = source_params_unpacked
                 .iter()
@@ -1850,10 +1854,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
-        if !self.allow_bivariant_param_count
-            && ((!target_has_rest && source_required > target_fixed_count)
-                || (guard_target_rest_arity
-                    && source_required > target_fixed_count + target_rest_min_required))
+        if ((!self.allow_bivariant_param_count && !target_has_rest) || guard_target_rest_arity)
+            && source_required
+                > target_fixed_count
+                    + if target_has_rest {
+                        target_rest_min_required
+                    } else {
+                        0
+                    }
         {
             let extra_are_void = source_params
                 .iter()

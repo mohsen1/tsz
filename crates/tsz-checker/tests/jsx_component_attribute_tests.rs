@@ -876,6 +876,99 @@ function test<T extends {{ x: number }}>(Component: SFC<T>) {{
 }
 
 #[test]
+fn test_explicit_generic_jsx_props_alias_preserves_callback_member() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Elements {{
+    foo: {{ callback?: (value: number) => void }};
+    bar: {{ callback?: (value: string) => void }};
+}}
+
+type Props<C extends keyof Elements> = {{ as?: C }} & Elements[C];
+declare function Test<C extends keyof Elements>(props: Props<C>): null;
+
+<Test<'bar'>
+    as="bar"
+    callback={{value => value.toUpperCase()}}
+/>;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "explicit generic JSX props alias should not lose the callback member, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "callback parameter should remain contextually typed through the JSX props alias, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_inferred_generic_jsx_props_alias_preserves_callback_member() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Elements {{
+    foo: {{ callback?: (value: number) => void }};
+    bar: {{ callback?: (value: string) => void }};
+}}
+
+type Props<C extends keyof Elements> = {{ as?: C }} & Elements[C];
+declare function Test<C extends keyof Elements>(props: Props<C>): null;
+
+<Test
+    as="bar"
+    callback={{value => value.toUpperCase()}}
+/>;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "inferred generic JSX props alias should not lose the callback member, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "callback parameter should remain contextually typed through inferred JSX props alias, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_props_alias_call_preserves_callback_member() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Elements {{
+    foo: {{ callback?: (value: number) => void }};
+    bar: {{ callback?: (value: string) => void }};
+}}
+
+type Props<C extends keyof Elements> = {{ as?: C }} & Elements[C];
+declare function Test<C extends keyof Elements>(props: Props<C>): null;
+
+Test({{
+    as: "bar",
+    callback: value => value.toUpperCase(),
+}});
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "generic props alias call should not lose the callback member, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "callback parameter should remain contextually typed through the call path, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_concrete_props_still_emit_excess_errors() {
     // When props type is fully concrete (no type parameters), excess property
     // checking should still work.

@@ -16,6 +16,19 @@ use tsz_solver::keyof_inner_type;
 use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextual_literal};
 
 impl<'a> CheckerState<'a> {
+    fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
+        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            type_id,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        helper.get_this_type_from_marker().is_some()
+            || helper.get_this_type().is_some()
+            || helper.get_return_type().is_some()
+            || helper.get_parameter_type(0).is_some()
+            || helper.get_rest_parameter_type(0).is_some()
+    }
+
     pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
         // Evaluate union members individually without subtype reduction to
         // preserve literal types (e.g., avoid `string | 'done'` → `string`).
@@ -60,6 +73,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(constraint) =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+            && constraint != type_id
+            && constraint != TypeId::UNKNOWN
+            && constraint != TypeId::ERROR
+        {
+            return self.contextual_type_for_expression(constraint);
+        }
+
         // Preserve direct callable shapes as contextual types. Re-evaluating them
         // can simplify contravariant parameter unions inside callback types, e.g.
         // `(value: A | B | C) => U` collapsing to `(value: A) => any` during
@@ -90,10 +112,40 @@ impl<'a> CheckerState<'a> {
         type_id.map(|type_id| self.contextual_type_for_expression(type_id))
     }
 
-    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
-        let ctx_type = self.ctx.contextual_type?;
-        self.contextual_type_allows_literal(ctx_type, literal_type)
-            .then_some(literal_type)
+    pub(crate) fn contextual_type_option_for_call_argument(
+        &mut self,
+        type_id: Option<TypeId>,
+        arg_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let Some(type_id) = type_id else {
+            return None;
+        };
+
+        let preserve_raw = self.ctx.arena.get(arg_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            )
+        });
+        let needs_resolved_callable_context =
+            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_index_access_types(self.ctx.types, type_id)
+                    .is_some()
+                || tsz_solver::type_queries::is_conditional_type(self.ctx.types, type_id)
+                || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+                    .is_some();
+
+        if preserve_raw
+            && !needs_resolved_callable_context
+            && self.raw_contextual_signature_available(type_id)
+        {
+            Some(type_id)
+        } else {
+            Some(self.contextual_type_for_expression(type_id))
+        }
     }
 
     pub(crate) fn contextual_type_allows_literal(
@@ -1534,6 +1586,11 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn private_member_name_matches(&self, candidate: &str, requested: &str) -> bool {
+        candidate == requested
+            || candidate.trim_start_matches('#') == requested.trim_start_matches('#')
+    }
+
     fn class_directly_declares_private_member(
         &self,
         class_idx: NodeIndex,
@@ -1562,12 +1619,64 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
-            if self.get_property_name(name_idx).as_deref() == Some(member_name) {
+            if self
+                .get_property_name(name_idx)
+                .is_some_and(|candidate| self.private_member_name_matches(&candidate, member_name))
+            {
                 return Some(self.class_member_is_static(member_idx));
             }
         }
 
         None
+    }
+
+    fn private_accessor_presence_in_class(
+        &self,
+        class_idx: NodeIndex,
+        member_name: &str,
+        is_static: bool,
+    ) -> (bool, bool) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return (false, false);
+        };
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return (false, false);
+        };
+
+        let mut has_getter = false;
+        let mut has_setter = false;
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if self.class_member_is_static(member_idx) != is_static {
+                continue;
+            }
+
+            let is_getter = member_node.kind == syntax_kind_ext::GET_ACCESSOR;
+            let is_setter = member_node.kind == syntax_kind_ext::SET_ACCESSOR;
+            if !is_getter && !is_setter {
+                continue;
+            }
+
+            let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                continue;
+            };
+            if !self
+                .get_property_name(accessor.name)
+                .is_some_and(|candidate| self.private_member_name_matches(&candidate, member_name))
+            {
+                continue;
+            }
+
+            has_getter |= is_getter;
+            has_setter |= is_setter;
+        }
+
+        (has_getter, has_setter)
     }
 
     pub(crate) fn get_type_of_private_property_access(
@@ -1576,6 +1685,7 @@ impl<'a> CheckerState<'a> {
         access: &tsz_parser::parser::node::AccessExprData,
         name_idx: NodeIndex,
         object_type: TypeId,
+        is_write_context: bool,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         use crate::query_boundaries::common::PropertyAccessResult;
@@ -1593,6 +1703,25 @@ impl<'a> CheckerState<'a> {
         // Mark the private identifier symbol as referenced for unused-variable tracking.
         for &sym_id in &symbols {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+
+        if !is_write_context && let Some(class_info) = self.ctx.enclosing_class.as_ref() {
+            let is_static_context = self.find_enclosing_static_block(idx).is_some()
+                || self.is_this_in_static_class_member(idx);
+            let (has_getter, has_setter) = self.private_accessor_presence_in_class(
+                class_info.class_idx,
+                &property_name,
+                is_static_context,
+            );
+            if has_setter && !has_getter {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::PRIVATE_ACCESSOR_WAS_DEFINED_WITHOUT_A_GETTER,
+                    diagnostic_codes::PRIVATE_ACCESSOR_WAS_DEFINED_WITHOUT_A_GETTER,
+                );
+                return TypeId::ERROR;
+            }
         }
 
         // NOTE: Do NOT emit TS18016 here — property access position is grammatically valid.
@@ -2030,7 +2159,7 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
                 // In write context, use the setter parameter type instead of the read type.
-                if self.ctx.skip_flow_narrowing {
+                if is_write_context {
                     write_type.unwrap_or(type_id)
                 } else if type_id == TypeId::UNDEFINED && write_type.is_some() {
                     // TS2806: Reading from a private setter-only accessor.

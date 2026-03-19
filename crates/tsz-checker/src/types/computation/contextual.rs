@@ -8,6 +8,29 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
+fn callee_needs_contextual_return_type(state: &CheckerState, callee_idx: NodeIndex) -> bool {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let callee_idx = state
+        .ctx
+        .arena
+        .skip_parenthesized_and_assertions(callee_idx);
+    let Some(node) = state.ctx.arena.get(callee_idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+            state
+                .ctx
+                .arena
+                .get_function(node)
+                .is_some_and(|func| function_body_needs_contextual_return_type(state, func.body))
+        }
+        _ => false,
+    }
+}
+
 /// A node is contextually sensitive if its type cannot be fully determined
 /// without an expected type from its parent. This includes:
 /// - Arrow functions and function expressions
@@ -92,16 +115,15 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
         // `handler(type, state => state)` to Round 2, so the outer call can first
         // infer type arguments from non-contextual inputs and then provide a concrete
         // contextual return type to the inner generic call.
-        k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => state
-            .ctx
-            .arena
-            .get_call_expr(node)
-            .and_then(|call| call.arguments.as_ref())
-            .is_some_and(|args| {
-                args.nodes
-                    .iter()
-                    .any(|&arg| is_contextually_sensitive(state, arg))
-            }),
+        k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+            state.ctx.arena.get_call_expr(node).is_some_and(|call| {
+                call.arguments.as_ref().is_some_and(|args| {
+                    args.nodes
+                        .iter()
+                        .any(|&arg| is_contextually_sensitive(state, arg))
+                }) || callee_needs_contextual_return_type(state, call.expression)
+            })
+        }
 
         // Object Literals: Sensitive if any property is sensitive
         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {

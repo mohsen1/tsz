@@ -1,12 +1,16 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{ContextualTypeContext, TypeId};
+
+use super::call_inference::should_preserve_contextual_application_shape;
 
 impl<'a> CheckerState<'a> {
     /// Check for TDZ violations: variable used before its declaration in a
@@ -730,16 +734,20 @@ impl<'a> CheckerState<'a> {
         }
         let obj = self.ctx.arena.get_literal_expr(node)?;
 
-        // Evaluate the target parameter type to get its object shape
+        // Evaluate the target parameter type when possible, but keep the raw target
+        // around so contextual property lookup can still pierce unresolved generic
+        // intersections/applications like `{ as?: C } & Elements[C]`.
         let target_type = self.evaluate_type_with_env(target_param_type);
-        let target_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)?;
-
-        // Build a map of target property name -> type
+        let target_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type);
         let target_props: rustc_hash::FxHashMap<tsz_common::Atom, TypeId> = target_shape
-            .properties
-            .iter()
-            .map(|p| (p.name, p.type_id))
-            .collect();
+            .map(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.type_id))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut properties = Vec::new();
 
@@ -765,7 +773,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Sensitive property: check if the contextual function type's params are concrete
-                let Some(&target_prop_type) = target_props.get(&name_atom) else {
+                let target_prop_type = target_props.get(&name_atom).copied().or_else(|| {
+                    self.contextual_object_literal_property_type(target_param_type, &name)
+                });
+                let Some(target_prop_type) = target_prop_type else {
                     continue;
                 };
 
@@ -853,7 +864,10 @@ impl<'a> CheckerState<'a> {
                 };
                 let name_atom = self.ctx.types.intern_string(&name);
 
-                let Some(&target_prop_type) = target_props.get(&name_atom) else {
+                let target_prop_type = target_props.get(&name_atom).copied().or_else(|| {
+                    self.contextual_object_literal_property_type(target_param_type, &name)
+                });
+                let Some(target_prop_type) = target_prop_type else {
                     continue;
                 };
 
@@ -989,5 +1003,360 @@ impl<'a> CheckerState<'a> {
         type_param_names
             .iter()
             .any(|&name| tsz_solver::contains_type_parameter_named(self.ctx.types, type_id, name))
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    pub(crate) fn is_unshadowed_commonjs_require_identifier(&mut self, idx: NodeIndex) -> bool {
+        if !self.ctx.compiler_options.module.is_commonjs() {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if ident.escaped_text != "require" {
+            return false;
+        }
+
+        let resolved_symbol = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol(idx));
+        let Some(sym_id) = resolved_symbol else {
+            return true;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return true;
+        };
+
+        !symbol
+            .declarations
+            .iter()
+            .any(|decl_idx| self.ctx.binder.node_symbols.contains_key(&decl_idx.0))
+    }
+
+    pub(crate) fn normalize_contextual_call_param_type(&mut self, param_type: TypeId) -> TypeId {
+        if tsz_solver::type_queries::is_callable_type(self.ctx.types, param_type)
+            || should_preserve_contextual_application_shape(self.ctx.types, param_type)
+        {
+            return param_type;
+        }
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, param_type)
+        {
+            let evaluated_members: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    if should_preserve_contextual_application_shape(self.ctx.types, member) {
+                        member
+                    } else {
+                        self.evaluate_type_with_env(member)
+                    }
+                })
+                .collect();
+            if evaluated_members
+                .iter()
+                .zip(members.iter())
+                .all(|(evaluated, original)| evaluated == original)
+            {
+                return param_type;
+            }
+
+            let reduced = self.ctx.types.union_literal_reduce(evaluated_members);
+            if reduced != param_type
+                && let Some(def_id) = self.ctx.definition_store.find_def_for_type(param_type)
+            {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(reduced, def_id);
+            }
+            return reduced;
+        }
+
+        self.evaluate_type_with_env(param_type)
+    }
+
+    pub(crate) fn finalize_generic_call_result(
+        &mut self,
+        callee_type_for_call: TypeId,
+        generic_instantiated_params: Option<&Vec<tsz_solver::ParamInfo>>,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        result: CallResult,
+        sanitized_generic_inference: bool,
+        needs_real_type_recheck: bool,
+        shape_this_type: Option<TypeId>,
+    ) -> (CallResult, bool) {
+        if let Some(instantiated_params) = generic_instantiated_params {
+            self.propagate_generic_constructor_display_defs(
+                callee_type_for_call,
+                args.len(),
+                instantiated_params,
+            );
+        }
+
+        let mut allow_contextual_mismatch_deferral = true;
+        let result = if let Some(instantiated_params) = generic_instantiated_params {
+            let expected_param_types = self.contextual_param_types_from_instantiated_params(
+                instantiated_params,
+                arg_types.len(),
+            );
+            let recheck_this_type = self.extract_this_type_from_params(instantiated_params);
+            let recheck_pushed_this = if let Some(tt) = recheck_this_type.or(shape_this_type) {
+                self.ctx.this_type_stack.push(tt);
+                true
+            } else {
+                false
+            };
+            let result = if sanitized_generic_inference || needs_real_type_recheck {
+                self.recheck_generic_call_arguments_with_real_types(
+                    result,
+                    instantiated_params,
+                    args,
+                    arg_types,
+                )
+            } else {
+                result
+            };
+            if recheck_pushed_this {
+                self.ctx.this_type_stack.pop();
+            }
+            let recovered_mismatch = matches!(
+                &result,
+                CallResult::ArgumentTypeMismatch {
+                    fallback_return,
+                    ..
+                } if *fallback_return != TypeId::ERROR
+            );
+            let (result, should_epc) = match result {
+                CallResult::Success(return_type) => (CallResult::Success(return_type), true),
+                CallResult::ArgumentTypeMismatch {
+                    index,
+                    actual,
+                    expected,
+                    fallback_return,
+                } => {
+                    if let Some(param) = instantiated_params.get(index).or_else(|| {
+                        let last = instantiated_params.last()?;
+                        last.rest.then_some(last)
+                    }) {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = expected_param_types
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .unwrap_or_else(|| {
+                                if param.rest {
+                                    self.rest_argument_element_type_with_env(evaluated_param)
+                                } else {
+                                    evaluated_param
+                                }
+                            });
+                        let arg_type = args
+                            .get(index)
+                            .copied()
+                            .map(|arg_idx| {
+                                self.refreshed_generic_call_arg_type_with_context(
+                                    arg_idx,
+                                    arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+                                    Some(expected_param),
+                                )
+                            })
+                            .unwrap_or(TypeId::UNKNOWN);
+                        let fresh_assignable = self
+                            .is_assignable_to_with_env(arg_type, expected_param)
+                            || self
+                                .is_assignable_via_contextual_signatures(arg_type, expected_param);
+                        let excess_property_recovery = if !fresh_assignable {
+                            args.get(index)
+                                .copied()
+                                .filter(|&arg_idx| {
+                                    self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
+                                        arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    })
+                                })
+                                .is_some_and(|arg_idx| {
+                                    if is_type_parameter_type(self.ctx.types, expected_param) {
+                                        return false;
+                                    }
+                                    let before = self.ctx.diagnostics.len();
+                                    self.check_object_literal_excess_properties(
+                                        arg_type,
+                                        expected_param,
+                                        arg_idx,
+                                    );
+                                    self.ctx.diagnostics.len() > before
+                                })
+                        } else {
+                            false
+                        };
+                        if !fresh_assignable && !excess_property_recovery {
+                            allow_contextual_mismatch_deferral = false;
+                        }
+                        (
+                            CallResult::ArgumentTypeMismatch {
+                                index,
+                                expected: expected_param,
+                                actual: arg_type,
+                                fallback_return,
+                            },
+                            fresh_assignable || excess_property_recovery,
+                        )
+                    } else {
+                        (
+                            CallResult::ArgumentTypeMismatch {
+                                index,
+                                actual,
+                                expected,
+                                fallback_return,
+                            },
+                            false,
+                        )
+                    }
+                }
+                other => (other, false),
+            };
+            if should_epc {
+                for (i, &arg_idx) in args.iter().enumerate() {
+                    if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                        && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && let Some(param) = instantiated_params.get(i)
+                        && param.type_id != TypeId::ANY
+                        && param.type_id != TypeId::UNKNOWN
+                    {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        if !is_type_parameter_type(self.ctx.types, evaluated_param) {
+                            let arg_type = self.refreshed_generic_call_arg_type_with_context(
+                                arg_idx,
+                                arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                                Some(evaluated_param),
+                            );
+                            self.check_object_literal_excess_properties(
+                                arg_type,
+                                evaluated_param,
+                                arg_idx,
+                            );
+                        }
+                    }
+                }
+                if recovered_mismatch {
+                    if let CallResult::ArgumentTypeMismatch {
+                        fallback_return, ..
+                    } = &result
+                    {
+                        CallResult::Success(*fallback_return)
+                    } else {
+                        result
+                    }
+                } else {
+                    result
+                }
+            } else {
+                result
+            }
+        } else {
+            result
+        };
+
+        (result, allow_contextual_mismatch_deferral)
+    }
+
+    pub(crate) fn extract_this_type_from_params(
+        &self,
+        params: &[tsz_solver::ParamInfo],
+    ) -> Option<TypeId> {
+        for param in params {
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                param.type_id,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            if let Some(tt) = ctx_helper.get_this_type_from_marker() {
+                return Some(tt);
+            }
+            if let Some(tsz_solver::TypeData::Application(app_id)) =
+                self.ctx.types.lookup(param.type_id)
+            {
+                let app = self.ctx.types.type_application(app_id);
+                if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.ctx.types.lookup(app.base) {
+                    use tsz_solver::TypeResolver;
+                    let env = self.ctx.type_env.borrow();
+                    if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
+                        let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
+                        let expanded = tsz_solver::instantiate_generic(
+                            self.ctx.types,
+                            body,
+                            &type_params,
+                            &app.args,
+                        );
+                        let expanded_ctx = ContextualTypeContext::with_expected_and_options(
+                            self.ctx.types,
+                            expanded,
+                            self.ctx.compiler_options.no_implicit_any,
+                        );
+                        if let Some(tt) = expanded_ctx.get_this_type_from_marker() {
+                            return Some(tt);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn try_emit_ts2339_for_missing_this_property(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> bool {
+        if self.ctx.enclosing_class.is_none() {
+            return false;
+        }
+
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return false;
+        }
+
+        let Some(property_name) = self.get_property_name(access.name_or_argument) else {
+            return false;
+        };
+
+        let this_type = self.get_type_of_node(access.expression);
+        if this_type == TypeId::ANY || this_type == TypeId::ERROR {
+            return false;
+        }
+
+        let result = self.resolve_property_access_with_env(this_type, &property_name);
+        if matches!(
+            result,
+            crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+        ) {
+            self.error_property_not_exist_at(&property_name, this_type, access.name_or_argument);
+            return true;
+        }
+
+        false
     }
 }
