@@ -326,6 +326,46 @@ impl<'a> CheckerState<'a> {
             return self.compute_enum_member_symbol_type(sym_id, value_decl);
         }
 
+        // Get/Set accessors - resolve type from the accessor declaration's type annotation.
+        // For get accessors, the type is the return type annotation (or inferred from body).
+        // For set accessors, the type is the first parameter's type annotation.
+        if flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR) != 0 {
+            for &decl_idx in &declarations {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(accessor) = self.ctx.arena.get_accessor(node) else {
+                    continue;
+                };
+                if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    // Get accessor: return type is the type annotation
+                    if accessor.type_annotation.is_some() {
+                        let return_type = self.get_type_from_type_node(accessor.type_annotation);
+                        return (return_type, Vec::new());
+                    }
+                    // No type annotation - try to infer from body return type
+                    // Fall through to use get_type_of_node if body exists
+                    if accessor.body.is_some() {
+                        let body_type = self.get_type_of_node(accessor.body);
+                        if body_type != TypeId::ERROR && body_type != TypeId::UNKNOWN {
+                            return (body_type, Vec::new());
+                        }
+                    }
+                } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    // Set accessor: type is the first parameter's type annotation
+                    if let Some(&param_idx) = accessor.parameters.nodes.first() {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation.is_some()
+                        {
+                            let param_type = self.get_type_from_type_node(param.type_annotation);
+                            return (param_type, Vec::new());
+                        }
+                    }
+                }
+            }
+        }
+
         // Methods merged across lib/interface declarations should preserve overloads from
         // every declaration arena, not just the first value declaration.
         if flags & symbol_flags::METHOD != 0 {
