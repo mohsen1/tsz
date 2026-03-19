@@ -360,7 +360,9 @@ mod tests {
     async fn read_until_sentinel_collects_all_output_before_marker() {
         let mut child = Command::new("sh")
             .arg("-c")
-            .arg(format!("printf '%s\\n%s\\n%s\\n' first second '{BATCH_SENTINEL}'"))
+            .arg(format!(
+                "printf '%s\\n%s\\n%s\\n' first second '{BATCH_SENTINEL}'"
+            ))
             .stdout(Stdio::piped())
             .spawn()
             .expect("spawn sentinel process");
