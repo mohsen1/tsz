@@ -488,7 +488,9 @@ impl TypeInterner {
                     self.unit_values_are_disjoint(key_a, key_b)
                 }
             }
-            (Enum(_, key), other) | (other, Enum(_, key)) => self.unit_values_are_disjoint(key, other),
+            (Enum(_, key), other) | (other, Enum(_, key)) => {
+                self.unit_values_are_disjoint(key, other)
+            }
             _ => true,
         }
     }

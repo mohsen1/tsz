@@ -654,9 +654,7 @@ impl<'a> CheckerState<'a> {
         } else {
             "any".to_string()
         };
-        let raw_name = rest
-            .split_whitespace()
-            .next()?;
+        let raw_name = rest.split_whitespace().next()?;
         let optional = raw_name.starts_with('[') || prop_type.trim_end().ends_with('=');
         let name = raw_name
             .trim_end_matches(',')

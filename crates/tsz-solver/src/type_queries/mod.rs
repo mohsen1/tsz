@@ -71,8 +71,7 @@ pub use extended::{
     create_number_literal_type, create_string_literal_type, get_application_base,
     get_invalid_index_type_member, get_invalid_index_type_member_strict, get_literal_property_name,
     get_number_literal_value, get_string_literal_value, get_tuple_list_id, is_literal_enum_member,
-    is_number_literal, is_object_with_index_type, is_string_literal,
-    widen_literal_to_primitive,
+    is_number_literal, is_object_with_index_type, is_string_literal, widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

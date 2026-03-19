@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
                     &sub_parent,
                     is_sub_array_object,
                 )
-                    .or_else(|| self.jsdoc_type_from_expression(eff_type))
+                .or_else(|| self.jsdoc_type_from_expression(eff_type))
             } else {
                 self.jsdoc_type_from_expression(eff_type)
             };
@@ -1258,7 +1258,8 @@ impl<'a> CheckerState<'a> {
         } else {
             let first = rest.split_whitespace().next().unwrap_or("");
             let inline_type = rest.find('{').and_then(|idx| {
-                Self::parse_jsdoc_curly_type_expr(&rest[idx..]).map(|(expr, _)| expr.trim().to_string())
+                Self::parse_jsdoc_curly_type_expr(&rest[idx..])
+                    .map(|(expr, _)| expr.trim().to_string())
             });
             (inline_type, first)
         };

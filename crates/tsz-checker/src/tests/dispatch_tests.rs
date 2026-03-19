@@ -1,6 +1,6 @@
 use crate::context::{CheckerOptions, ScriptTarget};
-use crate::test_utils::check_source;
 use crate::test_utils::check_js_source_diagnostics;
+use crate::test_utils::check_source;
 use crate::test_utils::check_source_diagnostics;
 use tsz_common::checker_options::JsxMode;
 
@@ -846,7 +846,10 @@ function eachPerson(callback) {
 }
 "#,
     );
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2554 || d.code == 2345).collect();
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2554 || d.code == 2345)
+        .collect();
     assert_eq!(
         relevant.len(),
         0,

@@ -438,12 +438,12 @@ impl<'a> CheckerState<'a> {
                 subst.insert(mapped.type_param.name, k_unconstrained);
 
                 let instantiated_source = instantiate_type(self.ctx.types, keyof_source, &subst);
-                let evaluated_source =
-                    if self.contains_type_parameters_cached(instantiated_source) {
-                        instantiated_source
-                    } else {
-                        self.evaluate_type_with_resolution(instantiated_source)
-                    };
+                let evaluated_source = if self.contains_type_parameters_cached(instantiated_source)
+                {
+                    instantiated_source
+                } else {
+                    self.evaluate_type_with_resolution(instantiated_source)
+                };
 
                 let inst_template = instantiate_type(self.ctx.types, mapped.template, &subst);
                 let inst_name_type = mapped
@@ -755,15 +755,15 @@ impl<'a> CheckerState<'a> {
         // Prefer the shared finite-key collector once the constraint has been
         // resolved. This keeps mapped expansion aligned with property access and
         // exact `keyof` key-space semantics.
-        let string_keys: Vec<_> =
-            if let Some(names) = tsz_solver::type_queries::collect_finite_mapped_property_names(
+        let string_keys: Vec<_> = if let Some(names) =
+            tsz_solver::type_queries::collect_finite_mapped_property_names(
                 self.ctx.types,
                 resolved_mapped_id,
             ) {
-                names.into_iter().collect()
-            } else {
-                tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys)
-            };
+            names.into_iter().collect()
+        } else {
+            tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys)
+        };
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;
@@ -883,12 +883,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(constraint) =
-            crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                type_id,
-            )
-        else {
+        let Some(constraint) = crate::query_boundaries::state::checking::type_parameter_constraint(
+            self.ctx.types,
+            type_id,
+        ) else {
             return false;
         };
 

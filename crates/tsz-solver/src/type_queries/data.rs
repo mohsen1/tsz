@@ -1932,10 +1932,7 @@ fn intersection_has_impossible_literal_discriminants(
     false
 }
 
-fn object_member_has_impossible_required_property(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
+fn object_member_has_impossible_required_property(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let evaluated_type = crate::evaluation::evaluate::evaluate_type(db, type_id);
     let type_id = if evaluated_type != type_id {
         evaluated_type
@@ -1955,7 +1952,11 @@ fn object_member_has_impossible_required_property(
 
 fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
-    let type_id = if evaluated != type_id { evaluated } else { type_id };
+    let type_id = if evaluated != type_id {
+        evaluated
+    } else {
+        type_id
+    };
     let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
         return false;
     };
@@ -1984,10 +1985,7 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     false
 }
 
-pub fn prune_impossible_object_union_members(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> TypeId {
+pub fn prune_impossible_object_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let Some(TypeData::Union(list_id)) = db.lookup(type_id) else {
         return type_id;
     };
