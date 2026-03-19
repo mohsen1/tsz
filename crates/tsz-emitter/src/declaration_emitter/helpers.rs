@@ -6475,15 +6475,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
         };
-        let wrapped_export = self
-            .arena
-            .nodes
-            .iter()
-            .any(|node| {
-                self.arena
-                    .get_export_decl(node)
-                    .is_some_and(|export| export.export_clause == decl_idx)
-            });
+        let wrapped_export = self.arena.nodes.iter().any(|node| {
+            self.arena
+                .get_export_decl(node)
+                .is_some_and(|export| export.export_clause == decl_idx)
+        });
         let has_effective_export = self.statement_has_effective_export(decl_idx)
             || self
                 .arena
@@ -6505,14 +6501,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 let should_emit = saved_emit_public_api_only
                     && !has_effective_export
-                    && self
-                        .arena
-                        .get_class(decl_node)
-                        .is_some_and(|class| {
-                            !self
-                                .arena
-                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                        });
+                    && self.arena.get_class(decl_node).is_some_and(|class| {
+                        !self
+                            .arena
+                            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    });
                 if should_emit {
                     self.emit_public_api_only = false;
                     self.emit_class_declaration(decl_idx);

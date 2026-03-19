@@ -533,7 +533,9 @@ export class Derived extends getBase()<string, number> {}
 
     let interner = TypeInterner::new();
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
-    type_cache.node_types.insert(extends_expr_idx.0, TypeId::ANY);
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::ANY);
 
     let mut emitter =
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
