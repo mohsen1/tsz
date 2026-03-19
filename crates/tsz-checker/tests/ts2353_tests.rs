@@ -268,6 +268,43 @@ const gen2TypeB: Gen2<ABC.B> = { v: "I am B", b: "" };
 }
 
 #[test]
+fn mapped_application_assignment_reports_missing_property_instead_of_ts2322() {
+    let source = r#"
+enum ABC { A, B }
+
+type Gen<T extends ABC> = { v: T; } & (
+  { v: ABC.A, a: string } |
+  { v: ABC.B, b: string }
+);
+
+type Gen2<T extends ABC> = {
+  [Property in keyof Gen<T>]: string;
+};
+
+declare let a: Gen2<ABC.A>;
+declare let b: Gen2<ABC.B>;
+a = b;
+b = a;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|d| d.0 == 2741).collect();
+    assert_eq!(ts2741.len(), 2, "Expected two TS2741 diagnostics, got: {diags:?}");
+    assert!(
+        ts2741.iter().any(|d| d.1.contains("Property 'a' is missing")),
+        "Expected missing-property diagnostic for 'a', got: {diags:?}"
+    );
+    assert!(
+        ts2741.iter().any(|d| d.1.contains("Property 'b' is missing")),
+        "Expected missing-property diagnostic for 'b', got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322 || d.0 == 2353),
+        "Mapped application assignment should classify as missing properties, got: {diags:?}"
+    );
+}
+
+#[test]
 fn object_literal_union_normalization_avoids_ts2339_and_ts2353() {
     let source = r#"
 let a1 = [{ a: 0 }, { a: 1, b: "x" }, { a: 2, b: "y", c: true }][0];
