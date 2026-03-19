@@ -1967,7 +1967,9 @@ impl<'a> DeclarationEmitter<'a> {
                             && class
                                 .heritage_clauses
                                 .as_ref()
-                                .and_then(|heritage| self.non_nameable_extends_heritage_type(heritage))
+                                .and_then(|heritage| {
+                                    self.non_nameable_extends_heritage_type(heritage)
+                                })
                                 .is_some()
                         {
                             has_non_exported = true;
