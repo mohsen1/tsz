@@ -1237,10 +1237,11 @@ impl ParserState {
             }
         }
 
-        // Recovery: Handle 'try' keyword misplaced in class body.
-        // `try { ... }` is not a valid class member. When followed by `{` on the same line,
-        // emit TS1068 to match tsc's behavior.
-        if modifiers.is_none() && self.is_token(SyntaxKind::TryKeyword) {
+        // Recovery: Handle `try` keyword misplaced in class body.
+        // `try { ... }` is not a valid class member, even after modifiers like
+        // `public`. When followed by `{` on the same line, emit TS1068 to match tsc
+        // rather than parsing `try` as a property name and cascading into TS1434/TS1435.
+        if self.is_token(SyntaxKind::TryKeyword) {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
@@ -1256,16 +1257,14 @@ impl ParserState {
             }
         }
 
-        // Recovery: Handle 'class'/'enum' keywords that are misplaced declarations in class body.
-        // `class D { }` or `enum E { }` inside a class body are invalid — classes and enums
-        // can't be nested as class members. But `class;` or `class(){}` are valid property names.
-        // When followed by an identifier on the same line, emit TS1068 and skip the declaration.
-        if modifiers.is_none()
-            && matches!(
-                self.token(),
-                SyntaxKind::ClassKeyword | SyntaxKind::EnumKeyword
-            )
-        {
+        // Recovery: Handle `class`/`enum` keywords that are misplaced declarations in a class body.
+        // `class D {}` or `enum E {}` inside a class body are invalid, even after
+        // modifiers like `public`. But `class;` or `class(){}` remain valid property
+        // and method names, so only trigger when an identifier follows on the same line.
+        if matches!(
+            self.token(),
+            SyntaxKind::ClassKeyword | SyntaxKind::EnumKeyword
+        ) {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
