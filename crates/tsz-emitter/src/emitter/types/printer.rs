@@ -2125,8 +2125,26 @@ impl<'a> TypePrinter<'a> {
         if app.args.is_empty() {
             base_text
         } else {
-            let args: Vec<String> = app.args.iter().map(|&id| self.print_type(id)).collect();
+            let args: Vec<String> = app
+                .args
+                .iter()
+                .enumerate()
+                .map(|(index, &id)| self.print_type_argument(id, index == 0))
+                .collect();
             format!("{base_text}<{}>", args.join(", "))
+        }
+    }
+
+    fn print_type_argument(&self, type_id: TypeId, is_first: bool) -> String {
+        let printed = self.print_type(type_id);
+
+        if is_first
+            && self.type_needs_parentheses_in_composition(type_id)
+            && printed.trim_start().starts_with('<')
+        {
+            format!("({printed})")
+        } else {
+            printed
         }
     }
 

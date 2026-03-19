@@ -369,6 +369,39 @@ fn test_structural_setter_only_property_uses_write_type() {
 }
 
 #[test]
+fn test_first_generic_function_type_argument_is_parenthesized() {
+    let source = r#"
+class X<A> {}
+var prop11: X< <Tany>() => Tany >;
+var prop12: X<(<Tany>() => Tany)>;
+function f1() {
+    return prop11;
+}
+class Y<A, B> {}
+var prop3: Y< <Tany>() => Tany, <Tany>() => Tany>;
+"#;
+
+    let output = emit_dts_with_binding(source);
+
+    assert!(
+        output.contains("declare var prop11: X<(<Tany>() => Tany)>;"),
+        "Expected first generic function type argument to be parenthesized: {output}"
+    );
+    assert!(
+        output.contains("declare var prop12: X<(<Tany>() => Tany)>;"),
+        "Expected explicitly parenthesized generic function type argument to remain stable: {output}"
+    );
+    assert!(
+        output.contains("declare function f1(): X<(<Tany>() => Tany)>;"),
+        "Expected inferred return type to preserve first generic function type argument parentheses: {output}"
+    );
+    assert!(
+        output.contains("declare var prop3: Y<(<Tany>() => Tany), <Tany>() => Tany>;"),
+        "Expected only the first generic function type argument to be parenthesized: {output}"
+    );
+}
+
+#[test]
 fn test_named_class_expression_constructor_type_is_inlined() {
     let source = r#"
 export function wrapClass(param: any) {

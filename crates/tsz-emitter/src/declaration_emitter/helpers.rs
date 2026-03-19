@@ -4305,13 +4305,10 @@ impl<'a> DeclarationEmitter<'a> {
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
             if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
-                let type_node = self.arena.get(var_decl.type_annotation)?;
-                if let Some(type_text) = self.get_source_slice_no_semi(type_node.pos, type_node.end)
-                {
-                    let trimmed = type_text.trim_end();
-                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                    return Some(trimmed.to_string());
-                }
+                let type_text = self.emit_type_node_text(var_decl.type_annotation)?;
+                let trimmed = type_text.trim_end();
+                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                return Some(trimmed.to_string());
             }
         }
 
@@ -4381,18 +4378,38 @@ impl<'a> DeclarationEmitter<'a> {
             return Vec::new();
         };
 
-        let last = list.nodes.last().copied();
         list.nodes
             .iter()
-            .filter_map(|&arg| {
+            .enumerate()
+            .filter_map(|(index, &arg)| {
                 let node = self.arena.get(arg)?;
-                let mut text = self.get_source_slice(node.pos, node.end)?;
-                if Some(arg) == last && text.ends_with('>') {
-                    text.pop();
+                let mut text = self.get_source_slice_no_semi(node.pos, node.end)?;
+                if self.first_type_argument_needs_parentheses(arg, index == 0) {
+                    text = format!("({text})");
                 }
                 Some(text)
             })
             .collect()
+    }
+
+    pub(crate) fn first_type_argument_needs_parentheses(
+        &self,
+        type_arg_idx: NodeIndex,
+        is_first: bool,
+    ) -> bool {
+        if !is_first {
+            return false;
+        }
+
+        self.arena
+            .get(type_arg_idx)
+            .and_then(|node| self.arena.get_function_type(node))
+            .is_some_and(|func| {
+                !func
+                    .type_parameters
+                    .as_ref()
+                    .is_none_or(|params| params.nodes.is_empty())
+            })
     }
 
     fn declaration_constructor_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
