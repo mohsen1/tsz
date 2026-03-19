@@ -1695,15 +1695,8 @@ impl<'a> CheckerState<'a> {
 
         let mut property_types = Vec::new();
         for source_key_atom in matching_source_keys {
-            let key_literal = self.ctx.types.literal_string_atom(source_key_atom);
-            let instantiated =
-                crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
-                    self.ctx.types,
-                    mapped.template,
-                    mapped.type_param.name,
-                    key_literal,
-                );
-            let property_type = self.evaluate_type_with_env(instantiated);
+            let property_type =
+                self.instantiate_mapped_property_template_with_env(&mapped, source_key_atom);
             let property_type = match mapped.optional_modifier {
                 Some(tsz_solver::MappedModifier::Add) => self
                     .ctx
@@ -1745,7 +1738,8 @@ mod tests {
         state::CheckerState,
     };
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::node::NodeArena;
+    use tsz_parser::parser::{NodeIndex, ParserState, syntax_kind_ext};
 
     #[test]
     fn ts2353_spread_object_literal_reports_explicit_excess_property_only() {
@@ -1837,14 +1831,7 @@ function f<P extends MyPartial<Foo>>(p: P) {
         );
     }
 
-    fn build_checker(
-        source: &str,
-    ) -> (
-        ParserState,
-        tsz_parser::parser::NodeIndex,
-        BinderState,
-        TypeInterner,
-    ) {
+    fn build_checker(source: &str) -> (ParserState, NodeIndex, BinderState, TypeInterner) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -1853,6 +1840,78 @@ function f<P extends MyPartial<Foo>>(p: P) {
 
         let types = TypeInterner::new();
         (parser, root, binder, types)
+    }
+
+    fn find_node_by_text_and_kind(
+        arena: &NodeArena,
+        source: &str,
+        kind: u16,
+        text: &str,
+    ) -> Option<NodeIndex> {
+        (0..arena.len()).find_map(|i| {
+            let idx = NodeIndex(i as u32);
+            let node = arena.get(idx)?;
+            (node.kind == kind && &source[node.pos as usize..node.end as usize] == text)
+                .then_some(idx)
+        })
+    }
+
+    #[test]
+    fn mapped_type_application_property_resolution_preserves_optional_method_type() {
+        let source = "interface Foo { foo(): void }
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+class A<P extends MyPartial<Foo>> {
+    constructor(public props: MyReadonly<P>) {}
+    doSomething() {
+        this.props.foo && this.props.foo()
+    }
+}";
+
+        let (parser, root, binder, types) = build_checker(source);
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let call = find_node_by_text_and_kind(
+            parser.get_arena(),
+            source,
+            syntax_kind_ext::CALL_EXPRESSION,
+            "this.props.foo()",
+        )
+        .expect("call expression");
+        let callee_access = parser
+            .get_arena()
+            .get(call)
+            .and_then(|node| parser.get_arena().get_call_expr(node))
+            .map(|call| call.expression)
+            .expect("call callee");
+        let object_access = parser
+            .get_arena()
+            .get(callee_access)
+            .and_then(|node| parser.get_arena().get_access_expr(node))
+            .map(|access| access.expression)
+            .expect("callee object access");
+
+        let object_ty = checker.get_type_of_node(object_access);
+        let raw_lookup = checker.resolve_property_access_with_env(object_ty, "foo");
+        let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            raw_lookup
+        else {
+            panic!("expected successful property lookup on MyReadonly<P>, got {raw_lookup:?}");
+        };
+
+        let formatted = checker.format_type(type_id);
+        assert!(
+            formatted.contains("=> void") && formatted.contains("undefined"),
+            "expected MyReadonly<P>.foo to preserve optional method type, got {formatted}",
+        );
     }
 
     #[test]
