@@ -789,14 +789,30 @@ impl ParserState {
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
             self.next_token();
+            let preserve_downstream_expected = matches!(
+                self.token(),
+                SyntaxKind::BreakKeyword
+                    | SyntaxKind::ContinueKeyword
+                    | SyntaxKind::DoKeyword
+                    | SyntaxKind::ForKeyword
+                    | SyntaxKind::IfKeyword
+                    | SyntaxKind::ReturnKeyword
+                    | SyntaxKind::SwitchKeyword
+                    | SyntaxKind::ThrowKeyword
+                    | SyntaxKind::TryKeyword
+                    | SyntaxKind::WhileKeyword
+                    | SyntaxKind::WithKeyword
+            );
             let diag_count = self.parse_diagnostics.len();
             let result = self.parse_statement();
-            let mut i = diag_count;
-            while i < self.parse_diagnostics.len() {
-                if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
-                    self.parse_diagnostics.remove(i);
-                } else {
-                    i += 1;
+            if !preserve_downstream_expected {
+                let mut i = diag_count;
+                while i < self.parse_diagnostics.len() {
+                    if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
+                        self.parse_diagnostics.remove(i);
+                    } else {
+                        i += 1;
+                    }
                 }
             }
             result

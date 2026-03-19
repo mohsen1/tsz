@@ -253,6 +253,46 @@ fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
 }
 
 #[test]
+fn test_top_level_modifier_recovery_keeps_try_block_error() {
+    let source = "cla <ss {\n  _ static try\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    let ts1434: Vec<_> = diagnostics.iter().filter(|d| d.code == 1434).collect();
+    let ts1128: Vec<_> = diagnostics.iter().filter(|d| d.code == 1128).collect();
+
+    assert_eq!(
+        ts1005.len(),
+        2,
+        "Expected both the leading ';' recovery and the trailing try-block '{{' recovery, got {diagnostics:?}"
+    );
+    assert!(
+        ts1005
+            .iter()
+            .any(|diag| diag.start == 8 && diag.message == "';' expected."),
+        "Expected the leading ';' recovery at the stray '{{', got {diagnostics:?}"
+    );
+    assert!(
+        ts1005
+            .iter()
+            .any(|diag| diag.start == 25 && diag.message == "'{' expected."),
+        "Expected the downstream try-statement '{{' recovery at EOF, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1434.len(),
+        1,
+        "Expected the stray identifier recovery to remain, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1128.len(),
+        1,
+        "Expected the top-level modifier recovery to keep TS1128, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_object_literal_statement_recovery_after_shorthand_property() {
     let source = "var v = { a\nreturn;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
