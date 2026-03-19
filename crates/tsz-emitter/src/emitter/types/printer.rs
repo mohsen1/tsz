@@ -181,6 +181,26 @@ impl<'a> TypePrinter<'a> {
             .iter()
             .copied()
             .any(|decl| self.declaration_is_nameable(decl))
+            || self.foreign_global_like_symbol_is_nameable(sym_id, symbol)
+    }
+
+    fn foreign_global_like_symbol_is_nameable(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        if symbol.declarations.is_empty()
+            || self.resolve_symbol_module_path(sym_id).is_some()
+            || self.is_local_import_alias(sym_id)
+        {
+            return false;
+        }
+
+        let Some(node_arena) = self.node_arena else {
+            return true;
+        };
+
+        !symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl| node_arena.get(decl).is_some())
     }
 
     fn declaration_is_nameable(&self, decl_idx: tsz_parser::NodeIndex) -> bool {
