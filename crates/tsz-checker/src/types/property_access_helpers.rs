@@ -185,7 +185,10 @@ impl<'a> CheckerState<'a> {
         // When an exported member is function-typed, assignments such as
         // `module.exports.f.self = module.exports.f` should use the same expando
         // path as plain `f.self = ...`.
-        if self.current_file_commonjs_export_member_name(object_expr_idx).is_some() {
+        if self
+            .current_file_commonjs_export_member_name(object_expr_idx)
+            .is_some()
+        {
             return true;
         }
 
@@ -358,7 +361,9 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_identifier(node)
                 .is_some_and(|ident| ident.escaped_text == "exports")
-                && self.resolve_identifier_symbol_without_tracking(idx).is_none();
+                && self
+                    .resolve_identifier_symbol_without_tracking(idx)
+                    .is_none();
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
