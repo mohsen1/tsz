@@ -183,9 +183,7 @@ impl<'a> CheckerState<'a> {
         let mut decorator_idx = NodeIndex::NONE;
         let mut class_idx = NodeIndex::NONE;
         while current.is_some() {
-            let Some(node) = self.ctx.arena.get(current) else {
-                return None;
-            };
+            let node = self.ctx.arena.get(current)?;
 
             if node.kind == syntax_kind_ext::DECORATOR {
                 decorator_idx = current;
@@ -202,9 +200,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return None;
-            };
+            let ext = self.ctx.arena.get_extended(current)?;
             current = ext.parent;
         }
 
@@ -212,17 +208,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(class_node) = self.ctx.arena.get(class_idx) else {
-            return None;
-        };
-        let Some(class) = self.ctx.arena.get_class(class_node) else {
-            return None;
-        };
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(class_node)?;
 
         class.members.nodes.iter().find_map(|&member_idx| {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                return None;
-            };
+            let member_node = self.ctx.arena.get(member_idx)?;
             let member_has_decorator = match member_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
                     .ctx
