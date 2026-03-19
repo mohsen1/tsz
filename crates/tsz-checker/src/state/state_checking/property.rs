@@ -1408,7 +1408,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let pruned_object_type = self.prune_impossible_object_union_members_with_env(resolved_object_type);
+        let pruned_object_type =
+            self.prune_impossible_object_union_members_with_env(resolved_object_type);
         if pruned_object_type != resolved_object_type {
             resolved_object_type = pruned_object_type;
             mapped_candidate_type = pruned_object_type;
@@ -1740,8 +1741,7 @@ impl<'a> CheckerState<'a> {
 mod tests {
     use crate::test_utils::check_source_diagnostics;
     use crate::{
-        context::CheckerOptions,
-        query_boundaries::type_construction::TypeInterner,
+        context::CheckerOptions, query_boundaries::type_construction::TypeInterner,
         state::CheckerState,
     };
     use tsz_binder::BinderState;
@@ -1837,7 +1837,14 @@ function f<P extends MyPartial<Foo>>(p: P) {
         );
     }
 
-    fn build_checker(source: &str) -> (ParserState, tsz_parser::parser::NodeIndex, BinderState, TypeInterner) {
+    fn build_checker(
+        source: &str,
+    ) -> (
+        ParserState,
+        tsz_parser::parser::NodeIndex,
+        BinderState,
+        TypeInterner,
+    ) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 

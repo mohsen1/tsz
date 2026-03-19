@@ -353,9 +353,10 @@ impl<'a> CheckerState<'a> {
 
         for member in members {
             let evaluated_member = self.evaluate_type_with_resolution(member);
-            let Some(shape) =
-                crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_member)
-            else {
+            let Some(shape) = crate::query_boundaries::state::checking::object_shape(
+                self.ctx.types,
+                evaluated_member,
+            ) else {
                 continue;
             };
 
@@ -402,9 +403,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(members) =
-            crate::query_boundaries::state::checking::intersection_members(self.ctx.types, evaluated)
-        else {
+        let Some(members) = crate::query_boundaries::state::checking::intersection_members(
+            self.ctx.types,
+            evaluated,
+        ) else {
             return false;
         };
 

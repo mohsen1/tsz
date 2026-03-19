@@ -280,13 +280,24 @@ fn test_mapped_keyof_intersection_prunes_impossible_distinct_enum_member_branch(
     let discriminated_union = interner.union(vec![branch_a, branch_b]);
     let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
     assert!(
-        matches!(interner.lookup(intersection), Some(TypeData::Intersection(_))),
+        matches!(
+            interner.lookup(intersection),
+            Some(TypeData::Intersection(_))
+        ),
         "expected discriminated object intersection to stay deferred, got {:?}",
         interner.lookup(intersection)
     );
 
-    assert!(crate::is_subtype_of(&interner, enum_member_a, enum_member_a));
-    assert!(!crate::is_subtype_of(&interner, enum_member_a, enum_member_b));
+    assert!(crate::is_subtype_of(
+        &interner,
+        enum_member_a,
+        enum_member_a
+    ));
+    assert!(!crate::is_subtype_of(
+        &interner,
+        enum_member_a,
+        enum_member_b
+    ));
     let narrowed = crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants(
         &interner,
         discriminated_union,
@@ -370,13 +381,14 @@ fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_ke
         PropertyInfo::new(v_name, enum_member_b),
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
-    let generic_intersection = interner.intersection(vec![
-        fixed_v_t,
-        interner.union(vec![branch_a, branch_b]),
-    ]);
+    let generic_intersection =
+        interner.intersection(vec![fixed_v_t, interner.union(vec![branch_a, branch_b])]);
 
     assert!(
-        matches!(interner.lookup(generic_intersection), Some(TypeData::Intersection(_))),
+        matches!(
+            interner.lookup(generic_intersection),
+            Some(TypeData::Intersection(_))
+        ),
         "expected generic discriminant intersection to stay deferred, got {:?}",
         interner.lookup(generic_intersection)
     );
@@ -394,17 +406,23 @@ fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_ke
     assert!(
         keys.contains(&interner.literal_string("v")),
         "expected instantiated keyof to contain 'v', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
     assert!(
         keys.contains(&interner.literal_string("a")),
         "expected instantiated keyof to contain 'a', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
     assert!(
         !keys.contains(&interner.literal_string("b")),
         "did not expect instantiated keyof to contain 'b', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -437,13 +455,14 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
         PropertyInfo::new(v_name, enum_member_b),
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
-    let generic_intersection = interner.intersection(vec![
-        fixed_v_t,
-        interner.union(vec![branch_a, branch_b]),
-    ]);
+    let generic_intersection =
+        interner.intersection(vec![fixed_v_t, interner.union(vec![branch_a, branch_b])]);
 
     assert!(
-        matches!(interner.lookup(generic_intersection), Some(TypeData::Intersection(_))),
+        matches!(
+            interner.lookup(generic_intersection),
+            Some(TypeData::Intersection(_))
+        ),
         "expected generic discriminant intersection to stay deferred, got {:?}",
         interner.lookup(generic_intersection)
     );
@@ -461,17 +480,23 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
     assert!(
         keys.contains(&interner.literal_string("v")),
         "expected instantiated keyof to contain 'v', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
     assert!(
         keys.contains(&interner.literal_string("a")),
         "expected instantiated keyof to contain 'a', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
     assert!(
         !keys.contains(&interner.literal_string("b")),
         "did not expect instantiated keyof to contain 'b', got {:?}",
-        keys.iter().map(|member| interner.lookup(*member)).collect::<Vec<_>>()
+        keys.iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
     );
 }
 

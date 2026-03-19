@@ -95,12 +95,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.apparent_primitive_keyof(IntrinsicKind::String);
             }
             Some(TypeData::Union(_members)) => {
-                let narrowed_operand =
-                    crate::type_queries::prune_impossible_object_union_members(
-                        self.interner(),
-                        operand,
-                    );
-                let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand) else {
+                let narrowed_operand = crate::type_queries::prune_impossible_object_union_members(
+                    self.interner(),
+                    operand,
+                );
+                let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand)
+                else {
                     return self.recurse_keyof(narrowed_operand);
                 };
                 let member_list = self.interner().type_list(members);

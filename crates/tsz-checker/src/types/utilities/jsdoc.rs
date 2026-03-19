@@ -38,7 +38,7 @@ pub(crate) struct JsdocParamTagInfo {
 #[derive(Clone)]
 pub(crate) struct JsdocCallbackInfo {
     pub(crate) params: Vec<JsdocParamTagInfo>,
-    pub(crate) return_type: Option<String>,   // raw return type expression
+    pub(crate) return_type: Option<String>, // raw return type expression
     /// Parsed type predicate from `@return {x is Type}`.
     pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
@@ -1808,10 +1808,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let raw_type_expr = param
-                .type_expr
-                .clone()
-                .unwrap_or_else(|| "any".to_string());
+            let raw_type_expr = param.type_expr.clone().unwrap_or_else(|| "any".to_string());
             let effective_expr = raw_type_expr.trim_end_matches('=').trim();
             let effective_expr = if param.rest {
                 effective_expr.trim_start_matches("...").trim()
@@ -1827,20 +1824,19 @@ impl<'a> CheckerState<'a> {
                 || effective_expr == "Array<Object>"
                 || effective_expr == "Array<object>";
 
-            let mut type_id = if (is_object_base || is_array_object_base)
-                && !nested_entries.is_empty()
-            {
-                self.build_nested_param_object_type_from_entries(
-                    &nested_entries,
-                    &param.name,
-                    is_array_object_base,
-                )
-                .or_else(|| self.jsdoc_type_from_expression(effective_expr))
-                .unwrap_or(TypeId::ANY)
-            } else {
-                self.jsdoc_type_from_expression(effective_expr)
+            let mut type_id =
+                if (is_object_base || is_array_object_base) && !nested_entries.is_empty() {
+                    self.build_nested_param_object_type_from_entries(
+                        &nested_entries,
+                        &param.name,
+                        is_array_object_base,
+                    )
+                    .or_else(|| self.jsdoc_type_from_expression(effective_expr))
                     .unwrap_or(TypeId::ANY)
-            };
+                } else {
+                    self.jsdoc_type_from_expression(effective_expr)
+                        .unwrap_or(TypeId::ANY)
+                };
 
             if param.rest {
                 type_id = factory.array(type_id);
@@ -1873,7 +1869,8 @@ impl<'a> CheckerState<'a> {
             };
             let parameter_index = if param_name != "this" {
                 params.iter().position(|param| {
-                    param.name
+                    param
+                        .name
                         .is_some_and(|name| name == self.ctx.types.intern_string(&param_name))
                 })
             } else {

@@ -293,8 +293,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Skip DefId-level cycle detection when both are Application types with
         // the SAME base DefId (e.g., Box<number> vs Box<string>).
-        let both_same_base_app = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id)
-        {
+        let both_same_base_app = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
             let s_app = self.interner.type_application(s_app_id);
             let t_app = self.interner.type_application(t_app_id);
             s_app.base == t_app.base
