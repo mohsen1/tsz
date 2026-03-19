@@ -526,7 +526,7 @@ impl<'a> Completions<'a> {
     }
 
     /// Check if we're inside a class body (not inside a method body within it)
-    fn is_in_class_body_context(&self, node_idx: NodeIndex) -> bool {
+    pub(super) fn is_in_class_body_context(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
         for _ in 0..15 {
             if let Some(node) = self.arena.get(current) {
