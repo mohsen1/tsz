@@ -262,6 +262,12 @@ impl<'a> Completions<'a> {
                     continue;
                 }
                 let name = interner.resolve_atom(prop.name);
+                // Skip synthetic brand properties used for nominal class typing.
+                // These are internal type system markers (e.g. `__private_brand_42`)
+                // and must never appear in user-facing completions.
+                if name.starts_with("__private_brand_") {
+                    continue;
+                }
                 self.add_property_completion_ex(
                     props,
                     interner,
@@ -531,23 +537,48 @@ impl<'a> Completions<'a> {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
+
+                // Extract the member name and kind based on AST node type.
+                // `this.` inside a class body should show all instance members
+                // (properties and methods, both public and private).
+                let (name, kind) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier_node(member_idx) {
+                        continue;
+                    }
+                    let Some(name) = self.arena.get_identifier_text(prop.name) else {
+                        continue;
+                    };
+                    (name, CompletionItemKind::Property)
+                } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier_node(member_idx) {
+                        continue;
+                    }
+                    let Some(name) = self.arena.get_identifier_text(method.name) else {
+                        continue;
+                    };
+                    (name, CompletionItemKind::Method)
+                } else {
                     continue;
                 };
-                let Some(name) = self.arena.get_identifier_text(prop.name) else {
-                    continue;
-                };
+
                 if name.starts_with('#') {
                     continue;
                 }
                 if !seen_names.insert(name.to_string()) {
                     continue;
                 }
-                let mut item = CompletionItem::new(name.to_string(), CompletionItemKind::Property);
+                let mut item = CompletionItem::new(name.to_string(), kind);
                 item.sort_text = Some(sort_priority::MEMBER.to_string());
+                if kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
                 items.push(item);
             }
         }
@@ -1340,6 +1371,30 @@ impl<'a> Completions<'a> {
             current = ext.parent;
         }
         None
+    }
+
+    /// Check if a class member node has the `static` modifier.
+    fn has_static_modifier_node(&self, member_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let modifiers = if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            self.arena.get_property_decl(node).and_then(|d| d.modifiers.as_ref())
+        } else if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            self.arena.get_method_decl(node).and_then(|d| d.modifiers.as_ref())
+        } else {
+            None
+        };
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub(super) fn class_extends_expression(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
