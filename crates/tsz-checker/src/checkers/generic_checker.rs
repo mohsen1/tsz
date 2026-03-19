@@ -172,6 +172,177 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn type_arg_identifier_name_local(&self, arg_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let tr = self.ctx.arena.get_type_ref(arg_node)?;
+            let name_node = self.ctx.arena.get(tr.type_name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            Some(ident.escaped_text.clone())
+        } else if arg_node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(arg_node)?;
+            Some(ident.escaped_text.clone())
+        } else {
+            None
+        }
+    }
+
+    fn infer_type_param_has_name_local(
+        &self,
+        infer_data: &tsz_parser::parser::node::InferTypeData,
+        name: &str,
+    ) -> bool {
+        if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+            && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+            && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            ident.escaped_text == name
+        } else {
+            false
+        }
+    }
+
+    fn type_reference_name_matches_local(&self, type_name_idx: NodeIndex, name: &str) -> bool {
+        if let Some(name_node) = self.ctx.arena.get(type_name_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            ident.escaped_text == name
+        } else {
+            false
+        }
+    }
+
+    fn extends_clause_has_weak_key_constrained_infer_named_local(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+            && self.infer_type_param_has_name_local(infer_data, name)
+        {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let is_weak_collection = self
+                .type_reference_name_matches_local(type_ref.type_name, "WeakMap")
+                || self.type_reference_name_matches_local(type_ref.type_name, "WeakSet");
+            if is_weak_collection
+                && let Some(type_args) = &type_ref.type_arguments
+                && let Some(&first_arg) = type_args.nodes.first()
+                && let Some(first_node) = self.ctx.arena.get(first_arg)
+                && first_node.kind == syntax_kind_ext::INFER_TYPE
+                && let Some(infer_data) = self.ctx.arena.get_infer_type(first_node)
+                && self.infer_type_param_has_name_local(infer_data, name)
+            {
+                return true;
+            }
+
+            if let Some(type_args) = &type_ref.type_arguments {
+                for &arg in &type_args.nodes {
+                    if self.extends_clause_has_weak_key_constrained_infer_named_local(arg, name) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+            for &elem_idx in &tuple.elements.nodes {
+                if self.extends_clause_has_weak_key_constrained_infer_named_local(elem_idx, name) {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(named_member) = self.ctx.arena.get_named_tuple_member(node)
+            && self.extends_clause_has_weak_key_constrained_infer_named_local(
+                named_member.type_node,
+                name,
+            )
+        {
+            return true;
+        }
+
+        if (node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            || node.kind == syntax_kind_ext::OPTIONAL_TYPE
+            || node.kind == syntax_kind_ext::REST_TYPE)
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            && self
+                .extends_clause_has_weak_key_constrained_infer_named_local(wrapped.type_node, name)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn is_infer_with_weak_key_implicit_constraint_in_conditional_local(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(name) = self.type_arg_identifier_name_local(arg_idx) else {
+            return false;
+        };
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+
+        let mut current = arg_idx;
+        for _ in 0..30 {
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
+            if parent.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                    && let Some(true_node) = self.ctx.arena.get(cond.true_type)
+                    && arg_node.pos >= true_node.pos
+                    && arg_node.end <= true_node.end
+                    && self.extends_clause_has_weak_key_constrained_infer_named_local(
+                        cond.extends_type,
+                        &name,
+                    )
+                {
+                    return true;
+                }
+                if parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                {
+                    return false;
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn has_hidden_conditional_infer_constraint_local(&self, arg_idx: NodeIndex) -> bool {
+        self.is_infer_with_implicit_constraint_in_conditional(arg_idx)
+            || self.is_infer_with_weak_key_implicit_constraint_in_conditional_local(arg_idx)
+    }
+
     // =========================================================================
     // Type Argument Validation
     // =========================================================================
@@ -656,7 +827,6 @@ impl<'a> CheckerState<'a> {
                             if query::contains_type_parameters(self.ctx.types, inst_constraint) {
                                 continue;
                             }
-
                             let db = self.ctx.types.as_type_database();
                             let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
 
@@ -760,7 +930,7 @@ impl<'a> CheckerState<'a> {
                         // checks to conditional type evaluation.
                         let has_implicit_constraint =
                             type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
-                                self.is_infer_with_implicit_constraint_in_conditional(arg_idx)
+                                self.has_hidden_conditional_infer_constraint_local(arg_idx)
                             });
                         if has_implicit_constraint {
                             continue;
@@ -786,9 +956,8 @@ impl<'a> CheckerState<'a> {
                                 type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.is_inside_mapped_type(arg_idx)
                                         || self.type_arg_has_explicit_constraint_in_ast(arg_idx)
-                                        || self.is_infer_with_implicit_constraint_in_conditional(
-                                            arg_idx,
-                                        )
+                                        || self
+                                            .has_hidden_conditional_infer_constraint_local(arg_idx)
                                 });
                             if has_hidden_constraint {
                                 continue;
@@ -927,7 +1096,6 @@ impl<'a> CheckerState<'a> {
                         &subst,
                     )
                 };
-
                 // Skip if the instantiated constraint still contains type parameters.
                 // This avoids false positive TS2344 when the constraint cannot be fully
                 // resolved (e.g., conditional type narrowing contexts like
