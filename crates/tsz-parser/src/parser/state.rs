@@ -1799,6 +1799,7 @@ impl ParserState {
             if !expr_had_error
                 || self.is_token(SyntaxKind::ColonToken)
                 || self.is_token(SyntaxKind::CloseParenToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
             {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
