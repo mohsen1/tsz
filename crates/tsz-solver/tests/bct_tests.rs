@@ -446,6 +446,35 @@ fn test_bct_literal_widening_mixed_literals() {
     assert_eq!(result, TypeId::NUMBER);
 }
 
+#[test]
+fn test_bct_fresh_object_literals_preserve_normalized_union() {
+    let interner = TypeInterner::new();
+    let ctx = InferenceContext::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let c_name = interner.intern_string("c");
+
+    let obj1 = interner.object_fresh(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+    let obj2 = interner.object_fresh(vec![
+        PropertyInfo::new(a_name, TypeId::NUMBER),
+        PropertyInfo::new(b_name, TypeId::STRING),
+    ]);
+    let obj3 = interner.object_fresh(vec![
+        PropertyInfo::new(a_name, TypeId::NUMBER),
+        PropertyInfo::new(b_name, TypeId::STRING),
+        PropertyInfo::new(c_name, TypeId::BOOLEAN),
+    ]);
+
+    let result = ctx.best_common_type(&[obj1, obj2, obj3]);
+    let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("expected normalized union, got {:?}", interner.lookup(result));
+    };
+
+    let members = interner.type_list(list_id);
+    assert_eq!(members.len(), 3, "expected all object-literal candidates to survive");
+}
+
 // =============================================================================
 // Deduplication
 // =============================================================================

@@ -10,6 +10,7 @@
 //! 3. Try to find a common base class (e.g., Dog + Cat -> Animal)
 //! 4. If not found, create a union of all candidates
 
+use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, LiteralValue, ObjectShape, ObjectShapeId,
     ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId,
@@ -87,6 +88,11 @@ impl<'a> InferenceContext<'a> {
             if unique.len() > 1 {
                 return base;
             }
+        }
+
+        if let Some(normalized) = normalize_fresh_object_literal_union_members(self.interner, &unique)
+        {
+            return self.interner.union(normalized);
         }
 
         // Step 2: Tournament reduction — O(N) to find potential supertype candidate.
@@ -239,6 +245,13 @@ impl<'a> InferenceContext<'a> {
             && primary_types.len() > 1
         {
             return self.add_nullable_to_result(base, has_undefined, has_null);
+        }
+
+        if let Some(normalized) =
+            normalize_fresh_object_literal_union_members(self.interner, &primary_types)
+        {
+            let result = self.interner.union(normalized);
+            return self.add_nullable_to_result(result, has_undefined, has_null);
         }
 
         // Step 3: Tournament reduction with strict subtype

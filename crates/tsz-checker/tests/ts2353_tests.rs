@@ -238,6 +238,36 @@ const ok: Gen2 = { v: "", a: "" };
     assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
 }
 
+#[test]
+fn object_literal_union_normalization_avoids_ts2339_and_ts2353() {
+    let source = r#"
+let a1 = [{ a: 0 }, { a: 1, b: "x" }, { a: 2, b: "y", c: true }][0];
+a1.b;
+a1.c;
+a1 = { a: 0, b: 0 };
+
+let d1 = [{ kind: 'a', pos: { x: 0, y: 0 } }, { kind: 'b', pos: !true ? { a: "x" } : { b: 0 } }][0];
+d1.pos.x;
+d1.pos.y;
+d1.pos.a;
+d1.pos.b;
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2339),
+        "Normalized object-literal unions should not report missing-property reads here, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Normalized object-literal unions should not report excess properties here, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 2322),
+        "Expected the bad assignment to remain a TS2322, got: {diags:?}"
+    );
+}
+
 // --- Type alias name display in diagnostics ---
 
 #[test]

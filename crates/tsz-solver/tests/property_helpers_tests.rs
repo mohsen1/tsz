@@ -224,6 +224,28 @@ fn test_union_property_missing_on_one_member() {
 }
 
 #[test]
+fn test_union_property_missing_on_fresh_object_literal_member_yields_undefined() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x = interner.intern_string("x");
+    let y = interner.intern_string("y");
+    let obj1 = interner.object_fresh(vec![
+        PropertyInfo::new(x, TypeId::NUMBER),
+        PropertyInfo::new(y, TypeId::STRING),
+    ]);
+    let obj2 = interner.object_fresh(vec![PropertyInfo::new(y, TypeId::STRING)]);
+    let union = interner.union(vec![obj1, obj2]);
+
+    let result = evaluator.resolve_property_access(union, "x");
+    let Some((type_id, _)) = result.success_info() else {
+        panic!("expected Success, got {result:?}");
+    };
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    assert_eq!(type_id, expected);
+}
+
+#[test]
 fn test_union_with_any_returns_any() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);

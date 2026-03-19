@@ -83,36 +83,11 @@ fn complement_fresh_object_literal_union(
     left: TypeId,
     right: TypeId,
 ) -> Option<(TypeId, TypeId)> {
-    let left_shape = fresh_literal_shape(interner, left)?;
-    let right_shape = fresh_literal_shape(interner, right)?;
-
-    // Keep this narrowly scoped to plain fresh object literals.
-    if left_shape.symbol.is_some()
-        || right_shape.symbol.is_some()
-        || left_shape.string_index.is_some()
-        || left_shape.number_index.is_some()
-        || right_shape.string_index.is_some()
-        || right_shape.number_index.is_some()
-    {
+    let normalized = normalize_fresh_object_literal_union_members(interner, &[left, right])?;
+    if normalized.len() != 2 {
         return None;
     }
-
-    let mut names: Vec<Atom> = left_shape.properties.iter().map(|p| p.name).collect();
-    for name in right_shape.properties.iter().map(|p| p.name) {
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-
-    if names.is_empty() {
-        return None;
-    }
-
-    let left_completed = add_missing_optional_properties(&left_shape.properties, &names);
-    let right_completed = add_missing_optional_properties(&right_shape.properties, &names);
-    let left_type = interner.object_with_flags(left_completed, left_shape.flags);
-    let right_type = interner.object_with_flags(right_completed, right_shape.flags);
-    Some((left_type, right_type))
+    Some((normalized[0], normalized[1]))
 }
 
 fn fresh_literal_shape(
@@ -128,6 +103,57 @@ fn fresh_literal_shape(
         return None;
     }
     Some((*shape).clone())
+}
+
+pub(crate) fn normalize_fresh_object_literal_union_members(
+    interner: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<Vec<TypeId>> {
+    let mut object_members = Vec::with_capacity(members.len());
+
+    for &member in members {
+        let shape = fresh_literal_shape(interner, member)?;
+        // Object literals containing spreads are not fresh, and open/symbol-backed
+        // objects should not participate in this normalization.
+        if shape.symbol.is_some()
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+        {
+            return None;
+        }
+        object_members.push((member, shape));
+    }
+
+    if object_members.len() < 2 {
+        return None;
+    }
+
+    let mut names: Vec<Atom> = Vec::new();
+    for (_, shape) in &object_members {
+        for prop in &shape.properties {
+            if !names.contains(&prop.name) {
+                names.push(prop.name);
+            }
+        }
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    let mut changed = false;
+    let mut normalized = Vec::with_capacity(object_members.len());
+    for (original_type, shape) in object_members {
+        let completed = add_missing_optional_properties(&shape.properties, &names);
+        if completed != shape.properties {
+            changed = true;
+            normalized.push(interner.object_with_flags(completed, shape.flags));
+        } else {
+            normalized.push(original_type);
+        }
+    }
+
+    changed.then_some(normalized)
 }
 
 fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) -> Vec<PropertyInfo> {
@@ -352,6 +378,14 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // When we have multiple literal types of the same primitive kind, widen to the primitive
     // Example: [1, 2] -> number[], ["a", "b"] -> string[]
     let widened = widen_literals(interner, types);
+
+    // Fresh plain object literals widen as a normalized union, not as the single
+    // structural supertype candidate. Without this, `[ {a:0}, {a:1,b:"x"} ]`
+    // collapses to `{ a: number }`, losing optionalized properties and causing
+    // downstream TS2339/TS2353 drift.
+    if let Some(normalized) = normalize_fresh_object_literal_union_members(interner, &widened) {
+        return interner.union(normalized);
+    }
 
     // Constructor-valued arrays should preserve member unions. Collapsing
     // `[Concrete, Abstract]` to a single structurally-compatible constructor
