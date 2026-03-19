@@ -260,9 +260,7 @@ impl<'a> Completions<'a> {
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
-        self.collect_properties_for_type_inner(
-            type_id, interner, checker, visited, props, false,
-        );
+        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, false);
     }
 
     /// Collect properties including private/protected members.
@@ -275,9 +273,7 @@ impl<'a> Completions<'a> {
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
-        self.collect_properties_for_type_inner(
-            type_id, interner, checker, visited, props, true,
-        );
+        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, true);
     }
 
     fn collect_properties_for_type_inner(
@@ -297,7 +293,12 @@ impl<'a> Completions<'a> {
         let evaluated = tsz_solver::evaluate_type(interner, resolved);
         if evaluated != type_id {
             self.collect_properties_for_type_inner(
-                evaluated, interner, checker, visited, props, include_private,
+                evaluated,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
             );
             return;
         }
@@ -366,7 +367,12 @@ impl<'a> Completions<'a> {
             } else {
                 for &member in members.iter() {
                     self.collect_properties_for_type_inner(
-                        member, interner, checker, visited, props, include_private,
+                        member,
+                        interner,
+                        checker,
+                        visited,
+                        props,
+                        include_private,
                     );
                 }
             }
@@ -378,7 +384,12 @@ impl<'a> Completions<'a> {
             let members = interner.type_list(members_id);
             for &member in members.iter() {
                 self.collect_properties_for_type_inner(
-                    member, interner, checker, visited, props, include_private,
+                    member,
+                    interner,
+                    checker,
+                    visited,
+                    props,
+                    include_private,
                 );
             }
             return;
@@ -387,7 +398,12 @@ impl<'a> Completions<'a> {
         if let Some(app) = visitor::application_id(interner, evaluated) {
             let app = interner.type_application(app);
             self.collect_properties_for_type_inner(
-                app.base, interner, checker, visited, props, include_private,
+                app.base,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
             );
             return;
         }
@@ -1033,7 +1049,8 @@ impl<'a> Completions<'a> {
         if let Some(parent) = Self::normalize_member_parent_type_name(&type_text) {
             return Some(parent);
         }
-        if let Some(parent) = self.resolve_member_target_symbol(expr_idx)
+        if let Some(parent) = self
+            .resolve_member_target_symbol(expr_idx)
             .and_then(|sym_id| self.binder.symbols.get(sym_id))
             .and_then(|symbol| {
                 use tsz_binder::symbol_flags;
@@ -1050,7 +1067,10 @@ impl<'a> Completions<'a> {
             let class_idx = self.find_enclosing_class_declaration(expr_idx)?;
             let class_node = self.arena.get(class_idx)?;
             let class_data = self.arena.get_class(class_node)?;
-            return self.arena.get_identifier_text(class_data.name).map(|s| s.to_string());
+            return self
+                .arena
+                .get_identifier_text(class_data.name)
+                .map(|s| s.to_string());
         }
 
         None
@@ -1454,9 +1474,13 @@ impl<'a> Completions<'a> {
             return false;
         };
         let modifiers = if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-            self.arena.get_property_decl(node).and_then(|d| d.modifiers.as_ref())
+            self.arena
+                .get_property_decl(node)
+                .and_then(|d| d.modifiers.as_ref())
         } else if node.kind == syntax_kind_ext::METHOD_DECLARATION {
-            self.arena.get_method_decl(node).and_then(|d| d.modifiers.as_ref())
+            self.arena
+                .get_method_decl(node)
+                .and_then(|d| d.modifiers.as_ref())
         } else {
             None
         };
@@ -1507,7 +1531,8 @@ impl<'a> Completions<'a> {
         if let Some(rest) = after_params.strip_prefix(':') {
             let return_type = rest.trim_start();
             // Take until `{` or end of line
-            let end_pos = return_type.find('{')
+            let end_pos = return_type
+                .find('{')
                 .or_else(|| return_type.find('\n'))
                 .unwrap_or(return_type.len());
             let return_type = return_type[..end_pos].trim();
