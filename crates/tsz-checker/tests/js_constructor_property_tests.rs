@@ -68,6 +68,10 @@ fn check_js_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, Str
         .collect()
 }
 
+fn count_code(diags: &[(u32, String)], code: u32) -> usize {
+    diags.iter().filter(|(c, _)| *c == code).count()
+}
+
 /// Basic constructor this.prop assignment → no TS2339 on instance access
 #[test]
 fn test_js_constructor_this_prop_no_false_ts2339() {
@@ -231,6 +235,39 @@ class Derived extends Base {
         ts2339.len(),
         0,
         "Expected no TS2339 for method body this.prop, got: {ts2339:?}"
+    );
+}
+
+#[test]
+fn test_js_static_block_super_expando_reports_ts2565() {
+    let source = r#"
+class C {
+    static blah1 = 123;
+}
+C.blah2 = 456;
+
+class D extends C {
+    static {
+        super.blah1;
+        super.blah2;
+    }
+}
+"#;
+
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2565),
+        1,
+        "Expected JS static block super expando access to report TS2565, got: {diagnostics:?}"
     );
 }
 
