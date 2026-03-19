@@ -43,11 +43,11 @@ pub trait TypeDatabase {
 
     /// Get conditional type by value (Copy, no Arc overhead).
     fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
-        (*self.conditional_type(id)).clone()
+        *self.conditional_type(id)
     }
     /// Get mapped type by value (Copy, no Arc overhead).
     fn get_mapped(&self, id: MappedTypeId) -> MappedType {
-        (*self.mapped_type(id)).clone()
+        *self.mapped_type(id)
     }
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication>;
 
