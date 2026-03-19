@@ -138,14 +138,14 @@ fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let base_path = lib_dir.join("lib.esnext.d.ts");
     let base_path: &Path = base_path.as_path();
 
-    let custom_path = resolve_lib_reference_path(&base_path, "CUSTOM").expect("resolve custom");
+    let custom_path = resolve_lib_reference_path(base_path, "CUSTOM").expect("resolve custom");
     assert_eq!(custom_path, lib_dir.join("lib.custom.d.ts"));
 
     let wrapped_path =
-        resolve_lib_reference_path(&base_path, "lib.custom.d.ts").expect("resolve wrapped");
+        resolve_lib_reference_path(base_path, "lib.custom.d.ts").expect("resolve wrapped");
     assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
 
-    assert!(resolve_lib_reference_path(&base_path, "nonexistent").is_none());
+    assert!(resolve_lib_reference_path(base_path, "nonexistent").is_none());
 }
 
 #[test]

@@ -560,12 +560,27 @@ impl<'a> Completions<'a> {
             return None;
         }
 
+        // Compute the replacement span: the content between quotes of the
+        // enclosing string literal (start+1 .. end-1), matching TypeScript's
+        // `createTextSpanFromStringLiteralLikeContent`.
+        let replacement_span = self.arena.get(string_literal_idx).map(|node| {
+            let start = node.pos + 1; // skip opening quote
+            let end = if node.end > node.pos + 1 {
+                node.end - 1 // skip closing quote
+            } else {
+                node.end
+            };
+            (start, end)
+        });
+
         let mut items: Vec<_> = labels
             .into_iter()
             .map(|label| {
-                let mut item =
-                    CompletionItem::new(format!("\"{label}\""), CompletionItemKind::Variable);
+                let mut item = CompletionItem::new(label, CompletionItemKind::Variable);
                 item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
+                if let Some((start, end)) = replacement_span {
+                    item.replacement_span = Some((start, end));
+                }
                 item
             })
             .collect();

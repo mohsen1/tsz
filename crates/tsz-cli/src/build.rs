@@ -224,11 +224,10 @@ mod tests {
     }
 
     fn create_project_dir(name: &str) -> TempDir {
-        let dir = tempfile::Builder::new()
+        tempfile::Builder::new()
             .prefix(&format!("tsz_build_{name}_"))
             .tempdir()
-            .unwrap();
-        dir
+            .unwrap()
     }
 
     fn write_project_config(dir: &Path) -> PathBuf {
