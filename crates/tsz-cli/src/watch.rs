@@ -626,3 +626,142 @@ impl Debouncer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn format_12h_handles_midnight_noon_and_edge_minutes() {
+        assert_eq!(format_12h(0, 0, 0), "12:00:00 AM");
+        assert_eq!(format_12h(11, 59, 59), "11:59:59 AM");
+        assert_eq!(format_12h(12, 0, 0), "12:00:00 PM");
+        assert_eq!(format_12h(23, 59, 59), "11:59:59 PM");
+    }
+
+    #[test]
+    fn normalize_event_path_preserves_absolute_paths_and_joins_relative_paths() {
+        let base_dir = Path::new("/repo/project");
+
+        assert_eq!(
+            normalize_event_path(base_dir, Path::new("/tmp/file.ts")),
+            PathBuf::from("/tmp/file.ts")
+        );
+        assert_eq!(
+            normalize_event_path(base_dir, Path::new("src/file.ts")),
+            PathBuf::from("/repo/project/src/file.ts")
+        );
+    }
+
+    #[test]
+    fn is_default_excluded_matches_nested_default_exclude_directories() {
+        assert!(is_default_excluded(Path::new("/repo/node_modules/pkg/index.ts")));
+        assert!(is_default_excluded(Path::new("/repo/src/bower_components/lib.ts")));
+        assert!(!is_default_excluded(Path::new("/repo/src/app.ts")));
+    }
+
+    #[test]
+    fn resolve_explicit_files_joins_relative_entries_and_keeps_absolute_entries() {
+        let base_dir = Path::new("/repo/project");
+        let files = vec![
+            PathBuf::from("src/app.ts"),
+            PathBuf::from("/external/shared.ts"),
+        ];
+
+        let resolved = resolve_explicit_files(base_dir, &files).expect("expected explicit files");
+        assert!(resolved.contains(&PathBuf::from("/repo/project/src/app.ts")));
+        assert!(resolved.contains(&PathBuf::from("/external/shared.ts")));
+    }
+
+    #[test]
+    fn collect_watch_roots_deduplicates_base_and_parent_directories() {
+        let base_dir = Path::new("/repo/project");
+        let mut explicit = FxHashSet::default();
+        explicit.insert(PathBuf::from("/repo/project/src/app.ts"));
+        explicit.insert(PathBuf::from("/repo/project/src/utils/helper.ts"));
+
+        let roots = collect_watch_roots(base_dir, Some(&explicit));
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/repo/project"),
+                PathBuf::from("/repo/project/src"),
+                PathBuf::from("/repo/project/src/utils"),
+            ]
+        );
+    }
+
+    #[test]
+    fn watch_filter_respects_project_config_explicit_files_and_exclusions() {
+        let base_dir = PathBuf::from("/repo/project");
+        let project_config = base_dir.join("tsconfig.json");
+
+        let explicit_file = base_dir.join("src/app.ts");
+        let ignored_file = base_dir.join("dist/generated.ts");
+        let excluded_file = base_dir.join("src/skip.ts");
+        let other_file = base_dir.join("src/other.ts");
+
+        let mut explicit_files = FxHashSet::default();
+        explicit_files.insert(explicit_file.clone());
+
+        let mut exclude_files = FxHashSet::default();
+        exclude_files.insert(excluded_file.clone());
+
+        let filter = WatchFilter::new(
+            Some(explicit_files),
+            vec![base_dir.join("dist")],
+            Some(project_config.clone()),
+            Some(exclude_files),
+        );
+
+        assert!(filter.should_record(&project_config));
+        assert!(filter.should_record(&explicit_file));
+        assert!(!filter.should_record(&ignored_file));
+        assert!(!filter.should_record(&excluded_file));
+        assert!(!filter.should_record(&other_file));
+    }
+
+    #[test]
+    fn watch_filter_marks_emitted_paths_as_ineligible() {
+        let base_dir = PathBuf::from("/repo/project");
+        let path = base_dir.join("src/app.ts");
+
+        let mut explicit_files = FxHashSet::default();
+        explicit_files.insert(path.clone());
+
+        let mut filter = WatchFilter::new(Some(explicit_files), Vec::new(), None, None);
+        assert!(filter.should_record(&path));
+
+        filter.set_last_emitted(vec![path.clone()]);
+        assert!(!filter.should_record(&path));
+    }
+
+    #[test]
+    fn debouncer_coalesces_events_and_clears_after_flush_or_removal() {
+        let mut debouncer = Debouncer::new(Duration::from_millis(200));
+        let now = Instant::now();
+        let path_a = PathBuf::from("/repo/project/src/a.ts");
+        let path_b = PathBuf::from("/repo/project/src/b.ts");
+
+        debouncer.record_at(now, path_a.clone());
+        debouncer.record_at(now, path_b.clone());
+        debouncer.record_at(now, path_a.clone());
+
+        assert!(debouncer.flush_ready(now + Duration::from_millis(150)).is_none());
+
+        let flushed = debouncer
+            .flush_ready(now + Duration::from_millis(200))
+            .expect("expected pending paths to flush");
+        let flushed: FxHashSet<_> = flushed.into_iter().collect();
+        assert_eq!(flushed.len(), 2);
+        assert!(flushed.contains(&path_a));
+        assert!(flushed.contains(&path_b));
+
+        debouncer.record_at(now + Duration::from_millis(250), path_a.clone());
+        let mut remove = FxHashSet::default();
+        remove.insert(path_a);
+        debouncer.remove_paths(&remove);
+        assert!(debouncer.flush_ready(now + Duration::from_millis(500)).is_none());
+    }
+}
