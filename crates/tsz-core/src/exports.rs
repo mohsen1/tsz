@@ -607,4 +607,115 @@ mod tests {
         assert_eq!(stats.named_exports, 2);
         assert_eq!(stats.namespace_reexports, 1);
     }
+
+    #[test]
+    fn test_namespace_reexport_alias_is_visible_as_named_export() {
+        let mut tracker = ExportTracker::new();
+
+        tracker.add_namespace_reexport(NamespaceReExport {
+            module_specifier: "./utils".to_string(),
+            alias: Some("ns".to_string()),
+            node: NodeIndex::NONE,
+            start: 0,
+            end: 0,
+        });
+
+        let binding = tracker.get_export("ns").expect("expected alias binding");
+        assert_eq!(binding.kind, ExportKind::NamespaceReExportAs);
+        assert_eq!(binding.source_module.as_deref(), Some("./utils"));
+        assert!(tracker.is_exported("ns"));
+        assert_eq!(tracker.stats().namespace_reexports, 1);
+        assert_eq!(tracker.stats().reexport_sources, 1);
+    }
+
+    #[test]
+    fn test_commonjs_exports_update_flags_and_clear_resets_state() {
+        let mut tracker = ExportTracker::new();
+
+        tracker.add_commonjs_export(CommonJSExport {
+            kind: ExportKind::CommonJSDefault,
+            property_name: None,
+            node: NodeIndex::NONE,
+            start: 0,
+            end: 0,
+        });
+        tracker.add_commonjs_export(CommonJSExport {
+            kind: ExportKind::CommonJSNamed,
+            property_name: Some("named".to_string()),
+            node: NodeIndex::NONE,
+            start: 0,
+            end: 0,
+        });
+
+        let stats = tracker.stats();
+        assert!(tracker.has_commonjs_exports);
+        assert!(tracker.has_default_export);
+        assert_eq!(stats.commonjs_exports, 2);
+        assert_eq!(stats.default_exports, 1);
+
+        tracker.clear();
+
+        assert!(tracker.declarations.is_empty());
+        assert!(tracker.bindings_by_name.is_empty());
+        assert!(tracker.namespace_reexports.is_empty());
+        assert!(tracker.reexports.is_empty());
+        assert!(tracker.reexport_sources.is_empty());
+        assert!(tracker.commonjs_exports.is_empty());
+        assert!(tracker.default_export.is_none());
+        assert!(!tracker.has_default_export);
+        assert!(!tracker.has_commonjs_exports);
+        assert!(!tracker.is_exported("default"));
+    }
+
+    #[test]
+    fn test_resolve_export_namespace_reexport_only_lists_star_sources() {
+        let mut tracker = ExportTracker::new();
+
+        tracker.add_namespace_reexport(NamespaceReExport {
+            module_specifier: "./star".to_string(),
+            alias: None,
+            node: NodeIndex::NONE,
+            start: 0,
+            end: 0,
+        });
+        tracker.add_namespace_reexport(NamespaceReExport {
+            module_specifier: "./aliased".to_string(),
+            alias: Some("aliased".to_string()),
+            node: NodeIndex::NONE,
+            start: 0,
+            end: 0,
+        });
+
+        match tracker.resolve_export("missing") {
+            ExportResolution::PossibleNamespaceReExport { sources, name } => {
+                assert_eq!(name, "missing");
+                assert_eq!(sources, vec!["./star".to_string()]);
+            }
+            _ => panic!("expected namespace re-export fallback"),
+        }
+    }
+
+    #[test]
+    fn test_exported_binding_builder_preserves_explicit_metadata() {
+        let binding = ExportedBindingBuilder::new("Foo")
+            .local_name("LocalFoo")
+            .kind(ExportKind::ReExport)
+            .declaration_node(NodeIndex(20))
+            .local_declaration_node(NodeIndex(21))
+            .symbol_id(SymbolId(22))
+            .type_only(true)
+            .source_module("./types")
+            .original_name("Bar")
+            .build();
+
+        assert_eq!(binding.exported_name, "Foo");
+        assert_eq!(binding.local_name, "LocalFoo");
+        assert_eq!(binding.kind, ExportKind::ReExport);
+        assert_eq!(binding.declaration_node, NodeIndex(20));
+        assert_eq!(binding.local_declaration_node, NodeIndex(21));
+        assert_eq!(binding.symbol_id, SymbolId(22));
+        assert!(binding.is_type_only);
+        assert_eq!(binding.source_module.as_deref(), Some("./types"));
+        assert_eq!(binding.original_name.as_deref(), Some("Bar"));
+    }
 }

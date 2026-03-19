@@ -19,6 +19,8 @@ fn test_script_target_comparisons() {
     assert!(!ScriptTarget::ES2022.supports_es2023());
     assert!(ScriptTarget::ES2023.supports_es2023());
     assert!(!ScriptTarget::ES5.supports_es2019());
+    assert!(!ScriptTarget::ES2024.supports_es2025());
+    assert!(ScriptTarget::ES2025.supports_es2025());
 }
 
 #[test]
@@ -42,6 +44,25 @@ fn test_module_kind_detection() {
     assert!(!ModuleKind::CommonJS.is_es_module());
     assert!(!ModuleKind::AMD.is_es_module());
     assert!(!ModuleKind::UMD.is_es_module());
+    assert!(!ModuleKind::System.is_es_module());
+    assert!(ModuleKind::Preserve.is_es_module());
+
+    // Node-like systems still support dynamic import, but only the modern
+    // targets accept the second `import()` options argument.
+    assert!(ModuleKind::Node16.is_node_module());
+    assert!(ModuleKind::Node18.is_node_module());
+    assert!(ModuleKind::Node20.is_node_module());
+    assert!(ModuleKind::NodeNext.is_node_module());
+    assert!(!ModuleKind::CommonJS.is_node_module());
+    assert!(ModuleKind::ES2020.supports_dynamic_import());
+    assert!(ModuleKind::Node16.supports_dynamic_import());
+    assert!(ModuleKind::NodeNext.supports_dynamic_import());
+    assert!(!ModuleKind::ES2015.supports_dynamic_import());
+    assert!(ModuleKind::ESNext.supports_dynamic_import_options());
+    assert!(ModuleKind::Node16.supports_dynamic_import_options());
+    assert!(ModuleKind::Node20.supports_dynamic_import_options());
+    assert!(ModuleKind::Preserve.supports_dynamic_import_options());
+    assert!(!ModuleKind::CommonJS.supports_dynamic_import_options());
 }
 
 #[test]

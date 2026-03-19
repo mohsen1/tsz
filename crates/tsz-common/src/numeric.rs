@@ -87,4 +87,30 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0o8"), None);
         assert_eq!(parse_numeric_literal_value("0xg"), None);
     }
+
+    #[test]
+    fn test_parse_numeric_literal_value_rejects_missing_digits_and_empty_input() {
+        assert_eq!(parse_numeric_literal_value(""), None);
+        assert_eq!(parse_numeric_literal_value("0x"), None);
+        assert_eq!(parse_numeric_literal_value("0b"), None);
+        assert_eq!(parse_numeric_literal_value("0o"), None);
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_value_handles_signs_and_separators() {
+        assert_eq!(parse_numeric_literal_value("+42"), Some(42.0));
+        assert_eq!(parse_numeric_literal_value("-3.5"), Some(-3.5));
+        assert_eq!(parse_numeric_literal_value("1_2_3_4"), Some(1234.0));
+        assert_eq!(parse_numeric_literal_value("0xDE_AD"), Some(57005.0));
+        assert_eq!(parse_numeric_literal_value("0b1010_1111"), Some(175.0));
+        assert_eq!(parse_numeric_literal_value("0o7_7"), Some(63.0));
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_value_mixes_rejections_and_separator_normalization() {
+        assert_eq!(parse_numeric_literal_value("1e"), None);
+        assert_eq!(parse_numeric_literal_value("0x1p2"), None);
+        assert_eq!(parse_numeric_literal_value("abc"), None);
+        assert_eq!(parse_numeric_literal_value("1__2"), Some(12.0));
+    }
 }
