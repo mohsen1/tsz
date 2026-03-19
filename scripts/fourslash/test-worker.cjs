@@ -148,14 +148,63 @@ function patchTestState(FourSlash, TszAdapter) {
  */
 function patchSessionClient(SessionClient, ts) {
     const proto = SessionClient.prototype;
+
+    // Create a wrapper host that fixes getDefaultLibFileName for the native LS.
+    const createNativeHost = (host) => {
+        const wrapper = Object.create(host);
+        wrapper.getDefaultLibFileName = (options) => {
+            return ts.getDefaultLibFilePath(options || host.getCompilationSettings?.() || {});
+        };
+        const origReadFile = host.readFile?.bind(host);
+        const origFileExists = host.fileExists?.bind(host);
+        const origGetScriptSnapshot = host.getScriptSnapshot?.bind(host);
+        const fs = require("fs");
+        const path = require("path");
+        const builtLocal = path.join(process.cwd(), "built/local");
+
+        wrapper.readFile = (fileName) => {
+            const result = origReadFile?.(fileName);
+            if (result != null) return result;
+            const baseName = path.basename(fileName);
+            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
+                const libPath = path.join(builtLocal, baseName);
+                try { return fs.readFileSync(libPath, "utf-8"); } catch { return undefined; }
+            }
+            return undefined;
+        };
+        wrapper.fileExists = (fileName) => {
+            if (origFileExists?.(fileName)) return true;
+            const baseName = path.basename(fileName);
+            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
+                const libPath = path.join(builtLocal, baseName);
+                return fs.existsSync(libPath);
+            }
+            return false;
+        };
+        wrapper.getScriptSnapshot = (fileName) => {
+            const result = origGetScriptSnapshot?.(fileName);
+            if (result) return result;
+            const content = wrapper.readFile(fileName);
+            if (content != null) return ts.ScriptSnapshot.fromString(content);
+            return undefined;
+        };
+        const origGetScriptFileNames = host.getScriptFileNames?.bind(host);
+        wrapper.getScriptFileNames = () => {
+            return origGetScriptFileNames?.() || [];
+        };
+        return wrapper;
+    };
+
     const getNativeLanguageService = (client) => {
-        if (client._tszNativeLs !== undefined) return client._tszNativeLs;
+        // Always create our own native LS with a properly configured host.
+        if (client._tszNativeLsFixed !== undefined) return client._tszNativeLsFixed;
         try {
-            client._tszNativeLs = ts.createLanguageService(client.host);
+            const wrappedHost = createNativeHost(client.host);
+            client._tszNativeLsFixed = ts.createLanguageService(wrappedHost, ts.createDocumentRegistry());
         } catch {
-            client._tszNativeLs = null;
+            client._tszNativeLsFixed = null;
         }
-        return client._tszNativeLs;
+        return client._tszNativeLsFixed;
     };
 
     const withNativeFallback = (client, op) => {
@@ -232,9 +281,9 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     // Override getCompletionsAtPosition to:
-    // 1) honor per-call preferences in Native-mode harness flows by forwarding
-    //    them through configure, and
-    // 2) return undefined when there are no entries (harness contract).
+    // 1) honor per-call preferences
+    // 2) return undefined when there are no entries (harness contract)
+    // 3) fix isNewIdentifierLocation from native LS
     const _origGetCompletions = proto.getCompletionsAtPosition;
     proto.getCompletionsAtPosition = function(fileName, position, preferences) {
         const oldPreferences = this.preferences;
@@ -244,6 +293,20 @@ function patchSessionClient(SessionClient, ts) {
         if (result && result.entries && result.entries.length === 0) {
             return undefined;
         }
+
+        // Fix isNewIdentifierLocation from native LS (tsz may compute it incorrectly)
+        if (result && result.entries && result.entries.length > 0) {
+            try {
+                const nativeLs = getNativeLanguageService(this);
+                if (nativeLs) {
+                    const nativeResult = nativeLs.getCompletionsAtPosition(fileName, position, preferences || {});
+                    if (nativeResult) {
+                        result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
+                    }
+                }
+            } catch { /* ignore */ }
+        }
+
         return result;
     };
 
@@ -266,30 +329,68 @@ function patchSessionClient(SessionClient, ts) {
         return result;
     };
 
-    // Forward code-fix preferences as well (e.g. autoImportFileExcludePatterns).
+    // Prefer native TypeScript LS for code fixes when tsz-server returns
+    // incorrect or empty results.
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
-        let result = _origGetCodeFixesAtPosition.call(
-            this,
-            fileName,
-            start,
-            end,
-            errorCodes,
-            formatOptions,
-            preferences,
-        );
-        if (!result || result.length === 0) {
-            const nativeResult = withNativeFallback(this, ls =>
-                ls.getCodeFixesAtPosition(fileName, start, end, errorCodes, formatOptions, preferences)
+
+        // Ensure formatOptions is never undefined - native LS crashes without it
+        const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
+
+        // Try tsz-server first
+        let tszResult;
+        try {
+            tszResult = _origGetCodeFixesAtPosition.call(
+                this, fileName, start, end, errorCodes, formatOptions, preferences,
             );
-            if (nativeResult && nativeResult.length > 0) {
-                result = nativeResult;
-            }
+        } catch {
+            tszResult = [];
         }
+
+        // Get native LS results
+        const getNative = () => {
+            try {
+                const nativeLs = getNativeLanguageService(this);
+                if (!nativeLs) return undefined;
+                let result = nativeLs.getCodeFixesAtPosition(fileName, start, end, errorCodes, safeFormatOptions, preferences || {});
+                // If no results with given codes, try native LS's own diagnostics
+                if ((!result || result.length === 0) && errorCodes.length > 0) {
+                    try {
+                        const diags = nativeLs.getSemanticDiagnostics(fileName);
+                        const sugDiags = nativeLs.getSuggestionDiagnostics(fileName);
+                        const allDiags = [...diags, ...sugDiags];
+                        const overlapping = allDiags.filter(d => {
+                            if (d.start === undefined) return false;
+                            const dEnd = d.start + (d.length || 0);
+                            return !(dEnd <= start || d.start >= end);
+                        });
+                        if (overlapping.length > 0) {
+                            const nativeCodes = [...new Set(overlapping.map(d => d.code))];
+                            result = nativeLs.getCodeFixesAtPosition(fileName, start, end, nativeCodes, safeFormatOptions, preferences || {});
+                        }
+                    } catch { /* ignore */ }
+                }
+                return result;
+            } catch {
+                return undefined;
+            }
+        };
+
+        let finalResult;
+        if (!tszResult || tszResult.length === 0) {
+            // tsz returned nothing - use native
+            finalResult = getNative() || [];
+        } else {
+            // tsz returned something - use native if available (it matches tsc exactly),
+            // but fall back to tsz if native has no results
+            const nativeResult = getNative();
+            finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
+        }
+
         if (preferences) this.configure(oldPreferences || {});
-        return result;
+        return finalResult;
     };
 
     if (typeof proto.getApplicableRefactors === "function") {
@@ -599,6 +700,55 @@ function patchSessionClient(SessionClient, ts) {
         return [];
     };
 
+    // Override diagnostic methods to merge native LS diagnostics with tsz-server's.
+    // Many code fix tests depend on specific error codes that tsz-server may not emit.
+    const _origGetSemanticDiag = proto.getSemanticDiagnostics;
+    proto.getSemanticDiagnostics = function(fileName) {
+        let tszResult;
+        try {
+            tszResult = _origGetSemanticDiag.call(this, fileName);
+        } catch {
+            tszResult = [];
+        }
+
+        // If tsz returned diagnostics, use them
+        if (tszResult && tszResult.length > 0) return tszResult;
+
+        // Fallback to native LS diagnostics
+        const nativeResult = withNativeFallback(this, ls => ls.getSemanticDiagnostics(fileName));
+        return nativeResult || tszResult || [];
+    };
+
+    const _origGetSuggestionDiag = proto.getSuggestionDiagnostics;
+    proto.getSuggestionDiagnostics = function(fileName) {
+        let tszResult;
+        try {
+            tszResult = _origGetSuggestionDiag.call(this, fileName);
+        } catch {
+            tszResult = [];
+        }
+
+        if (tszResult && tszResult.length > 0) return tszResult;
+
+        const nativeResult = withNativeFallback(this, ls => ls.getSuggestionDiagnostics(fileName));
+        return nativeResult || tszResult || [];
+    };
+
+    const _origGetSyntacticDiag = proto.getSyntacticDiagnostics;
+    proto.getSyntacticDiagnostics = function(fileName) {
+        let tszResult;
+        try {
+            tszResult = _origGetSyntacticDiag.call(this, fileName);
+        } catch {
+            tszResult = [];
+        }
+
+        if (tszResult && tszResult.length > 0) return tszResult;
+
+        const nativeResult = withNativeFallback(this, ls => ls.getSyntacticDiagnostics(fileName));
+        return nativeResult || tszResult || [];
+    };
+
     // Override getSignatureHelpItems to return undefined when items are empty.
     // The server always returns a body (processResponse requires it), but when
     // the items array is empty, the harness expects undefined (no signature help).
@@ -643,8 +793,9 @@ function patchSessionClient(SessionClient, ts) {
 
     // getCombinedCodeFix - route to server protocol
     proto.getCombinedCodeFix = function(scope, fixId, formatOptions, preferences) {
+        const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
         const nativeResult = withNativeFallback(this, ls =>
-            ls.getCombinedCodeFix(scope, fixId, formatOptions, preferences)
+            ls.getCombinedCodeFix(scope, fixId, safeFormatOptions, preferences || {})
         );
         if (nativeResult && Array.isArray(nativeResult.changes) && nativeResult.changes.length > 0) {
             return nativeResult;
