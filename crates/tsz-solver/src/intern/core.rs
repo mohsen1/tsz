@@ -1904,6 +1904,17 @@ impl TypeInterner {
         self.intern(TypeData::ObjectWithIndex(shape_id))
     }
 
+    /// Get the TypeId for an already-interned Object shape.
+    /// This is O(1) since it's an interner cache hit.
+    pub fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        self.intern(TypeData::Object(shape_id))
+    }
+
+    /// Get the TypeId for an already-interned ObjectWithIndex shape.
+    pub fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        self.intern(TypeData::ObjectWithIndex(shape_id))
+    }
+
     /// Intern a function type
     pub fn function(&self, shape: FunctionShape) -> TypeId {
         let shape_id = self.intern_function_shape(shape);
