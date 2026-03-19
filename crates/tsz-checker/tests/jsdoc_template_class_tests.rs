@@ -43,11 +43,11 @@ fn symbol_property_type_strings(
                 .get(*name)
                 .unwrap_or_else(|| panic!("missing symbol {name}"));
             let symbol_type = checker.get_type_of_symbol(sym_id);
-            let property_type = match checker.resolve_property_access_with_env(symbol_type, property_name)
-            {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
-                _ => TypeId::ERROR,
-            };
+            let property_type =
+                match checker.resolve_property_access_with_env(symbol_type, property_name) {
+                    PropertyAccessResult::Success { type_id, .. } => type_id,
+                    _ => TypeId::ERROR,
+                };
             checker.format_type(property_type)
         })
         .collect()
@@ -132,7 +132,8 @@ fn class_instance_property_type_string(
         .get(&sym_id)
         .copied()
         .unwrap_or(TypeId::ERROR);
-    let property_type = match checker.resolve_property_access_with_env(instance_type, property_name) {
+    let property_type = match checker.resolve_property_access_with_env(instance_type, property_name)
+    {
         PropertyAccessResult::Success { type_id, .. } => type_id,
         _ => TypeId::ERROR,
     };
@@ -170,15 +171,16 @@ fn instantiated_constructor_return_property_type_string(
         .get(class_name)
         .unwrap_or_else(|| panic!("missing symbol {class_name}"));
     let type_id = checker.get_type_of_symbol(sym_id);
-    let construct_sig = tsz_solver::type_queries::get_construct_signatures(checker.ctx.types, type_id)
-        .and_then(|sigs| sigs.first().cloned())
-        .unwrap_or_else(|| panic!("missing construct signature for {class_name}"));
+    let construct_sig =
+        tsz_solver::type_queries::get_construct_signatures(checker.ctx.types, type_id)
+            .and_then(|sigs| sigs.first().cloned())
+            .unwrap_or_else(|| panic!("missing construct signature for {class_name}"));
     let instantiated = checker.instantiate_signature(&construct_sig, type_args);
-    let property_type = match checker.resolve_property_access_with_env(instantiated.return_type, property_name)
-    {
-        PropertyAccessResult::Success { type_id, .. } => type_id,
-        _ => TypeId::ERROR,
-    };
+    let property_type =
+        match checker.resolve_property_access_with_env(instantiated.return_type, property_name) {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => TypeId::ERROR,
+        };
     checker.format_type(property_type)
 }
 
@@ -211,8 +213,9 @@ fn first_construct_signature_param_is_type_parameter(
         .get(class_name)
         .unwrap_or_else(|| panic!("missing symbol {class_name}"));
     let type_id = checker.get_type_of_symbol(sym_id);
-    let Some(construct_sig) = tsz_solver::type_queries::get_construct_signatures(checker.ctx.types, type_id)
-        .and_then(|sigs| sigs.first().cloned())
+    let Some(construct_sig) =
+        tsz_solver::type_queries::get_construct_signatures(checker.ctx.types, type_id)
+            .and_then(|sigs| sigs.first().cloned())
     else {
         return false;
     };
@@ -256,15 +259,11 @@ fn resolve_new_result_property_type_string(
         .get(class_name)
         .unwrap_or_else(|| panic!("missing symbol {class_name}"));
     let constructor_type = checker.get_type_of_symbol(sym_id);
-    let return_type = match checker.resolve_new_with_checker_adapter(
-        constructor_type,
-        arg_types,
-        false,
-        None,
-    ) {
-        tsz_checker::query_boundaries::common::CallResult::Success(return_type) => return_type,
-        other => panic!("resolve_new_with_checker_adapter did not succeed: {other:?}"),
-    };
+    let return_type =
+        match checker.resolve_new_with_checker_adapter(constructor_type, arg_types, false, None) {
+            tsz_checker::query_boundaries::common::CallResult::Success(return_type) => return_type,
+            other => panic!("resolve_new_with_checker_adapter did not succeed: {other:?}"),
+        };
     let property_type = match checker.resolve_property_access_with_env(return_type, property_name) {
         PropertyAccessResult::Success { type_id, .. } => type_id,
         _ => TypeId::ERROR,
