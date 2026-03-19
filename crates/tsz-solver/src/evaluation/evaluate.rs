@@ -505,7 +505,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // eagerly evaluates `keyof T` when T is concrete, destroying the
                     // structural information needed for passthrough detection later.
                     if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(resolved) {
-                        let mapped = self.interner.mapped_type(mapped_id);
+                        let mapped = self.interner.get_mapped(mapped_id);
                         if let Some(TypeData::KeyOf(source)) =
                             self.interner.lookup(mapped.constraint)
                             && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
@@ -682,7 +682,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(type_id) else {
             return false;
         };
-        let cond = self.interner.conditional_type(cond_id);
+        let cond = self.interner.get_conditional(cond_id);
         matches!(
             self.interner.lookup(cond.extends_type),
             Some(TypeData::Application(_))
@@ -818,7 +818,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.collect_type_params(elem, seen, params);
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.collect_type_params(cond.check_type, seen, params);
                 self.collect_type_params(cond.extends_type, seen, params);
                 self.collect_type_params(cond.true_type, seen, params);
@@ -832,7 +832,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 // Note: mapped.type_param is the iteration variable (e.g., K in "K in keyof T")
                 // We should NOT add it directly - the outer type param (T) is found in the constraint.
                 // For DeepPartial<T> = { [K in keyof T]?: DeepPartial<T[K]> }:
@@ -1288,8 +1288,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Visit a conditional type: T extends U ? X : Y
     fn visit_conditional(&mut self, cond_id: ConditionalTypeId) -> TypeId {
-        let cond = self.interner.conditional_type(cond_id);
-        self.evaluate_conditional(cond.as_ref())
+        let cond = self.interner.get_conditional(cond_id);
+        self.evaluate_conditional(&cond)
     }
 
     /// Visit an index access type: T[K]
@@ -1299,8 +1299,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Visit a mapped type: { [K in Keys]: V }
     fn visit_mapped(&mut self, mapped_id: MappedTypeId) -> TypeId {
-        let mapped = self.interner.mapped_type(mapped_id);
-        self.evaluate_mapped(mapped.as_ref())
+        let mapped = self.interner.get_mapped(mapped_id);
+        self.evaluate_mapped(&mapped)
     }
 
     /// Visit a keyof type: keyof T
