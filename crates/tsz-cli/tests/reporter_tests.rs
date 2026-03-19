@@ -492,8 +492,14 @@ fn pretty_mode_summary_multiple_files_groups_only_errors() {
         output.contains("Found 3 errors in 2 files."),
         "missing multi-file summary: {output}"
     );
-    assert!(output.contains("Errors  Files"), "missing summary table: {output}");
-    assert!(output.contains("alpha.ts:1"), "missing alpha entry: {output}");
+    assert!(
+        output.contains("Errors  Files"),
+        "missing summary table: {output}"
+    );
+    assert!(
+        output.contains("alpha.ts:1"),
+        "missing alpha entry: {output}"
+    );
     assert!(output.contains("beta.ts:1"), "missing beta entry: {output}");
 }
 
@@ -517,7 +523,10 @@ fn pretty_mode_omits_summary_when_only_warnings_are_present() {
     reporter.set_pretty(true);
     let output = reporter.render(&[diagnostic]);
 
-    assert!(!output.contains("Found "), "warnings should not add a summary: {output}");
+    assert!(
+        !output.contains("Found "),
+        "warnings should not add a summary: {output}"
+    );
     assert!(
         !output.contains("Errors  Files"),
         "warnings should not add an error table: {output}"

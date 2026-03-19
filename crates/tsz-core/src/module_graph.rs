@@ -602,8 +602,8 @@ pub struct ModuleGraphStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use crate::module_resolver::ModuleExtension;
+    use std::path::PathBuf;
 
     fn create_test_path(name: &str) -> PathBuf {
         // Use a temp directory structure for testing

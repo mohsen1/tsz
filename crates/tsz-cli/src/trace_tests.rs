@@ -126,7 +126,10 @@ fn test_tracer_complete_with_args_and_metadata_record_expected_payloads() {
     assert_eq!(events[0].name, "Parse");
     assert!(matches!(events[0].ph, Phase::Complete));
     assert_eq!(events[0].dur, Some(42));
-    assert_eq!(events[0].args.get("phase"), Some(&serde_json::json!("parse")));
+    assert_eq!(
+        events[0].args.get("phase"),
+        Some(&serde_json::json!("parse"))
+    );
     assert_eq!(events[1].cat, "__metadata");
     assert!(matches!(events[1].ph, Phase::Metadata));
     assert_eq!(events[1].args.get("name"), Some(&serde_json::json!("tsz")));

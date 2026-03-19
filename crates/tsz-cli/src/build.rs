@@ -246,7 +246,12 @@ mod tests {
         source_path
     }
 
-    fn write_root_build_info(dir: &Path, source_path: &Path, latest_changed_dts: Option<&str>, build_time: Option<u64>) -> PathBuf {
+    fn write_root_build_info(
+        dir: &Path,
+        source_path: &Path,
+        latest_changed_dts: Option<&str>,
+        build_time: Option<u64>,
+    ) -> PathBuf {
         let mut builder = BuildInfoBuilder::new(dir.to_path_buf());
         builder.add_file(source_path, &[]).unwrap();
         let mut build_info = builder.build();
@@ -281,7 +286,12 @@ mod tests {
         }
     }
 
-    fn make_project(config_path: PathBuf, root_dir: PathBuf, resolved_references: Vec<ResolvedProjectReference>, out_dir: Option<PathBuf>) -> ResolvedProject {
+    fn make_project(
+        config_path: PathBuf,
+        root_dir: PathBuf,
+        resolved_references: Vec<ResolvedProjectReference>,
+        out_dir: Option<PathBuf>,
+    ) -> ResolvedProject {
         ResolvedProject {
             config_path,
             root_dir,
@@ -306,7 +316,8 @@ mod tests {
         );
 
         let out_dir = root_dir.join("dist");
-        let project_with_out_dir = make_project(config_path, root_dir, Vec::new(), Some(out_dir.clone()));
+        let project_with_out_dir =
+            make_project(config_path, root_dir, Vec::new(), Some(out_dir.clone()));
         assert_eq!(
             get_build_info_path(&project_with_out_dir),
             Some(out_dir.join("tsconfig.tsbuildinfo"))
@@ -321,7 +332,9 @@ mod tests {
         let source_path = write_source_file(&root_dir, "src/index.ts", "export const x = 1;");
         let mut build_info = BuildInfo::new();
         build_info.version = "0.0.0".to_string();
-        build_info.save(&root_dir.join("tsconfig.tsbuildinfo")).unwrap();
+        build_info
+            .save(&root_dir.join("tsconfig.tsbuildinfo"))
+            .unwrap();
 
         let project = make_project(config_path, root_dir, Vec::new(), None);
         let _ = source_path;
@@ -399,7 +412,11 @@ mod tests {
         let source_path = write_source_file(&root_dir, "src/index.ts", "export const x = 1;");
         write_root_build_info(&root_dir, &source_path, None, Some(u64::MAX));
 
-        let dts_path = write_source_file(&ref_dir, "dist/index.d.ts", "export declare const y: number;");
+        let dts_path = write_source_file(
+            &ref_dir,
+            "dist/index.d.ts",
+            "export declare const y: number;",
+        );
         let ref_config_path = ref_dir.join("tsconfig.json");
         fs::write(&ref_config_path, "{}").unwrap();
         write_reference_build_info(&ref_dir, Some("dist/index.d.ts"));
