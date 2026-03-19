@@ -267,6 +267,15 @@ where
             .get(&id)
             .map(|e| std::sync::Arc::clone(e.value()))
     }
+
+    /// Get value by copy for Copy types, avoiding Arc clone overhead.
+    #[inline]
+    fn get_copy(&self, id: u32) -> Option<T>
+    where
+        T: Copy,
+    {
+        self.inner.get()?.items.get(&id).map(|e| **e.value())
+    }
 }
 
 /// Type interning table with lock-free concurrent access.
@@ -625,6 +634,42 @@ impl TypeInterner {
                 ..Default::default()
             })
         })
+    }
+
+    /// Get a conditional type by value (no Arc clone overhead).
+    /// Preferred over `conditional_type()` since ConditionalType is Copy.
+    #[inline]
+    pub fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        self.conditional_types
+            .get_copy(id.0)
+            .unwrap_or(ConditionalType {
+                check_type: TypeId::ERROR,
+                extends_type: TypeId::ERROR,
+                true_type: TypeId::ERROR,
+                false_type: TypeId::ERROR,
+                is_distributive: false,
+            })
+    }
+
+    /// Get a mapped type by value (no Arc clone overhead).
+    /// Preferred over `mapped_type()` since MappedType is Copy.
+    #[inline]
+    pub fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        self.mapped_types
+            .get_copy(id.0)
+            .unwrap_or(MappedType {
+                type_param: TypeParamInfo {
+                    is_const: false,
+                    name: self.intern_string("_"),
+                    constraint: None,
+                    default: None,
+                },
+                constraint: TypeId::ERROR,
+                name_type: None,
+                template: TypeId::ERROR,
+                readonly_modifier: None,
+                optional_modifier: None,
+            })
     }
 
     #[inline]
