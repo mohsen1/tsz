@@ -477,6 +477,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.object_with_index(shape)
     }
 
+    fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        self.interner.object_type_from_shape(shape_id)
+    }
+
+    fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        self.interner.object_with_index_type_from_shape(shape_id)
+    }
+
     fn function(&self, shape: FunctionShape) -> TypeId {
         self.interner.function(shape)
     }

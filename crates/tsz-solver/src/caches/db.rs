@@ -84,6 +84,10 @@ pub trait TypeDatabase {
     fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
     }
+    /// Get the TypeId for an already-interned Object shape (O(1) cache hit).
+    fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
+    /// Get the TypeId for an already-interned ObjectWithIndex shape.
+    fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
     /// Create a fresh object type with both widened properties (for type checking)
     /// and display properties (for error messages, implementing tsc's freshness model).
     fn object_fresh_with_display(
@@ -337,6 +341,14 @@ impl TypeDatabase for TypeInterner {
         symbol: Option<SymbolId>,
     ) -> TypeId {
         Self::object_with_flags_and_symbol(self, properties, flags, symbol)
+    }
+
+    fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        Self::object_type_from_shape(self, shape_id)
+    }
+
+    fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        Self::object_with_index_type_from_shape(self, shape_id)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {

@@ -125,11 +125,12 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
-        let obj_type = self.interner().object_with_flags_and_symbol(
-            shape.properties.clone(),
-            shape.flags,
-            shape.symbol,
-        );
+        // PERF: Reuse existing interned type for this shape instead of cloning
+        // the entire property list and re-interning. The shape is already interned,
+        // so this is an O(1) cache hit.
+        let obj_type = self
+            .interner()
+            .object_type_from_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -199,7 +200,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
-        let obj_type = self.interner().object_with_index((*shape).clone());
+        let obj_type = self
+            .interner()
+            .object_with_index_type_from_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -357,11 +360,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
-        let obj_type = self.interner().object_with_flags_and_symbol(
-            shape.properties.clone(),
-            shape.flags,
-            shape.symbol,
-        );
+        // PERF: Reuse existing interned type for this shape instead of cloning
+        // the entire property list and re-interning. The shape is already interned,
+        // so this is an O(1) cache hit.
+        let obj_type = self
+            .interner()
+            .object_type_from_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -436,7 +440,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
-        let obj_type = self.interner().object_with_index((*shape).clone());
+        let obj_type = self
+            .interner()
+            .object_with_index_type_from_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
