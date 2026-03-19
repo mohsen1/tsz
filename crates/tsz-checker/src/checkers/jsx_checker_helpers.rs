@@ -115,7 +115,9 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                let child_nodes = self.get_jsx_body_child_nodes(attributes_idx).unwrap_or_default();
+                let child_nodes = self
+                    .get_jsx_body_child_nodes(attributes_idx)
+                    .unwrap_or_default();
                 if !self.type_is_standard_jsx_child_type(children_type)
                     && self.report_invalid_jsx_multi_children(
                         attributes_idx,
@@ -224,9 +226,9 @@ impl<'a> CheckerState<'a> {
         child_nodes: &[NodeIndex],
     ) -> bool {
         let valid_child_type = self.get_valid_jsx_multi_child_type();
-        let contextual_type = self.get_jsx_opening_element_from_attributes(attributes_idx).and_then(
-            |opening_idx| self.get_jsx_children_contextual_type(opening_idx),
-        );
+        let contextual_type = self
+            .get_jsx_opening_element_from_attributes(attributes_idx)
+            .and_then(|opening_idx| self.get_jsx_children_contextual_type(opening_idx));
         let mut emitted = false;
 
         for &child_idx in child_nodes {
@@ -247,9 +249,8 @@ impl<'a> CheckerState<'a> {
             } else {
                 (child_idx, child_idx)
             };
-            let child_request = TypingRequest::with_contextual_type(
-                contextual_type.unwrap_or(children_type),
-            );
+            let child_request =
+                TypingRequest::with_contextual_type(contextual_type.unwrap_or(children_type));
             let child_type = self.compute_type_of_node_with_request(type_node, &child_request);
             if matches!(child_type, TypeId::ANY | TypeId::ERROR) {
                 continue;
@@ -322,7 +323,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().union(members)
     }
 
-    fn get_jsx_opening_element_from_attributes(&self, attributes_idx: NodeIndex) -> Option<NodeIndex> {
+    fn get_jsx_opening_element_from_attributes(
+        &self,
+        attributes_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let opening_node = self.ctx.arena.get(opening_idx)?;
         self.ctx.arena.get_jsx_opening(opening_node)?;

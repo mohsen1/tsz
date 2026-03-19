@@ -10,7 +10,9 @@ use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{ConditionalType, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo};
+use crate::types::{
+    ConditionalType, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo,
+};
 
 // =============================================================================
 // Basic Index Access Tests
@@ -586,7 +588,9 @@ fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
                     assert_eq!(object_type, t_type);
                     assert_eq!(key_type, cond.true_type);
                 }
-                other => panic!("Expected per-key conditional to keep a single key parameter, got {other:?}"),
+                other => panic!(
+                    "Expected per-key conditional to keep a single key parameter, got {other:?}"
+                ),
             }
         }
         other => panic!("Expected deferred conditional result, got {other:?}"),

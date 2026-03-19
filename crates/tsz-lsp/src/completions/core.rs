@@ -288,9 +288,7 @@ impl<'a> Completions<'a> {
         }
 
         // 5b. Class/interface body member position: return member keywords
-        if !member_request
-            && let Some(context) = self.member_body_context(node_idx, offset)
-        {
+        if !member_request && let Some(context) = self.member_body_context(node_idx, offset) {
             return Some(self.get_member_keyword_completions(context));
         }
 
@@ -708,8 +706,8 @@ impl<'a> Completions<'a> {
     /// (after `{`, `;`, or `}` inside a class or interface body).
     /// Returns Some("class") or Some("interface") if at a member position.
     fn member_body_context(&self, node_idx: NodeIndex, offset: u32) -> Option<&'static str> {
-        let in_class = self.is_in_class_body_context(node_idx)
-            || self.text_likely_in_class_body(offset);
+        let in_class =
+            self.is_in_class_body_context(node_idx) || self.text_likely_in_class_body(offset);
         let in_interface = !in_class && self.is_in_interface_body_context(node_idx);
         if !in_class && !in_interface {
             return None;
@@ -762,16 +760,25 @@ impl<'a> Completions<'a> {
             &["readonly"]
         } else {
             &[
-                "abstract", "accessor", "async", "constructor", "declare",
-                "get", "override", "private", "protected", "public",
-                "readonly", "set", "static",
+                "abstract",
+                "accessor",
+                "async",
+                "constructor",
+                "declare",
+                "get",
+                "override",
+                "private",
+                "protected",
+                "public",
+                "readonly",
+                "set",
+                "static",
             ]
         };
         keywords
             .iter()
             .map(|kw| {
-                let mut item =
-                    CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
+                let mut item = CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
                 item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
                 item
             })
