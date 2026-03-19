@@ -236,3 +236,60 @@ fn invalid_var_like_class_member_does_not_emit_keyword_suggestion_cascade() {
         "should not emit TS1435 after TS1440 var-like class member recovery, got {diags:?}"
     );
 }
+
+#[test]
+fn modifier_led_nested_class_member_recovery_prefers_ts1068_and_ts1128() {
+    for source in [
+        "class C {\n  public class D {\n}\n}",
+        "class C {\n  public enum E {\n}\n}",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let diags = parser.get_diagnostics();
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(
+                &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+            ),
+            "expected TS1068 for {source:?}, got {diags:?}"
+        );
+        assert!(
+            codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+            "expected TS1128 for {source:?}, got {diags:?}"
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+            "should not emit TS1434 after modifier-led nested declaration recovery for {source:?}, got {diags:?}"
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN),
+            "should not emit TS1435 after modifier-led nested declaration recovery for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn modifier_led_try_block_in_class_body_prefers_ts1068() {
+    let (parser, _root) = parse_source("class C {\n  public try {\n  }\n}");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "expected TS1068 for modifier-led try recovery, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "should not emit TS1434 for modifier-led try recovery, got {diags:?}"
+    );
+}
+
+#[test]
+fn modifier_led_keyword_named_members_still_parse() {
+    let (parser, _root) = parse_source("class C {\n  public class;\n  public enum() {}\n}");
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.is_empty(),
+        "valid keyword-named members should still parse after class-member recovery changes, got {diags:?}"
+    );
+}
