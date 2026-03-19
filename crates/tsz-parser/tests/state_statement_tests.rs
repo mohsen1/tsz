@@ -311,7 +311,8 @@ fn bare_var_statement_in_class_body_recovers_as_ts1068_then_ts1128() {
 
 #[test]
 fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
-    let source = "// @target: es2015\nnamespace M {\n   ¬\n   class C {\n   }\n   @\n   enum E {\n   ¬\n";
+    let source =
+        "// @target: es2015\nnamespace M {\n   ¬\n   class C {\n   }\n   @\n   enum E {\n   ¬\n";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();

@@ -1451,7 +1451,11 @@ fn class_extends_implements() {
 #[test]
 fn class_duplicate_extends_recovery_discards_duplicate_clause_types() {
     let (parser, root) = parse_source("class C extends A extends B {}");
-    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
     assert!(
         codes.contains(&diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN),
         "expected TS1172 for duplicate extends clause, got {:?}",
@@ -1481,7 +1485,11 @@ fn class_duplicate_extends_recovery_discards_duplicate_clause_types() {
 #[test]
 fn class_duplicate_implements_recovery_discards_duplicate_clause_types() {
     let (parser, root) = parse_source("class C implements A implements B {}");
-    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
     assert!(
         codes.contains(&diagnostic_codes::IMPLEMENTS_CLAUSE_ALREADY_SEEN),
         "expected TS1175 for duplicate implements clause, got {:?}",
@@ -1546,7 +1554,11 @@ fn class_extends_comma_recovery_keeps_single_base_type() {
 #[test]
 fn class_out_of_order_extends_recovery_keeps_trailing_clause() {
     let (parser, root) = parse_source("class C implements A extends B {}");
-    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|diag| diag.code).collect();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
     assert!(
         codes.contains(&diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE),
         "expected TS1173 for out-of-order extends clause, got {:?}",

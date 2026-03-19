@@ -96,15 +96,12 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         &mut self,
         mapped: &crate::types::MappedType,
     ) -> TypeId {
-        let constrained_key = self
-            .evaluator
-            .interner()
-            .type_param(TypeParamInfo {
-                name: mapped.type_param.name,
-                constraint: Some(mapped.constraint),
-                default: mapped.type_param.default,
-                is_const: mapped.type_param.is_const,
-            });
+        let constrained_key = self.evaluator.interner().type_param(TypeParamInfo {
+            name: mapped.type_param.name,
+            constraint: Some(mapped.constraint),
+            default: mapped.type_param.default,
+            is_const: mapped.type_param.is_const,
+        });
 
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, constrained_key);
