@@ -109,10 +109,10 @@ impl<'a> CheckerState<'a> {
                     let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    if ident.escaped_text == name {
-                        if let Some(sym_id) = self.ctx.binder.get_node_symbol(param_idx) {
-                            return Some(sym_id);
-                        }
+                    if ident.escaped_text == name
+                        && let Some(sym_id) = self.ctx.binder.get_node_symbol(param_idx)
+                    {
+                        return Some(sym_id);
                     }
                 }
             }

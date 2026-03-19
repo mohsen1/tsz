@@ -324,6 +324,16 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
+    /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
+    pub(super) fn make_narrowing_context(&self) -> tsz_solver::NarrowingContext<'_> {
+        if let Some(cache) = self.narrowing_cache {
+            tsz_solver::NarrowingContext::with_cache(self.interner, cache)
+        } else {
+            tsz_solver::NarrowingContext::new(self.interner)
+        }
+    }
+
     fn substitute_this_type_if_available(&self, type_id: TypeId) -> TypeId {
         if let Some(concrete_this_type) = self.concrete_this_type
             && tsz_solver::contains_this_type(self.interner, type_id)
@@ -1491,11 +1501,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Create narrowing context and wire up TypeEnvironment if available
         let env_borrow;
-        let mut narrowing = if let Some(cache) = self.narrowing_cache {
-            NarrowingContext::with_cache(self.interner, cache)
-        } else {
-            NarrowingContext::new(self.interner)
-        };
+        let mut narrowing = self.make_narrowing_context();
 
         if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
@@ -1659,7 +1665,7 @@ impl<'a> FlowAnalyzer<'a> {
         if self.contains_optional_chain(predicate_target)
             && self.is_optional_chain_prefix(predicate_target, reference)
         {
-            let narrowing = NarrowingContext::new(self.interner);
+            let narrowing = self.make_narrowing_context();
             let narrowed = narrowing.narrow_excluding_type(pre_type, TypeId::NULL);
             narrowed_pre_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
             applied_optional_chain_transport = true;
@@ -1675,11 +1681,7 @@ impl<'a> FlowAnalyzer<'a> {
             && self.is_matching_reference(base, reference)
         {
             let env_borrow;
-            let mut narrowing = if let Some(cache) = self.narrowing_cache {
-                NarrowingContext::with_cache(self.interner, cache)
-            } else {
-                NarrowingContext::new(self.interner)
-            };
+            let mut narrowing = self.make_narrowing_context();
 
             if let Some(env) = &self.type_environment {
                 env_borrow = env.borrow();
