@@ -289,11 +289,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Expand type arguments
         let body_is_conditional_with_app_infer =
             self.is_conditional_with_application_infer(resolved);
-        let expanded_args = if body_is_conditional_with_app_infer {
-            self.expand_type_args_preserve_applications(&app.args)
-        } else {
-            self.expand_type_args(&app.args)
-        };
+        let expanded_args: std::borrow::Cow<'_, [TypeId]> =
+            if body_is_conditional_with_app_infer {
+                std::borrow::Cow::Owned(
+                    self.expand_type_args_preserve_applications(&app.args),
+                )
+            } else {
+                self.expand_type_args(&app.args)
+            };
 
         // Instantiate the body with the type arguments — but do NOT evaluate
         let instantiated =
@@ -494,11 +497,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // at the Application level (e.g., Promise<string> vs Promise<infer U>).
                     let body_is_conditional_with_app_infer =
                         self.is_conditional_with_application_infer(resolved);
-                    let expanded_args = if body_is_conditional_with_app_infer {
-                        self.expand_type_args_preserve_applications(&app.args)
-                    } else {
-                        self.expand_type_args(&app.args)
-                    };
+                    let expanded_args: std::borrow::Cow<'_, [TypeId]> =
+                        if body_is_conditional_with_app_infer {
+                            std::borrow::Cow::Owned(
+                                self.expand_type_args_preserve_applications(&app.args),
+                            )
+                        } else {
+                            self.expand_type_args(&app.args)
+                        };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
                     if let Some(db) = self.query_db
@@ -750,18 +756,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Expand type arguments by evaluating any that are `TypeQuery` or Application.
     /// Uses a loop instead of closure to allow mutable self access.
-    pub(crate) fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+    pub(crate) fn expand_type_args<'b>(
+        &mut self,
+        args: &'b [TypeId],
+    ) -> std::borrow::Cow<'b, [TypeId]> {
         // Fast path: check if any arg needs expansion before allocating.
         // Most type args are simple types that pass through unchanged.
         let needs_expansion = args.iter().any(|&arg| self.needs_type_arg_expansion(arg));
         if !needs_expansion {
-            return args.to_vec();
+            return std::borrow::Cow::Borrowed(args);
         }
         let mut expanded = Vec::with_capacity(args.len());
         for &arg in args {
             expanded.push(self.try_expand_type_arg(arg));
         }
-        expanded
+        std::borrow::Cow::Owned(expanded)
     }
 
     /// Check if a type arg needs expansion (without actually expanding it).

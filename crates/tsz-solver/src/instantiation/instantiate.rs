@@ -324,14 +324,22 @@ impl<'a> TypeInstantiator<'a> {
         type_params: &[TypeParamInfo],
     ) -> (usize, Option<FxHashMap<TypeId, TypeId>>) {
         let shadowed_len = self.shadowed.len();
-        let saved_visiting = (!type_params.is_empty()).then(|| {
+        let saved_visiting = if type_params.is_empty() {
+            None
+        } else if self.visiting.is_empty() {
+            // PERF: When visiting map is empty (common for top-level generic
+            // instantiation), no clone needed — just remove the type params
+            // (which are no-ops on an empty map) and return an empty map
+            // as the "saved" state.
+            Some(FxHashMap::default())
+        } else {
             let saved = self.visiting.clone();
             for tp in type_params {
                 let tp_id = self.interner.type_param(*tp);
                 self.visiting.remove(&tp_id);
             }
-            saved
-        });
+            Some(saved)
+        };
         self.shadowed.extend(type_params.iter().map(|tp| tp.name));
         (shadowed_len, saved_visiting)
     }
