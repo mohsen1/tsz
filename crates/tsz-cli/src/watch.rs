@@ -656,8 +656,12 @@ mod tests {
 
     #[test]
     fn is_default_excluded_matches_nested_default_exclude_directories() {
-        assert!(is_default_excluded(Path::new("/repo/node_modules/pkg/index.ts")));
-        assert!(is_default_excluded(Path::new("/repo/src/bower_components/lib.ts")));
+        assert!(is_default_excluded(Path::new(
+            "/repo/node_modules/pkg/index.ts"
+        )));
+        assert!(is_default_excluded(Path::new(
+            "/repo/src/bower_components/lib.ts"
+        )));
         assert!(!is_default_excluded(Path::new("/repo/src/app.ts")));
     }
 
@@ -748,7 +752,11 @@ mod tests {
         debouncer.record_at(now, path_b.clone());
         debouncer.record_at(now, path_a.clone());
 
-        assert!(debouncer.flush_ready(now + Duration::from_millis(150)).is_none());
+        assert!(
+            debouncer
+                .flush_ready(now + Duration::from_millis(150))
+                .is_none()
+        );
 
         let flushed = debouncer
             .flush_ready(now + Duration::from_millis(200))
@@ -762,6 +770,10 @@ mod tests {
         let mut remove = FxHashSet::default();
         remove.insert(path_a);
         debouncer.remove_paths(&remove);
-        assert!(debouncer.flush_ready(now + Duration::from_millis(500)).is_none());
+        assert!(
+            debouncer
+                .flush_ready(now + Duration::from_millis(500))
+                .is_none()
+        );
     }
 }

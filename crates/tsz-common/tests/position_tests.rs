@@ -82,5 +82,8 @@ fn test_position_to_offset_returns_none_for_missing_line_and_clamps_character() 
     let map = LineMap::build(source);
 
     assert_eq!(map.position_to_offset(Position::new(2, 0), source), None);
-    assert_eq!(map.position_to_offset(Position::new(1, 10), source), Some(8));
+    assert_eq!(
+        map.position_to_offset(Position::new(1, 10), source),
+        Some(8)
+    );
 }

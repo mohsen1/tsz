@@ -196,7 +196,10 @@ mod tests {
         });
 
         if cfg!(debug_assertions) {
-            assert!(result.is_err(), "debug builds should trip the diagnostic lookup assertion");
+            assert!(
+                result.is_err(),
+                "debug builds should trip the diagnostic lookup assertion"
+            );
         } else {
             let diagnostic = result.expect("release builds should return the fallback diagnostic");
             assert_eq!(diagnostic.category, DiagnosticCategory::Error);
@@ -211,12 +214,8 @@ mod tests {
 
     #[test]
     fn diagnostic_with_related_appends_message_information() {
-        let diagnostic = Diagnostic::error("file.ts", 10, 3, "message", 1234).with_related(
-            "other.ts",
-            20,
-            5,
-            "see also",
-        );
+        let diagnostic = Diagnostic::error("file.ts", 10, 3, "message", 1234)
+            .with_related("other.ts", 20, 5, "see also");
 
         assert_eq!(diagnostic.related_information.len(), 1);
         let related = &diagnostic.related_information[0];

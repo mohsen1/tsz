@@ -356,7 +356,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        dir.push(format!("tsz_fs_unit_{label}_{}_{}", std::process::id(), nanos));
+        dir.push(format!(
+            "tsz_fs_unit_{label}_{}_{}",
+            std::process::id(),
+            nanos
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
