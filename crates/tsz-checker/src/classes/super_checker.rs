@@ -936,9 +936,11 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|class| self.class_requires_super_call(class));
 
-        let has_position_sensitive_members = class_data
-            .as_ref()
-            .is_some_and(|class| self.class_has_super_call_position_sensitive_members(class));
+        let has_position_sensitive_members = if let Some(class) = class_data.as_ref() {
+            self.class_has_super_call_position_sensitive_members(class_idx, class)
+        } else {
+            false
+        };
 
         // TS2335: super can only be referenced in a derived class
         if !has_base_class {

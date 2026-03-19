@@ -1618,8 +1618,7 @@ impl<'a> CheckerState<'a> {
         if !class_extends_error_reported {
             self.check_parameter_property_compatibility(
                 class_data,
-                base_class,
-                base_idx,
+                &base_chain_summary,
                 &derived_class_name,
                 &base_class_name,
                 &substitution,
@@ -1696,8 +1695,7 @@ impl<'a> CheckerState<'a> {
     fn check_parameter_property_compatibility(
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
-        base_class: &tsz_parser::parser::node::ClassData,
-        base_idx: NodeIndex,
+        base_chain_summary: &ClassChainSummary,
         derived_class_name: &str,
         base_class_name: &str,
         substitution: &tsz_solver::TypeSubstitution,
@@ -1738,28 +1736,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Find matching member in base class (including private, for visibility checks)
-                let base_any_info = {
-                    let mut found = None;
-                    for &base_member_idx in &base_class.members.nodes {
-                        if let Some(info) = self.extract_class_member_info(base_member_idx, false)
-                            && info.name == param_name
-                            && !info.is_static
-                        {
-                            found = Some(info);
-                            break;
-                        }
-                    }
-                    if found.is_none() {
-                        found = self.find_member_in_class_chain(
-                            base_idx,
-                            &param_name,
-                            false,
-                            0,
-                            false, // don't skip private
-                        );
-                    }
-                    found
-                };
+                let base_any_info = base_chain_summary
+                    .lookup(&param_name, false, false)
+                    .cloned();
 
                 // Check visibility conflict (TS2415)
                 if let Some(ref base_any_info) = base_any_info
@@ -1779,8 +1758,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check type compatibility — find visible base member
-                let base_info =
-                    self.find_member_in_class_chain(base_idx, &param_name, false, 0, true);
+                let base_info = base_chain_summary.lookup(&param_name, false, true).cloned();
                 let Some(base_info) = base_info else {
                     continue;
                 };

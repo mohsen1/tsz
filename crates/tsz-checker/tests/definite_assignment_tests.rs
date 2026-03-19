@@ -201,6 +201,90 @@ fn test_ts2729_parameter_property_before_define_field_initialization() {
 }
 
 #[test]
+fn test_parameter_property_chain_summary_preserves_optional_base_param_property_type() {
+    let source = r"
+        class Base {
+            constructor(public value?: number) {}
+        }
+
+        class Derived extends Base {
+            constructor(public override value?: number) {
+                super(value);
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS
+        ),
+        0,
+        "Optional parameter properties should compare through the shared base-chain summary without TS2415, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        ),
+        0,
+        "Optional parameter properties should keep their `| undefined` shape through the shared summary, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_parameter_property_chain_summary_preserves_optional_base_property_override_type() {
+    let source = r"
+        class Base {
+            constructor(public value?: number) {}
+        }
+
+        class Derived extends Base {
+            override value?: number;
+
+            constructor(value?: number) {
+                super(value);
+                this.value = value;
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS
+        ),
+        0,
+        "Explicit properties should see the same optional base parameter-property type via the shared class summary, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        ),
+        0,
+        "Optional base parameter-property types should not be narrowed away during override checking, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2564_named_class_expression_prefers_outer_namespace_member_resolution() {
     let source = r"
         namespace C {
