@@ -1045,10 +1045,10 @@ impl<'a> CheckerState<'a> {
                 use tsz_solver::relations::freshness::{is_fresh_object_type, widen_freshness};
                 if is_fresh_object_type(self.ctx.types, result_type) {
                     let widened = widen_freshness(self.ctx.types, result_type);
-                    return self.instantiate_callable_result_from_request(widened, request);
+                    return self.instantiate_callable_result_from_request(idx, widened, request);
                 }
             }
-            return self.instantiate_callable_result_from_request(result_type, request);
+            return self.instantiate_callable_result_from_request(idx, result_type, request);
         }
 
         self.resolve_unresolved_identifier(idx, name)

@@ -63,11 +63,46 @@ impl<'a> CheckerState<'a> {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
     }
 
-    fn contextual_type_is_unresolved_for_argument_refresh(&self, type_id: TypeId) -> bool {
+    pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(&self, type_id: TypeId) -> bool {
         type_id == TypeId::UNKNOWN
             || type_id == TypeId::ERROR
             || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
             || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+    }
+
+    pub(crate) fn is_immediate_call_or_new_callee(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..100 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    current = parent_idx;
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent)
+                        .is_some_and(|call| call.expression == current);
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     pub(crate) fn object_literal_function_like_param_spans(
@@ -770,6 +805,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn instantiate_callable_result_from_request(
         &mut self,
+        idx: NodeIndex,
         result_type: TypeId,
         request: &TypingRequest,
     ) -> TypeId {
@@ -794,6 +830,10 @@ impl<'a> CheckerState<'a> {
             })
             .is_some_and(|shape| !shape.type_params.is_empty());
         if !has_generic_signature {
+            return result_type;
+        }
+
+        if self.is_immediate_call_or_new_callee(idx) {
             return result_type;
         }
 
@@ -1268,7 +1308,13 @@ impl<'a> CheckerState<'a> {
 
             // Regular (non-spread) argument
             let expected_type = expected_for_index(effective_index, expanded_count);
-            let apply_contextual = self.argument_needs_contextual_type(arg_idx);
+            let unresolved_refresh_context = expected_type.is_some_and(|ty| {
+                ty == TypeId::UNKNOWN
+                    || ty == TypeId::ERROR
+                    || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
+            });
+            let apply_contextual =
+                self.argument_needs_contextual_type(arg_idx) && !unresolved_refresh_context;
             let expected_context_type = self.contextual_type_option_for_call_argument_at(
                 expected_type,
                 arg_idx,
@@ -1345,11 +1391,9 @@ impl<'a> CheckerState<'a> {
                     is_contextually_sensitive(self, arg_idx)
                         || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                             && self.ctx.generic_excess_skip.is_some())
-                });
+            });
             if is_sensitive_contextual_arg {
                 let arg_node = arg_node.expect("sensitive contextual arg should exist");
-                let unresolved_refresh_context = expected_type
-                    .is_some_and(|ty| self.contextual_type_is_unresolved_for_argument_refresh(ty));
                 let object_literal_function_param_spans =
                     if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                         self.object_literal_function_like_param_spans(arg_idx)
@@ -1484,6 +1528,7 @@ impl<'a> CheckerState<'a> {
                 })
                 && !raw_context_requires_generic_epc_skip
                 && !callable_context_requires_generic_epc_skip
+                && !self.contextual_type_is_unresolved_for_argument_refresh(expected)
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }
@@ -1522,6 +1567,7 @@ impl<'a> CheckerState<'a> {
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
                     i < skip.len() && skip[i]
                 })
+                && !self.contextual_type_is_unresolved_for_argument_refresh(expected)
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);

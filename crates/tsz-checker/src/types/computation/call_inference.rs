@@ -1416,9 +1416,15 @@ impl<'a> CheckerState<'a> {
                 )
             }
         };
+        let expected_is_unresolved = expected_type.is_some_and(|expected| {
+            expected == TypeId::UNKNOWN
+                || expected == TypeId::ERROR
+                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
+        });
         let needs_contextual_signature_instantiation =
             self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
-        let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
+        let apply_contextual =
+            !expected_is_unresolved && (syntax_needs_contextual || needs_contextual_signature_instantiation);
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx);
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
@@ -1546,12 +1552,6 @@ impl<'a> CheckerState<'a> {
             TypingRequest::NONE
         };
 
-        let expected_is_unresolved = expected_type.is_none_or(|expected| {
-            expected == TypeId::UNKNOWN
-                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
-                || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, expected)
-        });
-
         // Snapshot diagnostic + closure state when in speculative round2.
         // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
         // dropped by the suppress filter. Without restoring, the final retry pass sees these
@@ -1580,6 +1580,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|skip| effective_index < skip.len() && skip[effective_index])
             && !raw_context_requires_generic_epc_skip
             && !callable_context_requires_generic_epc_skip
+            && !expected_is_unresolved
         {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }
@@ -1688,7 +1689,10 @@ impl<'a> CheckerState<'a> {
                         && diag.start >= node.pos
                         && diag.start < node.end
                 });
-                if expected_is_unresolved && is_function_arg_diag {
+                if expected_is_unresolved
+                    && (is_function_arg_diag
+                        || (is_object_literal_diag && is_provisional_implicit_any))
+                {
                     return false;
                 }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
