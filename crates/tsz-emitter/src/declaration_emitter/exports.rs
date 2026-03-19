@@ -1822,6 +1822,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(alias_name) = extends_alias
             {
                 self.write(alias_name);
+                if let Some(&type_idx) = valid_types.first()
+                    && let Some(type_node) = self.arena.get(type_idx)
+                    && let Some(expr) = self.arena.get_expr_type_args(type_node)
+                    && let Some(ref type_args) = expr.type_arguments
+                    && !type_args.nodes.is_empty()
+                {
+                    self.emit_type_arguments(type_args);
+                }
                 continue;
             }
 

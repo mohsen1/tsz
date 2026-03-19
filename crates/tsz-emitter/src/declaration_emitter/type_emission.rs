@@ -593,7 +593,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Emit a `<T1, T2, ...>` type argument list.
-    fn emit_type_arguments(&mut self, type_args: &tsz_parser::parser::NodeList) {
+    pub(crate) fn emit_type_arguments(&mut self, type_args: &tsz_parser::parser::NodeList) {
         self.write("<");
         let mut first = true;
         for &arg_idx in &type_args.nodes {

@@ -1188,7 +1188,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn emit_class_declaration(&mut self, class_idx: NodeIndex) {
+    pub(crate) fn emit_class_declaration(&mut self, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
             return;
         };
