@@ -13925,6 +13925,54 @@ class Result<T, E> {
 }
 
 #[test]
+fn test_static_method_type_params_still_check_constructor_argument_nullability() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+namespace Editor {
+    export class List<T> {
+        public next!: List<T>;
+        public prev!: List<T>;
+
+        constructor(public isHead: boolean, public data: T) {}
+
+        public static MakeHead2<T>(): List<T> {
+            var entry: List<T> = new List<T>(true, null);
+            entry.prev = entry;
+            entry.next = entry;
+            return entry;
+        }
+
+        public static MakeHead3<U>(): List<U> {
+            var entry: List<U> = new List<U>(true, null);
+            entry.prev = entry;
+            entry.next = entry;
+            return entry;
+        }
+    }
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    let ts2302_count = diagnostics.iter().filter(|(code, _)| *code == 2302).count();
+
+    assert_eq!(
+        ts2302_count, 0,
+        "Method type parameters should shadow class type parameters in static members.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2345_count, 2,
+        "Explicitly-instantiated constructor arguments should still check nullability against method type parameters.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "conditional type eager resolution regressed after solver merge"]
 fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
     let diagnostics = compile_and_get_diagnostics_named(
