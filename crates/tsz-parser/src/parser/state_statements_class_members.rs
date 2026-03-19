@@ -1723,7 +1723,10 @@ impl ParserState {
     }
 
     fn look_ahead_is_class_body_variable_statement(&mut self) -> bool {
-        if !matches!(self.token(), SyntaxKind::VarKeyword | SyntaxKind::LetKeyword) {
+        if !matches!(
+            self.token(),
+            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword
+        ) {
             return false;
         }
 

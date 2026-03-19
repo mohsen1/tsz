@@ -32,17 +32,11 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        // Get class info to access member order
-        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+        let Some(summary) = self.summarize_enclosing_class_initialization() else {
             return;
         };
 
-        // Find the position of the current property in the member list
-        let Some(current_pos) = class_info
-            .member_nodes
-            .iter()
-            .position(|&idx| idx == current_prop_idx)
-        else {
+        let Some(current_pos) = summary.member_position(current_prop_idx) else {
             return;
         };
 
@@ -56,46 +50,25 @@ impl<'a> CheckerState<'a> {
         // field definition. We need to check for this case.
         let use_define = self.ctx.compiler_options.target.supports_es2022();
 
-        // Pre-collect parameter property names if useDefineForClassFields is active
-        let param_prop_names: Vec<String> = if use_define {
-            self.collect_constructor_parameter_property_names(&class_info)
-        } else {
-            Vec::new()
-        };
-
         for (name, access_node_idx) in accesses {
-            let mut found_in_members = false;
-            // Find if this name refers to another property in the class
-            for (target_pos, &target_idx) in class_info.member_nodes.iter().enumerate() {
-                if let Some(member_name) = self.get_member_name(target_idx)
-                    && member_name == name
-                {
-                    found_in_members = true;
-                    // Check if target is an instance property (not static, not a method)
-                    if self.is_instance_property(target_idx) {
-                        // Report 2729 if:
-                        // 1. Target is declared after current property, OR
-                        // 2. Target is an abstract property (no initializer in this class)
-                        let should_error = target_pos > current_pos
-                            || self.is_abstract_property(target_idx)
-                            || self.has_no_initializer(target_idx);
-                        if should_error {
-                            self.error_at_node(
-                                access_node_idx,
-                                &format!("Property '{name}' is used before its initialization."),
-                                diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
-                            );
-                        }
-                    }
-                    break;
-                }
-            }
+            let own_property = summary.instance_property_named(&name);
 
             // If name wasn't found in class body members but matches a constructor
             // parameter property, report TS2729 when useDefineForClassFields is true.
             // Parameter properties are always assigned in the constructor body, which
             // runs after field definitions with useDefineForClassFields semantics.
-            if !found_in_members && param_prop_names.contains(&name) {
+            if let Some(target) = own_property {
+                let should_error = target.position > current_pos
+                    || target.is_abstract
+                    || target.has_no_initializer;
+                if should_error {
+                    self.error_at_node(
+                        access_node_idx,
+                        &format!("Property '{name}' is used before its initialization."),
+                        diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                    );
+                }
+            } else if use_define && summary.parameter_property_names.contains(&name) {
                 self.error_at_node(
                     access_node_idx,
                     &format!("Property '{name}' is used before its initialization."),
@@ -103,95 +76,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-    }
-
-    /// Collect the names of constructor parameter properties for the enclosing class.
-    ///
-    /// Parameter properties are constructor parameters with access modifiers
-    /// (public, private, protected, readonly, override) that create class properties.
-    fn collect_constructor_parameter_property_names(
-        &self,
-        class_info: &crate::context::EnclosingClassInfo,
-    ) -> Vec<String> {
-        let mut names = Vec::new();
-
-        // Find the constructor in the class members
-        for &member_idx in &class_info.member_nodes {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
-                continue;
-            };
-
-            // Check each parameter for parameter property modifiers
-            for &param_idx in &ctor.parameters.nodes {
-                let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                    continue;
-                };
-                if !self.has_parameter_property_modifier(&param.modifiers) {
-                    continue;
-                }
-                // Get the parameter name
-                if let Some(name_node) = self.ctx.arena.get(param.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    names.push(ident.escaped_text.clone());
-                }
-            }
-            break; // Only one constructor per class
-        }
-
-        names
-    }
-
-    /// Check if a property declaration is abstract (has abstract modifier).
-    ///
-    /// ## Parameters
-    /// - `member_idx`: The class member node index
-    ///
-    /// Returns true if the member is an abstract property declaration.
-    pub(crate) fn is_abstract_property(&self, member_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return false;
-        };
-
-        if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-            return false;
-        }
-
-        if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-            return self.has_abstract_modifier(&prop.modifiers);
-        }
-
-        false
-    }
-
-    /// Check if a property declaration has no initializer and no definite
-    /// assignment assertion (`!`).
-    ///
-    /// Properties with `!` (e.g. `prop!: T`) are definitively asserted to be
-    /// initialized, so they should not trigger TS2729.
-    pub(crate) fn has_no_initializer(&self, member_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return false;
-        };
-
-        if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-            return false;
-        }
-
-        if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-            return prop.initializer.is_none() && !prop.exclamation_token;
-        }
-
-        false
     }
 
     /// Check if a member is a static property (has static modifier).
@@ -942,28 +826,5 @@ impl<'a> CheckerState<'a> {
                 // For other expressions, we don't recurse further
             }
         }
-    }
-
-    /// Check if a class member is an instance property (not static, not a method/accessor).
-    ///
-    /// ## Parameters
-    /// - `member_idx`: The class member node index
-    ///
-    /// Returns true if the member is a non-static property declaration.
-    pub(crate) fn is_instance_property(&self, member_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return false;
-        };
-
-        if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-            return false;
-        }
-
-        if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-            // Check if it has a static modifier
-            return !self.has_static_modifier(&prop.modifiers);
-        }
-
-        false
     }
 }

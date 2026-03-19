@@ -134,6 +134,26 @@ fn ts2352_array_assertion_anchors_first_excess_property() {
         matching[0].start, foo_pos,
         "Expected TS2352 to anchor at the excess property name, got: {matching:?}"
     );
+
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Type assertions should not emit nested TS2353 from array elements, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2352_array_assertion_with_best_common_type_does_not_emit_ts2353() {
+    let diags = check_source_diagnostics(
+        r#"
+<{ id: number; }[]>[{ foo: "s" }, {}];
+"#,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics when array assertion falls back to best common type, got: {diags:?}"
+    );
 }
 
 #[test]

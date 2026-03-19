@@ -547,8 +547,8 @@ impl ParserState {
             }
             SyntaxKind::AtToken => {
                 if self.look_ahead_has_missing_decorator_expression() {
-                    self.error_expression_expected();
                     self.next_token();
+                    self.error_expression_expected();
                     self.parse_statement()
                 } else {
                     // Decorator: @decorator class/function

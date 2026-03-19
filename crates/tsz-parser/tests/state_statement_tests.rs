@@ -311,16 +311,36 @@ fn bare_var_statement_in_class_body_recovers_as_ts1068_then_ts1128() {
 
 #[test]
 fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
-    let (parser, _root) = parse_source("namespace M { ¬ class C { } @ enum E { ¬");
+    let source = "// @target: es2015\nnamespace M {\n   ¬\n   class C {\n   }\n   @\n   enum E {\n   ¬\n";
+    let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let at_pos = source.find('@').unwrap() as u32;
+    let enum_pos = source.find("enum E").unwrap() as u32;
+    let eof_pos = source.len() as u32;
     assert!(
         codes.contains(&diagnostic_codes::INVALID_CHARACTER),
         "expected TS1127 for invalid characters, got {diags:?}"
     );
-    assert!(
-        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "expected TS1109 for stray '@' before enum, got {diags:?}"
+    let ts1109 = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for stray '@' before enum");
+    assert_eq!(
+        ts1109.start, enum_pos,
+        "TS1109 should land on `enum`, not `@`: {diags:?}"
+    );
+    assert_ne!(
+        ts1109.start, at_pos,
+        "TS1109 should not be reported at the stray `@`: {diags:?}"
+    );
+    let ts1005 = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::EXPECTED)
+        .expect("expected TS1005 for the unclosed enum tail");
+    assert_eq!(
+        ts1005.start, eof_pos,
+        "TS1005 should be emitted once at EOF for the missing `}}`: {diags:?}"
     );
     assert!(
         !codes.contains(&diagnostic_codes::DECLARATION_EXPECTED),
