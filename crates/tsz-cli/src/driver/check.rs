@@ -2,6 +2,12 @@
 
 use super::check_utils::*;
 use super::*;
+use tsz::checker::context::RequestCacheCounters;
+
+pub(super) struct CollectDiagnosticsResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub request_cache_counters: RequestCacheCounters,
+}
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
@@ -158,10 +164,11 @@ pub(super) fn collect_diagnostics(
     typescript_dom_replacement_globals: (bool, bool, bool),
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
-) -> Vec<Diagnostic> {
+) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut request_cache_counters = RequestCacheCounters::default();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
     let mut resolution_cache = ModuleResolutionCache::default();
@@ -606,7 +613,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters)> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -678,43 +685,47 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = work_items
-            .iter()
-            .zip(per_file_binders.into_iter())
-            .map(|(&file_idx, binder)| {
-                let context = CheckFileForParallelContext {
-                    file_idx,
-                    binder,
-                    program,
-                    compiler_options: &compiler_options,
-                    lib_contexts: &lib_ctx_for_parallel,
-                    all_arenas: &all_arenas,
-                    all_binders: &all_binders,
-                    symbol_file_targets: &symbol_file_targets,
-                    resolved_module_paths: &resolved_module_paths,
-                    resolved_module_specifiers: &resolved_module_specifiers,
-                    resolved_module_errors: &resolved_module_errors,
-                    is_external_module_by_file: &is_external_module_by_file,
-                    file_is_esm_map: &file_is_esm_map,
-                    shared_lib_cache: Arc::clone(&shared_lib_cache),
-                    no_check,
-                    check_js,
-                    explicit_check_js_false,
-                    skip_lib_check,
-                    has_deprecation_diagnostics,
-                    typescript_dom_replacement_globals,
-                    program_has_real_syntax_errors,
-                };
-                check_file_for_parallel(context)
-            })
-            .collect();
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters)> =
+            work_items
+                .iter()
+                .zip(per_file_binders.into_iter())
+                .map(|(&file_idx, binder)| {
+                    let context = CheckFileForParallelContext {
+                        file_idx,
+                        binder,
+                        program,
+                        compiler_options: &compiler_options,
+                        lib_contexts: &lib_ctx_for_parallel,
+                        all_arenas: &all_arenas,
+                        all_binders: &all_binders,
+                        symbol_file_targets: &symbol_file_targets,
+                        resolved_module_paths: &resolved_module_paths,
+                        resolved_module_specifiers: &resolved_module_specifiers,
+                        resolved_module_errors: &resolved_module_errors,
+                        is_external_module_by_file: &is_external_module_by_file,
+                        file_is_esm_map: &file_is_esm_map,
+                        shared_lib_cache: Arc::clone(&shared_lib_cache),
+                        no_check,
+                        check_js,
+                        explicit_check_js_false,
+                        skip_lib_check,
+                        has_deprecation_diagnostics,
+                        typescript_dom_replacement_globals,
+                        program_has_real_syntax_errors,
+                    };
+                    check_file_for_parallel(context)
+                })
+                .collect();
 
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache)) in file_results.into_iter().enumerate() {
+            for (idx, (file_diags, type_cache, file_counters)) in
+                file_results.into_iter().enumerate()
+            {
                 diagnostics.extend(file_diags);
+                request_cache_counters.merge(file_counters);
                 if let Some(tc) = type_cache {
                     let file_path = PathBuf::from(&program.files[work_items[idx]].file_name);
                     tc_out.insert(file_path, tc);
@@ -903,6 +914,7 @@ pub(super) fn collect_diagnostics(
             // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
             if options.skip_lib_check && is_declaration_file(&file.file_name) {
                 diagnostics.extend(file_diagnostics);
+                request_cache_counters.merge(checker.ctx.request_cache_counters);
                 continue;
             }
 
@@ -944,6 +956,8 @@ pub(super) fn collect_diagnostics(
             }
 
             // Update the cache and check for export hash changes
+            let checker_counters = checker.ctx.request_cache_counters;
+
             if let Some(c) = cache.as_deref_mut() {
                 let new_hash = compute_export_hash(program, file, file_idx, &mut checker);
                 let old_hash = c.export_hashes.get(&file_path).copied();
@@ -970,6 +984,7 @@ pub(super) fn collect_diagnostics(
             } else {
                 diagnostics.extend(file_diagnostics);
             }
+            request_cache_counters.merge(checker_counters);
         }
     }
 
@@ -995,7 +1010,10 @@ pub(super) fn collect_diagnostics(
         program, options, base_dir,
     ));
 
-    diagnostics
+    CollectDiagnosticsResult {
+        diagnostics,
+        request_cache_counters,
+    }
 }
 
 fn propagate_module_export_maps(
@@ -1107,7 +1125,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> (Vec<Diagnostic>, Option<TypeCache>) {
+) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters) {
     let CheckFileForParallelContext {
         file_idx,
         binder,
@@ -1134,7 +1152,7 @@ pub(super) fn check_file_for_parallel<'a>(
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (Vec::new(), None);
+        return (Vec::new(), None, RequestCacheCounters::default());
     }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
@@ -1291,8 +1309,9 @@ pub(super) fn check_file_for_parallel<'a>(
         );
     }
 
+    let checker_counters = checker.ctx.request_cache_counters;
     let type_cache = checker.extract_cache();
-    (file_diagnostics, Some(type_cache))
+    (file_diagnostics, Some(type_cache), checker_counters)
 }
 
 #[cfg(test)]
@@ -1322,6 +1341,7 @@ mod tests {
             &type_cache_output,
             false,
         )
+        .diagnostics
     }
 
     fn default_cli_args_for_test() -> CliArgs {
@@ -1407,7 +1427,8 @@ const q: PromiseLike<number> = p;
             (false, false, false),
             &type_cache_output,
             false,
-        );
+        )
+        .diagnostics;
 
         assert!(
             diagnostics.is_empty(),
@@ -1604,7 +1625,8 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             (false, false, false),
             &type_cache_output,
             false,
-        );
+        )
+        .diagnostics;
         let direct_ts2322_count = direct_diagnostics
             .iter()
             .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
@@ -1623,7 +1645,8 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             (false, false, false),
             &type_cache_output,
             false,
-        );
+        )
+        .diagnostics;
 
         let ts2322_count = diagnostics
             .iter()

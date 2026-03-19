@@ -1604,7 +1604,9 @@ impl<'a> CheckerState<'a> {
                             if keep_contextual_body {
                                 self.ctx.preserve_literal_types = true;
                             }
-                            self.clear_type_cache_recursive(body);
+                            if body_request.is_empty() {
+                                self.clear_type_cache_recursive(body);
+                            }
                             let t = self.get_type_of_node_with_request(body, &body_request);
                             self.ctx.preserve_literal_types = prev_preserve_literals;
                             t
@@ -1661,8 +1663,6 @@ impl<'a> CheckerState<'a> {
                                 let snap = self.ctx.snapshot_diagnostics();
                                 let return_req =
                                     TypingRequest::with_contextual_type(expected_return_type);
-                                self.clear_type_cache_recursive(cond.when_true);
-                                self.clear_type_cache_recursive(cond.when_false);
                                 let mut when_true =
                                     self.get_type_of_node_with_request(cond.when_true, &return_req);
                                 let mut when_false = self

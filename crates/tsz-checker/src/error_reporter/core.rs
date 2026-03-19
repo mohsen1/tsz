@@ -10,6 +10,86 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn sanitize_type_annotation_text_for_diagnostic(
+        &self,
+        text: String,
+        allow_object_shapes: bool,
+    ) -> Option<String> {
+        fn parenthesize_intersection_in_union_text(text: &str) -> String {
+            let mut parts = Vec::new();
+            let mut current = String::new();
+            let mut depth = 0u32;
+
+            for (i, ch) in text.char_indices() {
+                match ch {
+                    '(' | '<' | '[' => {
+                        depth += 1;
+                        current.push(ch);
+                    }
+                    ')' | '>' | ']' => {
+                        depth = depth.saturating_sub(1);
+                        current.push(ch);
+                    }
+                    '|' if depth == 0
+                        && text.get(i.saturating_sub(1)..i) == Some(" ")
+                        && text.get(i + 1..i + 2) == Some(" ") =>
+                    {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                    }
+                    _ => current.push(ch),
+                }
+            }
+            parts.push(current.trim().to_string());
+
+            parts
+                .into_iter()
+                .map(|part| {
+                    if part.contains(" & ") && !part.starts_with('(') {
+                        format!("({part})")
+                    } else {
+                        part
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
+
+        let mut text = text.trim().trim_start_matches(':').trim().to_string();
+        if let Some(nl) = text.find('\n') {
+            text = text[..nl].trim_end().to_string();
+        }
+        if text.ends_with('=') {
+            text.pop();
+            text = text.trim_end().to_string();
+        }
+        while matches!(text.chars().last(), Some(',') | Some(';')) {
+            text.pop();
+            text = text.trim_end().to_string();
+        }
+        while matches!(text.chars().last(), Some(')')) {
+            let open_count = text.chars().filter(|&ch| ch == '(').count();
+            let close_count = text.chars().filter(|&ch| ch == ')').count();
+            if close_count <= open_count {
+                break;
+            }
+            text.pop();
+            text = text.trim_end().to_string();
+        }
+        if !allow_object_shapes && (text.starts_with('{') || text.starts_with('[')) {
+            return None;
+        }
+        let open_count = text.chars().filter(|&ch| ch == '(').count();
+        let close_count = text.chars().filter(|&ch| ch == ')').count();
+        if open_count != close_count || text.is_empty() {
+            return None;
+        }
+        if text.contains(" & ") && text.contains(" | ") {
+            text = parenthesize_intersection_in_union_text(&text);
+        }
+        Some(text)
+    }
+
     fn param_matches_property_key_literal(&self, prop_name: Atom, ty: TypeId) -> bool {
         let prop_name = self.ctx.types.resolve_atom_ref(prop_name);
         if self.ctx.types.literal_string(prop_name.as_ref()) == ty {
@@ -316,7 +396,7 @@ impl<'a> CheckerState<'a> {
     /// undefined, null, void, never, etc.) so the displayed type matches tsc.
     /// For example, `IProps | number` becomes `IProps`, and
     /// `{ testBool?: boolean | undefined; } | undefined` becomes `{ testBool?: boolean | undefined; }`.
-    fn strip_non_object_union_members_for_excess_display(&self, ty: TypeId) -> TypeId {
+    pub(super) fn strip_non_object_union_members_for_excess_display(&self, ty: TypeId) -> TypeId {
         let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
         if let Some(members) = query::union_members(self.ctx.types, ty) {
             let object_like: Vec<_> = members
@@ -325,6 +405,10 @@ impl<'a> CheckerState<'a> {
                 .filter(|member| {
                     let evaluated = tsz_solver::evaluate_type(self.ctx.types, *member);
                     !tsz_solver::is_primitive_type(self.ctx.types, evaluated)
+                        && !tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            evaluated,
+                        )
                 })
                 .collect();
             // Only strip if we actually removed something and have at least one member left
@@ -461,6 +545,9 @@ impl<'a> CheckerState<'a> {
         let ty = self.strip_non_object_union_members_for_excess_display(ty);
 
         if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            let preserve_intersection_parts = members
+                .iter()
+                .any(|member| tsz_solver::evaluate_type(self.ctx.types, *member) == TypeId::OBJECT);
             let mut changed = false;
             let parts: Vec<String> = members
                 .iter()
@@ -475,7 +562,7 @@ impl<'a> CheckerState<'a> {
                     }
                 })
                 .collect();
-            if changed {
+            if changed || preserve_intersection_parts {
                 return parts.join(" & ");
             }
         }
@@ -506,16 +593,41 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn format_annotation_like_type(&mut self, text: &str) -> String {
+    pub(super) fn format_annotation_like_type(&mut self, text: &str) -> String {
         let mut formatted = text.trim().to_string();
-        if formatted.starts_with("{ ")
-            && formatted.ends_with(" }")
-            && formatted.contains(':')
-            && !formatted.ends_with("; }")
-        {
+        if formatted.contains(";}") {
+            formatted = formatted.replace(";}", "; }");
+        }
+        if formatted.contains(':') && formatted.ends_with(" }") && !formatted.ends_with("; }") {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
         formatted
+    }
+
+    pub(crate) fn excess_property_target_annotation_text_for_site(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let mut current = idx;
+        loop {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent_idx = info.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
+                let grandparent = self.ctx.arena.get(grandparent_idx)?;
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
+                    && var_decl.initializer == parent_idx
+                    && var_decl.type_annotation.is_some()
+                {
+                    return self.node_text(var_decl.type_annotation).and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                    });
+                }
+                return None;
+            }
+            current = parent_idx;
+        }
     }
 
     pub(super) fn should_use_evaluated_assignability_display(
@@ -700,6 +812,13 @@ impl<'a> CheckerState<'a> {
                         .is_some()
                         .then_some(self.terminal_assignment_source_expression(decl.initializer));
                 }
+                k if k == syntax_kind_ext::PARAMETER => {
+                    let param = self.ctx.arena.get_parameter(node)?;
+                    return param
+                        .initializer
+                        .is_some()
+                        .then_some(self.terminal_assignment_source_expression(param.initializer));
+                }
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     let prop = self.ctx.arena.get_property_assignment(node)?;
                     return prop.initializer.is_some().then_some(prop.initializer);
@@ -883,97 +1002,6 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         allow_object_shapes: bool,
     ) -> Option<String> {
-        fn sanitize_type_annotation_text(
-            text: String,
-            allow_object_shapes: bool,
-        ) -> Option<String> {
-            let mut text = text.trim().trim_start_matches(':').trim().to_string();
-            // If the extracted text contains a newline, take only the first line —
-            // the node span may extend past the declaration.
-            if let Some(nl) = text.find('\n') {
-                text = text[..nl].trim_end().to_string();
-            }
-            // Strip trailing `=` that leaks from variable initializers
-            // (e.g. `string | number = ""` → `string | number`).
-            if text.ends_with('=') {
-                text.pop();
-                text = text.trim_end().to_string();
-            }
-            while matches!(text.chars().last(), Some(',') | Some(';')) {
-                text.pop();
-                text = text.trim_end().to_string();
-            }
-            while matches!(text.chars().last(), Some(')')) {
-                let open_count = text.chars().filter(|&ch| ch == '(').count();
-                let close_count = text.chars().filter(|&ch| ch == ')').count();
-                if close_count <= open_count {
-                    break;
-                }
-                text.pop();
-                text = text.trim_end().to_string();
-            }
-            if !allow_object_shapes && (text.starts_with('{') || text.starts_with('[')) {
-                return None;
-            }
-            let open_count = text.chars().filter(|&ch| ch == '(').count();
-            let close_count = text.chars().filter(|&ch| ch == ')').count();
-            if open_count != close_count {
-                return None;
-            }
-            if text.is_empty() {
-                return None;
-            }
-            // TypeScript `&` binds tighter than `|`. Add precedence parentheses
-            // so annotation text like `A & B | C & D` becomes `(A & B) | (C & D)`.
-            if text.contains(" & ") && text.contains(" | ") {
-                text = parenthesize_intersection_in_union_text(&text);
-            }
-            Some(text)
-        }
-
-        /// Add parentheses around `&`-joined groups in a top-level `|` union.
-        fn parenthesize_intersection_in_union_text(text: &str) -> String {
-            let mut parts = Vec::new();
-            let mut current = String::new();
-            let mut depth = 0u32;
-
-            for (i, ch) in text.char_indices() {
-                match ch {
-                    '(' | '<' | '[' => {
-                        depth += 1;
-                        current.push(ch);
-                    }
-                    ')' | '>' | ']' => {
-                        depth = depth.saturating_sub(1);
-                        current.push(ch);
-                    }
-                    '|' if depth == 0
-                        && text.get(i.saturating_sub(1)..i) == Some(" ")
-                        && text.get(i + 1..i + 2) == Some(" ") =>
-                    {
-                        parts.push(current.trim().to_string());
-                        current = String::new();
-                    }
-                    _ => {
-                        current.push(ch);
-                    }
-                }
-            }
-            parts.push(current.trim().to_string());
-
-            let formatted: Vec<String> = parts
-                .into_iter()
-                .map(|part| {
-                    if part.contains(" & ") && !part.starts_with('(') {
-                        format!("({part})")
-                    } else {
-                        part
-                    }
-                })
-                .collect();
-            formatted.join(" | ")
-        }
-
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1000,9 +1028,9 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = self.ctx.arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                let mut text = self
-                    .node_text(param.type_annotation)
-                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes))?;
+                let mut text = self.node_text(param.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                })?;
                 if param.question_token
                     && self.ctx.strict_null_checks()
                     && !text.contains("undefined")
@@ -1019,9 +1047,9 @@ impl<'a> CheckerState<'a> {
             if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
-                return self
-                    .node_text(var_decl.type_annotation)
-                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
+                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                });
             }
         }
 
@@ -1191,7 +1219,11 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
+    fn object_literal_source_type_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: Option<TypeId>,
+    ) -> Option<String> {
         // Only skip parentheses, not type assertions.  When the source is
         // `<foo>({})`, the diagnostic should display the asserted type name
         // `foo`, not the inner object literal `{}`.  Returning `None` here
@@ -1204,6 +1236,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let literal = self.ctx.arena.get_literal_expr(node)?;
+        let target = target.map(|target| self.evaluate_type_for_assignability(target));
+        let target_shape = target.and_then(|target| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
+        });
         let mut parts = Vec::new();
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
@@ -1227,6 +1263,9 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => return None,
             };
+            let property_name = self
+                .get_property_name(prop.name)
+                .map(|name| self.ctx.types.intern_string(&name));
             let value_type = self.get_type_of_node(prop.initializer);
             if value_type == TypeId::ERROR {
                 return None;
@@ -1234,8 +1273,62 @@ impl<'a> CheckerState<'a> {
 
             // tsc displays the widened type for object literal properties in
             // assignability errors — e.g. `{ 0: string }` not `{ 0: "1" }`.
+            let value_display_type = property_name
+                .and_then(|name| {
+                    let shape = target_shape.as_ref()?;
+                    shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == name)
+                        .map(|prop| prop.type_id)
+                })
+                .filter(|target_prop_type| {
+                    crate::query_boundaries::diagnostics::function_shape(self.ctx.types, value_type)
+                        .is_some()
+                        && crate::query_boundaries::diagnostics::function_shape(
+                            self.ctx.types,
+                            *target_prop_type,
+                        )
+                        .is_some()
+                })
+                .and_then(|target_prop_type| {
+                    let value_shape = crate::query_boundaries::diagnostics::function_shape(
+                        self.ctx.types,
+                        value_type,
+                    )?;
+                    let target_shape = crate::query_boundaries::diagnostics::function_shape(
+                        self.ctx.types,
+                        target_prop_type,
+                    )?;
+                    let merged_params: Vec<_> = value_shape
+                        .params
+                        .iter()
+                        .zip(target_shape.params.iter())
+                        .map(|(value_param, target_param)| tsz_solver::ParamInfo {
+                            type_id: target_param.type_id,
+                            ..value_param.clone()
+                        })
+                        .collect();
+                    let merged = self
+                        .ctx
+                        .types
+                        .factory()
+                        .function(tsz_solver::FunctionShape {
+                            type_params: value_shape.type_params.clone(),
+                            params: merged_params,
+                            this_type: value_shape.this_type,
+                            return_type: value_shape.return_type,
+                            type_predicate: value_shape.type_predicate.clone(),
+                            is_constructor: value_shape.is_constructor,
+                            is_method: value_shape.is_method,
+                        });
+                    Some(merged)
+                })
+                .unwrap_or(value_type);
+            let widened_value_display_type = self
+                .widen_function_like_display_type(self.widen_type_for_display(value_display_type));
             let value_display =
-                self.format_type_for_assignability_message(self.widen_type_for_display(value_type));
+                self.format_type_for_assignability_message(widened_value_display_type);
             parts.push(format!("{display_name}: {value_display}"));
         }
 
@@ -1281,7 +1374,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1348,7 +1441,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1372,7 +1465,7 @@ impl<'a> CheckerState<'a> {
                     widened_expr_type
                 }
             } else {
-                source
+                self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
 
@@ -1468,7 +1561,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1495,7 +1588,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1508,7 +1601,7 @@ impl<'a> CheckerState<'a> {
                     widened_expr_type
                 }
             } else {
-                source
+                self.widen_type_for_display(source)
             };
             let display_type = self.widen_function_like_display_type(display_type);
             return self.format_assignability_type_for_message(display_type, target);

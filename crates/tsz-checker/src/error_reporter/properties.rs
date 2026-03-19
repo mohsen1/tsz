@@ -10,6 +10,75 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
+        [target, self.evaluate_type_for_assignability(target)]
+            .into_iter()
+            .filter_map(|candidate| {
+                tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, candidate)
+            })
+            .any(|members| {
+                members.iter().any(|member| {
+                    let evaluated_member = self.evaluate_type_for_assignability(*member);
+                    tsz_solver::is_primitive_type(self.ctx.types, evaluated_member)
+                        || tsz_solver::type_queries::is_type_parameter_like(
+                            self.ctx.types,
+                            evaluated_member,
+                        )
+                })
+            })
+    }
+
+    fn excess_property_target_display_for_site(
+        &mut self,
+        target: TypeId,
+        idx: NodeIndex,
+    ) -> String {
+        let inferred_display = self.format_excess_property_target_type(target);
+        if let Some(annotation_text) = self.excess_property_target_annotation_text_for_site(idx) {
+            let annotation_display = self.format_annotation_like_type(&annotation_text);
+            if inferred_display.starts_with('{') && annotation_display.contains("object &") {
+                return annotation_display;
+            }
+            if inferred_display.starts_with('{')
+                && !annotation_display.contains('|')
+                && !annotation_display.contains("object")
+                && annotation_display.contains('&')
+            {
+                return annotation_display;
+            }
+        }
+        inferred_display
+    }
+
+    pub(crate) fn excess_property_diagnostic_message(
+        &mut self,
+        prop_name: &str,
+        target: TypeId,
+        idx: NodeIndex,
+    ) -> (u32, String) {
+        let type_str = self.excess_property_target_display_for_site(target, idx);
+        let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
+        if !self.has_syntax_parse_errors()
+            && let Some(suggestion) = self
+                .find_similar_property(prop_name, suggestion_target)
+                .or_else(|| self.find_similar_property(prop_name, target))
+        {
+            return (
+                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                format!(
+                    "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
+                ),
+            );
+        }
+
+        (
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+            format!(
+                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+            ),
+        )
+    }
+
     fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(idx)?;
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -487,51 +556,36 @@ impl<'a> CheckerState<'a> {
         if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
             return;
         }
+        if self.should_suppress_excess_property_for_target(target) {
+            return;
+        }
 
         if let Some(anchor) =
             self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
         {
-            // TS2561: Check for spelling suggestion on excess properties.
-            if !self.has_syntax_parse_errors()
-                && let Some(suggestion) = self.find_similar_property(prop_name, target)
-            {
-                let type_str = self.format_excess_property_target_type(target);
-                let message = format!(
-                    "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
-                );
-                self.error_at_anchor(
-                    idx,
-                    DiagnosticAnchorKind::PropertyToken,
-                    &message,
-                    diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
-                );
-                return;
-            }
-
-            let type_str = self.format_excess_property_target_type(target);
-            let message = format!(
-                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
-            );
+            let (code, message) = self.excess_property_diagnostic_message(prop_name, target, idx);
             self.ctx.push_diagnostic(Diagnostic::error(
                 &self.ctx.file_name,
                 anchor.start,
                 anchor.length,
                 message,
-                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                code,
             ));
         }
     }
 
     /// Report a "Cannot assign to readonly property" error using solver diagnostics with source tracking.
     pub fn error_readonly_property_at(&mut self, prop_name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
+        {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             )
             .with_def_store(&self.ctx.definition_store);
-            let diag = builder.readonly_property(prop_name, loc.start, loc.length());
+            let diag = builder.readonly_property(prop_name, anchor.start, anchor.length);
             self.ctx
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));

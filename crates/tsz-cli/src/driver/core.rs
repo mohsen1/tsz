@@ -93,6 +93,7 @@ pub struct CompilationResult {
     pub files_read: Vec<PathBuf>,
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
+    pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -786,6 +787,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         });
     }
 
@@ -813,6 +815,7 @@ fn compile_inner(
                     emitted_files: Vec::new(),
                     files_read: Vec::new(),
                     file_infos: Vec::new(),
+                    request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
                 });
             }
             return Err(e);
@@ -894,6 +897,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         });
     }
 
@@ -959,6 +963,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         });
     }
 
@@ -1172,7 +1177,7 @@ fn compile_inner(
 
     let collect_diagnostics_start = Instant::now();
     let parallel_type_caches = std::sync::Mutex::new(FxHashMap::default());
-    let mut diagnostics: Vec<Diagnostic> = collect_diagnostics(
+    let collected = collect_diagnostics(
         &program,
         &resolved,
         &base_dir,
@@ -1182,6 +1187,7 @@ fn compile_inner(
         &parallel_type_caches,
         has_deprecation_diagnostics,
     );
+    let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     perf_log_phase("collect_diagnostics", collect_diagnostics_start);
 
     // Get reference to type caches for declaration emit.
@@ -1390,6 +1396,7 @@ fn compile_inner(
         emitted_files,
         files_read,
         file_infos,
+        request_cache_counters: collected.request_cache_counters,
     })
 }
 
@@ -1402,6 +1409,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         emitted_files: Vec::new(),
         files_read: Vec::new(),
         file_infos: Vec::new(),
+        request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
     }
 }
 

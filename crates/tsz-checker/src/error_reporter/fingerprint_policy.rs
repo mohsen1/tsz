@@ -430,6 +430,39 @@ impl<'a> CheckerState<'a> {
         normalized
     }
 
+    /// Returns true when a contextual object-literal call mismatch is only caused by
+    /// Object.prototype members such as `toString` or `valueOf`.
+    ///
+    /// Those members are implicitly present on ordinary objects, so the call-level
+    /// TS2345 should be suppressed instead of surfacing a bogus missing-property error.
+    pub(crate) fn should_suppress_object_literal_call_mismatch(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        use tsz_solver::SubtypeFailureReason;
+
+        let analysis = self.analyze_assignability_failure(source_type, target_type);
+        let Some(reason) = analysis.failure_reason else {
+            return false;
+        };
+
+        match reason {
+            SubtypeFailureReason::MissingProperty { property_name, .. } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+                is_object_prototype_method(&prop_name)
+            }
+            SubtypeFailureReason::MissingProperties { property_names, .. } => {
+                !property_names.is_empty()
+                    && property_names.iter().all(|property_name| {
+                        let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                        is_object_prototype_method(&prop_name)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     fn parent_index(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(idx)?;
         ext.parent.is_some().then_some(ext.parent)
@@ -667,9 +700,8 @@ impl<'a> CheckerState<'a> {
             {
                 return first_elem;
             }
-            return first;
         }
-        call_idx
+        self.call_primary_anchor_node(call_idx)
     }
 
     fn type_assertion_overlap_anchor_in_expression(

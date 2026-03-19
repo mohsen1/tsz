@@ -31,12 +31,12 @@ if [ -n "${TSZ_LIB_DIR:-}" ]; then
     export TSZ_LIB_DIR
 fi
 
-# Dedicated target directory for benchmarks - isolated from dev builds
-# This prevents other cargo builds from accidentally overwriting the optimized binary
+# Dedicated target directory for benchmarks - isolated from dev builds.
 BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
+TSZ_OUTPUT_DIR="$BENCH_TARGET_DIR/dist"
 
 # Compilers
-TSZ="$BENCH_TARGET_DIR/dist/tsz"
+TSZ="$TSZ_OUTPUT_DIR/tsz"
 TSGO="${TSGO:-}"
 TSGO_TOOL_DIR="${TSGO_TOOL_DIR:-$BENCH_TARGET_DIR/tools/tsgo}"
 TSGO_LOCAL_BIN="$TSGO_TOOL_DIR/node_modules/.bin/tsgo"
@@ -323,41 +323,78 @@ check_prerequisites() {
         echo -e "${CYAN}Target directory: $BENCH_TARGET_DIR${NC}"
 
         # PGO (Profile-Guided Optimization): collect profile data then rebuild.
-        # This typically gives 5-15% speedup on hot paths by guiding LLVM's
-        # optimization decisions with real workload data.
+        # This typically gives a better optimized binary for full benchmark
+        # runs, but quick mode prefers a deterministic fast rebuild.
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
+        local pgo_target_dir
+        local optimized_target_dir
+        mkdir -p "$BENCH_TARGET_DIR"
+        pgo_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/pgo-build.XXXXXX")"
+        optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
         local llvm_profdata
         llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1 || true)"
+        local use_pgo=true
+        if [ "$QUICK_MODE" = true ]; then
+            use_pgo=false
+        fi
 
-        if [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
+        if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
             rm -rf "$pgo_dir"
             mkdir -p "$pgo_dir"
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
+                CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                cargo build --profile dist -p tsz-cli)
+                cargo build --profile dist -p tsz-cli --bin tsz)
 
             echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
             # Run representative workloads
-            echo "const x: number = 1;" | ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$TSZ" --noEmit /dev/stdin 2>/dev/null || true
+            local pgo_tsz="$pgo_target_dir/dist/tsz"
+            echo "const x: number = 1;" | ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit /dev/stdin 2>/dev/null || true
             for _i in 1 2 3; do
                 if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
-                    ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$TSZ" --noEmit \
+                    ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit \
                         "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" 2>/dev/null || true
                 fi
             done
 
             echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
             "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+            if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli)
+                cargo build --profile dist -p tsz-cli --bin tsz); then
+                # LLVM PGO can fail when the profile-use link step encounters
+                # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                # Fall back to a clean non-PGO dist build so benchmark runs still
+                # complete successfully.
+                echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                rm -rf "$optimized_target_dir"
+                optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz)
+            fi
+            mkdir -p "$TSZ_OUTPUT_DIR"
+            install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            rm -rf "$optimized_target_dir"
+            rm -rf "$pgo_target_dir"
         else
-            echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+            if [ "$QUICK_MODE" = true ]; then
+                echo -e "${YELLOW}Quick mode skips PGO; using standard dist build${NC}"
+            else
+                echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
+            fi
+            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli)
+                cargo build --profile dist -p tsz-cli --bin tsz)
+            mkdir -p "$TSZ_OUTPUT_DIR"
+            install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            rm -rf "$optimized_target_dir"
+            rm -rf "$pgo_target_dir"
         fi
     fi
     
