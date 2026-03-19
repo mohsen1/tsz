@@ -707,6 +707,10 @@ impl<'a> CheckerState<'a> {
             return self.current_file_commonjs_module_exports_namespace_type();
         }
 
+        if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
+            return TypeId::ERROR;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -800,47 +804,10 @@ impl<'a> CheckerState<'a> {
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
 
-            if self.is_type_only_import_equals_namespace_expr(access.expression) {
-                let has_scoped_value_or_alias = self
-                    .entity_name_text(access.expression)
-                    .map(|entity_name| {
-                        let lib_binders = self.get_lib_binders();
-                        self.ctx
-                            .binder
-                            .resolve_identifier_with_filter(
-                                self.ctx.arena,
-                                access.expression,
-                                &lib_binders,
-                                |sid| {
-                                    self.ctx
-                                        .binder
-                                        .get_symbol_with_libs(sid, &lib_binders)
-                                        .is_some_and(|s| {
-                                            (s.flags & symbol_flags::VALUE) != 0
-                                                || ((s.flags & symbol_flags::ALIAS) != 0
-                                                    && !s.is_type_only
-                                                    && s.escaped_name == entity_name)
-                                        })
-                                },
-                            )
-                            .is_some()
-                    })
-                    .unwrap_or(false);
-                if has_scoped_value_or_alias {
-                    // A value-capable alias is visible in scope (e.g. duplicate
-                    // `import M = ...` where one target is value-bearing). Defer to
-                    // regular member resolution instead of forcing TS2693/TS2708.
-                } else {
-                    if let Some(ns_name) = self.entity_name_text(access.expression) {
-                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
-                        if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
-                            && self.alias_resolves_to_type_only(sym_id)
-                        {
-                            self.error_type_only_value_at(&ns_name, access.expression);
-                        }
-                    }
-                    return TypeId::ERROR;
-                }
+            if self
+                .report_namespace_value_access_for_type_only_import_equals_expr(access.expression)
+            {
+                return TypeId::ERROR;
             }
 
             let enum_instance_like_access = self

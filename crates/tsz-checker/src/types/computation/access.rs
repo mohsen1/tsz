@@ -284,6 +284,10 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
+            return TypeId::ERROR;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -463,15 +467,9 @@ impl<'a> CheckerState<'a> {
         let mut use_index_signature_check = true;
 
         if let Some(name) = literal_string.as_deref() {
-            if self.is_type_only_import_equals_namespace_expr(access.expression) {
-                if let Some(ns_name) = self.entity_name_text(access.expression) {
-                    self.error_namespace_used_as_value_at(&ns_name, access.expression);
-                    if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
-                        && self.alias_resolves_to_type_only(sym_id)
-                    {
-                        self.error_type_only_value_at(&ns_name, access.expression);
-                    }
-                }
+            if self
+                .report_namespace_value_access_for_type_only_import_equals_expr(access.expression)
+            {
                 return TypeId::ERROR;
             }
 

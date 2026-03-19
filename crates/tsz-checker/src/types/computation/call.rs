@@ -22,6 +22,34 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    fn reemit_namespace_value_error_for_call_callee(&mut self, callee_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_idx = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return;
+        };
+
+        let base_expr = match callee_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_access_expr(callee_node)
+                    .map(|access| access.expression)
+            }
+            _ => None,
+        };
+
+        let Some(base_expr) = base_expr else {
+            return;
+        };
+        let base_expr = self.ctx.arena.skip_parenthesized_and_assertions(base_expr);
+
+        let _ = self.report_namespace_value_access_for_type_only_import_equals_expr(base_expr);
+    }
+
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -295,6 +323,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
         if callee_type == TypeId::ERROR {
+            self.reemit_namespace_value_error_for_call_callee(call.expression);
             // Still evaluate type arguments to catch TS2304 for unresolved type names
             // (e.g., `this.super<T>(0)` where T is undeclared)
             if let Some(ref type_args_list) = call.type_arguments {

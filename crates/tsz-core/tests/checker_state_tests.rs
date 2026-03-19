@@ -28697,11 +28697,11 @@ class Container<T> {
         .iter()
         .filter(|d| d.code == 2564)
         .count();
-    // tsc suppresses TS2564 for type parameter properties — the type parameter
-    // may be instantiated to a type with a default (e.g., Container<number | undefined>).
+    // TypeScript now requires initialization for unconstrained type-parameter
+    // properties too, so strict property initialization still reports TS2564 here.
     assert_eq!(
-        count, 0,
-        "Expected no TS2564 for generic type parameter property (matches tsc), got: {:?}",
+        count, 1,
+        "Expected TS2564 for generic type parameter property (matches tsc), got: {:?}",
         checker.ctx.diagnostics
     );
 }

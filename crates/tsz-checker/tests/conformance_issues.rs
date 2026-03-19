@@ -13708,6 +13708,31 @@ namespace Editor {
 }
 
 #[test]
+fn test_static_method_type_params_shadow_class_type_params() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+class Result<T, E> {
+    constructor() {}
+
+    static ok<T, E>(): Result<T, E> {
+        return new Result<T, E>();
+    }
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Static method type parameters should shadow class type parameters in signatures and bodies.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "conditional type eager resolution regressed after solver merge"]
 fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
     let diagnostics = compile_and_get_diagnostics_named(
