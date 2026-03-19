@@ -1607,7 +1607,11 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type
                 if param.type_annotation.is_some() {
                     self.write(": ");
-                    self.emit_type(param.type_annotation);
+                    if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
+                        self.write(&rescued);
+                    } else {
+                        self.emit_type(param.type_annotation);
+                    }
                     if is_parameter_property && param.question_token {
                         self.write(" | undefined");
                     }

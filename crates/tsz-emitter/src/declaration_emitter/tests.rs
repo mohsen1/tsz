@@ -6,8 +6,8 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_solver::{
-    CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
-    DefId, SymbolRef, TupleElement, TypeId, TypeInterner,
+    CallSignature, CallableShape, DefId, FunctionShape, ObjectFlags, ObjectShape, ParamInfo,
+    PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
 };
 
 // =============================================================================
@@ -385,8 +385,7 @@ fn test_foreign_global_lazy_type_application_keeps_alias_name() {
         .iter()
         .enumerate()
         .find_map(|(idx, node)| {
-            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
-                .then_some(NodeIndex(idx as u32))
+            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION).then_some(NodeIndex(idx as u32))
         })
         .expect("missing foreign type alias declaration");
 
@@ -403,10 +402,8 @@ fn test_foreign_global_lazy_type_application_keeps_alias_name() {
 
     let interner = TypeInterner::new();
     let def_id = DefId(42);
-    let flat_array_type = interner.application(
-        interner.lazy(def_id),
-        vec![TypeId::STRING, TypeId::NUMBER],
-    );
+    let flat_array_type =
+        interner.application(interner.lazy(def_id), vec![TypeId::STRING, TypeId::NUMBER]);
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
     type_cache.def_to_symbol.insert(def_id, flat_array_sym);
@@ -4963,6 +4960,22 @@ fn test_assertion_function() {
     assert!(
         output.contains("asserts val"),
         "Expected asserts modifier: {output}"
+    );
+}
+
+#[test]
+fn test_setter_parameter_asserts_this_predicate_is_rescued_from_source() {
+    let output = emit_dts(
+        r#"
+    declare class Wat {
+        set p2(x: asserts this is string);
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("set p2(x: asserts this is string);"),
+        "Expected setter parameter asserts predicate to be preserved: {output}"
     );
 }
 
