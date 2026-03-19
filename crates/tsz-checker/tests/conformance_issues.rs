@@ -11847,6 +11847,43 @@ foo<CoolArray<any>>();
     );
 }
 
+#[test]
+fn test_no_false_ts2344_for_discriminated_union_record_helper() {
+    let mut source = String::from("type BigUnion =\n");
+    for idx in 0..1200 {
+        source.push_str(&format!("  | {{ name: '{idx}'; children: BigUnion[] }}\n"));
+    }
+    source.push_str(
+        r#"
+
+type DiscriminateUnion<T, K extends keyof T, V extends T[K]> = T extends Record<K, V> ? T : never;
+type WithName<T extends BigUnion['name']> = DiscriminateUnion<BigUnion, 'name', T>;
+type ChildrenOf<T extends BigUnion> = T['children'][number];
+
+export function makeThing<T extends BigUnion['name']>(
+    name: T,
+    children: ChildrenOf<WithName<T>>[] = [],
+) {}
+
+makeThing('42', []);
+"#,
+    );
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Discriminated-union Record helper should not trigger TS2344.\nActual: {diagnostics:?}"
+    );
+}
+
 /// Issue: instanceof narrowing uses structural subtyping instead of nominal class identity.
 ///
 /// When class A has only optional properties, `is_assignable_to(B, A)` returns true

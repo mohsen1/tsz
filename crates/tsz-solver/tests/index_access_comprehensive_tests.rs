@@ -596,3 +596,31 @@ fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
         other => panic!("Expected deferred conditional result, got {other:?}"),
     }
 }
+
+#[test]
+fn test_large_union_literal_property_access_uses_fast_path() {
+    let interner = TypeInterner::new();
+
+    let mut members = Vec::new();
+    let mut expected_names = Vec::new();
+    for idx in 0..1200 {
+        let name = interner.literal_string(&format!("item-{idx}"));
+        expected_names.push(name);
+        members.push(interner.object(vec![
+            PropertyInfo::new(interner.intern_string("name"), name),
+            PropertyInfo::new(interner.intern_string("payload"), TypeId::NUMBER),
+        ]));
+    }
+
+    let big_union = interner.union(members);
+    let result = evaluate_type(
+        &interner,
+        interner.index_access(big_union, interner.literal_string("name")),
+    );
+
+    assert_eq!(
+        result,
+        interner.union(expected_names),
+        "large unions indexed by a literal property key should evaluate instead of falling back to error"
+    );
+}

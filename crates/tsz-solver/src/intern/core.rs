@@ -1452,12 +1452,10 @@ impl TypeInterner {
             return flat[0];
         }
 
-        // TS2590: Check if the union would be too complex for subtype reduction.
-        // tsc's removeSubtypes iterates backward over the union members, counting
-        // pairwise subtype comparisons. After 100K checks, it estimates remaining
-        // work: if estimated total > 1M, it aborts with TS2590. This effectively
-        // caps unions at ~1000 unique object types. We check this upfront since
-        // the O(n²) cost is predictable from member count.
+        // Large object unions are expensive to subtype-reduce (O(n²)), but they are
+        // still valid types. Preserve them and skip subtype reduction instead of
+        // collapsing the whole union to `error`, which poisons downstream computed
+        // types such as `keyof BigUnion` and `BigUnion["name"]`.
         if flat.len() > 1000 {
             let has_object_types = flat.iter().any(|&id| {
                 matches!(
@@ -1470,8 +1468,7 @@ impl TypeInterner {
                 )
             });
             if has_object_types {
-                self.union_too_complex.store(true, Ordering::Relaxed);
-                return TypeId::ERROR;
+                return self.normalize_union_literal_only(flat);
             }
         }
 
