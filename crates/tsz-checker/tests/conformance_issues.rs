@@ -5346,6 +5346,38 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_this_in_nested_class_computed_name_keeps_ts2339_companion() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class C {
+    static readonly c: "foo" = "foo";
+    static bar = class Inner {
+        static [this.c] = 123;
+        [this.c] = 123;
+    }
+}
+        "#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2465),
+        "Expected TS2465 for 'this' in class computed property names. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1166),
+        "Expected TS1166 companion diagnostic for invalid class computed property names. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 companion diagnostic for missing property 'c' on Inner. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_super_in_constructor_parameter_reports_ts2336_and_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
         r"

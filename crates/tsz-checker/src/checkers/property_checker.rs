@@ -20,6 +20,58 @@ impl<'a> CheckerState<'a> {
     // Property Accessibility
     // =========================================================================
 
+    fn report_computed_this_property_missing(&mut self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        if !self.is_this_expression(access.expression)
+            || !self.is_this_in_class_member_computed_property_name(access.expression)
+        {
+            return false;
+        }
+
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let property_name = name_ident.escaped_text.as_str();
+
+        let Some(class_idx) = self.nearest_enclosing_class(access.expression) else {
+            return false;
+        };
+        let is_static = self.is_this_in_static_class_member(access.expression);
+        if self
+            .summarize_class_chain(class_idx)
+            .lookup(property_name, is_static, true)
+            .is_some()
+        {
+            return false;
+        }
+
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+            return false;
+        };
+        let receiver_type = if is_static {
+            self.get_class_constructor_type(class_idx, class_data)
+        } else {
+            self.get_class_instance_type(class_idx, class_data)
+        };
+        self.error_property_not_exist_at(property_name, receiver_type, access.name_or_argument);
+        true
+    }
+
     /// Check if accessing a property is allowed based on its access modifier.
     ///
     /// ## Access Modifiers:
@@ -759,7 +811,18 @@ impl<'a> CheckerState<'a> {
         // structural error but still need type evaluation.
         let expr_type = self.get_type_of_node(computed.expression);
 
+        let emitted_computed_this_missing =
+            self.report_computed_this_property_missing(computed.expression);
+
         if expr_type == tsz_solver::TypeId::ERROR {
+            if emitted_computed_this_missing {
+                self.error_at_node(name_idx, message, code);
+            }
+            return;
+        }
+
+        if emitted_computed_this_missing {
+            self.error_at_node(name_idx, message, code);
             return;
         }
 

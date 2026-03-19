@@ -146,6 +146,31 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Find the nearest enclosing class declaration/expression by walking parents.
+    pub(crate) fn nearest_enclosing_class(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION)
+            {
+                return Some(current);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
     /// Check if `this` is inside a static class member by walking the AST.
     /// Returns true if the nearest enclosing class member/static-block has a `static` modifier.
     /// Unlike `enclosing_class.in_static_member`, this works even outside the
