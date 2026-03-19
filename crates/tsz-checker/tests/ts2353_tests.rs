@@ -299,7 +299,9 @@ pipe(
 
     let diags = get_diagnostics(source);
     assert!(
-        !diags.iter().any(|d| d.0 == 2353 || d.0 == 7006 || d.0 == 2345),
+        !diags
+            .iter()
+            .any(|d| d.0 == 2353 || d.0 == 7006 || d.0 == 2345),
         "Nested generic callee should infer from its own signature before outer call compatibility, got: {diags:?}"
     );
     assert!(diags.is_empty(), "Expected no diagnostics, got: {diags:?}");
