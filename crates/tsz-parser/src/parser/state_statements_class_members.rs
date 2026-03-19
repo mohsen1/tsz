@@ -966,6 +966,11 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
+        if self.look_ahead_is_class_body_variable_statement() {
+            self.recover_invalid_class_body_variable_statement();
+            return NodeIndex::NONE;
+        }
+
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
         let diag_len_before_modifiers = self.parse_diagnostics.len();
         let parsed_modifiers = self.parse_class_member_modifiers();
@@ -1707,6 +1712,59 @@ impl ParserState {
             {
                 self.next_token();
             }
+        }
+
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+        }
+    }
+
+    fn look_ahead_is_class_body_variable_statement(&mut self) -> bool {
+        if !matches!(self.token(), SyntaxKind::VarKeyword | SyntaxKind::LetKeyword) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let is_match = if self.scanner.has_preceding_line_break() {
+            false
+        } else if matches!(
+            self.token(),
+            SyntaxKind::OpenBraceToken | SyntaxKind::OpenBracketToken
+        ) {
+            true
+        } else if self.is_identifier_or_keyword() || self.is_token(SyntaxKind::PrivateIdentifier) {
+            self.next_token();
+            !self.scanner.has_preceding_line_break() && !self.is_token(SyntaxKind::OpenParenToken)
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_match
+    }
+
+    fn recover_invalid_class_body_variable_statement(&mut self) {
+        self.parse_error_at_current_token(
+            "Unexpected token. A constructor, method, accessor, or property was expected.",
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        );
+
+        while !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            self.next_token();
         }
 
         if self.is_token(SyntaxKind::CloseBraceToken) {
