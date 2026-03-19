@@ -135,3 +135,96 @@ pub fn format_message(message: &str, args: &[&str]) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_diagnostic_finds_known_code_and_rejects_unknown_code() {
+        let known = data::DIAGNOSTIC_MESSAGES
+            .first()
+            .copied()
+            .expect("generated diagnostic table should not be empty");
+
+        let lookup = lookup_diagnostic(known.code).expect("known code should resolve");
+        assert_eq!(lookup, known);
+        assert!(lookup_diagnostic(u32::MAX).is_none());
+    }
+
+    #[test]
+    fn get_message_template_matches_lookup_and_returns_none_for_unknown_code() {
+        let known = data::DIAGNOSTIC_MESSAGES
+            .first()
+            .copied()
+            .expect("generated diagnostic table should not be empty");
+
+        assert_eq!(get_message_template(known.code), Some(known.message));
+        assert_eq!(get_message_template(u32::MAX), None);
+    }
+
+    #[test]
+    fn format_message_replaces_placeholders_and_leaves_missing_ones_intact() {
+        let formatted = format_message("{0} + {1} + {0} + {2}", &["a", "b"]);
+        assert_eq!(formatted, "a + b + a + {2}");
+    }
+
+    #[test]
+    fn diagnostic_from_code_uses_table_entry_for_known_code() {
+        let known = data::DIAGNOSTIC_MESSAGES
+            .first()
+            .copied()
+            .expect("generated diagnostic table should not be empty");
+        let args = ["left", "right", "extra"];
+        let expected_message = format_message(known.message, &args);
+
+        let diagnostic = Diagnostic::from_code(known.code, "test.ts", 4, 8, &args);
+
+        assert_eq!(diagnostic.category, known.category);
+        assert_eq!(diagnostic.code, known.code);
+        assert_eq!(diagnostic.file, "test.ts");
+        assert_eq!(diagnostic.start, 4);
+        assert_eq!(diagnostic.length, 8);
+        assert_eq!(diagnostic.message_text, expected_message);
+        assert!(diagnostic.related_information.is_empty());
+    }
+
+    #[test]
+    fn diagnostic_from_code_uses_unknown_fallback_for_missing_code() {
+        let result = std::panic::catch_unwind(|| {
+            Diagnostic::from_code(u32::MAX, "missing.ts", 1, 2, &["ignored"])
+        });
+
+        if cfg!(debug_assertions) {
+            assert!(result.is_err(), "debug builds should trip the diagnostic lookup assertion");
+        } else {
+            let diagnostic = result.expect("release builds should return the fallback diagnostic");
+            assert_eq!(diagnostic.category, DiagnosticCategory::Error);
+            assert_eq!(diagnostic.code, u32::MAX);
+            assert_eq!(diagnostic.file, "missing.ts");
+            assert_eq!(diagnostic.start, 1);
+            assert_eq!(diagnostic.length, 2);
+            assert_eq!(diagnostic.message_text, "Unknown diagnostic");
+            assert!(diagnostic.related_information.is_empty());
+        }
+    }
+
+    #[test]
+    fn diagnostic_with_related_appends_message_information() {
+        let diagnostic = Diagnostic::error("file.ts", 10, 3, "message", 1234).with_related(
+            "other.ts",
+            20,
+            5,
+            "see also",
+        );
+
+        assert_eq!(diagnostic.related_information.len(), 1);
+        let related = &diagnostic.related_information[0];
+        assert_eq!(related.category, DiagnosticCategory::Message);
+        assert_eq!(related.code, 0);
+        assert_eq!(related.file, "other.ts");
+        assert_eq!(related.start, 20);
+        assert_eq!(related.length, 5);
+        assert_eq!(related.message_text, "see also");
+    }
+}
