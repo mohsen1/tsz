@@ -164,3 +164,41 @@ const x: R1 = 42; // should error: number not assignable to string
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_utility_types_function_keys_generic_pick_has_no_false_diagnostics() {
+    let source = r#"
+type NonUndefined<A> = A extends undefined ? never : A;
+type FunctionKeys<T extends object> = {
+  [K in keyof T]-?: NonUndefined<T[K]> extends (...args: any[]) => unknown ? K : never;
+}[keyof T];
+type FunctionProps<T extends object> = Pick<T, FunctionKeys<T>>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Expected utility-types FunctionKeys/Pick pattern to check cleanly, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

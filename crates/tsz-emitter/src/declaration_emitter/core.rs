@@ -1650,7 +1650,14 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(method.name)
                     .and_then(|node| self.arena.get_computed_property(node))
                     .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-                    .is_some_and(|t| t == tsz_solver::types::TypeId::ANY));
+                    .is_some_and(|t| {
+                        t == tsz_solver::types::TypeId::ANY
+                            || self.type_interner.is_some_and(|interner| {
+                                !tsz_solver::type_queries::is_type_usable_as_property_name(
+                                    interner, t,
+                                )
+                            })
+                    }));
 
         if use_property_syntax {
             self.write(": ");

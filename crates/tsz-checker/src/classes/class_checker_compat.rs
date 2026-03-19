@@ -1276,21 +1276,13 @@ impl<'a> CheckerState<'a> {
         _depth: usize,
         skip_private: bool,
     ) -> Option<ClassMemberInfo> {
-        use tsz_solver::recursion::{RecursionGuard, RecursionProfile};
-
-        // Create a recursion guard for cycle detection
-        let mut guard = RecursionGuard::with_profile(RecursionProfile::CheckerRecursion);
-
-        self.find_member_in_class_chain_impl(
-            class_idx,
-            target_name,
-            target_is_static,
-            skip_private,
-            &mut guard,
-        )
+        self.summarize_class_chain(class_idx)
+            .lookup(target_name, target_is_static, skip_private)
+            .cloned()
     }
 
     /// Internal implementation of `find_member_in_class_chain` with recursion guard.
+    #[allow(dead_code)]
     fn find_member_in_class_chain_impl(
         &mut self,
         class_idx: NodeIndex,

@@ -76,6 +76,55 @@ struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
 }
 
 impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
+    fn index_is_symbolic_key_space(&self, constraint: TypeId) -> bool {
+        if self.index_type != constraint {
+            return false;
+        }
+
+        !matches!(
+            self.evaluator.interner().lookup(self.index_type),
+            Some(
+                TypeData::Literal(_)
+                    | TypeData::Intrinsic(
+                        IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol
+                    )
+            )
+        )
+    }
+
+    fn instantiate_mapped_template_with_constraint_param(
+        &mut self,
+        mapped: &crate::types::MappedType,
+    ) -> TypeId {
+        let constrained_key = self
+            .evaluator
+            .interner()
+            .type_param(TypeParamInfo {
+                name: mapped.type_param.name,
+                constraint: Some(mapped.constraint),
+                default: mapped.type_param.default,
+                is_const: mapped.type_param.is_const,
+            });
+
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, constrained_key);
+
+        let mut value_type = self.evaluator.evaluate(instantiate_type(
+            self.evaluator.interner(),
+            mapped.template,
+            &subst,
+        ));
+
+        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+            value_type = self
+                .evaluator
+                .interner()
+                .union2(value_type, TypeId::UNDEFINED);
+        }
+
+        value_type
+    }
+
     fn evaluate_apparent_primitive(&mut self, kind: IntrinsicKind) -> Option<TypeId> {
         match kind {
             IntrinsicKind::String
@@ -625,6 +674,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             || self.intersection_contains_mapped_constraint(mapped.constraint);
 
         if can_substitute {
+            // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
+            // When the index is the whole symbolic key space (typically `keyof T`),
+            // substituting `K := Keys` collapses per-key conditionals like
+            // `{ [K in keyof T]: T[K] extends U ? K : never }[keyof T]` into
+            // `T[keyof T] extends U ? keyof T : never`, which is unsound.
+            // Preserve the per-key relationship by evaluating the template against a
+            // constrained iteration variable instead of the whole key-space type.
+            if self.index_is_symbolic_key_space(mapped.constraint) {
+                return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
+            }
+
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, self.index_type);
 

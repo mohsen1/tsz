@@ -395,7 +395,7 @@ impl<'a> CheckerState<'a> {
                 if tuple_context.is_some() {
                     let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
                     match helper.get_tuple_element_type_with_count(index, elem_count) {
-                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
+                        Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
                     }
                 } else {
@@ -415,7 +415,7 @@ impl<'a> CheckerState<'a> {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
                     match elem_ctx_type {
-                        Some(ty) => crate::context::TypingRequest::with_contextual_type(ty),
+                        Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
                     }
                 }
@@ -579,7 +579,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use contextual element type when available for better inference
-        if let Some(ref helper) = ctx_helper
+        if !request.origin.is_assertion()
+            && let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
