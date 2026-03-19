@@ -2080,6 +2080,101 @@ let err = <Comp><div /><div /></Comp>;
 }
 
 #[test]
+fn jsx_children_multiline_formatting_whitespace_does_not_break_array_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: JSX.Element | JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let ok =
+    <Comp>
+
+
+        <div />
+        <div />
+    </Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Formatting-only JSX whitespace should not emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Formatting-only JSX whitespace should not emit TS2746, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_text_mismatch_reports_ts2747_without_ts2322() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: JSX.Element | JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let err = <Comp><div />  <div /></Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+        ),
+        "Inline JSX whitespace text should emit TS2747, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Text-child mismatch should not also emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_render_prop_multiple_children_emit_ts2322_not_ts2746() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface User {{
+    name: string;
+}}
+interface Prop {{
+    children: (user: User) => JSX.Element;
+}}
+function FetchUser(p: Prop) {{ return <div></div>; }}
+let err =
+    <FetchUser>
+        {{ user => <div /> }}
+        {{ user => <div /> }}
+    </FetchUser>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Render-prop children in a JSX body should emit one TS2322 per invalid child, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "Render-prop children should not be collapsed into TS2746, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_whitespace_only_text_ignored() {
     // Whitespace-only text children should not count as children
     let source = format!(

@@ -4,6 +4,7 @@
 //! missing-required-props (TS2741), intrinsic-attribute-only fallback, and
 //! generic SFC spread checking.
 
+use crate::context::TypingRequest;
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -79,6 +80,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         attributes_idx: NodeIndex,
         child_count: usize,
+        has_text_child: bool,
         tag_name_idx: NodeIndex,
     ) {
         let Some(children_type) = self.get_jsx_children_prop_type(props_type) else {
@@ -102,11 +104,25 @@ impl<'a> CheckerState<'a> {
             }
             _ => {
                 if self.type_allows_multiple_children(children_type) {
+                    if has_text_child && !self.children_type_accepts_text(children_type) {
+                        return;
+                    }
                     self.check_jsx_multiple_children_assignable(
                         attributes_idx,
                         children_type,
                         tag_name_idx,
                     );
+                    return;
+                }
+
+                let child_nodes = self.get_jsx_body_child_nodes(attributes_idx).unwrap_or_default();
+                if !self.type_is_standard_jsx_child_type(children_type)
+                    && self.report_invalid_jsx_multi_children(
+                        attributes_idx,
+                        children_type,
+                        &child_nodes,
+                    )
+                {
                     return;
                 }
 
@@ -132,6 +148,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(children_type)
+    }
+
+    fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
+        self.is_assignable_to(TypeId::STRING, children_type)
     }
 
     fn check_jsx_multiple_children_assignable(
@@ -197,6 +217,63 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.factory().array(element_type))
     }
 
+    fn report_invalid_jsx_multi_children(
+        &mut self,
+        attributes_idx: NodeIndex,
+        children_type: TypeId,
+        child_nodes: &[NodeIndex],
+    ) -> bool {
+        let valid_child_type = self.get_valid_jsx_multi_child_type();
+        let contextual_type = self.get_jsx_opening_element_from_attributes(attributes_idx).and_then(
+            |opening_idx| self.get_jsx_children_contextual_type(opening_idx),
+        );
+        let mut emitted = false;
+
+        for &child_idx in child_nodes {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16 {
+                continue;
+            }
+
+            let (diag_node, type_node) = if child_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                if let Some(expr_data) = self.ctx.arena.get_jsx_expression(child_node) {
+                    let expr_idx = expr_data.expression;
+                    (expr_idx, expr_idx)
+                } else {
+                    (child_idx, child_idx)
+                }
+            } else {
+                (child_idx, child_idx)
+            };
+            let child_request = TypingRequest::with_contextual_type(
+                contextual_type.unwrap_or(children_type),
+            );
+            let child_type = self.compute_type_of_node_with_request(type_node, &child_request);
+            if matches!(child_type, TypeId::ANY | TypeId::ERROR) {
+                continue;
+            }
+            if self.is_assignable_to(child_type, valid_child_type) {
+                continue;
+            }
+
+            let source_type = self.format_type(child_type);
+            let message = format!(
+                "Type '{source_type}' is not assignable to type 'boolean | any[] | ReactChild'."
+            );
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                diag_node,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            emitted = true;
+        }
+
+        emitted
+    }
+
     fn get_jsx_body_child_nodes(&self, attributes_idx: NodeIndex) -> Option<Vec<NodeIndex>> {
         let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
         let opening_node = self.ctx.arena.get(opening_idx)?;
@@ -213,6 +290,15 @@ impl<'a> CheckerState<'a> {
             let Some(child_node) = self.ctx.arena.get(child_idx) else {
                 continue;
             };
+            if child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
+                && let Some(text) = self.ctx.arena.get_jsx_text(child_node)
+            {
+                let is_all_whitespace = text.text.chars().all(|c| c.is_ascii_whitespace());
+                let has_newline = text.text.contains('\n');
+                if is_all_whitespace && has_newline {
+                    continue;
+                }
+            }
             if child_node.kind == syntax_kind_ext::JSX_EXPRESSION
                 && let Some(expr_data) = self.ctx.arena.get_jsx_expression(child_node)
                 && expr_data.expression == NodeIndex::NONE
@@ -223,6 +309,31 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(child_nodes)
+    }
+
+    fn get_valid_jsx_multi_child_type(&mut self) -> TypeId {
+        let mut members = vec![
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            self.ctx.types.factory().array(TypeId::ANY),
+        ];
+        if let Some(element_type) = self.get_jsx_element_type_for_check() {
+            members.push(element_type);
+        }
+        self.ctx.types.factory().union(members)
+    }
+
+    fn get_jsx_opening_element_from_attributes(&self, attributes_idx: NodeIndex) -> Option<NodeIndex> {
+        let opening_idx = self.ctx.arena.get_extended(attributes_idx)?.parent;
+        let opening_node = self.ctx.arena.get(opening_idx)?;
+        self.ctx.arena.get_jsx_opening(opening_node)?;
+        Some(opening_idx)
+    }
+
+    fn type_is_standard_jsx_child_type(&mut self, type_id: TypeId) -> bool {
+        let valid_child_type = self.get_valid_jsx_multi_child_type();
+        self.is_assignable_to(type_id, valid_child_type)
     }
 
     fn type_has_tuple_like_multiple_children(&mut self, type_id: TypeId) -> bool {
