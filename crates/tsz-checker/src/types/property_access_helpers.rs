@@ -10,6 +10,7 @@ use crate::state::CheckerState;
 use std::rc::Rc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -180,6 +181,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // CommonJS exports behave like namespace-like value objects in JS/checkJs.
+        // When an exported member is function-typed, assignments such as
+        // `module.exports.f.self = module.exports.f` should use the same expando
+        // path as plain `f.self = ...`.
+        if self.current_file_commonjs_export_member_name(object_expr_idx).is_some() {
+            return true;
+        }
+
         false
     }
 
@@ -286,8 +295,8 @@ impl<'a> CheckerState<'a> {
         if self.expando_read_is_self_default_initializer(property_access_idx) {
             return false;
         }
-        if self.is_commonjs_module_exports_root(object_expr_idx) {
-            return false;
+        if self.is_current_file_commonjs_export_base_for_expando(object_expr_idx) {
+            return self.commonjs_export_read_before_assignment(property_access_idx, property_name);
         }
         if !self.expando_read_is_within_initializing_scope(property_access_idx, object_expr_idx) {
             return false;
@@ -314,8 +323,173 @@ impl<'a> CheckerState<'a> {
             || self.is_js_prototype_read_root(object_expr_idx, property_name)
     }
 
-    fn is_commonjs_module_exports_root(&self, object_expr_idx: NodeIndex) -> bool {
-        self.expression_text(object_expr_idx).as_deref() == Some("module.exports")
+    fn current_file_commonjs_export_member_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base_for_expando(access.expression) {
+                    return None;
+                }
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base_for_expando(access.expression) {
+                    return None;
+                }
+                self.commonjs_static_member_name_for_expando(access.name_or_argument)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_current_file_commonjs_export_base_for_expando(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+                && self.resolve_identifier_symbol_without_tracking(idx).is_none();
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| {
+                ident.escaped_text == "module"
+                    && self
+                        .resolve_identifier_symbol_without_tracking(access.expression)
+                        .is_none()
+            })
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn commonjs_static_member_name_for_expando(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn commonjs_export_read_before_assignment(
+        &self,
+        property_access_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(read_node) = self.ctx.arena.get(property_access_idx) else {
+            return false;
+        };
+        let read_pos = read_node.pos;
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        let mut assigned_before = false;
+        let mut assigned_after = false;
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_commonjs_export_assignment_order(
+                stmt_idx,
+                property_name,
+                read_pos,
+                &mut assigned_before,
+                &mut assigned_after,
+            );
+            if assigned_before && assigned_after {
+                break;
+            }
+        }
+
+        assigned_after && !assigned_before
+    }
+
+    fn collect_commonjs_export_assignment_order(
+        &self,
+        idx: NodeIndex,
+        property_name: &str,
+        read_pos: u32,
+        assigned_before: &mut bool,
+        assigned_after: &mut bool,
+    ) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && let Some(name) = self.commonjs_export_assignment_name(binary.left)
+            && name == property_name
+        {
+            if node.pos < read_pos {
+                *assigned_before = true;
+            } else if node.pos > read_pos {
+                *assigned_after = true;
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(idx) {
+            self.collect_commonjs_export_assignment_order(
+                child_idx,
+                property_name,
+                read_pos,
+                assigned_before,
+                assigned_after,
+            );
+        }
+    }
+
+    fn commonjs_export_assignment_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base_for_expando(access.expression) {
+                    return None;
+                }
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base_for_expando(access.expression) {
+                    return None;
+                }
+                self.commonjs_static_member_name_for_expando(access.name_or_argument)
+            }
+            _ => None,
+        }
     }
 
     fn is_js_prototype_read_root(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {

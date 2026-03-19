@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-03-19T20:09:51Z",
-  "git_sha": "b9ba63467252b5e1e7fa80203ca294962dc1a408",
+  "timestamp": "2026-03-19T21:13:02Z",
+  "git_sha": "3b7904e8a2526397b6afa53e9c6987a675383902",
   "summary": {
     "total_tests": 12581,
-    "passed": 10910,
-    "failed": 1671,
+    "passed": 10914,
+    "failed": 1667,
     "pass_rate": 86.7
   },
   "areas_by_pass_rate": [
     {
       "area": "/Users",
-      "total": 12578,
-      "passed": 10910,
-      "failed": 1668,
-      "pass_rate": 86.74
+      "total": 12579,
+      "passed": 10914,
+      "failed": 1665,
+      "pass_rate": 86.76
     }
   ],
   "top_failures": [
@@ -532,11 +532,11 @@
       "count": 2
     },
     {
-      "code": "TS2551",
+      "code": "TS1212",
       "count": 2
     },
     {
-      "code": "TS1212",
+      "code": "TS2551",
       "count": 2
     },
     {
@@ -547,7 +547,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2339",
-      "count": 32
+      "count": 30
     },
     {
       "code": "TS2322",
@@ -559,7 +559,7 @@
     },
     {
       "code": "TS2345",
-      "count": 16
+      "count": 17
     },
     {
       "code": "TS2875",
@@ -753,7 +753,7 @@
     },
     {
       "code": "TS2339",
-      "count": 34
+      "count": 32
     },
     {
       "code": "TS2322",
@@ -761,7 +761,7 @@
     },
     {
       "code": "TS2345",
-      "count": 24
+      "count": 25
     },
     {
       "code": "TS7006",
@@ -852,11 +852,11 @@
       "count": 1
     },
     {
-      "code": "TS2879",
+      "code": "TS2874",
       "count": 1
     },
     {
-      "code": "TS2874",
+      "code": "TS2879",
       "count": 1
     },
     {
@@ -1041,11 +1041,11 @@
     },
     {
       "code": "TS2339",
-      "count": 70
+      "count": 67
     },
     {
       "code": "TS2345",
-      "count": 54
+      "count": 55
     },
     {
       "code": "TS2503",
@@ -1189,10 +1189,10 @@
     }
   ],
   "categories": {
-    "false_positive": 187,
+    "false_positive": 186,
     "all_missing": 245,
-    "wrong_code": 627,
-    "fingerprint_only": 605,
-    "close_to_passing": 432
+    "wrong_code": 626,
+    "fingerprint_only": 604,
+    "close_to_passing": 431
   }
 }
