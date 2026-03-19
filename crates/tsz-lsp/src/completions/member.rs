@@ -634,6 +634,11 @@ impl<'a> Completions<'a> {
                 if kind == CompletionItemKind::Method {
                     item.insert_text = Some(format!("{name}($1)"));
                     item.is_snippet = true;
+                    // Extract method signature from source text for display.
+                    item.detail = self.extract_method_signature_from_source(member_idx);
+                } else if kind == CompletionItemKind::Property {
+                    // Extract property type from source for display.
+                    item.detail = self.extract_property_type_from_source(member_idx);
                 }
                 items.push(item);
             }
@@ -1465,6 +1470,86 @@ impl<'a> Completions<'a> {
             }
         }
         false
+    }
+
+    /// Extract a method signature string (e.g. `(): void`) from the source text
+    /// of a method declaration node. Used by the `this.` AST fallback to provide
+    /// type detail when the checker cannot resolve the type.
+    fn extract_method_signature_from_source(&self, method_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(method_idx)?;
+        let start = node.pos as usize;
+        let end = node.end.min(self.source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let text = &self.source_text[start..end];
+        // Find the opening paren of the parameter list
+        let open = text.find('(')?;
+        // Find the matching close paren
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, ch) in text[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        // Check for return type annotation after the close paren
+        let after_params = text[close + 1..].trim_start();
+        if let Some(rest) = after_params.strip_prefix(':') {
+            let return_type = rest.trim_start();
+            // Take until `{` or end of line
+            let end_pos = return_type.find('{')
+                .or_else(|| return_type.find('\n'))
+                .unwrap_or(return_type.len());
+            let return_type = return_type[..end_pos].trim();
+            Some(format!("({}): {}", &text[open + 1..close], return_type))
+        } else {
+            Some(format!("({}): void", &text[open + 1..close]))
+        }
+    }
+
+    /// Extract a property type string (e.g. `number`) from the source text of a
+    /// property declaration node. Used by the `this.` AST fallback.
+    fn extract_property_type_from_source(&self, prop_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(prop_idx)?;
+        let prop = self.arena.get_property_decl(node)?;
+        if prop.type_annotation.is_some() {
+            let type_node = self.arena.get(prop.type_annotation)?;
+            let start = type_node.pos as usize;
+            let end = type_node.end.min(self.source_text.len() as u32) as usize;
+            if start < end {
+                return Some(self.source_text[start..end].trim().to_string());
+            }
+        }
+        // If there's an initializer, try to infer the type name from it
+        if prop.initializer.is_some() {
+            let init_node = self.arena.get(prop.initializer)?;
+            let start = init_node.pos as usize;
+            let end = init_node.end.min(self.source_text.len() as u32) as usize;
+            if start < end {
+                let text = self.source_text[start..end].trim();
+                // Simple literal type inference
+                if text.parse::<f64>().is_ok() {
+                    return Some("number".to_string());
+                }
+                if text == "true" || text == "false" {
+                    return Some("boolean".to_string());
+                }
+                if text.starts_with('"') || text.starts_with('\'') || text.starts_with('`') {
+                    return Some("string".to_string());
+                }
+            }
+        }
+        None
     }
 
     pub(super) fn class_extends_expression(&self, class_idx: NodeIndex) -> Option<NodeIndex> {

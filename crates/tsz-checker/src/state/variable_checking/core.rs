@@ -981,19 +981,17 @@ impl<'a> CheckerState<'a> {
                 // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
                 // a=number, b=string (tuple), not a=string|number (array).
                 let request = if is_destructuring {
-                    let request = checker.declaration_pattern_initializer_request(
+                    checker.declaration_pattern_initializer_request(
                         var_decl.name,
                         var_decl.initializer,
                         typing_request,
-                    );
-                    request
+                    )
                 } else {
-                    let request = checker.redeclaration_initializer_request(
+                    checker.redeclaration_initializer_request(
                         decl_idx,
                         var_decl.name,
                         var_decl.initializer,
-                    );
-                    request
+                    )
                 };
                 let mut init_type =
                     checker.get_type_of_node_with_request(var_decl.initializer, &request);

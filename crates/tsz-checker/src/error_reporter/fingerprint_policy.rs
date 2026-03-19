@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
                 let src_str = self.format_type_diagnostic(*source_type);
                 let names: Vec<String> = property_names
                     .iter()
-                    .filter(|a| !is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**a)))
+                    .filter(|a| !is_object_prototype_method(self.ctx.types.resolve_atom_ref(**a)))
                     .map(|a| self.ctx.types.resolve_atom_ref(*a).to_string())
                     .collect();
                 if names.is_empty() {
@@ -691,15 +691,13 @@ impl<'a> CheckerState<'a> {
         };
         if let Some(args) = &call.arguments
             && let Some(&first) = args.nodes.first()
+            && let Some(arg_node) = self.ctx.arena.get(first)
+            && arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.is_concat_call(call.expression)
+            && let Some(array) = self.ctx.arena.get_literal_expr(arg_node)
+            && let Some(&first_elem) = array.elements.nodes.first()
         {
-            if let Some(arg_node) = self.ctx.arena.get(first)
-                && arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                && self.is_concat_call(call.expression)
-                && let Some(array) = self.ctx.arena.get_literal_expr(arg_node)
-                && let Some(&first_elem) = array.elements.nodes.first()
-            {
-                return first_elem;
-            }
+            return first_elem;
         }
         self.call_primary_anchor_node(call_idx)
     }
