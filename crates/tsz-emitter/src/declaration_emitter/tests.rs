@@ -102,7 +102,11 @@ fn find_class_symbol(
         .unwrap_or_else(|| panic!("missing symbol for class {name}"))
 }
 
-fn find_interface_symbol(parser: &ParserState, binder: &BinderState, name: &str) -> tsz_binder::SymbolId {
+fn find_interface_symbol(
+    parser: &ParserState,
+    binder: &BinderState,
+    name: &str,
+) -> tsz_binder::SymbolId {
     parser
         .arena
         .nodes

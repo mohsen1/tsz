@@ -149,9 +149,18 @@ fn test_mapped_keyof_intersection_prunes_impossible_discriminant_branch() {
 
     let names =
         collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
-    assert!(names.contains(&v_name), "expected mapped keys to include 'v'");
-    assert!(names.contains(&a_name), "expected mapped keys to include 'a'");
-    assert!(!names.contains(&b_name), "did not expect mapped keys to include 'b'");
+    assert!(
+        names.contains(&v_name),
+        "expected mapped keys to include 'v'"
+    );
+    assert!(
+        names.contains(&a_name),
+        "expected mapped keys to include 'a'"
+    );
+    assert!(
+        !names.contains(&b_name),
+        "did not expect mapped keys to include 'b'"
+    );
 }
 
 #[test]
