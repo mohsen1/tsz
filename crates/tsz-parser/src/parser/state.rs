@@ -780,7 +780,7 @@ impl ParserState {
             // At EOF, force-emit unless the last error was an unterminated literal
             // (TS1002/TS1160/TS1161) — these scanner errors consume tokens past
             // the `)` and the missing `)` is a cascading artifact.
-            let force_emit = kind == SyntaxKind::CloseParenToken
+            let force_emit = (kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
                     || self.is_token(SyntaxKind::CloseBraceToken)
                     || ((self.is_identifier_or_keyword()
@@ -788,7 +788,11 @@ impl ParserState {
                         && self.last_error_pos != 0
                         && self.token_pos().abs_diff(self.last_error_pos) <= 3)
                     || (self.is_token(SyntaxKind::EndOfFileToken)
-                        && !self.last_error_was_unterminated_literal()));
+                        && !self.last_error_was_unterminated_literal())))
+                || (kind == SyntaxKind::CloseBraceToken
+                    && self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.last_error_was_unterminated_literal()
+                    && self.last_error_pos != self.token_pos());
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
