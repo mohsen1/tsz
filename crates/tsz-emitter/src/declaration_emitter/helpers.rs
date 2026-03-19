@@ -6715,8 +6715,9 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                    if let Some(clause_node) = self.arena.get(export.export_clause) {
+                if let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                {
                         if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
                             && let Some(class) = self.arena.get_class(clause_node)
                             && let Some(type_id) = self.synthetic_class_extends_alias_type_id(
@@ -6729,7 +6730,6 @@ impl<'a> DeclarationEmitter<'a> {
                                 export.export_clause,
                             );
                         }
-                    }
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {

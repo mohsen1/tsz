@@ -360,9 +360,9 @@ impl<'a> CheckerState<'a> {
 
     fn format_property_key_display(&self, key: &PropertyKey) -> String {
         match key {
-            PropertyKey::Computed(ComputedKey::Ident(value)) => format!("[{value}]"),
+            PropertyKey::Computed(ComputedKey::Ident(value))
+            | PropertyKey::Computed(ComputedKey::Number(value)) => format!("[{value}]"),
             PropertyKey::Computed(ComputedKey::String(value)) => format!("[\"{value}\"]"),
-            PropertyKey::Computed(ComputedKey::Number(value)) => format!("[{value}]"),
             PropertyKey::Private(value) => {
                 if value.starts_with('#') {
                     value.clone()
