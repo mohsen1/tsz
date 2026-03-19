@@ -543,7 +543,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         let mapped = self
             .evaluator
             .interner()
-            .mapped_type(MappedTypeId(mapped_id));
+            .get_mapped(MappedTypeId(mapped_id));
 
         // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
         // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type

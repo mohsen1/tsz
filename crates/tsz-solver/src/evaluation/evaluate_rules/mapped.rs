@@ -578,7 +578,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // through T's constraint, but we should keep the mapped type deferred to
         // preserve correct structural comparison with other deferred mapped types.
         if let Some(TypeData::Mapped(inner_mapped_id)) = self.interner().lookup(source) {
-            let inner_mapped = self.interner().mapped_type(inner_mapped_id);
+            let inner_mapped = self.interner().get_mapped(inner_mapped_id);
             return self.is_mapped_type_over_type_parameter(&inner_mapped);
         }
 
@@ -661,8 +661,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
         let members = match self.interner().lookup(constraint) {
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner().conditional_type(cond_id);
-                return self.evaluate_conditional(cond.as_ref());
+                let cond = self.interner().get_conditional(cond_id);
+                return self.evaluate_conditional(&cond);
             }
             Some(TypeData::Literal(LiteralValue::String(_))) => {
                 return constraint;
@@ -993,7 +993,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .any(|&m| self.find_index_access_into_any(m, param_name))
             }
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner().conditional_type(cond_id);
+                let cond = self.interner().get_conditional(cond_id);
                 self.find_index_access_into_any(cond.check_type, param_name)
                     || self.find_index_access_into_any(cond.extends_type, param_name)
                     || self.find_index_access_into_any(cond.true_type, param_name)
