@@ -198,6 +198,12 @@ impl<'a> TypePrinter<'a> {
             return false;
         }
 
+        if let Some(is_nameable_statement) =
+            self.declaration_statement_container_is_nameable(node_arena, decl_idx)
+        {
+            return is_nameable_statement;
+        }
+
         let mut current = node_arena.get_extended(decl_idx).map(|ext| ext.parent);
         while let Some(parent_idx) = current {
             let Some(parent_node) = node_arena.get(parent_idx) else {
@@ -223,6 +229,38 @@ impl<'a> TypePrinter<'a> {
         }
 
         true
+    }
+
+    fn declaration_statement_container_is_nameable(
+        &self,
+        node_arena: &NodeArena,
+        decl_idx: tsz_parser::NodeIndex,
+    ) -> Option<bool> {
+        for node in &node_arena.nodes {
+            if node_arena
+                .get_source_file(node)
+                .is_some_and(|source_file| source_file.statements.nodes.contains(&decl_idx))
+            {
+                return Some(true);
+            }
+
+            if node_arena
+                .get_module_block(node)
+                .and_then(|module_block| module_block.statements.as_ref())
+                .is_some_and(|statements| statements.nodes.contains(&decl_idx))
+            {
+                return Some(true);
+            }
+
+            if node_arena
+                .get_block(node)
+                .is_some_and(|block| block.statements.nodes.contains(&decl_idx))
+            {
+                return Some(false);
+            }
+        }
+
+        None
     }
 
     fn symbol_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
@@ -1636,7 +1674,8 @@ impl<'a> TypePrinter<'a> {
         let Some(symbol) = arena.get(sym_id) else {
             return false;
         };
-        !symbol.parent.is_some()
+        symbol.declarations.is_empty()
+            && !symbol.parent.is_some()
             && self.resolve_symbol_module_path(sym_id).is_none()
             && !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some())
     }

@@ -2,7 +2,8 @@ use super::*;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_solver::{
     CallSignature, CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
     SymbolRef, TupleElement, TypeId, TypeInterner,
@@ -71,6 +72,36 @@ fn emit_js_dts_with_usage_analysis(source: &str) -> String {
     emitter.emit(root)
 }
 
+fn find_class_symbol(
+    parser: &ParserState,
+    binder: &BinderState,
+    name: &str,
+    kind: u16,
+) -> tsz_binder::SymbolId {
+    let class_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == kind)
+                .then_some(NodeIndex(idx as u32))
+                .and_then(|idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_class(node))
+                        .filter(|class| parser.arena.get_identifier_text(class.name) == Some(name))
+                        .map(|_| idx)
+                })
+        })
+        .unwrap_or_else(|| panic!("missing class node for {name}"));
+
+    binder
+        .get_node_symbol(class_idx)
+        .unwrap_or_else(|| panic!("missing symbol for class {name}"))
+}
+
 #[test]
 fn test_same_file_symbol_module_path_is_none() {
     let source = r#"
@@ -83,7 +114,6 @@ namespace m1 {
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
-
     let current_arena = Arc::new(parser.arena.clone());
     let arena_addr = Arc::as_ptr(&current_arena) as usize;
     let mut arena_to_path = FxHashMap::default();
@@ -104,6 +134,142 @@ namespace m1 {
     assert!(
         emitter.resolve_symbol_module_path(sym_id).is_none(),
         "Expected same-file symbol to have no module path"
+    );
+}
+
+#[test]
+fn test_local_class_declaration_constructor_type_is_inlined() {
+    let source = r#"
+export function middle() {
+    abstract class Middle {
+        get a(): number { return 1; }
+        set a(arg: number) {}
+    }
+    return Middle;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let middle_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "Middle",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+
+    let interner = TypeInterner::new();
+    let a_atom = interner.intern_string("a");
+    let mut accessor = PropertyInfo::new(a_atom, TypeId::NUMBER);
+    accessor.write_type = TypeId::NUMBER;
+    accessor.is_class_prototype = true;
+    accessor.parent_id = Some(middle_sym);
+    accessor.declaration_order = 1;
+
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![accessor],
+        string_index: None,
+        number_index: None,
+        symbol: Some(middle_sym),
+    });
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance_type)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(middle_sym),
+        is_abstract: true,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(ctor_type);
+
+    assert!(
+        !printed.contains("Middle"),
+        "Did not expect local class declaration name to leak into constructor type: {printed}"
+    );
+    assert!(
+        printed.contains("abstract new () => {"),
+        "Expected local class declaration to emit as a structural constructor type: {printed}"
+    );
+    assert!(
+        printed.contains("get a(): number;"),
+        "Expected accessor getter to be preserved in structural emit: {printed}"
+    );
+    assert!(
+        printed.contains("set a(arg: number);"),
+        "Expected accessor setter to be preserved in structural emit: {printed}"
+    );
+}
+
+#[test]
+fn test_named_class_expression_constructor_type_is_inlined() {
+    let source = r#"
+export function wrapClass(param: any) {
+    return class Wrapped {
+        foo() { return param; }
+    };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let wrapped_sym = find_class_symbol(
+        &parser,
+        &binder,
+        "Wrapped",
+        tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION,
+    );
+
+    let interner = TypeInterner::new();
+    let foo_atom = interner.intern_string("foo");
+    let method_type = interner.function(FunctionShape::new(Vec::new(), TypeId::ANY));
+    let mut foo = PropertyInfo::method(foo_atom, method_type);
+    foo.is_class_prototype = true;
+    foo.parent_id = Some(wrapped_sym);
+    foo.declaration_order = 1;
+
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![foo],
+        string_index: None,
+        number_index: None,
+        symbol: Some(wrapped_sym),
+    });
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance_type)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(wrapped_sym),
+        is_abstract: false,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(ctor_type);
+
+    assert!(
+        !printed.contains("Wrapped"),
+        "Did not expect named class expression name to leak into constructor type: {printed}"
+    );
+    assert!(
+        printed.contains("new (): {"),
+        "Expected named class expression to emit as a structural constructor type: {printed}"
+    );
+    assert!(
+        printed.contains("foo(): any;"),
+        "Expected named class expression methods to be preserved structurally: {printed}"
     );
 }
 
