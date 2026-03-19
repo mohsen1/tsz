@@ -238,14 +238,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     || self.type_uses_inference_placeholders(key)
             }
             Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.type_uses_inference_placeholders(cond.check_type)
                     || self.type_uses_inference_placeholders(cond.extends_type)
                     || self.type_uses_inference_placeholders(cond.true_type)
                     || self.type_uses_inference_placeholders(cond.false_type)
             }
             Some(TypeData::Mapped(mapped_id)) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 self.type_uses_inference_placeholders(mapped.constraint)
                     || self.type_uses_inference_placeholders(mapped.template)
             }
@@ -1022,14 +1022,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .any(|prop| self.type_contains_placeholder(prop.type_id, var_map, visited))
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.type_contains_placeholder(cond.check_type, var_map, visited)
                     || self.type_contains_placeholder(cond.extends_type, var_map, visited)
                     || self.type_contains_placeholder(cond.true_type, var_map, visited)
                     || self.type_contains_placeholder(cond.false_type, var_map, visited)
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 mapped.type_param.constraint.is_some_and(|constraint| {
                     self.type_contains_placeholder(constraint, var_map, visited)
                 }) || mapped.type_param.default.is_some_and(|default| {
@@ -1190,7 +1190,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Conditional types: check all branches
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(cond_id);
+                let cond = self.interner.get_conditional(cond_id);
                 self.is_contextually_sensitive(cond.check_type)
                     || self.is_contextually_sensitive(cond.extends_type)
                     || self.is_contextually_sensitive(cond.true_type)
@@ -1199,7 +1199,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Mapped types: check constraint and template
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(mapped_id);
+                let mapped = self.interner.get_mapped(mapped_id);
                 self.is_contextually_sensitive(mapped.constraint)
                     || self.is_contextually_sensitive(mapped.template)
             }

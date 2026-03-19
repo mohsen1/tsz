@@ -29,7 +29,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [██████████████████░░] 87.5% (11,011/12,581 tests)
+Progress: [█████████████████░░░] 86.8% (10,919/12,581 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -55,11 +55,9 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████████████] 98.7% (2,604 / 2,638 tests)
+Progress: [████████████████░░░░] 80.0% (5,056 / 6,320 tests)
 ```
 <!-- FOURSLASH_END -->
 
-Of the enabled tests, 99%+ pass. ~3,682 tests are skipped pending deeper infrastructure
-(code fixes, refactoring, type-aware completions, formatting).
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".

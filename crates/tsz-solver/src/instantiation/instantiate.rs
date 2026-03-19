@@ -467,7 +467,7 @@ impl<'a> TypeInstantiator<'a> {
                         shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
-                    return self.interner.intern(key.clone());
+                    return self.interner.intern(*key);
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
                     tracing::trace!(
@@ -496,13 +496,13 @@ impl<'a> TypeInstantiator<'a> {
                         }
                     }
                     // No substitution and no instantiated constraint, return original
-                    self.interner.intern(key.clone())
+                    self.interner.intern(*key)
                 }
             }
 
             // Intrinsics don't change
             TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => {
-                self.interner.intern(key.clone())
+                self.interner.intern(*key)
             }
 
             // Lazy types might resolve to something that needs substitution
@@ -511,7 +511,7 @@ impl<'a> TypeInstantiator<'a> {
             | TypeData::BoundParameter(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => self.interner.intern(key.clone()),
+            | TypeData::ModuleNamespace(_) => self.interner.intern(*key),
 
             // Enum types: instantiate the member type (structural part)
             // The DefId (nominal identity) stays the same
@@ -533,7 +533,7 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(this_type) = self.this_type {
                     this_type
                 } else {
-                    self.interner.intern(key.clone())
+                    self.interner.intern(*key)
                 }
             }
 
@@ -661,7 +661,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Conditional: instantiate all parts
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(*cond_id);
+                let cond = self.interner.get_conditional(*cond_id);
                 if cond.is_distributive
                     && let Some(TypeData::TypeParameter(info)) =
                         self.interner.lookup(cond.check_type)
@@ -676,7 +676,7 @@ impl<'a> TypeInstantiator<'a> {
                     // so it can distribute to both branches
                     // TypeScript treats `boolean` as `true | false` for distributive conditionals
                     if substituted == TypeId::BOOLEAN {
-                        let cond_type = self.interner.conditional(*cond.as_ref());
+                        let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(2);
                         for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
                             if self.depth_exceeded {
@@ -711,7 +711,7 @@ impl<'a> TypeInstantiator<'a> {
                             self.depth_exceeded = true;
                             return TypeId::ERROR;
                         }
-                        let cond_type = self.interner.conditional(*cond.as_ref());
+                        let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(members.len());
                         for &member in members.iter() {
                             // Check depth before each distribution step
@@ -749,7 +749,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Mapped: instantiate constraint and template
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(*mapped_id);
+                let mapped = self.interner.get_mapped(*mapped_id);
                 let tp_slice = std::slice::from_ref(&mapped.type_param);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
 
@@ -957,7 +957,7 @@ impl<'a> TypeInstantiator<'a> {
 
                 if unchanged {
                     tracing::trace!("instantiate Mapped: UNCHANGED, returning original");
-                    return self.interner.mapped(*mapped);
+                    return self.interner.mapped(mapped);
                 }
 
                 let instantiated = MappedType {
@@ -1418,7 +1418,7 @@ fn template_has_lazy_application_in_composite(
             })
         }
         TypeData::Conditional(cond_id) => {
-            let cond = interner.conditional_type(cond_id);
+            let cond = interner.get_conditional(cond_id);
             template_has_lazy_application_in_composite(interner, cond.true_type)
                 || template_has_lazy_application_in_composite(interner, cond.false_type)
         }

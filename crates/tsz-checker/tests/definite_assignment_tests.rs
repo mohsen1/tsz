@@ -1166,3 +1166,74 @@ fn test_ts2564_no_error_without_strict_mode() {
         "TS2564 should not be emitted when strict mode is off, got: {diags:?}"
     );
 }
+
+// ── Regression tests: superWithTypeArgument3.ts (TS2564 false positive) ──
+
+#[test]
+fn test_ts2564_no_false_positive_generic_class_with_base() {
+    // Mirrors superWithTypeArgument3.ts: generic class C<T> with field `foo: T`,
+    // derived class D<T> extends C<T>. The field `foo` has type parameter T
+    // (unconstrained), so undefined is assignable to T and TS2564 must NOT fire
+    // for C. D inherits `foo` but declares no new properties, so TS2564 must
+    // not fire for D either.
+    let source = r"
+        class C<T> {
+            foo: T;
+            bar<U>(x: U) { }
+        }
+
+        class D<T> extends C<T> {
+            constructor() {
+                super();
+            }
+            bar() {
+                super.bar(null);
+            }
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "TS2564 must not fire for property typed as unconstrained type parameter T (superWithTypeArgument3 parity), got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_multiple_type_parameters_mixed_constraints() {
+    // Multiple type parameters: K extends string → TS2564, V unconstrained → no TS2564
+    let source = r"
+        class Map<K extends string, V> {
+            key: K;
+            value: V;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    // key: K (extends string) → TS2564 (undefined not assignable to string)
+    // value: V (unconstrained) → no TS2564 (undefined assignable to V)
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        1,
+        "Only constrained type parameter K should get TS2564, not unconstrained V, got: {diags:?}"
+    );
+}

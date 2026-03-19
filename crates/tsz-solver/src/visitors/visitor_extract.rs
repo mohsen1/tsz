@@ -124,7 +124,7 @@ pub fn intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Intri
 /// Extract the literal value if this is a literal type.
 pub fn literal_value(types: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralValue> {
     extract_type_data(types, type_id, |key| match key {
-        TypeData::Literal(value) => Some(value.clone()),
+        TypeData::Literal(value) => Some(*value),
         _ => None,
     })
 }

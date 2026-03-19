@@ -544,10 +544,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
     fn visit_conditional(&mut self, cond_id: u32) {
-        let cond = self
-            .computer
-            .db
-            .conditional_type(ConditionalTypeId(cond_id));
+        let cond = self.computer.db.get_conditional(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
         // In TypeScript, conditional types `T extends U ? X : Y` determine variance
@@ -563,7 +560,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Mapped types: constraint is contravariant, template is covariant.
     fn visit_mapped(&mut self, mapped_id: u32) {
-        let mapped = self.computer.db.mapped_type(MappedTypeId(mapped_id));
+        let mapped = self.computer.db.get_mapped(MappedTypeId(mapped_id));
         let current_polarity = self.get_current_polarity();
 
         // If the mapped type has modifiers that change optional/readonly status,

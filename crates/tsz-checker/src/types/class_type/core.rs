@@ -200,9 +200,14 @@ impl<'a> CheckerState<'a> {
             visibility: Visibility,
         }
 
-        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
-        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+        // PERF: Pre-size maps based on member count to avoid rehashing
+        let member_count = class.members.nodes.len();
+        let mut properties: FxHashMap<Atom, PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(member_count, Default::default());
+        let mut methods: FxHashMap<Atom, MethodAggregate> =
+            FxHashMap::with_capacity_and_hasher(member_count / 2, Default::default());
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> =
+            FxHashMap::with_capacity_and_hasher(4, Default::default());
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
         let mut has_nominal_members = false;
@@ -217,7 +222,7 @@ impl<'a> CheckerState<'a> {
         // reference `this.annotatedProp` can resolve correctly.
         let mut pushed_prescan_this = false;
         {
-            let mut prescan_props: Vec<PropertyInfo> = Vec::new();
+            let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;

@@ -535,10 +535,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(source_cond_id) = conditional_type_id(self.interner, source) {
             if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
-                let source_cond = self.interner.conditional_type(source_cond_id);
-                let target_cond = self.interner.conditional_type(target_cond_id);
+                let source_cond = self.interner.get_conditional(source_cond_id);
+                let target_cond = self.interner.get_conditional(target_cond_id);
                 if self
-                    .check_conditional_subtype(source_cond.as_ref(), target_cond.as_ref())
+                    .check_conditional_subtype(&source_cond, &target_cond)
                     .is_true()
                 {
                     return SubtypeResult::True;
@@ -566,13 +566,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
-            let source_cond = self.interner.conditional_type(source_cond_id);
-            return self.conditional_branches_subtype(source_cond.as_ref(), target);
+            let source_cond = self.interner.get_conditional(source_cond_id);
+            return self.conditional_branches_subtype(&source_cond, target);
         }
 
         if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
-            let target_cond = self.interner.conditional_type(target_cond_id);
-            return self.subtype_of_conditional_target(source, target_cond.as_ref());
+            let target_cond = self.interner.get_conditional(target_cond_id);
+            return self.subtype_of_conditional_target(source, &target_cond);
         }
 
         // Note: Source union/intersection handling is consolidated as follows:

@@ -158,14 +158,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .any(|&arg| self.type_contains_infer_inner(arg, visited))
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner().conditional_type(cond_id);
+                let cond = self.interner().get_conditional(cond_id);
                 self.type_contains_infer_inner(cond.check_type, visited)
                     || self.type_contains_infer_inner(cond.extends_type, visited)
                     || self.type_contains_infer_inner(cond.true_type, visited)
                     || self.type_contains_infer_inner(cond.false_type, visited)
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner().mapped_type(mapped_id);
+                let mapped = self.interner().get_mapped(mapped_id);
                 mapped
                     .type_param
                     .constraint
@@ -571,7 +571,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             TypeData::Conditional(cond_id) => {
-                let cond = self.interner().conditional_type(cond_id);
+                let cond = self.interner().get_conditional(cond_id);
                 self.bind_infer_defaults_inner(
                     cond.check_type,
                     inferred,
@@ -599,7 +599,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 )
             }
             TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner().mapped_type(mapped_id);
+                let mapped = self.interner().get_mapped(mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint
                     && !self
                         .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
