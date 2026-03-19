@@ -722,9 +722,7 @@ impl<'a> CheckerState<'a> {
             let matching_indices: Vec<usize> = target_prop_types
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &target_ty)| {
-                    self.is_subtype_of(prop_type, target_ty).then_some(i)
-                })
+                .filter_map(|(i, &target_ty)| self.is_subtype_of(prop_type, target_ty).then_some(i))
                 .collect();
 
             if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
