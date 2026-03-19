@@ -3561,7 +3561,10 @@ fn test_completions_function_parameter_in_body() {
     let position = Position::new(0, 30);
     let completions = Completions::new(arena, &binder, &line_map, source);
     let items = completions.get_completions(root, position);
-    assert!(items.is_some(), "Should have completions inside function body");
+    assert!(
+        items.is_some(),
+        "Should have completions inside function body"
+    );
     let items = items.unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(
