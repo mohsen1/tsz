@@ -353,14 +353,13 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
                     // Set accessor: type is the first parameter's type annotation
-                    if let Some(&param_idx) = accessor.parameters.nodes.first() {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            && param.type_annotation.is_some()
-                        {
-                            let param_type = self.get_type_from_type_node(param.type_annotation);
-                            return (param_type, Vec::new());
-                        }
+                    if let Some(&param_idx) = accessor.parameters.nodes.first()
+                        && let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && param.type_annotation.is_some()
+                    {
+                        let param_type = self.get_type_from_type_node(param.type_annotation);
+                        return (param_type, Vec::new());
                     }
                 }
             }
