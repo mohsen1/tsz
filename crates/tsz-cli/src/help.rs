@@ -924,17 +924,36 @@ mod tests {
 
     #[test]
     fn colorize_help_adds_bold_to_headers() {
-        // Force color off to test plain path
-        colored::control::set_override(false);
         let plain = render_help("6.0.0-dev.20260306");
-        let colorized = colorize_help(&plain);
-        assert!(!colorized.contains("\x1b[1m"));
-
-        // Force color on
         colored::control::set_override(true);
         let colorized = colorize_help(&plain);
         assert!(colorized.contains("\x1b[1mCOMMON COMMANDS\x1b[22m"));
         assert!(colorized.contains("\x1b[94m--help, -h\x1b[39m"));
+        colored::control::unset_override();
+    }
+
+    #[test]
+    fn colorize_help_colors_tsc_examples_and_preserves_missing_trailing_newline() {
+        colored::control::set_override(true);
+        let plain = "COMMON COMMANDS\n\n  tsc app.ts\nbody";
+        let colorized = colorize_help(plain);
+
+        assert!(!colorized.ends_with('\n'));
+        assert!(colorized.contains("  \x1b[94mtsc app.ts\x1b[39m"));
+        assert!(colorized.contains("body"));
+        colored::control::unset_override();
+    }
+
+    #[test]
+    fn colorize_help_does_not_color_triple_dash_or_mixed_case_lines_as_headers() {
+        colored::control::set_override(true);
+        let plain = "---\nMixed Case Header\n--flag\n";
+        let colorized = colorize_help(plain);
+
+        assert!(colorized.contains("---\n"));
+        assert!(colorized.contains("Mixed Case Header\n"));
+        assert!(colorized.contains("\x1b[94m--flag\x1b[39m"));
+        assert!(!colorized.contains("\x1b[1mMixed Case Header\x1b[22m"));
         colored::control::unset_override();
     }
 }
