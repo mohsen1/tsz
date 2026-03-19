@@ -420,12 +420,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(members) = tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
         {
             let mut saw_unknown = false;
             for member in members {
                 match self.contextual_property_presence(member, property_name, depth - 1) {
-                    ContextualPropertyPresence::Present => return ContextualPropertyPresence::Present,
+                    ContextualPropertyPresence::Present => {
+                        return ContextualPropertyPresence::Present;
+                    }
                     ContextualPropertyPresence::Unknown => saw_unknown = true,
                     ContextualPropertyPresence::Absent => {}
                 }
@@ -728,7 +731,12 @@ impl<'a> CheckerState<'a> {
             if property_types.is_empty() {
                 None
             } else {
-                Some(this.ctx.types.factory().union_preserve_members(property_types))
+                Some(
+                    this.ctx
+                        .types
+                        .factory()
+                        .union_preserve_members(property_types),
+                )
             }
         };
         let original_contextual_type = contextual_type;

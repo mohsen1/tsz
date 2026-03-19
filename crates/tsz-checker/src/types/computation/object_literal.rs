@@ -461,15 +461,14 @@ impl<'a> CheckerState<'a> {
                                 })
                             })
                     };
-                    let property_is_contextually_absent = contextual_absent_target.is_some_and(
-                        |ctx_type| {
+                    let property_is_contextually_absent =
+                        contextual_absent_target.is_some_and(|ctx_type| {
                             let lookup_type = self.contextual_lookup_type(ctx_type);
                             matches!(
                                 self.named_contextual_property_presence(lookup_type, &name),
                                 ContextualPropertyPresence::Absent
                             )
-                        },
-                    ) && !matches!(property_context_type, Some(TypeId::NEVER));
+                        }) && !matches!(property_context_type, Some(TypeId::NEVER));
                     let initializer_context_type = if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
                             contextual_type,

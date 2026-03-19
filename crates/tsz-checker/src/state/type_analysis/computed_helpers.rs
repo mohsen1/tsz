@@ -159,17 +159,14 @@ impl<'a> CheckerState<'a> {
         if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             && arg_index.is_some()
             && arg_count.is_some()
-            && self
-                .ctx
-                .generic_excess_skip
-                .as_ref()
-                .is_some_and(|skip| arg_index.is_some_and(|index| index < skip.len() && skip[index]))
+            && self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
+                arg_index.is_some_and(|index| index < skip.len() && skip[index])
+            })
             && let Some(callable_type) = self.ctx.current_callable_type
-            && let Some(shape) =
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    callable_type,
-                )
+            && let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                callable_type,
+            )
             && let Some(raw_contextual_type) = shape
                 .params
                 .get(arg_index.unwrap())

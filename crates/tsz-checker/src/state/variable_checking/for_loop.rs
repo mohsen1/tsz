@@ -3,8 +3,8 @@
 //! Extracted from `core.rs` to keep that file focused on
 //! general variable declaration checking (`check_variable_declaration`).
 
-use crate::state::CheckerState;
 use crate::context::TypingRequest;
+use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
