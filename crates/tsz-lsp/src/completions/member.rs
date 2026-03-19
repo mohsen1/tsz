@@ -1187,6 +1187,7 @@ impl<'a> Completions<'a> {
                 | "toLocaleLowerCase"
                 | "toUpperCase"
                 | "toLocaleUpperCase"
+                | "toLocaleString"
                 | "trim"
                 | "length"
                 | "substr"
