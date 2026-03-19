@@ -308,7 +308,7 @@ impl<'a> CheckerState<'a> {
                 if type_param.is_some() {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
                     if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
-                        && enclosing_class.in_static_member
+                        && self.is_in_static_class_member_context(type_name_idx)
                         && enclosing_class.type_param_names.iter().any(|n| n == name)
                     {
                         use crate::diagnostics::diagnostic_codes;
@@ -937,7 +937,7 @@ impl<'a> CheckerState<'a> {
                     self.emit_strict_mode_reserved_word_error(type_name_idx, name, true);
                 }
                 if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
-                    && enclosing_class.in_static_member
+                    && self.is_in_static_class_member_context(type_name_idx)
                     && enclosing_class.type_param_names.iter().any(|n| n == name)
                 {
                     use crate::diagnostics::diagnostic_codes;

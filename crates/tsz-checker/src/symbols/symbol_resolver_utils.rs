@@ -981,17 +981,26 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         object_type: TypeId,
     ) -> Option<(NodeIndex, bool)> {
+        let is_static_member_context = self.find_enclosing_static_block(expr_idx).is_some()
+            || self.is_this_in_static_class_member(expr_idx);
+
         if self.is_this_expression(expr_idx)
             && let Some(ref class_info) = self.ctx.enclosing_class
         {
-            return Some((class_info.class_idx, self.is_constructor_type(object_type)));
+            return Some((
+                class_info.class_idx,
+                is_static_member_context || self.is_constructor_type(object_type),
+            ));
         }
 
         if self.is_super_expression(expr_idx)
             && let Some(ref class_info) = self.ctx.enclosing_class
             && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
         {
-            return Some((base_idx, self.is_constructor_type(object_type)));
+            return Some((
+                base_idx,
+                is_static_member_context || self.is_constructor_type(object_type),
+            ));
         }
 
         if self

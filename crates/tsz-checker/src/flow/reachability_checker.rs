@@ -19,10 +19,6 @@ impl<'a> CheckerState<'a> {
 
         match expr_node.kind {
             syntax_kind_ext::CALL_EXPRESSION => {
-                if !self.get_type_of_node(expr_idx).is_never() {
-                    return false;
-                }
-
                 let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
                     return false;
                 };
@@ -31,7 +27,11 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .skip_parenthesized_and_assertions(call.expression);
-                self.never_returning_callee_is_control_flow_significant(callee)
+                if !self.never_returning_callee_is_control_flow_significant(callee) {
+                    return false;
+                }
+
+                self.get_type_of_node(expr_idx).is_never()
             }
             syntax_kind_ext::NEW_EXPRESSION => self.get_type_of_node(expr_idx).is_never(),
             _ => false,

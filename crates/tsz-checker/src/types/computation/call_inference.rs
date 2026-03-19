@@ -6,7 +6,6 @@ use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tracing::trace;
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
@@ -326,6 +325,19 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        let normalize = |shape: tsz_solver::FunctionShape| {
+            let mut normalized = shape.clone();
+            normalized.params = shape
+                .params
+                .iter()
+                .flat_map(|param| {
+                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
+                })
+                .collect();
+            normalized
+        };
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
         if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
             return source_ty;
         }
@@ -348,6 +360,156 @@ impl<'a> CheckerState<'a> {
         let instantiated =
             instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
         self.ctx.types.factory().function(instantiated)
+    }
+
+    pub(crate) fn instantiate_generic_function_argument_against_target_params(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> TypeId {
+        let source_eval = self.evaluate_type_with_env(source_ty);
+        let target_eval = self.evaluate_type_with_env(target_ty);
+        let function_info = match (
+            call_checker::get_contextual_signature(self.ctx.types, source_ty),
+            call_checker::get_contextual_signature(self.ctx.types, target_ty),
+        ) {
+            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+            _ => match (
+                call_checker::get_contextual_signature(self.ctx.types, source_eval),
+                call_checker::get_contextual_signature(self.ctx.types, target_eval),
+            ) {
+                (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+                _ => None,
+            },
+        };
+
+        let Some((source_fn, target_fn)) = function_info else {
+            return source_ty;
+        };
+        let normalize = |shape: tsz_solver::FunctionShape| {
+            let mut normalized = shape.clone();
+            normalized.params = shape
+                .params
+                .iter()
+                .flat_map(|param| {
+                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
+                })
+                .collect();
+            normalized
+        };
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
+        if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
+            return source_ty;
+        }
+
+        let target_param_types: Vec<_> = target_fn
+            .params
+            .iter()
+            .take(source_fn.params.len())
+            .map(|p| p.type_id)
+            .collect();
+
+        let has_concrete_param_context = target_param_types.iter().any(|&param_ty| {
+            param_ty != TypeId::ANY
+                && param_ty != TypeId::UNKNOWN
+                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, param_ty)
+        });
+        if !has_concrete_param_context {
+            return source_ty;
+        }
+
+        let env = self.ctx.type_env.borrow();
+        let substitution = call_checker::compute_contextual_types_with_context(
+            self.ctx.types,
+            &self.ctx,
+            &env,
+            &source_fn,
+            &target_param_types,
+            None,
+        );
+        let instantiated =
+            instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
+        self.ctx.types.factory().function(instantiated)
+    }
+
+    pub(crate) fn target_has_concrete_return_context_for_generic_refinement(
+        &mut self,
+        target_ty: TypeId,
+    ) -> bool {
+        let target_eval = self.evaluate_type_with_env(target_ty);
+        let target_fn = call_checker::get_contextual_signature(self.ctx.types, target_ty)
+            .or_else(|| call_checker::get_contextual_signature(self.ctx.types, target_eval));
+        let Some(target_fn) = target_fn else {
+            return false;
+        };
+
+        let return_ty = target_fn.return_type;
+        return_ty != TypeId::ANY
+            && return_ty != TypeId::UNKNOWN
+            && return_ty != TypeId::ERROR
+            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, return_ty)
+            && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, return_ty)
+    }
+
+    pub(crate) fn contextual_param_types_from_instantiated_params(
+        &mut self,
+        instantiated_params: &[tsz_solver::ParamInfo],
+        arg_count: usize,
+    ) -> Vec<Option<TypeId>> {
+        let unpacked_params: Vec<_> = instantiated_params
+            .iter()
+            .flat_map(|param| {
+                tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
+            })
+            .collect();
+        let rest_start = if unpacked_params.last().is_some_and(|param| param.rest) {
+            unpacked_params.len().saturating_sub(1)
+        } else {
+            unpacked_params.len()
+        };
+
+        (0..arg_count)
+            .map(|index| {
+                if index < rest_start {
+                    unpacked_params
+                        .get(index)
+                        .map(|param| self.evaluate_type_with_env(param.type_id))
+                } else {
+                    unpacked_params
+                        .last()
+                        .filter(|param| param.rest)
+                        .map(|param| {
+                            let rest_type = self.evaluate_type_with_env(param.type_id);
+                            self.rest_argument_element_type_with_env(rest_type)
+                        })
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn refine_generic_function_args_against_instantiated_params(
+        &mut self,
+        arg_types: Vec<TypeId>,
+        instantiated_params: &[tsz_solver::ParamInfo],
+    ) -> Vec<TypeId> {
+        let expected_types = self
+            .contextual_param_types_from_instantiated_params(instantiated_params, arg_types.len());
+
+        arg_types
+            .into_iter()
+            .enumerate()
+            .map(|(i, arg_type)| {
+                let expected = expected_types.get(i).copied().flatten();
+                expected
+                    .map(|expected| {
+                        self.instantiate_generic_function_argument_against_target_params(
+                            arg_type, expected,
+                        )
+                    })
+                    .unwrap_or(arg_type)
+            })
+            .collect()
     }
 
     pub(crate) fn collect_return_context_substitution(
@@ -469,15 +631,42 @@ impl<'a> CheckerState<'a> {
         {
             let target_fn =
                 instantiate_contextual_target_shape_for_return_context(self.ctx.types, &target_fn);
-            for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter())
-            {
+            let mut target_index = 0usize;
+            for source_param in &source_fn.params {
+                let target_type = if source_param.rest {
+                    let remaining = &target_fn.params[target_index..];
+                    if remaining.len() == 1 && remaining[0].rest {
+                        remaining[0].type_id
+                    } else {
+                        self.ctx.types.factory().tuple(
+                            remaining
+                                .iter()
+                                .map(|param| tsz_solver::TupleElement {
+                                    type_id: param.type_id,
+                                    optional: param.optional,
+                                    rest: param.rest,
+                                    name: param.name,
+                                })
+                                .collect(),
+                        )
+                    }
+                } else {
+                    let Some(target_param) = target_fn.params.get(target_index) else {
+                        break;
+                    };
+                    target_index += 1;
+                    target_param.type_id
+                };
                 self.collect_return_context_substitution(
                     source_param.type_id,
-                    target_param.type_id,
+                    target_type,
                     tracked_type_params,
                     substitution,
                     visited,
                 );
+                if source_param.rest {
+                    break;
+                }
             }
             self.collect_return_context_substitution(
                 source_fn.return_type,
@@ -847,6 +1036,58 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            let arg_idx = args.get(index).copied();
+            let skip_unresolved_callable_recheck = arg_idx.is_some_and(|arg_idx| {
+                self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                            || k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    )
+                }) && (tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    expected,
+                ) || tsz_solver::type_queries::contains_infer_types_db(
+                    self.ctx.types,
+                    expected,
+                )) && crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    expected,
+                )
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(expected);
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                })
+                .is_some()
+                    && crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        cached_actual,
+                    )
+                    .or_else(|| {
+                        let evaluated = self.evaluate_type_with_env(cached_actual);
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some()
+            });
+            if skip_unresolved_callable_recheck {
+                continue;
+            }
+
+            let object_literal_function_param_spans = arg_idx
+                .filter(|&arg_idx| {
+                    self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    })
+                })
+                .map(|arg_idx| self.object_literal_function_like_param_spans(arg_idx))
+                .unwrap_or_default();
+            let refresh_diag_len = self.ctx.diagnostics.len();
             let actual = args
                 .get(index)
                 .copied()
@@ -858,8 +1099,40 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .unwrap_or(cached_actual);
+            let refreshed_diag_start = refresh_diag_len.min(self.ctx.diagnostics.len());
+            let refreshed_object_literal_param_has_implicit_any = !object_literal_function_param_spans
+                .is_empty()
+                && self.ctx.diagnostics[refreshed_diag_start..].iter().any(|diag| {
+                    matches!(
+                        diag.code,
+                        crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                            | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                    ) && object_literal_function_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+                });
+            let expected_is_concrete = expected != TypeId::UNKNOWN
+                && expected != TypeId::ERROR
+                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
+                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, expected);
+            if expected_is_concrete && !refreshed_object_literal_param_has_implicit_any {
+                self.ctx.diagnostics.retain(|diag| {
+                    !matches!(
+                        diag.code,
+                        crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                            | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                    ) || !object_literal_function_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+                });
+            }
 
-            let is_assignable = self.is_assignable_to_with_env(actual, expected);
+            let is_assignable = self.is_assignable_to_with_env(actual, expected)
+                || self.is_assignable_via_contextual_signatures(actual, expected);
 
             if !is_assignable {
                 return CallResult::ArgumentTypeMismatch {
@@ -1066,24 +1339,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.evaluate_type_with_env(instantiated)
                 };
-                trace!(
-                    arg_index = i,
-                    preserve_application_shape,
-                    param_type_id = param_type.0,
-                    param_type_app_args = ?tsz_solver::type_queries::get_application_info(
-                        self.ctx.types,
-                        param_type,
-                    )
-                    .map(|(_, args)| args),
-                    instantiated_id = instantiated.0,
-                    instantiated_app_args = ?tsz_solver::type_queries::get_application_info(
-                        self.ctx.types,
-                        instantiated,
-                    )
-                    .map(|(_, args)| args),
-                    evaluated_id = evaluated.0,
-                    "Round 2: instantiated parameter type"
-                );
                 Some(if is_rest_param {
                     self.rest_argument_element_type_with_env(evaluated)
                 } else {
@@ -1092,11 +1347,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            trace!(
-                arg_index = i,
-                ctx_type_id = ?ctx_type.map(|t| t.0),
-                "Round 2: contextual type for argument"
-            );
             round2_contextual_types.push(ctx_type);
         }
         round2_contextual_types
@@ -1112,8 +1362,7 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use tsz_scanner::SyntaxKind;
 
-        let mut is_nested_invocation = false;
-        let apply_contextual = {
+        let syntax_needs_contextual = {
             let Some(node) = self.ctx.arena.get(arg_idx) else {
                 return TypeId::ERROR;
             };
@@ -1130,8 +1379,6 @@ impl<'a> CheckerState<'a> {
             if is_literal {
                 true
             } else {
-                is_nested_invocation = node.kind == syntax_kind_ext::CALL_EXPRESSION
-                    || node.kind == syntax_kind_ext::NEW_EXPRESSION;
                 matches!(
                     node.kind,
                     k if k == syntax_kind_ext::ARROW_FUNCTION
@@ -1147,24 +1394,12 @@ impl<'a> CheckerState<'a> {
                 )
             }
         };
-        let expected_context_type = if is_nested_invocation {
-            expected_type
-        } else {
-            self.contextual_type_option_for_expression(expected_type)
-        };
+        let needs_contextual_signature_instantiation =
+            self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
+        let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
+        let expected_context_type =
+            self.contextual_type_option_for_call_argument(expected_type, arg_idx);
 
-        if let Some(node) = self.ctx.arena.get(arg_idx)
-            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-        {
-            trace!(
-                arg_idx = arg_idx.0,
-                expected_type = ?expected_type.map(|t| t.0),
-                expected_context_type = ?expected_context_type.map(|t| t.0),
-                expected_type_display = ?expected_type.map(|t| self.format_type(t)),
-                expected_context_type_display = ?expected_context_type.map(|t| self.format_type(t)),
-                "compute_single_call_argument_type: object literal context"
-            );
-        }
         // Extract ThisType<T> marker from the unevaluated expected type BEFORE
         // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
         // interface marker, so intersection simplification removes it. We need to
@@ -1270,6 +1505,12 @@ impl<'a> CheckerState<'a> {
             TypingRequest::NONE
         };
 
+        let expected_is_unresolved = expected_type.is_none_or(|expected| {
+            expected == TypeId::UNKNOWN
+                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
+                || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, expected)
+        });
+
         // Snapshot diagnostic + closure state when in speculative round2.
         // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
         // dropped by the suppress filter. Without restoring, the final retry pass sees these
@@ -1279,6 +1520,9 @@ impl<'a> CheckerState<'a> {
         let speculation_snap = suppress_diagnostics.then(|| self.ctx.snapshot_diagnostics());
         let implicit_any_closure_snapshot =
             suppress_diagnostics.then(|| self.ctx.implicit_any_checked_closures.clone());
+        let provisional_context_snap =
+            (!suppress_diagnostics && apply_contextual && expected_is_unresolved)
+                .then(|| self.ctx.snapshot_diagnostics());
         let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
 
         if check_excess_properties
@@ -1299,6 +1543,45 @@ impl<'a> CheckerState<'a> {
 
         if let Some(snap) = &speculation_snap {
             let arg_node = self.ctx.arena.get(arg_idx);
+            let object_literal_method_param_spans: Vec<(u32, u32)> = arg_node
+                .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                .and_then(|node| self.ctx.arena.get_literal_expr(node))
+                .map(|obj| {
+                    obj.elements
+                        .nodes
+                        .iter()
+                        .filter_map(|&element_idx| {
+                            let element = self.ctx.arena.get(element_idx)?;
+                            match element.kind {
+                                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                                    .ctx
+                                    .arena
+                                    .get_method_decl(element)
+                                    .map(|method| method.parameters.nodes.as_slice()),
+                                k if k == syntax_kind_ext::GET_ACCESSOR
+                                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                                {
+                                    self.ctx
+                                        .arena
+                                        .get_accessor(element)
+                                        .map(|accessor| accessor.parameters.nodes.as_slice())
+                                }
+                                _ => None,
+                            }
+                            .map(|params| {
+                                params
+                                    .iter()
+                                    .filter_map(|&param_idx| {
+                                        let param_node = self.ctx.arena.get(param_idx)?;
+                                        Some((param_node.pos, param_node.end))
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .flatten()
+                        .collect()
+                })
+                .unwrap_or_default();
             let callback_body_start = arg_node
                 .filter(|node| {
                     node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -1320,6 +1603,9 @@ impl<'a> CheckerState<'a> {
             let mut seen_new_diags = FxHashSet::default();
             let mut seen_diag_keys = existing_diag_keys;
             self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+                if Self::should_preserve_speculative_call_diagnostic(diag) {
+                    return true;
+                }
                 // --- Phase 1: dedup by (code, start) against pre-existing + already-kept ---
                 let key = (diag.code, diag.start);
                 if !seen_new_diags.insert(key) {
@@ -1353,14 +1639,29 @@ impl<'a> CheckerState<'a> {
                         && diag.start >= node.pos
                         && diag.start < node.end
                 });
+                let is_function_arg_diag = arg_node.is_some_and(|node| {
+                    (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                        && diag.start >= node.pos
+                        && diag.start < node.end
+                });
+                if expected_is_unresolved && is_function_arg_diag {
+                    return false;
+                }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
                 // literals even in round2 speculative passes. Unlike assignability errors
                 // (which get a definitive check in resolve_call_with_checker_adapter), TS7006
                 // is determined by whether the contextual type is available in THIS pass.
                 let implicit_any_in_object_literal =
                     is_provisional_implicit_any && is_object_literal_diag;
+                let implicit_any_in_object_literal_method =
+                    implicit_any_in_object_literal
+                        && object_literal_method_param_spans
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end);
                 let keep = (!is_assignability && !is_provisional_implicit_any)
-                    || implicit_any_in_object_literal
+                    || (implicit_any_in_object_literal
+                        && !implicit_any_in_object_literal_method)
                     || callback_body_start.is_some_and(|start| diag.start == start)
                     || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
                 // --- Phase 3: exact-message dedup for kept diagnostics ---
@@ -1381,8 +1682,31 @@ impl<'a> CheckerState<'a> {
             // Restore implicit-any closure tracking to the pre-round2 state so the final
             // retry pass can re-emit TS7006 for closures whose diagnostics were suppressed.
             if let Some(snapshot) = implicit_any_closure_snapshot {
+                let contextual_closures: Vec<_> = self
+                    .ctx
+                    .implicit_any_contextual_closures
+                    .iter()
+                    .copied()
+                    .collect();
                 self.ctx.restore_implicit_any_closures(&snapshot);
+                self.ctx
+                    .implicit_any_checked_closures
+                    .extend(contextual_closures);
             }
+        }
+        if let Some(snap) = &provisional_context_snap {
+            let arg_node = self.ctx.arena.get(arg_idx);
+            self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+                Self::should_preserve_speculative_call_diagnostic(diag)
+                    || !arg_node.is_some_and(|node| {
+                        diag.start >= node.pos
+                            && diag.start < node.end
+                            && (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                    })
+            });
         }
 
         if pushed_this_type {

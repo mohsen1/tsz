@@ -193,9 +193,45 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        // Get the type of the object
-        let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
-        let object_type = self.evaluate_application_type(object_type);
+        let literal_string = self.get_literal_string_from_node(access.name_or_argument);
+        let numeric_string_index = literal_string
+            .as_deref()
+            .and_then(|name| self.get_numeric_index_from_string(name));
+        let literal_index = self
+            .get_literal_index_from_node(access.name_or_argument)
+            .or(numeric_string_index);
+
+        // Get the type of the object. In write context, prefer the receiver's
+        // declared type when it already has the indexed member, otherwise fall
+        // back to the flow-narrowed receiver so subtype-based writes still work.
+        let object_type = if skip_flow_narrowing {
+            let object_type_no_flow = self.get_type_of_node_with_request(
+                access.expression,
+                &TypingRequest::for_write_context(),
+            );
+            let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+            let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+            let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
+                !matches!(
+                    self.resolve_property_access_with_env(resolved_no_flow, name),
+                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                )
+            } else if literal_index.is_some() {
+                self.get_element_access_type(resolved_no_flow, TypeId::NUMBER, literal_index)
+                    != TypeId::ERROR
+            } else {
+                false
+            };
+            let chosen = if can_use_no_flow {
+                object_type_no_flow
+            } else {
+                self.get_type_of_node_with_request(access.expression, &read_request)
+            };
+            self.evaluate_application_type(chosen)
+        } else {
+            let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
+            self.evaluate_application_type(object_type)
+        };
 
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
         // the object type from `o?.b` includes `undefined`. Strip nullish types when this
@@ -226,14 +262,6 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
-
-        let literal_string = self.get_literal_string_from_node(access.name_or_argument);
-        let numeric_string_index = literal_string
-            .as_deref()
-            .and_then(|name| self.get_numeric_index_from_string(name));
-        let literal_index = self
-            .get_literal_index_from_node(access.name_or_argument)
-            .or(numeric_string_index);
 
         if let Some(name) = literal_string.as_deref()
             && self.is_global_this_like_expression(access.expression)
@@ -1125,11 +1153,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if skip_flow_narrowing {
+        let result_type = if skip_flow_narrowing {
             result_type
         } else {
             self.apply_flow_narrowing(idx, result_type)
-        }
+        };
+        self.instantiate_callable_result_from_request(result_type, request)
     }
 
     fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {
@@ -1514,20 +1543,8 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(false);
 
-        // Static context: the current `this` type is the current class constructor type.
-        let is_static_context = self.current_this_type().is_some_and(|this_ty| {
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_info.class_idx) {
-                this_ty == self.get_type_of_symbol(sym_id)
-            } else if let Some(class_node) = self.ctx.arena.get(class_info.class_idx) {
-                if let Some(class) = self.ctx.arena.get_class(class_node) {
-                    this_ty == self.get_class_constructor_type(class_info.class_idx, class)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        });
+        let is_static_context = self.find_enclosing_static_block(idx).is_some()
+            || self.is_this_in_static_class_member(idx);
 
         if is_super_call || is_static_context {
             if extends_expr_idx.is_some()

@@ -222,6 +222,10 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            if self.try_discriminated_union_excess_check(source, target, idx) {
+                return;
+            }
+
             // For union excess property checking, tsc uses two strategies:
             //
             // 1. Discriminant narrowing: if a source property has a unit literal
@@ -272,10 +276,13 @@ impl<'a> CheckerState<'a> {
                     .collect();
 
                 if target_prop_types.is_empty() {
-                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
+                    let prop_name = self.object_literal_property_display_name(
+                        report_idx,
+                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+                    );
                     self.error_excess_property_at(&prop_name, target, report_idx);
                     self.check_excess_property_initializer_implicit_any(report_idx, target);
                 } else {
@@ -391,10 +398,13 @@ impl<'a> CheckerState<'a> {
                 let is_known = found_in_named || has_index_signature || member_may_accept_unknown;
 
                 if !is_known {
-                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
+                    let prop_name = self.object_literal_property_display_name(
+                        report_idx,
+                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+                    );
                     self.error_excess_property_at(&prop_name, target, report_idx);
                     self.check_excess_property_initializer_implicit_any(report_idx, target);
                 } else {
@@ -493,10 +503,13 @@ impl<'a> CheckerState<'a> {
 
                 let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
                 if target_prop.is_none() {
-                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
+                    let prop_name = self.object_literal_property_display_name(
+                        report_idx,
+                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+                    );
                     self.error_excess_property_at(&prop_name, target, report_idx);
                     self.check_excess_property_initializer_implicit_any(report_idx, target);
                 } else if let Some(target_prop) = target_prop {
@@ -634,7 +647,10 @@ impl<'a> CheckerState<'a> {
 
         // Report the first excess property by source position (earliest in file)
         if let Some(earliest) = excess_candidates.iter().min_by_key(|c| c.2) {
-            let prop_name = self.ctx.types.resolve_atom(earliest.0);
+            let prop_name = self.object_literal_property_display_name(
+                earliest.1,
+                self.ctx.types.resolve_atom(earliest.0).as_ref(),
+            );
             self.error_excess_property_at(&prop_name, narrowed_member_type, earliest.1);
             self.check_excess_property_initializer_implicit_any(earliest.1, narrowed_member_type);
             true
@@ -890,11 +906,15 @@ impl<'a> CheckerState<'a> {
             };
 
             if value_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                // Get the type of the nested object literal
-                let nested_source_type = self.get_type_of_node(effective_value_idx);
-
                 // Check if we have a target type for this property
                 if let Some(nested_target_type) = target_prop_type {
+                    // Preserve the derived contextual target when retyping nested object
+                    // literals for recursive excess-property checks.
+                    let nested_request =
+                        crate::context::TypingRequest::with_contextual_type(nested_target_type);
+                    let nested_source_type =
+                        self.get_type_of_node_with_request(effective_value_idx, &nested_request);
+
                     // Recursively check the nested object literal for excess properties
                     self.check_object_literal_excess_properties(
                         nested_source_type,
@@ -938,6 +958,40 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn object_literal_property_display_name(
+        &self,
+        elem_idx: NodeIndex,
+        fallback_name: &str,
+    ) -> String {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return fallback_name.to_string();
+        };
+
+        match elem_node.kind {
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_property_assignment(elem_node)
+                .and_then(|prop| {
+                    self.ctx.arena.get(prop.name).and_then(|name_node| {
+                        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                            self.computed_property_display_name(prop.name)
+                        } else {
+                            self.get_property_name(prop.name)
+                        }
+                    })
+                })
+                .unwrap_or_else(|| fallback_name.to_string()),
+            syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_shorthand_property(elem_node)
+                .and_then(|prop| self.get_identifier_text_from_idx(prop.name))
+                .unwrap_or_else(|| fallback_name.to_string()),
+            _ => fallback_name.to_string(),
+        }
     }
 
     /// TS2353 guard for object destructuring from object literals with computed keys.
@@ -1122,7 +1176,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return None;

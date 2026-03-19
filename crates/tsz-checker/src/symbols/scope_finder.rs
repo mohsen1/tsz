@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an AST node is inside a class body by walking parents.
-    fn is_inside_class_body(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_inside_class_body(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
         let mut current = idx;
         let mut iterations = 0;
@@ -147,35 +147,126 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if `this` is inside a static class member by walking the AST.
-    /// Returns true if the nearest enclosing method/accessor/static-block has a `static` modifier.
+    /// Returns true if the nearest enclosing class member/static-block has a `static` modifier.
     /// Unlike `enclosing_class.in_static_member`, this works even outside the
     /// `check_class_member` flow (e.g., during `get_type_of_node` caching).
     pub(crate) fn is_this_in_static_class_member(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
-            CLASS_STATIC_BLOCK_DECLARATION, GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
+            CLASS_DECLARATION, CLASS_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION, CONSTRUCTOR,
+            FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION,
+            PROPERTY_DECLARATION, SET_ACCESSOR,
         };
-        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
-            Some(f) => f,
-            None => return false,
-        };
-        let fn_node = match self.ctx.arena.get(enclosing_fn) {
-            Some(n) => n,
-            None => return false,
-        };
-        match fn_node.kind {
-            k if k == METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(fn_node)
-                .is_some_and(|m| self.has_static_modifier(&m.modifiers)),
-            k if k == GET_ACCESSOR || k == SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(fn_node)
-                .is_some_and(|a| self.has_static_modifier(&a.modifiers)),
-            k if k == CLASS_STATIC_BLOCK_DECLARATION => true,
-            _ => false,
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == PROPERTY_DECLARATION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_property_decl(node)
+                        .is_some_and(|prop| self.has_static_modifier(&prop.modifiers));
+                }
+                k if k == METHOD_DECLARATION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_method_decl(node)
+                        .is_some_and(|method| self.has_static_modifier(&method.modifiers));
+                }
+                k if k == GET_ACCESSOR || k == SET_ACCESSOR => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_accessor(node)
+                        .is_some_and(|accessor| self.has_static_modifier(&accessor.modifiers));
+                }
+                k if k == CLASS_STATIC_BLOCK_DECLARATION => return true,
+                k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION || k == CONSTRUCTOR => {
+                    return false;
+                }
+                k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => return false,
+                _ => {}
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
         }
+
+        false
+    }
+
+    /// Check if a node is enclosed by a static class member or static block.
+    ///
+    /// Unlike `is_this_in_static_class_member`, this intentionally ignores nested
+    /// function boundaries because class type parameters remain invalid anywhere
+    /// within a static member body, including nested function type annotations and
+    /// explicit type-argument lists.
+    pub(crate) fn is_in_static_class_member_context(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION, CONSTRUCTOR,
+            GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == PROPERTY_DECLARATION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_property_decl(node)
+                        .is_some_and(|prop| self.has_static_modifier(&prop.modifiers));
+                }
+                k if k == METHOD_DECLARATION => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_method_decl(node)
+                        .is_some_and(|method| self.has_static_modifier(&method.modifiers));
+                }
+                k if k == GET_ACCESSOR || k == SET_ACCESSOR => {
+                    return self
+                        .ctx
+                        .arena
+                        .get_accessor(node)
+                        .is_some_and(|accessor| self.has_static_modifier(&accessor.modifiers));
+                }
+                k if k == CONSTRUCTOR => return false,
+                k if k == CLASS_STATIC_BLOCK_DECLARATION => return true,
+                k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => return false,
+                _ => {}
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+
+        false
     }
 
     /// Check if the enclosing non-arrow function has an explicit `this` parameter.

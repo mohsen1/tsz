@@ -6,6 +6,8 @@ use crate::query_boundaries::flow_analysis::{
 };
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use tsz_binder::{SymbolId, flow_flags};
 use tsz_parser::parser::NodeIndex;
@@ -643,25 +645,29 @@ impl<'a> CheckerState<'a> {
             declaration_ident
         };
         let switch_flow_node = {
-            let mut candidate = flow_node;
             let mut found = None;
-            // Walk a short antecedent chain to recover switch-clause context for
-            // nodes immediately after a clause (e.g. statements in default block).
-            for _ in 0..4 {
+            let mut visited = FxHashSet::default();
+            let mut worklist = VecDeque::from([flow_node]);
+
+            // Statement-level flow nodes inside a clause can sit several hops away
+            // from the clause marker and may have multiple antecedents. Walk the
+            // local graph slice instead of assuming a single short chain.
+            while let Some(candidate) = worklist.pop_front() {
+                if candidate.is_none() || !visited.insert(candidate) {
+                    continue;
+                }
                 let Some(flow) = self.ctx.binder.flow_nodes.get(candidate) else {
-                    break;
+                    continue;
                 };
                 if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
                     found = Some(candidate);
                     break;
                 }
-                let Some(&ant) = flow.antecedent.first() else {
-                    break;
-                };
-                if ant.is_none() {
-                    break;
+                for &antecedent in &flow.antecedent {
+                    if antecedent.is_some() {
+                        worklist.push_back(antecedent);
+                    }
                 }
-                candidate = ant;
             }
             found
         };
@@ -707,7 +713,11 @@ impl<'a> CheckerState<'a> {
                             if clause.expression.is_none() {
                                 return None;
                             }
-                            self.ctx.node_types.get(&clause.expression.0).copied()
+                            self.ctx
+                                .node_types
+                                .get(&clause.expression.0)
+                                .copied()
+                                .or_else(|| self.literal_type_from_initializer(clause.expression))
                         })
                         .collect()
                 };

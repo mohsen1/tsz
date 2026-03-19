@@ -371,7 +371,10 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let reported_actual = arg_types.get(index).copied().unwrap_or(actual);
+                let reported_actual = match arg_types.get(index).copied() {
+                    Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) | None => actual,
+                    Some(original) => original,
+                };
                 let reported_expected = self
                     .generic_callable_mismatch_display_target(actual, expected)
                     .unwrap_or(expected);
@@ -448,6 +451,7 @@ impl<'a> CheckerState<'a> {
                                 && d.start >= body_start
                                 && d.start < body_end)
                         });
+                        self.ctx.rebuild_emitted_diagnostics_from_current();
                     }
                     if !elaborated
                         && allow_contextual_mismatch_deferral
@@ -574,14 +578,23 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn should_defer_contextual_argument_mismatch(
-        &self,
+        &mut self,
         actual: TypeId,
         expected: TypeId,
     ) -> bool {
+        if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
+            return false;
+        }
         let callable_mismatch = tsz_solver::type_queries::is_callable_type(self.ctx.types, actual)
             && tsz_solver::type_queries::is_callable_type(self.ctx.types, expected);
         if assign_query::contains_infer_types(self.ctx.types, actual)
             || assign_query::contains_infer_types(self.ctx.types, expected)
+        {
+            return true;
+        }
+        if callable_mismatch
+            && (assign_query::contains_type_parameters(self.ctx.types, actual)
+                || assign_query::contains_type_parameters(self.ctx.types, expected))
         {
             return true;
         }
@@ -598,6 +611,64 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    fn call_target_generic_rest_requires_fixed_arity_error(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let normalize = |shape: tsz_solver::FunctionShape| {
+            let mut normalized = shape.clone();
+            normalized.params = shape
+                .params
+                .iter()
+                .flat_map(|param| {
+                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
+                })
+                .collect();
+            normalized
+        };
+
+        let actual = self.normalize_contextual_signature_with_env(actual);
+        let expected = self.normalize_contextual_signature_with_env(expected);
+        let Some(actual_shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            actual,
+        ) else {
+            return false;
+        };
+        let Some(expected_shape) =
+            crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                expected,
+            )
+        else {
+            return false;
+        };
+
+        let actual_shape = normalize(actual_shape);
+        let expected_shape = normalize(expected_shape);
+        let Some(expected_rest) = expected_shape.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+
+        if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, expected_rest.type_id)
+            && !tsz_solver::type_queries::contains_type_parameters_db(
+                self.ctx.types,
+                expected_rest.type_id,
+            )
+        {
+            return false;
+        }
+
+        let actual_required = actual_shape
+            .params
+            .iter()
+            .filter(|param| !param.optional && !param.rest)
+            .count();
+        let expected_fixed = expected_shape.params.len().saturating_sub(1);
+        actual_required > expected_fixed
     }
 
     pub(crate) fn suppress_later_call_excess_property_diagnostics(
@@ -628,6 +699,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|&(start, end)| diag.start >= start && diag.start < end)
         });
+        self.ctx.rebuild_emitted_diagnostics_from_current();
     }
 
     fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {

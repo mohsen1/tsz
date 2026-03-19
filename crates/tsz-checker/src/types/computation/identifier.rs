@@ -17,6 +17,19 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
+        tsz_solver::visitor::contains_type_matching(
+            self.ctx.types.as_type_database(),
+            type_id,
+            |key| {
+                matches!(
+                    key,
+                    tsz_solver::TypeData::Lazy(_) | tsz_solver::TypeData::Recursive(_)
+                )
+            },
+        )
+    }
+
     /// Get the type of an identifier expression.
     ///
     /// This function resolves the type of an identifier by:
@@ -934,19 +947,24 @@ impl<'a> CheckerState<'a> {
                     && flow_type != TypeId::ERROR;
 
                 if has_narrowing {
-                    // Check if this is "zombie freshness" - flow returning the widened
-                    // version of our declared literal type. If widen(declared) == flow,
-                    // use declared_type instead.
-                    // IMPORTANT: Evaluate the declared type first to expand type aliases
-                    // and lazy references, so widen_type can see the actual union members.
-                    let evaluated_declared = self.evaluate_type_for_assignability(declared_type);
-                    let widened_declared =
-                        tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
-                    if widened_declared == flow_type {
-                        declared_type
-                    } else {
-                        // Genuine narrowing (e.g., array element narrowing) - use narrowed type
+                    if self.has_recursive_alias_shape_for_flow_compare(declared_type) {
                         flow_type
+                    } else {
+                        // Check if this is "zombie freshness" - flow returning the widened
+                        // version of our declared literal type. If widen(declared) == flow,
+                        // use declared_type instead.
+                        // IMPORTANT: Evaluate the declared type first to expand type aliases
+                        // and lazy references, so widen_type can see the actual union members.
+                        let evaluated_declared =
+                            self.evaluate_type_for_assignability(declared_type);
+                        let widened_declared =
+                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
+                        if widened_declared == flow_type {
+                            declared_type
+                        } else {
+                            // Genuine narrowing (e.g., array element narrowing) - use narrowed type
+                            flow_type
+                        }
                     }
                 } else {
                     // No narrowing or error - check if we should preserve declared_type
@@ -999,21 +1017,27 @@ impl<'a> CheckerState<'a> {
                         // Flow type is just the initializer literal - use widened declared type
                         declared_type
                     } else {
-                        // Also check the reverse: if declared_type is a non-widened literal
-                        // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
-                        // is its widened form (string), flow is just returning the widened
-                        // version of our literal declared type - use declared_type.
-                        // IMPORTANT: Evaluate the declared type first to expand type aliases
-                        // and lazy references, so widen_type can see the actual union members.
-                        let evaluated_declared =
-                            self.evaluate_type_for_assignability(declared_type);
-                        let widened_declared =
-                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
-                        if widened_declared == flow_type {
-                            declared_type
-                        } else {
-                            // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
+                        if self.has_recursive_alias_shape_for_flow_compare(declared_type) {
                             flow_type
+                        } else {
+                            // Also check the reverse: if declared_type is a non-widened literal
+                            // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
+                            // is its widened form (string), flow is just returning the widened
+                            // version of our literal declared type - use declared_type.
+                            // IMPORTANT: Evaluate the declared type first to expand type aliases
+                            // and lazy references, so widen_type can see the actual union members.
+                            let evaluated_declared =
+                                self.evaluate_type_for_assignability(declared_type);
+                            let widened_declared = tsz_solver::widening::widen_type(
+                                self.ctx.types,
+                                evaluated_declared,
+                            );
+                            if widened_declared == flow_type {
+                                declared_type
+                            } else {
+                                // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
+                                flow_type
+                            }
                         }
                     }
                 } else {
@@ -1032,10 +1056,11 @@ impl<'a> CheckerState<'a> {
             if !self.ctx.compiler_options.sound_mode {
                 use tsz_solver::relations::freshness::{is_fresh_object_type, widen_freshness};
                 if is_fresh_object_type(self.ctx.types, result_type) {
-                    return widen_freshness(self.ctx.types, result_type);
+                    let widened = widen_freshness(self.ctx.types, result_type);
+                    return self.instantiate_callable_result_from_request(widened, request);
                 }
             }
-            return result_type;
+            return self.instantiate_callable_result_from_request(result_type, request);
         }
 
         self.resolve_unresolved_identifier(idx, name)

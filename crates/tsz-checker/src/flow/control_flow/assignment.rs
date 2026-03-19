@@ -12,11 +12,15 @@ use crate::query_boundaries::flow_analysis::{
     tuple_elements_for_type, union_members_for_type, unwrap_promise_type_argument,
     widen_literal_to_primitive,
 };
+use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ApplicationEvaluator, TupleElement, TypeId};
+use tsz_solver::{
+    ApplicationEvaluator, CallSignature, CallableShape, PropertyInfo, TupleElement, TypeId,
+    types::ParamInfo,
+};
 
 #[derive(Clone, Copy, Debug)]
 struct DestructuringSource {
@@ -25,7 +29,60 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
-    fn is_access_reference(&self, idx: NodeIndex) -> bool {
+    fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
+        while descendant.is_some() {
+            if descendant == ancestor {
+                return true;
+            }
+            descendant = self
+                .arena
+                .get_extended(descendant)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+        false
+    }
+
+    pub(crate) fn assignment_reads_reference_before_write(
+        &self,
+        assignment_node: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(assignment_node) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let Some(bin) = self.arena.get_binary_expr(node) else {
+                return false;
+            };
+            if !self.is_assignment_operator(bin.operator_token)
+                || !self.assignment_targets_reference_internal(bin.left, reference)
+            {
+                return false;
+            }
+
+            if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                return self.node_contains_descendant(bin.right, reference);
+            }
+
+            return self.node_contains_descendant(bin.left, reference)
+                || self.node_contains_descendant(bin.right, reference);
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = self.arena.get_variable_declaration(node) else {
+                return false;
+            };
+            return decl.initializer.is_some()
+                && self.assignment_targets_reference_internal(decl.name, reference)
+                && self.node_contains_descendant(decl.initializer, reference);
+        }
+
+        false
+    }
+
+    pub(crate) fn is_access_reference(&self, idx: NodeIndex) -> bool {
         self.arena.get(idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
@@ -91,6 +148,27 @@ impl<'a> FlowAnalyzer<'a> {
             let bin = self.arena.get_binary_expr(node)?;
             // Check if this is an assignment to our target reference
             if self.is_matching_reference(bin.left, target) {
+                if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarToken as u16
+                    || bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                {
+                    // Short-circuit expressions like `x ?? (x = y)` or `x || (x = y)`
+                    // update the tracked reference when the RHS assignment runs. For the
+                    // post-expression flow type, use the whole expression result so the
+                    // short-circuit branch and the assignment branch are both reflected.
+                    if self.assignment_targets_reference_node(bin.right, target) {
+                        if let Some(node_types) = self.node_types
+                            && let Some(&expr_type) = node_types.get(&assignment_node.0)
+                        {
+                            return Some(expr_type);
+                        }
+                        if let Some(node_types) = self.node_types
+                            && let Some(&rhs_type) = node_types.get(&bin.right.0)
+                        {
+                            return Some(rhs_type);
+                        }
+                    }
+                }
                 if bin.operator_token == SyntaxKind::EqualsToken as u16
                     && self.is_declared_in_for_in_header(target)
                 {
@@ -275,8 +353,10 @@ impl<'a> FlowAnalyzer<'a> {
                 if is_structural_literal {
                     if let Some(annotation_type) =
                         self.annotation_type_from_var_decl_node(assignment_node)
-                        && let Some(rhs_type) =
-                            self.node_types.and_then(|nt| nt.get(&rhs.0).copied())
+                        && let Some(rhs_type) = self
+                            .node_types
+                            .and_then(|nt| nt.get(&rhs.0).copied())
+                            .or_else(|| self.fallback_expression_type_from_syntax(rhs))
                         && self.is_assignable_to(rhs_type, annotation_type)
                     {
                         let reduced = self.narrow_assignment(annotation_type, rhs_type);
@@ -431,6 +511,10 @@ impl<'a> FlowAnalyzer<'a> {
         let rhs = self.skip_parens_and_assertions(rhs);
         let rhs_node = self.arena.get(rhs)?;
 
+        if let Some(reference_type) = self.fallback_type_for_reference(rhs) {
+            return Some(reference_type);
+        }
+
         if rhs_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.arena.get_conditional_expr(rhs_node)
         {
@@ -451,6 +535,223 @@ impl<'a> FlowAnalyzer<'a> {
             return self.fallback_await_expression_type(rhs);
         }
 
+        None
+    }
+
+    fn fallback_expression_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
+        let expr = self.skip_parens_and_assertions(expr);
+        if let Some(literal_type) = self.literal_type_from_node(expr) {
+            return Some(widen_literal_to_primitive(self.interner, literal_type));
+        }
+        if let Some(nullish_type) = self.nullish_literal_type(expr) {
+            return Some(nullish_type);
+        }
+        if let Some(ty) = self.node_types.and_then(|nt| nt.get(&expr.0).copied()) {
+            return Some(ty);
+        }
+        if let Some(reference_type) = self.fallback_type_for_reference(expr) {
+            return Some(reference_type);
+        }
+
+        let expr_node = self.arena.get(expr)?;
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.fallback_array_literal_type_from_syntax(expr)
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.fallback_object_literal_type_from_syntax(expr)
+            }
+            _ => None,
+        }
+    }
+
+    fn fallback_type_from_type_node_syntax(&self, type_node: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(type_node)?;
+
+        if let Some(ty) = self
+            .node_types
+            .and_then(|nt| nt.get(&type_node.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+        {
+            return Some(ty);
+        }
+
+        match node.kind {
+            k if k == SyntaxKind::NumberKeyword as u16 => Some(TypeId::NUMBER),
+            k if k == SyntaxKind::StringKeyword as u16 => Some(TypeId::STRING),
+            k if k == SyntaxKind::BooleanKeyword as u16 => Some(TypeId::BOOLEAN),
+            k if k == SyntaxKind::VoidKeyword as u16 => Some(TypeId::VOID),
+            k if k == SyntaxKind::AnyKeyword as u16 => Some(TypeId::ANY),
+            k if k == SyntaxKind::NeverKeyword as u16 => Some(TypeId::NEVER),
+            k if k == SyntaxKind::UnknownKeyword as u16 => Some(TypeId::UNKNOWN),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == SyntaxKind::ObjectKeyword as u16 => Some(TypeId::OBJECT),
+            k if k == SyntaxKind::BigIntKeyword as u16 => Some(TypeId::BIGINT),
+            k if k == SyntaxKind::SymbolKeyword as u16 => Some(TypeId::SYMBOL),
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => self
+                .arena
+                .get_wrapped_type(node)
+                .and_then(|wrapped| self.fallback_type_from_type_node_syntax(wrapped.type_node)),
+            k if k == syntax_kind_ext::LITERAL_TYPE => self
+                .arena
+                .get_literal_type(node)
+                .and_then(|literal| self.literal_type_from_node(literal.literal)),
+            k if k == syntax_kind_ext::UNION_TYPE => {
+                let composite = self.arena.get_composite_type(node)?;
+                let mut members = Vec::new();
+                for &member in &composite.types.nodes {
+                    members.push(self.fallback_type_from_type_node_syntax(member)?);
+                }
+                match members.len() {
+                    0 => Some(TypeId::NEVER),
+                    1 => members.first().copied(),
+                    _ => Some(self.interner.union(members)),
+                }
+            }
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let composite = self.arena.get_composite_type(node)?;
+                let mut members = Vec::new();
+                for &member in &composite.types.nodes {
+                    members.push(self.fallback_type_from_type_node_syntax(member)?);
+                }
+                match members.len() {
+                    0 => Some(TypeId::NEVER),
+                    1 => members.first().copied(),
+                    _ => Some(self.interner.intersection(members)),
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                let array = self.arena.get_array_type(node)?;
+                let elem = self.fallback_type_from_type_node_syntax(array.element_type)?;
+                Some(self.interner.array(elem))
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let type_ref = self.arena.get_type_ref(node)?;
+                let sym_id = self
+                    .binder
+                    .resolve_identifier(self.arena, type_ref.type_name)
+                    .or_else(|| self.reference_symbol(type_ref.type_name))?;
+                let symbol = self.binder.get_symbol(sym_id)?;
+                symbol
+                    .declarations
+                    .iter()
+                    .copied()
+                    .find_map(|decl| self.fallback_named_type_declaration_type(decl))
+            }
+            _ => None,
+        }
+    }
+
+    fn fallback_named_type_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
+        if let Some(ty) = self
+            .node_types
+            .and_then(|nt| nt.get(&decl.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+        {
+            return Some(ty);
+        }
+
+        let node = self.arena.get(decl)?;
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let alias = self.arena.get_type_alias(node)?;
+                self.node_types
+                    .and_then(|nt| nt.get(&alias.type_node.0).copied())
+                    .filter(|&ty| ty != TypeId::ERROR)
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
+            {
+                self.node_types
+                    .and_then(|nt| nt.get(&decl.0).copied())
+                    .filter(|&ty| ty != TypeId::ERROR)
+            }
+            _ => None,
+        }
+    }
+
+    fn fallback_array_literal_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(expr)?;
+        let literal = self.arena.get_literal_expr(node)?;
+        let mut element_types = Vec::new();
+
+        for &element in &literal.elements.nodes {
+            if element.is_none() {
+                continue;
+            }
+            let element = self.skip_parens_and_assertions(element);
+            let element_node = self.arena.get(element)?;
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return None;
+            }
+            element_types.push(self.fallback_expression_type_from_syntax(element)?);
+        }
+
+        let element_type = match element_types.len() {
+            0 => TypeId::NEVER,
+            1 => element_types[0],
+            _ => self.interner.union(element_types),
+        };
+        Some(self.interner.array(element_type))
+    }
+
+    fn fallback_object_literal_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(expr)?;
+        let literal = self.arena.get_literal_expr(node)?;
+        let mut properties = Vec::new();
+
+        for &element in &literal.elements.nodes {
+            if element.is_none() {
+                continue;
+            }
+            let element_node = self.arena.get(element)?;
+            if let Some(prop) = self.arena.get_property_assignment(element_node) {
+                let name_atom = self.fallback_object_property_name_atom(prop.name)?;
+                let value_type = self.fallback_expression_type_from_syntax(prop.initializer)?;
+                properties.push(PropertyInfo::new(name_atom, value_type));
+                continue;
+            }
+            if let Some(shorthand) = self.arena.get_shorthand_property(element_node) {
+                let name_node = self.arena.get(shorthand.name)?;
+                let ident = self.arena.get_identifier(name_node)?;
+                let value_type = self
+                    .node_types
+                    .and_then(|nt| nt.get(&shorthand.name.0).copied())
+                    .or_else(|| self.fallback_type_for_reference(shorthand.name))?;
+                properties.push(PropertyInfo::new(ident.atom, value_type));
+                continue;
+            }
+            return None;
+        }
+
+        Some(self.interner.factory().object(properties))
+    }
+
+    fn fallback_object_property_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
+        let name_node = self.arena.get(name_idx)?;
+        if let Some(ident) = self.arena.get_identifier(name_node) {
+            return Some(ident.atom);
+        }
+        if let Some(literal) = self.arena.get_literal(name_node) {
+            return Some(self.interner.intern_string(&literal.text));
+        }
+        if let Some(computed) = self.arena.get_computed_property(name_node) {
+            let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
+            if let Some(literal) = tsz_solver::visitor::literal_value(self.interner, key_type) {
+                return Some(match literal {
+                    tsz_solver::LiteralValue::String(atom) => atom,
+                    tsz_solver::LiteralValue::Number(value) => {
+                        self.interner.intern_string(&value.0.to_string())
+                    }
+                    tsz_solver::LiteralValue::Boolean(value) => self
+                        .interner
+                        .intern_string(if value { "true" } else { "false" }),
+                    tsz_solver::LiteralValue::BigInt(atom) => atom,
+                });
+            }
+        }
         None
     }
 
@@ -589,6 +890,78 @@ impl<'a> FlowAnalyzer<'a> {
     fn fallback_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
         self.annotation_type_from_var_decl_node(decl)
             .or_else(|| self.node_types.and_then(|nt| nt.get(&decl.0).copied()))
+            .or_else(|| self.fallback_function_declaration_type(decl))
+    }
+
+    fn fallback_function_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {
+        let node = self.arena.get(decl)?;
+        let parameters = match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.arena.get_function(node).map(|func| &func.parameters)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(node)
+                .map(|method| &method.parameters),
+            _ => None,
+        }?;
+
+        let mut params = Vec::new();
+        let mut this_type = None;
+        for &param_idx in &parameters.nodes {
+            let param = self.arena.get_parameter_at(param_idx)?;
+            let param_name = self
+                .arena
+                .get_identifier_at(param.name)
+                .map(|ident| ident.escaped_text.as_str());
+            let param_type = if param.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.node_types
+                    .and_then(|nt| nt.get(&param.type_annotation.0).copied())
+                    .filter(|&ty| ty != TypeId::ERROR)
+                    .or_else(|| self.fallback_type_from_type_node_syntax(param.type_annotation))
+                    .unwrap_or(TypeId::ANY)
+            };
+            if param_name == Some("this") {
+                this_type = Some(param_type);
+                continue;
+            }
+            params.push(ParamInfo {
+                name: param_name.map(|name| self.interner.intern_string(name)),
+                type_id: param_type,
+                optional: param.question_token || param.initializer.is_some(),
+                rest: param.dot_dot_dot_token,
+            });
+        }
+
+        Some(self.interner.factory().callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: Vec::new(),
+                params,
+                this_type,
+                return_type: self
+                    .arena
+                    .get(decl)
+                    .and_then(|node| self.arena.get_function(node))
+                    .and_then(|func| {
+                        func.type_annotation.is_some().then_some(func.type_annotation)
+                    })
+                    .and_then(|type_ann| self.fallback_type_from_type_node_syntax(type_ann))
+                    .unwrap_or(TypeId::ANY),
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        }))
     }
 
     fn declared_return_type_from_declaration(&self, decl: NodeIndex) -> Option<TypeId> {
@@ -599,6 +972,8 @@ impl<'a> FlowAnalyzer<'a> {
         }
         self.node_types
             .and_then(|nt| nt.get(&func.type_annotation.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+            .or_else(|| self.fallback_type_from_type_node_syntax(func.type_annotation))
     }
 
     fn declaration_likely_returns_awaitable(&self, decl: NodeIndex) -> bool {
@@ -1011,20 +1386,33 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn destructuring_numeric_access_type(&self, source_ty: TypeId, index: usize) -> TypeId {
-        let db = self.interner.as_type_database();
+        let mut visited = FxHashSet::default();
+        self.destructuring_numeric_access_type_inner(source_ty, index, &mut visited)
+    }
 
-        if let Some(members) = union_members_for_type(db, source_ty) {
+    fn destructuring_numeric_access_type_inner(
+        &self,
+        source_ty: TypeId,
+        index: usize,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> TypeId {
+        if !visited.insert(source_ty) {
+            return TypeId::UNKNOWN;
+        }
+
+        let db = self.interner.as_type_database();
+        let result = if let Some(members) = union_members_for_type(db, source_ty) {
             let mut member_types = Vec::new();
             for member in members {
-                let member_type = self.destructuring_numeric_access_type(member, index);
+                let member_type =
+                    self.destructuring_numeric_access_type_inner(member, index, visited);
                 if member_type != TypeId::NEVER {
                     member_types.push(member_type);
                 }
             }
-            return tsz_solver::utils::union_or_single(self.interner, member_types);
-        }
-
-        if let Some(elements) = tuple_elements_for_type(db, source_ty) {
+            tsz_solver::utils::union_or_single(self.interner, member_types)
+        } else if let Some(elements) = tuple_elements_for_type(db, source_ty) {
+            let mut result = TypeId::UNDEFINED;
             for (position, element) in elements.iter().enumerate() {
                 if element.rest {
                     if index >= position {
@@ -1032,7 +1420,7 @@ impl<'a> FlowAnalyzer<'a> {
                             get_array_element_type(db, element.type_id).unwrap_or(element.type_id);
                         // With noUncheckedIndexedAccess, rest-region elements
                         // are potentially undefined (the tuple length is unknown).
-                        return if self.interner.no_unchecked_indexed_access() {
+                        result = if self.interner.no_unchecked_indexed_access() {
                             self.interner.union2(elem_ty, TypeId::UNDEFINED)
                         } else {
                             elem_ty
@@ -1042,24 +1430,27 @@ impl<'a> FlowAnalyzer<'a> {
                 }
 
                 if index == position {
-                    if element.optional {
-                        return self.interner.union2(element.type_id, TypeId::UNDEFINED);
-                    }
-                    return element.type_id;
+                    result = if element.optional {
+                        self.interner.union2(element.type_id, TypeId::UNDEFINED)
+                    } else {
+                        element.type_id
+                    };
+                    break;
                 }
             }
-            return TypeId::UNDEFINED;
-        }
-
-        if let Some(element_type) = get_array_element_type(db, source_ty) {
-            return if self.interner.no_unchecked_indexed_access() {
+            result
+        } else if let Some(element_type) = get_array_element_type(db, source_ty) {
+            if self.interner.no_unchecked_indexed_access() {
                 self.interner.union2(element_type, TypeId::UNDEFINED)
             } else {
                 element_type
-            };
-        }
+            }
+        } else {
+            TypeId::UNKNOWN
+        };
 
-        TypeId::UNKNOWN
+        visited.remove(&source_ty);
+        result
     }
 
     fn destructuring_source_with_default(

@@ -1,5 +1,6 @@
 //! Class member declaration and accessibility validation helpers.
 
+use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLookup};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node_flags;
@@ -410,6 +411,15 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(sym_id) = self
+                        .resolve_type_symbol_for_lowering(type_ref.type_name)
+                        .map(tsz_binder::SymbolId)
+                    && (self.ctx.symbol_resolution_set.contains(&sym_id)
+                        || self.type_alias_reaches_resolving_alias(sym_id))
+                {
+                    return;
+                }
                 let _ = self.get_type_from_type_reference(type_idx);
             }
             k if k == syntax_kind_ext::TYPE_QUERY => {
@@ -1152,6 +1162,14 @@ impl<'a> CheckerState<'a> {
     /// Report an error with context about a related symbol.
     /// Check a class member (property, method, constructor, accessor).
     pub(crate) fn check_class_member(&mut self, member_idx: NodeIndex) {
+        self.check_class_member_with_request(member_idx, &TypingRequest::NONE);
+    }
+
+    pub(crate) fn check_class_member_with_request(
+        &mut self,
+        member_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
         };
@@ -1201,16 +1219,16 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
-                self.check_property_declaration(member_idx);
+                self.check_property_declaration_with_request(member_idx, request);
             }
             syntax_kind_ext::METHOD_DECLARATION => {
-                self.check_method_declaration(member_idx);
+                self.check_method_declaration_with_request(member_idx, request);
             }
             syntax_kind_ext::CONSTRUCTOR => {
-                self.check_constructor_declaration(member_idx);
+                self.check_constructor_declaration_with_request(member_idx, request);
             }
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                self.check_accessor_declaration(member_idx);
+                self.check_accessor_declaration_with_request(member_idx, request);
             }
             syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 // TS2729: Check for use-before-init of static properties in static blocks
@@ -1237,7 +1255,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.function_depth += 1;
                     // Check each statement in the block
                     for &stmt_idx in &block.statements.nodes {
-                        self.check_statement(stmt_idx);
+                        let body_request = request.read().contextual_opt(None);
+                        self.check_statement_with_request(stmt_idx, &body_request);
                         if !self.statement_falls_through(stmt_idx) {
                             self.ctx.is_unreachable = true;
                         }

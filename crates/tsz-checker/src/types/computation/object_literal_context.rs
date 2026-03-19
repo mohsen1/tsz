@@ -28,6 +28,61 @@ pub(crate) enum ContextualPropertyPresence {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn contextual_absent_property_excess_target(
+        &mut self,
+        contextual_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::assignability::ExcessPropertiesKind;
+
+        let lookup_type = self.contextual_lookup_type(contextual_type);
+        match crate::query_boundaries::assignability::classify_for_excess_properties(
+            self.ctx.types,
+            lookup_type,
+        ) {
+            ExcessPropertiesKind::Object(_)
+            | ExcessPropertiesKind::ObjectWithIndex(_)
+            | ExcessPropertiesKind::Intersection(_) => Some(contextual_type),
+            ExcessPropertiesKind::Union(_) | ExcessPropertiesKind::NotObject => None,
+        }
+    }
+
+    pub(crate) fn named_contextual_property_presence(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> ContextualPropertyPresence {
+        self.contextual_property_presence(contextual_type, property_name, 6)
+    }
+
+    pub(crate) fn named_contextual_property_allows_callable_fallback(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        !matches!(
+            self.contextual_property_presence(contextual_type, property_name, 6),
+            ContextualPropertyPresence::Absent
+        )
+    }
+
+    pub(crate) fn contextual_callable_property_fallback_type(
+        &mut self,
+        contextual_type: TypeId,
+        property_context_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let wildcard_context = self.contextual_object_literal_property_type(contextual_type, "*");
+        let callable_fallback = self.fallback_contextual_callable_property_type(contextual_type, 6);
+
+        match wildcard_context {
+            Some(TypeId::ANY | TypeId::UNKNOWN) | None => callable_fallback
+                .or(wildcard_context)
+                .or(property_context_type),
+            Some(_) => wildcard_context
+                .or(callable_fallback)
+                .or(property_context_type),
+        }
+    }
+
     pub(crate) fn fallback_contextual_callable_property_type(
         &mut self,
         type_id: TypeId,
@@ -227,7 +282,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+    pub(crate) fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return None;
@@ -330,6 +385,10 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::ExcessPropertiesKind;
         use crate::query_boundaries::common::PropertyAccessResult;
 
+        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
+        if type_id == TypeId::UNDEFINED {
+            return ContextualPropertyPresence::Absent;
+        }
         if depth == 0 || matches!(type_id, TypeId::ANY | TypeId::ERROR) {
             return ContextualPropertyPresence::Unknown;
         }
@@ -775,7 +834,18 @@ impl<'a> CheckerState<'a> {
 
         let property_presence =
             self.contextual_property_presence(original_contextual_type, property_name, 6);
-        if property_presence == ContextualPropertyPresence::Absent
+        let resolved_property_presence = if contextual_type != original_contextual_type {
+            self.contextual_property_presence(contextual_type, property_name, 4)
+        } else {
+            ContextualPropertyPresence::Unknown
+        };
+        let effective_property_presence = match resolved_property_presence {
+            ContextualPropertyPresence::Present | ContextualPropertyPresence::Absent => {
+                resolved_property_presence
+            }
+            ContextualPropertyPresence::Unknown => property_presence,
+        };
+        if effective_property_presence == ContextualPropertyPresence::Absent
             && !self.should_preserve_absent_contextual_property_type(original_contextual_type, 6)
         {
             best_property_type = None;
@@ -789,7 +859,7 @@ impl<'a> CheckerState<'a> {
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
         if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type)
-            && property_presence != ContextualPropertyPresence::Absent
+            && effective_property_presence != ContextualPropertyPresence::Absent
         {
             tracing::trace!(
                 contextual_type = contextual_type.0,

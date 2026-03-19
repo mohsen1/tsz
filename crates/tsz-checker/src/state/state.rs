@@ -925,12 +925,33 @@ impl<'a> CheckerState<'a> {
         let skip_flow_narrowing = request.flow.skip_flow_narrowing();
 
         if use_node_cache && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            let is_super_sensitive_access = self.ctx.arena.get(idx).is_some_and(|node| {
+                use tsz_parser::parser::syntax_kind_ext;
+                (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    && self
+                        .ctx
+                        .arena
+                        .get_access_expr(node)
+                        .is_some_and(|access| self.is_super_expression(access.expression))
+            });
+            let is_super_keyword = self
+                .ctx
+                .arena
+                .get(idx)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16);
+
+            if is_super_sensitive_access || is_super_keyword {
+                // `super` diagnostics depend on the current class-member context.
+                // Reusing a silent cache entry from type-environment building can
+                // suppress TS17011/TS2336/TS2855 on the checked path.
+            }
             // PERF FAST PATH: Check the flow_analysis_cache directly with a cheap key
             // before doing the expensive should_apply_flow_narrowing_for_identifier check.
             // If the flow cache already has a result for this (flow_node, symbol, type),
             // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
             // checks, parameter default checks, and all other setup (~300ns savings per call).
-            if !skip_flow_narrowing
+            else if !skip_flow_narrowing
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
@@ -1033,6 +1054,8 @@ impl<'a> CheckerState<'a> {
                     node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                         || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 })
+                || is_super_sensitive_access
+                || is_super_keyword
             {
                 // Fall through to recompute with write-type awareness
             } else {
@@ -1212,42 +1235,6 @@ impl<'a> CheckerState<'a> {
         request: &crate::context::TypingRequest,
     ) -> TypeId {
         self.get_type_of_function_impl(idx, request)
-    }
-
-    /// Run an arbitrary closure under an explicit `TypingRequest`.
-    ///
-    /// Saves the current ambient context (`contextual_type`, `contextual_type_is_assertion`,
-    /// `skip_flow_narrowing`), installs the request's values, runs the closure, then
-    /// restores the saved state. Use this when multiple calls or non-standard entry points
-    /// (e.g. `check_statement`, loops of `get_type_of_node`) need a temporary typing context.
-    ///
-    /// # Compatibility bridge (TEMPORARY)
-    ///
-    /// Like the `*_with_request` methods, this is a shim that translates the request into
-    /// ambient ctx fields until all callers are fully migrated.
-    pub fn run_with_typing_context<F, R>(
-        &mut self,
-        request: &crate::context::TypingRequest,
-        f: F,
-    ) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        let prev_contextual = self.ctx.contextual_type;
-        let prev_assertion = self.ctx.contextual_type_is_assertion;
-        let prev_skip_flow = self.ctx.skip_flow_narrowing;
-
-        self.ctx.contextual_type = request.contextual_type;
-        self.ctx.contextual_type_is_assertion = request.origin.is_assertion();
-        self.ctx.skip_flow_narrowing = request.flow.skip_flow_narrowing();
-
-        let result = f(self);
-
-        self.ctx.contextual_type = prev_contextual;
-        self.ctx.contextual_type_is_assertion = prev_assertion;
-        self.ctx.skip_flow_narrowing = prev_skip_flow;
-
-        result
     }
 
     /// Check if `from` can reach `to` via a flow chain that doesn't narrow `sym_id`.
@@ -1480,7 +1467,9 @@ impl<'a> CheckerState<'a> {
 
         // Clear this node's cache
         self.ctx.node_types.remove(&idx.0);
-        if !self.ctx.implicit_any_contextual_closures.contains(&idx) {
+        if self.ctx.implicit_any_contextual_closures.contains(&idx) {
+            self.ctx.implicit_any_checked_closures.insert(idx);
+        } else {
             self.ctx.implicit_any_checked_closures.remove(&idx);
         }
 

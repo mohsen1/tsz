@@ -1114,6 +1114,134 @@ impl<'a> CheckerState<'a> {
 
     // JSX Children Contextual Typing
 
+    fn collect_jsx_children_discriminant_attrs(
+        &mut self,
+        attributes_idx: NodeIndex,
+    ) -> Vec<(String, TypeId)> {
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return Vec::new();
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return Vec::new();
+        };
+
+        let mut provided = Vec::new();
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                continue;
+            };
+            let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
+                continue;
+            };
+            if matches!(attr_name.as_str(), "key" | "ref" | "children") {
+                continue;
+            }
+
+            let attr_type = if attr_data.initializer.is_none() {
+                TypeId::BOOLEAN_TRUE
+            } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                    self.ctx
+                        .arena
+                        .get_jsx_expression(init_node)
+                        .map(|expr| expr.expression)
+                        .unwrap_or(attr_data.initializer)
+                } else {
+                    attr_data.initializer
+                };
+                if let Some(value_node) = self.ctx.arena.get(value_idx)
+                    && matches!(
+                        value_node.kind,
+                        syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                    )
+                {
+                    continue;
+                }
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let ty = self.compute_type_of_node(value_idx);
+                self.ctx.preserve_literal_types = prev;
+                ty
+            } else {
+                TypeId::ANY
+            };
+
+            provided.push((attr_name, attr_type));
+        }
+
+        provided
+    }
+
+    fn narrow_jsx_props_union_for_children(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+    ) -> TypeId {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, props_type)
+        else {
+            return props_type;
+        };
+
+        let provided_attrs = self.collect_jsx_children_discriminant_attrs(attributes_idx);
+        let provided_names: rustc_hash::FxHashSet<&str> = provided_attrs
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        let compatible: Vec<TypeId> = members
+            .into_iter()
+            .filter(|&member| {
+                let member = self.resolve_type_for_property_access(member);
+
+                let attrs_match = provided_attrs.iter().all(|(name, attr_type)| {
+                    use crate::query_boundaries::common::PropertyAccessResult;
+                    match self.resolve_property_access_with_env(member, name) {
+                        PropertyAccessResult::Success { type_id, .. } => {
+                            let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                            *attr_type == TypeId::ANY
+                                || *attr_type == TypeId::ERROR
+                                || self.is_assignable_to(*attr_type, expected)
+                        }
+                        _ => false,
+                    }
+                });
+                if !attrs_match {
+                    return false;
+                }
+
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
+                {
+                    shape.properties.iter().all(|prop| {
+                        if prop.optional {
+                            return true;
+                        }
+                        let prop_name = self.ctx.types.resolve_atom(prop.name);
+                        prop_name.as_str() == "children"
+                            || provided_names.contains(prop_name.as_str())
+                    })
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        if compatible.len() == 1 {
+            compatible[0]
+        } else {
+            props_type
+        }
+    }
+
     /// Extract the contextual type for JSX children from the opening element's
     /// props type. Used to provide contextual typing for children expressions
     /// like `<Comp>{(arg) => ...}</Comp>` where `arg` should get its type from
@@ -1179,7 +1307,7 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
             if let Some(props) = self.get_jsx_props_type_for_children_contextual(evaluated) {
-                props
+                self.narrow_jsx_props_union_for_children(jsx_opening.attributes, props)
             } else if self.is_generic_jsx_component(evaluated) {
                 // Generic component: return UNKNOWN to prevent false TS7006
                 return Some(TypeId::UNKNOWN);

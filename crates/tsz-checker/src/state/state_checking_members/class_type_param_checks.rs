@@ -3,6 +3,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> CheckerState<'a> {
     /// Check if a type node references class type parameters (TS2302).
@@ -22,8 +23,20 @@ impl<'a> CheckerState<'a> {
         };
 
         use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
 
         match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(ident) = self.ctx.arena.get_identifier(node)
+                    && class_type_param_names.contains(&ident.escaped_text)
+                {
+                    self.error_at_node(
+                        type_idx,
+                        "Static members cannot reference class type parameters.",
+                        diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                    );
+                }
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
                     // Check if type_name is an identifier matching a class type param
@@ -164,6 +177,34 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn check_static_member_body_for_class_type_param_refs(
+        &mut self,
+        root_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) {
+        if root_idx.is_none() || class_type_param_names.is_empty() {
+            return;
+        }
+
+        let mut stack = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            let parent_is_type_node = self
+                .ctx
+                .arena
+                .get_extended(node_idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .is_some_and(|parent| parent.is_type_node());
+            if node.is_type_node() && !parent_is_type_node {
+                self.check_type_node_for_class_type_param_refs(node_idx, class_type_param_names);
+                continue;
+            }
+            stack.extend(self.ctx.arena.get_children(node_idx));
+        }
+    }
+
     /// Collect type parameter names from a type parameter list.
     fn collect_type_param_names(
         &self,
@@ -185,20 +226,18 @@ impl<'a> CheckerState<'a> {
         names
     }
 
-    /// Check a static class member for references to class type parameters (TS2302).
-    pub(crate) fn check_static_member_for_class_type_param_refs(&mut self, member_idx: NodeIndex) {
+    fn check_static_member_for_class_type_param_refs_with_names(
+        &mut self,
+        member_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) {
         use tsz_parser::parser::syntax_kind_ext;
-
-        let class_type_param_names: Vec<String> = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .map(|c| c.type_param_names.clone())
-            .unwrap_or_default();
 
         if class_type_param_names.is_empty() {
             return;
         }
+
+        self.ctx.rebuild_emitted_diagnostics_from_current();
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -211,7 +250,11 @@ impl<'a> CheckerState<'a> {
                 {
                     self.check_type_node_for_class_type_param_refs(
                         prop.type_annotation,
-                        &class_type_param_names,
+                        class_type_param_names,
+                    );
+                    self.check_static_member_body_for_class_type_param_refs(
+                        prop.initializer,
+                        class_type_param_names,
                     );
                 }
             }
@@ -220,10 +263,14 @@ impl<'a> CheckerState<'a> {
                     && self.has_static_modifier(&method.modifiers)
                 {
                     self.check_callable_for_class_type_param_refs(
-                        &class_type_param_names,
+                        class_type_param_names,
                         &method.type_parameters,
                         &method.parameters,
                         method.type_annotation,
+                    );
+                    self.check_static_member_body_for_class_type_param_refs(
+                        method.body,
+                        class_type_param_names,
                     );
                 }
             }
@@ -232,10 +279,14 @@ impl<'a> CheckerState<'a> {
                     && self.has_static_modifier(&accessor.modifiers)
                 {
                     self.check_callable_for_class_type_param_refs(
-                        &class_type_param_names,
+                        class_type_param_names,
                         &accessor.type_parameters,
                         &accessor.parameters,
                         accessor.type_annotation,
+                    );
+                    self.check_static_member_body_for_class_type_param_refs(
+                        accessor.body,
+                        class_type_param_names,
                     );
                 }
             }
@@ -243,19 +294,17 @@ impl<'a> CheckerState<'a> {
                 if let Some(idx_sig) = self.ctx.arena.get_index_signature(node)
                     && self.has_static_modifier(&idx_sig.modifiers)
                 {
-                    // Check the index signature's value type for class type param refs
                     self.check_type_node_for_class_type_param_refs(
                         idx_sig.type_annotation,
-                        &class_type_param_names,
+                        class_type_param_names,
                     );
-                    // Also check parameter types
                     for &param_idx in &idx_sig.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
                             self.check_type_node_for_class_type_param_refs(
                                 param.type_annotation,
-                                &class_type_param_names,
+                                class_type_param_names,
                             );
                         }
                     }
@@ -263,6 +312,98 @@ impl<'a> CheckerState<'a> {
             }
             _ => {}
         }
+    }
+
+    fn recheck_static_member_class_type_param_refs_in_node(&mut self, node_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, MODULE_BLOCK, MODULE_DECLARATION,
+        };
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => {
+                if let Some(class_data) = self.ctx.arena.get_class(node) {
+                    let class_type_param_names =
+                        self.collect_type_param_names(&class_data.type_parameters);
+                    for &member_idx in &class_data.members.nodes {
+                        self.check_static_member_for_class_type_param_refs_with_names(
+                            member_idx,
+                            &class_type_param_names,
+                        );
+                    }
+                }
+            }
+            k if k == MODULE_DECLARATION => {
+                if let Some(module) = self.ctx.arena.get_module(node) {
+                    self.recheck_static_member_class_type_param_refs_in_node(module.body);
+                }
+            }
+            k if k == MODULE_BLOCK => {
+                if let Some(block) = self.ctx.arena.get_module_block(node)
+                    && let Some(ref statements) = block.statements
+                {
+                    for &stmt_idx in &statements.nodes {
+                        self.recheck_static_member_class_type_param_refs_in_node(stmt_idx);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn recheck_static_member_class_type_param_refs_in_source_file(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        for &stmt_idx in statements {
+            self.recheck_static_member_class_type_param_refs_in_node(stmt_idx);
+        }
+    }
+
+    /// Check a static class member for references to class type parameters (TS2302).
+    pub(crate) fn check_static_member_for_class_type_param_refs(&mut self, member_idx: NodeIndex) {
+        let class_type_param_names: Vec<String> = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.type_param_names.clone())
+            .unwrap_or_default();
+
+        self.check_static_member_for_class_type_param_refs_with_names(
+            member_idx,
+            &class_type_param_names,
+        );
+    }
+
+    pub(crate) fn check_type_node_for_static_member_class_type_param_refs(
+        &mut self,
+        type_idx: NodeIndex,
+    ) {
+        let class_type_param_names: Vec<String> = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.type_param_names.clone())
+            .unwrap_or_default();
+
+        if class_type_param_names.is_empty() {
+            return;
+        }
+
+        let in_static_member = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|class_info| class_info.in_static_member)
+            || self.is_in_static_class_member_context(type_idx);
+        if !in_static_member {
+            return;
+        }
+
+        self.check_type_node_for_class_type_param_refs(type_idx, &class_type_param_names);
     }
 
     /// Shared logic for checking a callable member (method/accessor) for class
@@ -461,7 +602,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !enclosing_class.in_static_member {
+        if !enclosing_class.in_static_member && !self.is_in_static_class_member_context(error_node)
+        {
             return;
         }
 

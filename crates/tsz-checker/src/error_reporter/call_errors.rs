@@ -904,6 +904,35 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
+            let excess_target = self.contextual_absent_property_excess_target(effective_param_type);
+            let property_presence = excess_target
+                .map(|target| self.named_contextual_property_presence(target, &prop_name));
+            if matches!(
+                property_presence,
+                Some(
+                    crate::computation::object_literal_context::ContextualPropertyPresence::Absent
+                )
+            ) {
+                let already_reported =
+                    self.get_node_span(prop_name_idx)
+                        .is_some_and(|(start, end)| {
+                            self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                            ) || self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                            )
+                        });
+                if !already_reported && let Some(excess_target) = excess_target {
+                    self.error_excess_property_at(&prop_name, excess_target, prop_name_idx);
+                }
+                elaborated = true;
+                continue;
+            }
+
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
                 .object_literal_target_property_type(
                     effective_param_type,

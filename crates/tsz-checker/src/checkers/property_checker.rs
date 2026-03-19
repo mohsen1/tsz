@@ -7,6 +7,7 @@ use crate::query_boundaries::type_computation::complex::{
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 // =============================================================================
@@ -158,13 +159,24 @@ impl<'a> CheckerState<'a> {
         };
 
         let current_class_idx = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+        let protected_candidates =
+            self.protected_access_candidate_classes(current_class_idx, object_expr);
         let mut protected_receiver_mismatch: Option<(NodeIndex, NodeIndex)> = None;
         let allowed = match access_info.level {
             MemberAccessLevel::Private => {
                 current_class_idx == Some(access_info.declaring_class_idx)
             }
-            MemberAccessLevel::Protected => match current_class_idx {
-                None => {
+            MemberAccessLevel::Protected => {
+                if !protected_candidates.is_empty() {
+                    self.check_protected_access_allowed(
+                        &protected_candidates,
+                        &access_info,
+                        is_static,
+                        object_expr,
+                        object_type,
+                        &mut protected_receiver_mismatch,
+                    )
+                } else {
                     // In free functions with an explicit `this: Class` parameter,
                     // TypeScript allows protected access through contextual `this`.
                     self.is_this_expression(object_expr)
@@ -174,15 +186,7 @@ impl<'a> CheckerState<'a> {
                                 receiver_class_idx == access_info.declaring_class_idx
                             })
                 }
-                Some(current_class_idx) => self.check_protected_access_allowed(
-                    current_class_idx,
-                    &access_info,
-                    is_static,
-                    object_expr,
-                    object_type,
-                    &mut protected_receiver_mismatch,
-                ),
-            },
+            }
         };
 
         if allowed {
@@ -233,7 +237,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check whether protected access is allowed from the given class context.
     ///
-    /// This handles nested classes by walking up the `enclosing_class_chain`.
+    /// This handles nested classes by walking lexical class ancestors.
     /// In TypeScript, when code is inside a nested class (e.g., `class B` inside
     /// `Derived1.method()`), protected access checks consider the outer enclosing
     /// classes, not just the innermost one. If the innermost class doesn't derive
@@ -245,18 +249,14 @@ impl<'a> CheckerState<'a> {
     ///   type doesn't match (wrong instance type).
     fn check_protected_access_allowed(
         &mut self,
-        current_class_idx: NodeIndex,
+        candidates: &[NodeIndex],
         access_info: &crate::state::MemberAccessInfo,
         is_static: bool,
         object_expr: NodeIndex,
         object_type: tsz_solver::TypeId,
         protected_receiver_mismatch: &mut Option<(NodeIndex, NodeIndex)>,
     ) -> bool {
-        // Try the innermost class first, then walk up the chain.
-        let mut candidates = vec![current_class_idx];
-        candidates.extend(self.ctx.enclosing_class_chain.iter().rev().copied());
-
-        for candidate_class_idx in candidates {
+        for &candidate_class_idx in candidates {
             if candidate_class_idx == access_info.declaring_class_idx {
                 // We're inside the declaring class itself — always allowed.
                 return true;
@@ -284,8 +284,8 @@ impl<'a> CheckerState<'a> {
                     // Receiver is a different class (parent, sibling, or unrelated).
                     // This is the TS2446 case: "protected and only accessible through
                     // an instance of class X. This is an instance of class Y."
-                    *protected_receiver_mismatch = Some((candidate_class_idx, receiver));
-                    return false;
+                    protected_receiver_mismatch.get_or_insert((candidate_class_idx, receiver));
+                    continue;
                 }
             } else {
                 // Can't resolve receiver — deny access.
@@ -295,6 +295,46 @@ impl<'a> CheckerState<'a> {
 
         // No enclosing class derives from the declaring class → TS2445.
         false
+    }
+
+    fn protected_access_candidate_classes(
+        &self,
+        current_class_idx: Option<NodeIndex>,
+        access_site_idx: NodeIndex,
+    ) -> Vec<NodeIndex> {
+        let mut candidates = current_class_idx.into_iter().collect::<Vec<_>>();
+        let mut parent = self
+            .ctx
+            .arena
+            .get_extended(access_site_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+
+        while parent.is_some() {
+            if let Some(node) = self.ctx.arena.get(parent)
+                && matches!(
+                    node.kind,
+                    syntax_kind_ext::CLASS_DECLARATION | syntax_kind_ext::CLASS_EXPRESSION
+                )
+                && !candidates.contains(&parent)
+            {
+                candidates.push(parent);
+            }
+            parent = self
+                .ctx
+                .arena
+                .get_extended(parent)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        for &class_idx in self.ctx.enclosing_class_chain.iter().rev() {
+            if !candidates.contains(&class_idx) {
+                candidates.push(class_idx);
+            }
+        }
+
+        candidates
     }
 
     /// Check property accessibility by examining brand properties on the type.

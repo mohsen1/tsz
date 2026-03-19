@@ -1,5 +1,6 @@
 //! Core implementation for class instance type resolution.
 
+use crate::context::EnclosingClassInfo;
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
@@ -162,7 +163,7 @@ impl<'a> CheckerState<'a> {
 
         // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
         // Keep class type parameters in scope while constructing the instance type.
-        let (class_type_params, mut class_type_param_updates) =
+        let (mut class_type_params, mut class_type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
 
         // In JS files, classes don't have syntax-level type parameters.
@@ -172,6 +173,7 @@ impl<'a> CheckerState<'a> {
             let (jsdoc_params, jsdoc_updates) =
                 self.push_jsdoc_class_template_type_params(class_idx);
             if !jsdoc_params.is_empty() {
+                class_type_params = jsdoc_params;
                 class_type_param_updates.extend(jsdoc_updates);
             }
         }
@@ -706,6 +708,40 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.pop();
         }
 
+        let restore_enclosing_class =
+            if !deferred_methods.is_empty() || !deferred_accessors.is_empty() {
+                let prev_enclosing_class = self.ctx.enclosing_class.take();
+                if let Some(ref prev) = prev_enclosing_class {
+                    self.ctx.enclosing_class_chain.push(prev.class_idx);
+                }
+                let class_type_param_names: Vec<String> = class_type_param_updates
+                    .iter()
+                    .map(|(name, _, _)| name.clone())
+                    .collect();
+                self.ctx.enclosing_class = Some(EnclosingClassInfo {
+                    name: self.get_class_name_from_decl(class_idx),
+                    class_idx,
+                    member_nodes: class.members.nodes.clone(),
+                    in_constructor: false,
+                    is_declared: self.is_ambient_class_declaration(class_idx),
+                    in_static_property_initializer: false,
+                    in_static_member: false,
+                    has_super_call_in_current_constructor: false,
+                    cached_instance_this_type: Some(
+                        self.ctx
+                            .class_instance_type_cache
+                            .get(&class_idx)
+                            .copied()
+                            .unwrap_or(TypeId::ERROR),
+                    ),
+                    type_param_names: class_type_param_names,
+                    class_type_parameters: class_type_params.clone(),
+                });
+                Some(prev_enclosing_class)
+            } else {
+                None
+            };
+
         // Phase 2: Process deferred methods with a partial `this` type so that
         // method body inference can resolve `this.x` references (e.g. `return this.b`).
         if !deferred_methods.is_empty() {
@@ -952,6 +988,13 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.this_type_stack.pop();
+        }
+
+        if let Some(prev_enclosing_class) = restore_enclosing_class {
+            self.ctx.enclosing_class = prev_enclosing_class;
+            if self.ctx.enclosing_class.is_some() {
+                self.ctx.enclosing_class_chain.pop();
+            }
         }
 
         // Convert accessors to properties

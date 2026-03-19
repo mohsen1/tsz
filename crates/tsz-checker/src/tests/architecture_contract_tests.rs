@@ -2246,9 +2246,8 @@ fn test_query_boundaries_coverage_ratio() {
 // fields: `ctx.contextual_type =`, `ctx.contextual_type_is_assertion =`,
 // and `ctx.skip_flow_narrowing =`.
 //
-// The compatibility bridge in `get_type_of_node_with_request` is the ONLY
-// place that should perform these mutations.  When the bridge is removed,
-// these tests should remain to prevent backsliding.
+// Legacy ambient state still exists in a few non-migrated subsystems, but
+// the request-first hot path must not regress.
 
 /// Migrated files must not contain raw `ctx.contextual_type =` assignments.
 /// They should use `get_type_of_node_with_request` instead.
@@ -2288,6 +2287,8 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/function_type.rs",
         "types/class_type/constructor.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
+        "state/state_checking_members/member_declaration_checks.rs",
+        "state/state_checking/class.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2336,7 +2337,12 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
         "types/property_access_type.rs",
         "types/computation/access.rs",
         "types/computation/helpers.rs",
+        "state/type_analysis/core.rs",
+        "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/computed_helpers_binding.rs",
         "state/state_checking_members/statement_callback_bridge.rs",
+        "state/state_checking_members/member_declaration_checks.rs",
+        "state/state_checking/class.rs",
         // Wave 3: call_checker and call_inference migrated skip_flow via TypingRequest
         "checkers/call_checker.rs",
         "types/computation/call_inference.rs",
@@ -2379,6 +2385,62 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
     }
 }
 
+/// Migrated helper files must not read request intent from ambient checker fields.
+#[test]
+fn migrated_helper_files_no_raw_ambient_request_reads() {
+    let migrated_files = &[
+        "state/type_analysis/core.rs",
+        "state/type_analysis/core_type_query.rs",
+        "state/type_analysis/computed_helpers_binding.rs",
+        "state/type_analysis/computed_helpers.rs",
+        "types/property_access_type.rs",
+        "state/variable_checking/destructuring.rs",
+        "state/variable_checking/core.rs",
+        "types/type_checking/core.rs",
+        "types/computation/tagged_template.rs",
+        "types/class_type/constructor.rs",
+        "state/state_checking_members/ambient_signature_checks.rs",
+        "state/state_checking_members/member_declaration_checks.rs",
+        "state/state_checking/class.rs",
+    ];
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for file in migrated_files {
+        let path = base.join(file);
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read {file}: {e}");
+        });
+
+        let violations: Vec<(usize, &str)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("*")
+                {
+                    return false;
+                }
+                trimmed.contains("self.ctx.contextual_type")
+                    || trimmed.contains("self.ctx.contextual_type_is_assertion")
+                    || trimmed.contains("self.ctx.skip_flow_narrowing")
+            })
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "File {file} must not read request intent from ambient checker state:\n{}",
+            violations
+                .iter()
+                .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
 /// Migrated files must not contain raw `ctx.contextual_type_is_assertion =` assignments.
 #[test]
 fn migrated_files_no_raw_contextual_assertion_mutation() {
@@ -2389,6 +2451,11 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "types/computation/helpers.rs",
         "types/computation/object_literal.rs",
         "types/function_type.rs",
+        "state/state_checking_members/ambient_signature_checks.rs",
+        "types/computation/tagged_template.rs",
+        "types/class_type/constructor.rs",
+        "state/state_checking_members/member_declaration_checks.rs",
+        "state/state_checking/class.rs",
     ];
 
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2419,6 +2486,52 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
             violations.is_empty(),
             "File {file} has been migrated to TypingRequest but still contains \
              raw `contextual_type_is_assertion =` mutations:\n{}",
+            violations
+                .iter()
+                .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+/// The removed `run_with_typing_context` compatibility bridge must not reappear.
+#[test]
+fn no_typing_context_bridge_helper_or_calls() {
+    let files = &[
+        "state/state.rs",
+        "dispatch.rs",
+        "types/function_type.rs",
+        "state/state_checking_members/statement_callback_bridge.rs",
+    ];
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for file in files {
+        let path = base.join(file);
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read {file}: {e}");
+        });
+
+        let violations: Vec<(usize, &str)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("*")
+                {
+                    return false;
+                }
+                trimmed.contains("run_with_typing_context(")
+                    || trimmed.contains("fn run_with_typing_context")
+            })
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "File {file} must not reintroduce the removed typing-context bridge:\n{}",
             violations
                 .iter()
                 .map(|(line_no, line)| format!("  line {}: {}", line_no + 1, line.trim()))

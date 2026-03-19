@@ -3,6 +3,7 @@
 //! Handles control flow statements and dispatches declarations.
 //! This module separates statement checking logic from the monolithic `CheckerState`.
 
+use crate::context::TypingRequest;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -19,22 +20,74 @@ pub trait StatementCheckCallbacks {
     /// Get the type of a node (expression or type annotation).
     fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId;
 
+    /// Request-aware node typing. Defaults to the legacy no-request path.
+    fn get_type_of_node_with_request(&mut self, idx: NodeIndex, request: &TypingRequest) -> TypeId {
+        let _ = request;
+        self.get_type_of_node(idx)
+    }
+
     /// Get the type of a node without flow narrowing.
     /// Used for switch discriminants where tsc uses the declared/widened type,
     /// not the flow-narrowed type (avoids false TS2678).
     fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId;
 
+    /// Request-aware no-narrowing node typing. Defaults to the legacy path.
+    fn get_type_of_node_no_narrowing_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let _ = request;
+        self.get_type_of_node_no_narrowing(idx)
+    }
+
     /// Check a variable statement.
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex);
+
+    fn check_variable_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let _ = request;
+        self.check_variable_statement(stmt_idx);
+    }
 
     /// Check a variable declaration list.
     fn check_variable_declaration_list(&mut self, list_idx: NodeIndex);
 
+    fn check_variable_declaration_list_with_request(
+        &mut self,
+        list_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let _ = request;
+        self.check_variable_declaration_list(list_idx);
+    }
+
     /// Check a variable declaration.
     fn check_variable_declaration(&mut self, decl_idx: NodeIndex);
 
+    fn check_variable_declaration_with_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let _ = request;
+        self.check_variable_declaration(decl_idx);
+    }
+
     /// Check a return statement.
     fn check_return_statement(&mut self, stmt_idx: NodeIndex);
+
+    fn check_return_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let _ = request;
+        self.check_return_statement(stmt_idx);
+    }
 
     /// Check unreachable code in a block.
     /// Check function implementations in a block.
@@ -164,6 +217,11 @@ pub trait StatementCheckCallbacks {
     /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
+    fn check_statement_with_request(&mut self, stmt_idx: NodeIndex, request: &TypingRequest) {
+        let _ = request;
+        self.check_statement(stmt_idx);
+    }
+
     /// Check switch statement exhaustiveness (Task 12: CFA Diagnostics).
     ///
     /// Called after all switch clauses have been checked to determine if
@@ -194,6 +252,16 @@ pub trait StatementCheckCallbacks {
         // Default: no contextual typing
         let _ = switch_type;
         self.get_type_of_node(case_expr)
+    }
+
+    fn get_type_of_case_expression_with_request(
+        &mut self,
+        case_expr: NodeIndex,
+        switch_type: TypeId,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let _ = request;
+        self.get_type_of_case_expression(case_expr, switch_type)
     }
 
     /// Check that a case expression type is comparable to the switch expression type.
@@ -317,7 +385,16 @@ impl StatementChecker {
     /// The `state` parameter provides both the arena for AST access and
     /// callbacks for type checking operations.
     pub fn check<S: StatementCheckCallbacks>(stmt_idx: NodeIndex, state: &mut S) {
+        Self::check_with_request(stmt_idx, state, &TypingRequest::NONE);
+    }
+
+    pub fn check_with_request<S: StatementCheckCallbacks>(
+        stmt_idx: NodeIndex,
+        state: &mut S,
+        request: &TypingRequest,
+    ) {
         state.report_unreachable_statement(stmt_idx);
+        let non_contextual_request = request.contextual_opt(None);
 
         // Get node kind and extract needed data before any mutable operations
         let node_data = {
@@ -331,7 +408,7 @@ impl StatementChecker {
 
         match kind {
             syntax_kind_ext::VARIABLE_STATEMENT => {
-                state.check_variable_statement(stmt_idx);
+                state.check_variable_statement_with_request(stmt_idx, request);
             }
             syntax_kind_ext::EXPRESSION_STATEMENT => {
                 // Extract expression index before mutable operations
@@ -348,7 +425,7 @@ impl StatementChecker {
                     // TS1359: Check for await expressions outside async function
                     state.check_await_expression(expression);
                     // Then get the type for normal type checking
-                    state.get_type_of_node(expression);
+                    state.get_type_of_node_with_request(expression, request);
                 }
             }
             syntax_kind_ext::IF_STATEMENT => {
@@ -369,7 +446,7 @@ impl StatementChecker {
                 if let Some((expression, then_stmt, else_stmt)) = if_data {
                     // Check condition
                     state.check_await_expression(expression);
-                    state.get_type_of_node(expression);
+                    state.get_type_of_node_with_request(expression, &non_contextual_request);
                     // TS2872/TS2873: check if condition is always truthy/falsy
                     state.check_truthy_or_falsy(expression);
                     // TS2774: check for non-nullable callable tested for truthiness
@@ -386,7 +463,7 @@ impl StatementChecker {
                         state.set_unreachable(true);
                     }
                     state.check_declaration_in_statement_position(then_stmt);
-                    state.check_statement(then_stmt);
+                    state.check_statement_with_request(then_stmt, request);
 
                     state.set_unreachable(prev_unreachable);
                     state.set_reported_unreachable(prev_reported);
@@ -397,7 +474,7 @@ impl StatementChecker {
                             state.set_unreachable(true);
                         }
                         state.check_declaration_in_statement_position(else_stmt);
-                        state.check_statement(else_stmt);
+                        state.check_statement_with_request(else_stmt, request);
 
                         state.set_unreachable(prev_unreachable);
                         state.set_reported_unreachable(prev_reported);
@@ -405,7 +482,7 @@ impl StatementChecker {
                 }
             }
             syntax_kind_ext::RETURN_STATEMENT => {
-                state.check_return_statement(stmt_idx);
+                state.check_return_statement_with_request(stmt_idx, request);
             }
             syntax_kind_ext::BLOCK => {
                 // Extract statements before mutable operations
@@ -420,7 +497,7 @@ impl StatementChecker {
                     let prev_unreachable = state.is_unreachable();
                     let prev_reported = state.has_reported_unreachable();
                     for inner_stmt in &stmts {
-                        state.check_statement(*inner_stmt);
+                        state.check_statement_with_request(*inner_stmt, request);
                         if !state.statement_falls_through(*inner_stmt) {
                             state.set_unreachable(true);
                         }
@@ -446,7 +523,7 @@ impl StatementChecker {
                         .map(|l| (l.condition, l.statement))
                 };
                 if let Some((condition, statement)) = loop_data {
-                    state.get_type_of_node(condition);
+                    state.get_type_of_node_with_request(condition, &non_contextual_request);
                     state.check_truthy_or_falsy(condition);
 
                     let prev_unreachable = state.is_unreachable();
@@ -461,7 +538,7 @@ impl StatementChecker {
 
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
-                    state.check_statement(statement);
+                    state.check_statement_with_request(statement, request);
                     state.leave_iteration_statement();
 
                     state.set_unreachable(prev_unreachable);
@@ -487,14 +564,18 @@ impl StatementChecker {
                             })
                         };
                         if is_var_decl_list {
-                            state.check_variable_declaration_list(initializer);
+                            state
+                                .check_variable_declaration_list_with_request(initializer, request);
                         } else {
-                            state.get_type_of_node(initializer);
+                            state.get_type_of_node_with_request(
+                                initializer,
+                                &non_contextual_request,
+                            );
                         }
                     }
                     let mut condition_is_false = false;
                     if condition.is_some() {
-                        state.get_type_of_node(condition);
+                        state.get_type_of_node_with_request(condition, &non_contextual_request);
                         state.check_truthy_or_falsy(condition);
                         condition_is_false = state.is_false_condition(condition);
                     }
@@ -508,9 +589,9 @@ impl StatementChecker {
 
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
-                    state.check_statement(statement);
+                    state.check_statement_with_request(statement, request);
                     if incrementor.is_some() {
-                        state.get_type_of_node(incrementor);
+                        state.get_type_of_node_with_request(incrementor, &non_contextual_request);
                     }
                     state.leave_iteration_statement();
 
@@ -575,7 +656,8 @@ impl StatementChecker {
                         // expression often involves the `of` keyword itself due to
                         // parsing ambiguity (e.g., `for (var of of)`).
                         if !is_for_of {
-                            state.get_type_of_node(expression);
+                            state
+                                .get_type_of_node_with_request(expression, &non_contextual_request);
                         }
                         if is_for_of {
                             TypeId::ANY
@@ -583,7 +665,8 @@ impl StatementChecker {
                             TypeId::STRING
                         }
                     } else {
-                        let expr_type = state.get_type_of_node(expression);
+                        let expr_type = state
+                            .get_type_of_node_with_request(expression, &non_contextual_request);
                         if is_for_of {
                             // Check if the expression is iterable and emit TS2488/TS2504 if not
                             state.check_for_of_iterability(expr_type, expression, await_modifier);
@@ -617,7 +700,7 @@ impl StatementChecker {
                             loop_var_type,
                             !is_for_of,
                         );
-                        state.check_variable_declaration_list(initializer);
+                        state.check_variable_declaration_list_with_request(initializer, request);
                     } else {
                         // TS2491: for-in with expression initializer cannot be array/object literal
                         if !is_for_of {
@@ -635,7 +718,7 @@ impl StatementChecker {
                     }
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
-                    state.check_statement(statement);
+                    state.check_statement_with_request(statement, request);
                     state.leave_iteration_statement();
                 }
             }
@@ -654,7 +737,10 @@ impl StatementChecker {
                     // discriminant. tsc's checkExpression returns the non-narrowed type,
                     // preventing false TS2678 when flow narrows the discriminant
                     // (e.g., `const x: number = 0` narrowed to `0` would reject `case 1`).
-                    let switch_type = state.get_type_of_node_no_narrowing(expression);
+                    let switch_type = state.get_type_of_node_no_narrowing_with_request(
+                        expression,
+                        &non_contextual_request,
+                    );
 
                     // Extract case clauses
                     let clauses = {
@@ -696,8 +782,11 @@ impl StatementChecker {
                                     // Check case expression with switch type as contextual type.
                                     // This enables excess property checking (TS2353) for object
                                     // literal case expressions, matching tsc behavior.
-                                    let case_type =
-                                        state.get_type_of_case_expression(clause_expr, switch_type);
+                                    let case_type = state.get_type_of_case_expression_with_request(
+                                        clause_expr,
+                                        switch_type,
+                                        request,
+                                    );
                                     state.check_switch_case_comparable(
                                         switch_type,
                                         case_type,
@@ -708,7 +797,7 @@ impl StatementChecker {
                                 let prev_unreachable = state.is_unreachable();
                                 let prev_reported = state.has_reported_unreachable();
                                 for inner_stmt_idx in &clause_stmts {
-                                    state.check_statement(*inner_stmt_idx);
+                                    state.check_statement_with_request(*inner_stmt_idx, request);
                                     if !state.statement_falls_through(*inner_stmt_idx) {
                                         state.set_unreachable(true);
                                     }
@@ -742,7 +831,7 @@ impl StatementChecker {
                 };
 
                 if let Some((try_block, catch_clause, finally_block)) = try_data {
-                    state.check_statement(try_block);
+                    state.check_statement_with_request(try_block, request);
 
                     if catch_clause.is_some() {
                         // Extract catch clause data
@@ -759,13 +848,13 @@ impl StatementChecker {
 
                         if let Some((var_decl, block)) = catch_data {
                             if var_decl.is_some() {
-                                state.check_variable_declaration(var_decl);
+                                state.check_variable_declaration_with_request(var_decl, request);
                             }
-                            state.check_statement(block);
+                            state.check_statement_with_request(block, request);
                         }
                     }
                     if finally_block.is_some() {
-                        state.check_statement(finally_block);
+                        state.check_statement_with_request(finally_block, request);
                     }
                 }
             }
@@ -781,7 +870,7 @@ impl StatementChecker {
                         .map(|r| r.expression)
                 };
                 if let Some(operand) = operand {
-                    state.get_type_of_node(operand);
+                    state.get_type_of_node_with_request(operand, &non_contextual_request);
                 }
             }
             syntax_kind_ext::INTERFACE_DECLARATION => {
@@ -823,7 +912,7 @@ impl StatementChecker {
                     }
                 };
                 for init_idx in initializers {
-                    state.get_type_of_node(init_idx);
+                    state.get_type_of_node_with_request(init_idx, &non_contextual_request);
                 }
             }
             syntax_kind_ext::EMPTY_STATEMENT | syntax_kind_ext::DEBUGGER_STATEMENT => {
@@ -883,7 +972,7 @@ impl StatementChecker {
                     state.enter_labeled_statement(label_name, is_iteration, label_idx);
 
                     // Check the contained statement
-                    state.check_statement(statement_idx);
+                    state.check_statement_with_request(statement_idx, request);
 
                     // Pop label from stack
                     state.leave_labeled_statement();
@@ -893,11 +982,11 @@ impl StatementChecker {
                 state.check_grammar_module_element_context(stmt_idx);
                 // Export assignments are mainly checked in check_export_assignment
                 // at the source file level
-                state.get_type_of_node(stmt_idx);
+                state.get_type_of_node_with_request(stmt_idx, request);
             }
             _ => {
                 // Catch-all for other statement types
-                state.get_type_of_node(stmt_idx);
+                state.get_type_of_node_with_request(stmt_idx, &non_contextual_request);
             }
         }
     }

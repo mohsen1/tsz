@@ -81,13 +81,7 @@ impl ContextualOrigin {
 /// # Examples
 ///
 /// ```ignore
-/// // Before (ambient state):
-/// let prev = self.ctx.contextual_type;
-/// self.ctx.contextual_type = Some(expected);
-/// let ty = self.get_type_of_node(expr);
-/// self.ctx.contextual_type = prev;
-///
-/// // After (request-first):
+/// // Request-first typing:
 /// let req = TypingRequest::with_contextual_type(expected);
 /// let ty = self.get_type_of_node_with_request(expr, &req);
 /// ```

@@ -1,3 +1,4 @@
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -18,23 +19,68 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::get_type_of_node(self, idx)
     }
 
+    fn get_type_of_node_with_request(&mut self, idx: NodeIndex, request: &TypingRequest) -> TypeId {
+        CheckerState::get_type_of_node_with_request(self, idx, request)
+    }
+
     fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId {
-        self.get_type_of_node_with_request(idx, &crate::context::TypingRequest::for_write_context())
+        self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context())
+    }
+
+    fn get_type_of_node_no_narrowing_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let request = request.contextual_opt(None).write();
+        self.get_type_of_node_with_request(idx, &request)
     }
 
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
         CheckerState::check_variable_statement(self, stmt_idx);
     }
 
+    fn check_variable_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        CheckerState::check_variable_statement_with_request(self, stmt_idx, request);
+    }
+
     fn check_variable_declaration_list(&mut self, list_idx: NodeIndex) {
         CheckerState::check_variable_declaration_list(self, list_idx);
+    }
+
+    fn check_variable_declaration_list_with_request(
+        &mut self,
+        list_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        CheckerState::check_variable_declaration_list_with_request(self, list_idx, request);
     }
 
     fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
         CheckerState::check_variable_declaration(self, decl_idx);
     }
 
+    fn check_variable_declaration_with_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        CheckerState::check_variable_declaration_with_request(self, decl_idx, request);
+    }
+
     fn check_return_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_return_statement(self, stmt_idx);
+    }
+
+    fn check_return_statement_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        _request: &TypingRequest,
+    ) {
         CheckerState::check_return_statement(self, stmt_idx);
     }
 
@@ -602,7 +648,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 std::mem::take(&mut self.ctx.generator_yield_operand_types);
             let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
 
-            self.check_statement(func.body);
+            self.check_statement_with_request(func.body, &TypingRequest::NONE);
 
             // For annotated generators, check that Generator<TYield, any, any>
             // is assignable to the declared return type.
@@ -927,12 +973,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     None
                 };
 
-                // TEMPORARY: check_statement still reads ctx.contextual_type,
-                // so install/restore around that call when we have an expected type.
                 {
-                    let clause_request = expected_type
-                        .map(crate::context::TypingRequest::with_contextual_type)
-                        .unwrap_or(crate::context::TypingRequest::NONE);
                     let skip_clause_expression_check = export_decl.module_specifier.is_some()
                         && self
                             .ctx
@@ -940,9 +981,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             .get(clause_idx)
                             .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                     if !skip_clause_expression_check {
-                        self.run_with_typing_context(&clause_request, |checker| {
-                            checker.check_statement(clause_idx);
-                        });
+                        self.check_statement(clause_idx);
                     }
                 }
 
@@ -1100,10 +1139,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 // Check for unused type parameters (TS6133)
                 self.check_unused_type_params(&type_alias.type_parameters, type_alias_idx);
-                // Skip name resolution on `intrinsic` body to avoid false TS2304
-                if !body_is_intrinsic_keyword {
-                    self.check_type_for_missing_names(type_alias.type_node);
-                }
+                // The core type-alias checker already validated the body type node,
+                // including missing-name resolution. Re-running that here after the
+                // circular-alias marker is popped can re-enter recursive alias graphs.
+                let _ = body_is_intrinsic_keyword;
                 self.check_type_for_parameter_properties(type_alias.type_node);
                 self.pop_type_parameters(updates);
             }
@@ -1408,6 +1447,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_statement(self, stmt_idx);
     }
 
+    fn check_statement_with_request(&mut self, stmt_idx: NodeIndex, request: &TypingRequest) {
+        CheckerState::check_statement_with_request(self, stmt_idx, request);
+    }
+
     fn check_switch_exhaustiveness(
         &mut self,
         _stmt_idx: NodeIndex,
@@ -1440,7 +1483,17 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // In tsc, `getContextualType` returns the switch discriminant type for case
         // clause expressions. This enables excess property checking (TS2353) when
         // the case expression is an object literal.
-        let request = crate::context::TypingRequest::with_contextual_type(switch_type);
+        let request = TypingRequest::with_contextual_type(switch_type);
+        self.get_type_of_node_with_request(case_expr, &request)
+    }
+
+    fn get_type_of_case_expression_with_request(
+        &mut self,
+        case_expr: NodeIndex,
+        switch_type: TypeId,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let request = request.read().contextual(switch_type);
         self.get_type_of_node_with_request(case_expr, &request)
     }
 

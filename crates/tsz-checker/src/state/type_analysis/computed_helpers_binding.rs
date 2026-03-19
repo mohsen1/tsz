@@ -1,3 +1,4 @@
+use crate::context::TypingRequest;
 use crate::query_boundaries::common::object_shape_for_type;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -773,11 +774,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve the identifier's type with flow narrowing enabled.
-        // get_type_of_node applies control-flow narrowing automatically.
-        let prev_skip = self.ctx.skip_flow_narrowing;
-        self.ctx.skip_flow_narrowing = false;
-        let expr_type = self.get_type_of_node(expr_name);
-        self.ctx.skip_flow_narrowing = prev_skip;
+        let expr_type = self.get_type_of_node_with_request(expr_name, &TypingRequest::NONE);
 
         // If we got a useful type (not ANY/ERROR), use it.
         // Otherwise fall back to the standard non-flow path.

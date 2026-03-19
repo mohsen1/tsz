@@ -11,6 +11,172 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl CheckerState<'_> {
+    pub(crate) fn enclosing_jsdoc_class_template_types(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> FxHashMap<String, TypeId> {
+        let mut template_types = FxHashMap::default();
+        if !self.is_js_file() {
+            return template_types;
+        }
+
+        let mut current = node_idx;
+        for _ in 0..12 {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                break;
+            };
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && let Some(class) = self.ctx.arena.get_class(parent_node)
+            {
+                if class
+                    .type_parameters
+                    .as_ref()
+                    .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return template_types;
+                }
+                let Some(source_file) = self.ctx.arena.source_files.first() else {
+                    return template_types;
+                };
+                let Some(jsdoc) =
+                    self.try_leading_jsdoc(&source_file.comments, parent_node.pos, &source_file.text)
+                else {
+                    return template_types;
+                };
+
+                for name in Self::jsdoc_template_type_params(&jsdoc) {
+                    let atom = self.ctx.types.intern_string(&name);
+                    template_types.entry(name).or_insert_with(|| {
+                        self.ctx.types.factory().type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        })
+                    });
+                }
+                return template_types;
+            }
+            current = parent_idx;
+        }
+
+        template_types
+    }
+
+    fn js_class_body_param_type_map(&mut self, body_idx: NodeIndex) -> FxHashMap<String, TypeId> {
+        let mut param_type_map = FxHashMap::default();
+        let Some(parent_idx) = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent) else {
+            return param_type_map;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return param_type_map;
+        };
+
+        let parameters = match parent_node.kind {
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .ctx
+                .arena
+                .get_constructor(parent_node)
+                .map(|ctor| &ctor.parameters),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(parent_node)
+                .map(|method| &method.parameters),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.ctx
+                    .arena
+                    .get_function(parent_node)
+                    .map(|func| &func.parameters)
+            }
+            _ => None,
+        };
+        let Some(parameters) = parameters else {
+            return param_type_map;
+        };
+        let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
+
+        let jsdoc = self.get_jsdoc_for_function(parent_idx);
+        let jsdoc_param_names: Vec<String> = jsdoc
+            .as_ref()
+            .map(|jsdoc| {
+                Self::extract_jsdoc_param_names(jsdoc)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let comment_start = self.get_jsdoc_comment_pos_for_function(parent_idx);
+
+        for (pi, &param_idx) in parameters.nodes.iter().enumerate() {
+            let Some(param) = self.ctx.arena.get_parameter_at(param_idx) else {
+                continue;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier_at(param.name) else {
+                continue;
+            };
+            let param_type = if param.type_annotation.is_some() {
+                Some(self.get_type_from_type_node(param.type_annotation))
+            } else if let (Some(ref jsdoc), Some(comment_start)) = (jsdoc.as_ref(), comment_start) {
+                let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
+                self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, Some(comment_start))
+                    .or_else(|| {
+                        Self::extract_jsdoc_param_type_string(jsdoc, &pname).and_then(|type_expr| {
+                            let normalized = type_expr
+                                .trim()
+                                .trim_end_matches('=')
+                                .trim_start_matches("...")
+                                .trim();
+                            class_template_types.get(normalized).copied()
+                        })
+                    })
+                    .or_else(|| self.jsdoc_type_annotation_for_node(param_idx))
+            } else {
+                self.jsdoc_type_annotation_for_node(param_idx)
+            };
+            if let Some(param_type) = param_type {
+                param_type_map.insert(name_ident.escaped_text.clone(), param_type);
+            }
+        }
+
+        param_type_map
+    }
+
+    fn js_constructor_assignment_rhs_type(
+        &mut self,
+        rhs_idx: NodeIndex,
+        param_type_map: &FxHashMap<String, TypeId>,
+    ) -> TypeId {
+        if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+            && rhs_node.kind == SyntaxKind::Identifier as u16
+            && let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node)
+            && let Some(&param_type) = param_type_map.get(rhs_ident.escaped_text.as_str())
+        {
+            return param_type;
+        }
+        if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+            && rhs_node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
+        {
+            let symbol_type = self.get_type_of_symbol(sym_id);
+            if symbol_type != TypeId::ERROR && symbol_type != TypeId::UNDEFINED {
+                return symbol_type;
+            }
+        }
+
+        self.get_type_of_node(rhs_idx)
+    }
+
     /// Scan a body (constructor or method) for `this.prop = value` assignments
     /// and add them as instance properties. This implements the JS/checkJs
     /// pattern where assignments serve as implicit property declarations.
@@ -35,6 +201,7 @@ impl CheckerState<'_> {
             };
             block.statements.nodes.clone()
         };
+        let param_type_map = self.js_class_body_param_type_map(body_idx);
 
         // Phase 1: Detect `var/let/const alias = this` patterns
         let this_aliases = self.collect_this_aliases(&stmts);
@@ -69,7 +236,8 @@ impl CheckerState<'_> {
                 any_is_explicit = true;
                 jsdoc_type
             } else if !rhs_idx.is_none() {
-                let mut rhs_type = self.get_type_of_node(rhs_idx);
+                let mut rhs_type =
+                    self.js_constructor_assignment_rhs_type(rhs_idx, &param_type_map);
                 let rhs_is_direct_empty_array =
                     self.ctx.arena.get(rhs_idx).is_some_and(|rhs_node| {
                         rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION

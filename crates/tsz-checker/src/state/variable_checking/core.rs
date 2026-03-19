@@ -2,6 +2,7 @@
 //!
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
+use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -13,6 +14,39 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn declaration_pattern_initializer_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+        typing_request: &TypingRequest,
+    ) -> TypingRequest {
+        let contextual_init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let supports_pattern_context =
+            self.ctx
+                .arena
+                .get(contextual_init)
+                .is_some_and(|init_node| {
+                    matches!(
+                        init_node.kind,
+                        syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    )
+                });
+
+        if !supports_pattern_context {
+            return TypingRequest::NONE;
+        }
+
+        self.build_contextual_type_from_pattern_with_request(
+            pattern_idx,
+            &typing_request.read().contextual_opt(None),
+        )
+        .map_or(TypingRequest::NONE, TypingRequest::with_contextual_type)
+    }
+
     fn cached_inferred_variable_type(
         &self,
         decl_idx: NodeIndex,
@@ -29,6 +63,60 @@ impl<'a> CheckerState<'a> {
                     .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
             })
             .filter(|&type_id| type_id != TypeId::ERROR)
+    }
+
+    fn has_prior_value_declaration_for_symbol(&self, decl_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx).or_else(|| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+                .and_then(|decl| self.ctx.binder.get_node_symbol(decl.name))
+        }) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&other| other != decl_idx)
+    }
+
+    fn redeclaration_initializer_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) -> TypingRequest {
+        if !self.has_prior_value_declaration_for_symbol(decl_idx) {
+            return TypingRequest::NONE;
+        }
+
+        let Some(init_node) = self.ctx.arena.get(
+            self.ctx
+                .arena
+                .skip_parenthesized_and_assertions(initializer_idx),
+        ) else {
+            return TypingRequest::NONE;
+        };
+        let initializer_needs_context = matches!(
+            init_node.kind,
+            k if k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+        ) || is_contextually_sensitive(self, initializer_idx);
+        if !initializer_needs_context {
+            return TypingRequest::NONE;
+        }
+
+        let Some(cached_type) = self.cached_inferred_variable_type(decl_idx, name_idx) else {
+            return TypingRequest::NONE;
+        };
+        if matches!(cached_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return TypingRequest::NONE;
+        }
+
+        TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
     }
 
     pub(crate) fn find_circular_reference_in_type_node(
@@ -241,6 +329,15 @@ impl<'a> CheckerState<'a> {
     /// Check a single variable declaration.
     #[tracing::instrument(level = "trace", skip(self), fields(decl_idx = ?decl_idx))]
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
+        self.check_variable_declaration_with_request(decl_idx, &TypingRequest::NONE);
+    }
+
+    #[tracing::instrument(level = "trace", skip(self, typing_request), fields(decl_idx = ?decl_idx))]
+    pub(crate) fn check_variable_declaration_with_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        typing_request: &TypingRequest,
+    ) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
         };
@@ -568,7 +665,6 @@ impl<'a> CheckerState<'a> {
                 declared_type = jsdoc_type;
                 has_type_annotation = true;
             }
-
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
                 if let Some(sf) = checker.ctx.arena.source_files.first()
@@ -663,6 +759,18 @@ impl<'a> CheckerState<'a> {
                                 .map(|node| (node.pos, node.end));
                             [when_true, when_false]
                         });
+                    if !request.is_empty()
+                        && let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
+                    {
+                        let init_start = init_node.pos;
+                        let init_end = init_node.end;
+                        checker.ctx.diagnostics.retain(|diag| {
+                            diag.code
+                                == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                                || diag.start < init_start
+                                || diag.start >= init_end
+                        });
+                    }
                     let init_snap = checker.ctx.snapshot_diagnostics();
                     let init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
@@ -858,14 +966,17 @@ impl<'a> CheckerState<'a> {
                     }
                     return init_type;
                 }
-                // Clear cache for closure initializers so TS7006 is properly emitted.
-                // During build_type_environment, closures are typed without contextual info
-                // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
-                // so TS7006 can fire for closures that truly lack contextual types.
+                // Clear cache for initializer forms whose checked-pass type can differ
+                // from build_type_environment:
+                // - closures may pick up contextual typing and deferred TS7006
+                // - `new` expressions can pick up finalized generic constructor
+                //   specializations after class/constructor symbols stabilize
                 if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
                     && matches!(
                         init_node.kind,
-                        syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+                        syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::NEW_EXPRESSION
                     )
                 {
                     checker.clear_type_cache_recursive(var_decl.initializer);
@@ -875,31 +986,26 @@ impl<'a> CheckerState<'a> {
                 // so array literals produce positional (tuple) types instead of widened
                 // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
                 // a=number, b=string (tuple), not a=string|number (array).
-                let contextual_init = checker
-                    .ctx
-                    .arena
-                    .skip_parenthesized_and_assertions(var_decl.initializer);
-                let supports_pattern_context =
-                    checker
-                        .ctx
-                        .arena
-                        .get(contextual_init)
-                        .is_some_and(|init_node| {
-                            matches!(
-                                init_node.kind,
-                                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            )
-                        });
-                let request = if is_destructuring
-                    && supports_pattern_context
-                    && let Some(ctx_type) =
-                        checker.build_contextual_type_from_pattern(var_decl.name)
-                {
-                    checker.clear_type_cache_recursive(var_decl.initializer);
-                    TypingRequest::with_contextual_type(ctx_type)
+                let request = if is_destructuring {
+                    let request = checker.declaration_pattern_initializer_request(
+                        var_decl.name,
+                        var_decl.initializer,
+                        typing_request,
+                    );
+                    if !request.is_empty() {
+                        checker.clear_type_cache_recursive(var_decl.initializer);
+                    }
+                    request
                 } else {
-                    TypingRequest::NONE
+                    let request = checker.redeclaration_initializer_request(
+                        decl_idx,
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+                    if !request.is_empty() {
+                        checker.clear_type_cache_recursive(var_decl.initializer);
+                    }
+                    request
                 };
                 let mut init_type =
                     checker.get_type_of_node_with_request(var_decl.initializer, &request);
@@ -1647,15 +1753,22 @@ impl<'a> CheckerState<'a> {
             // binding element symbols created by the binder.
             let pattern_type = if var_decl.type_annotation.is_some() {
                 self.get_type_from_type_node(var_decl.type_annotation)
-            } else if var_decl.initializer.is_some() {
-                self.get_type_of_node(var_decl.initializer)
-            } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
-                TypeId::UNKNOWN
-            } else if let Some(inferred) = self.compute_for_in_of_variable_type(decl_idx) {
-                inferred
             } else if let Some(inferred) =
                 self.cached_inferred_variable_type(decl_idx, var_decl.name)
             {
+                // Reuse the declaration's already-computed type so destructuring
+                // element checks see the same request-aware initializer result.
+                inferred
+            } else if var_decl.initializer.is_some() {
+                let initializer_request = self.declaration_pattern_initializer_request(
+                    var_decl.name,
+                    var_decl.initializer,
+                    typing_request,
+                );
+                self.get_type_of_node_with_request(var_decl.initializer, &initializer_request)
+            } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
+                TypeId::UNKNOWN
+            } else if let Some(inferred) = self.compute_for_in_of_variable_type(decl_idx) {
                 inferred
             } else {
                 TypeId::ANY
@@ -1687,11 +1800,17 @@ impl<'a> CheckerState<'a> {
             }
 
             // Ensure binding element identifiers get the correct inferred types.
-            self.assign_binding_pattern_symbol_types(var_decl.name, effective_pattern_type);
-            self.check_binding_pattern(
+            let binding_request = typing_request.read().contextual_opt(None);
+            self.assign_binding_pattern_symbol_types_with_request(
+                var_decl.name,
+                effective_pattern_type,
+                &binding_request,
+            );
+            self.check_binding_pattern_with_request(
                 var_decl.name,
                 effective_pattern_type,
                 var_decl.type_annotation.is_some(),
+                &binding_request,
             );
 
             // Record source expression for flow-based property narrowing.
@@ -1705,7 +1824,7 @@ impl<'a> CheckerState<'a> {
 
             // Track destructured binding groups for correlated narrowing.
             // Only needed for union source types where narrowing one property affects others.
-            let resolved_for_union = self.evaluate_type_for_assignability(pattern_type);
+            let resolved_for_union = self.resolve_lazy_type(pattern_type);
             if query::union_members(self.ctx.types, resolved_for_union).is_some() {
                 // Check if this is a const declaration
                 let is_const = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {

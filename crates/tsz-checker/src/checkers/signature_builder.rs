@@ -164,6 +164,7 @@ impl<'a> CheckerState<'a> {
         class_type_params: &[tsz_solver::TypeParamInfo],
     ) -> tsz_solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&ctor.type_parameters);
+        let enclosing_class_template_types = self.enclosing_jsdoc_class_template_types(ctor_idx);
         let (mut params, this_type) = self.extract_params_from_parameter_list(&ctor.parameters);
 
         // In JS files, resolve JSDoc @param types for constructor parameters.
@@ -184,14 +185,30 @@ impl<'a> CheckerState<'a> {
                     && param.type_annotation.is_none()
                 {
                     let pname = self.parameter_name_for_error(param.name);
+                    let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, &pname)
+                        .is_some_and(|type_expr| type_expr.trim().ends_with('='))
+                        || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, &pname);
                     if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(ctor_idx)
                         && let Some(jsdoc_type) = self.resolve_jsdoc_param_type_with_pos(
                             &jsdoc,
                             &pname,
                             Some(comment_start),
-                        )
+                        ).or_else(|| {
+                            Self::extract_jsdoc_param_type_string(&jsdoc, &pname).and_then(
+                                |type_expr| {
+                                    let normalized = type_expr
+                                        .trim()
+                                        .trim_end_matches('=')
+                                        .trim_start_matches("...")
+                                        .trim();
+                                    enclosing_class_template_types.get(normalized).copied()
+                                },
+                            )
+                        })
                     {
                         params[i].type_id = jsdoc_type;
+                        params[i].optional =
+                            param.question_token || param.initializer.is_some() || jsdoc_optional;
                     }
                 }
             }

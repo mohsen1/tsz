@@ -13,6 +13,20 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn finalize_property_access_result(
+        &self,
+        idx: NodeIndex,
+        result_type: TypeId,
+        skip_flow_narrowing: bool,
+        skip_result_flow_for_result: bool,
+    ) -> TypeId {
+        if skip_flow_narrowing || skip_result_flow_for_result {
+            result_type
+        } else {
+            self.apply_flow_narrowing(idx, result_type)
+        }
+    }
+
     fn recover_property_from_implemented_interfaces(
         &mut self,
         class_idx: NodeIndex,
@@ -94,7 +108,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
-        result
+        self.instantiate_callable_result_from_request(result, request)
     }
 
     fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {
@@ -249,7 +263,12 @@ impl<'a> CheckerState<'a> {
                 // Enum members and namespace exports both resolve to the selected member symbol type.
                 // Namespace exports may represent functions, variables, etc., each with its own symbol type.
                 let member_type = self.get_type_of_symbol(member_sym_id);
-                return self.apply_flow_narrowing(idx, member_type);
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             // TS2729 for namespace member access in static property initializers:
@@ -311,7 +330,31 @@ impl<'a> CheckerState<'a> {
                 || self.should_skip_property_result_flow_narrowing(idx));
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
 
-        let original_object_type = if skip_optional_base_flow {
+        let original_object_type = if skip_flow_narrowing {
+            let object_type_no_flow = self.get_type_of_node_with_request(
+                access.expression,
+                &TypingRequest::for_write_context(),
+            );
+
+            let can_use_no_flow = if let Some(probe_atom) = property_name_for_probe {
+                let property_name_arc = self.ctx.types.resolve_atom_ref(probe_atom);
+                let property_name: &str = &property_name_arc;
+                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+                let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+                !matches!(
+                    self.resolve_property_access_with_env(resolved_no_flow, property_name),
+                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                )
+            } else {
+                false
+            };
+
+            if can_use_no_flow {
+                object_type_no_flow
+            } else {
+                self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
+            }
+        } else if skip_optional_base_flow {
             self.get_type_of_node_with_request(
                 access.expression,
                 &TypingRequest::for_write_context(),
@@ -507,11 +550,12 @@ impl<'a> CheckerState<'a> {
                             .borrow_mut()
                             .insert((object_type, prop_atom), result_type);
                     }
-                    return if !skip_flow_narrowing && skip_result_flow_for_result {
-                        result_type
-                    } else {
-                        self.apply_flow_narrowing(idx, result_type)
-                    };
+                    return self.finalize_property_access_result(
+                        idx,
+                        result_type,
+                        skip_flow_narrowing,
+                        skip_result_flow_for_result,
+                    );
                 }
 
                 let fast_result = self.ctx.types.resolve_property_access_with_options(
@@ -557,11 +601,12 @@ impl<'a> CheckerState<'a> {
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
-                            return if !skip_flow_narrowing && skip_result_flow_for_result {
-                                result_type
-                            } else {
-                                self.apply_flow_narrowing(idx, result_type)
-                            };
+                            return self.finalize_property_access_result(
+                                idx,
+                                result_type,
+                                skip_flow_narrowing,
+                                skip_result_flow_for_result,
+                            );
                         }
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
@@ -576,7 +621,12 @@ impl<'a> CheckerState<'a> {
                         {
                             result_type = factory.union2(result_type, TypeId::UNDEFINED);
                         }
-                        return self.apply_flow_narrowing(idx, result_type);
+                        return self.finalize_property_access_result(
+                            idx,
+                            result_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
                         self.ctx
@@ -599,6 +649,7 @@ impl<'a> CheckerState<'a> {
                 access,
                 access.name_or_argument,
                 object_type,
+                skip_flow_narrowing,
             );
         }
 
@@ -610,7 +661,12 @@ impl<'a> CheckerState<'a> {
                 if property_type == TypeId::ERROR {
                     return TypeId::ERROR;
                 }
-                return self.apply_flow_narrowing(idx, property_type);
+                return self.finalize_property_access_result(
+                    idx,
+                    property_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
         }
 
@@ -711,7 +767,12 @@ impl<'a> CheckerState<'a> {
                     {
                         // For merged symbols, we return the type for any exported member
                         let member_type = self.get_type_of_symbol(member_id);
-                        return self.apply_flow_narrowing(idx, member_type);
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                 }
             }
@@ -789,7 +850,12 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_type) =
                     self.resolve_namespace_value_member(object_type, property_name)
             {
-                return self.apply_flow_narrowing(idx, member_type);
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             // Fallback for namespace/export member accesses where type-only namespace
@@ -829,7 +895,12 @@ impl<'a> CheckerState<'a> {
                             self.get_type_of_symbol(member_sym_id)
                         };
                         if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
-                            return self.apply_flow_narrowing(idx, member_type);
+                            return self.finalize_property_access_result(
+                                idx,
+                                member_type,
+                                skip_flow_narrowing,
+                                false,
+                            );
                         }
                     }
                 }
@@ -910,13 +981,23 @@ impl<'a> CheckerState<'a> {
                     property_name,
                 )
             {
-                return self.apply_flow_narrowing(idx, strict_method_type);
+                return self.finalize_property_access_result(
+                    idx,
+                    strict_method_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             if let Some(iterator_method_type) =
                 self.synthesized_array_iterator_method_type(object_type_for_access, property_name)
             {
-                return self.apply_flow_narrowing(idx, iterator_method_type);
+                return self.finalize_property_access_result(
+                    idx,
+                    iterator_method_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             // Use the environment-aware resolver so that array methods, boxed
@@ -1014,11 +1095,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         prop_type
                     };
-                    if !skip_flow_narrowing && skip_result_flow_for_result {
-                        effective_type
-                    } else {
-                        self.apply_flow_narrowing(idx, effective_type)
-                    }
+                    self.finalize_property_access_result(
+                        idx,
+                        effective_type,
+                        skip_flow_narrowing,
+                        skip_result_flow_for_result,
+                    )
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
@@ -1026,7 +1108,12 @@ impl<'a> CheckerState<'a> {
                         object_type_for_access,
                         property_name,
                     ) {
-                        return self.apply_flow_narrowing(idx, augmented_type);
+                        return self.finalize_property_access_result(
+                            idx,
+                            augmented_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     // Check global interface augmentations for primitive wrappers
                     // and other built-in types (e.g., `interface Boolean { doStuff() }`)
@@ -1034,7 +1121,12 @@ impl<'a> CheckerState<'a> {
                         object_type_for_access,
                         property_name,
                     ) {
-                        return self.apply_flow_narrowing(idx, augmented_type);
+                        return self.finalize_property_access_result(
+                            idx,
+                            augmented_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     // For callable/function types, check the Function interface
                     // for augmented members (e.g., declare global { interface Function { ... } })
@@ -1045,7 +1137,12 @@ impl<'a> CheckerState<'a> {
                         && let PropertyAccessResult::Success { type_id, .. } =
                             self.resolve_property_access_with_env(func_iface, property_name)
                     {
-                        return self.apply_flow_narrowing(idx, type_id);
+                        return self.finalize_property_access_result(
+                            idx,
+                            type_id,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     if let Some((class_idx, is_static_access)) =
                         self.resolve_class_for_access(access.expression, object_type_for_access)
@@ -1053,7 +1150,12 @@ impl<'a> CheckerState<'a> {
                         && let Some(interface_type) = self
                             .recover_property_from_implemented_interfaces(class_idx, property_name)
                     {
-                        return self.apply_flow_narrowing(idx, interface_type);
+                        return self.finalize_property_access_result(
+                            idx,
+                            interface_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
                     if access.question_dot_token {
@@ -1124,6 +1226,13 @@ impl<'a> CheckerState<'a> {
                         // keep checks when `this` is contextually owned by a class/object
                         // member (checkJs should still enforce member-consistent typing).
                         if self.this_has_contextual_owner(access.expression).is_none() {
+                            return TypeId::ANY;
+                        }
+                        // Constructor and method bodies in JS/checkJs use `this.prop = value`
+                        // as an implicit instance-property declaration. In write context,
+                        // allow the missing-property access so the assignment path can
+                        // establish the member without a false TS2339 on the same node.
+                        if skip_flow_narrowing {
                             return TypeId::ANY;
                         }
                     }
@@ -1293,8 +1402,12 @@ impl<'a> CheckerState<'a> {
                     // For possibly-nullish values in non-strict mode, don't error
                     // But for definitely-nullish values in non-strict mode, fall through to error reporting below
                     if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
-                        return self
-                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
                     // Check if the expression is a literal null/undefined keyword (not a variable)
                     // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
@@ -1327,16 +1440,24 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                             &[value_name],
                         );
-                        return self
-                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
 
                     // Without strictNullChecks, null/undefined are in every type's domain,
                     // so TS18047/TS18048/TS18049 are never emitted (matches tsc behavior).
                     // Note: TS18050 for literal null/undefined is handled above.
                     if !self.ctx.compiler_options.strict_null_checks {
-                        return self
-                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                        return self.finalize_property_access_result(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                            skip_flow_narrowing,
+                            false,
+                        );
                     }
 
                     // Try to get the name of the expression (handles identifiers and property chains like a.b)
@@ -1385,7 +1506,12 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(access.expression, &message, code);
 
                     // Error recovery: return the property type found in valid members
-                    self.apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR))
+                    self.finalize_property_access_result(
+                        idx,
+                        property_type.unwrap_or(TypeId::ERROR),
+                        skip_flow_narrowing,
+                        false,
+                    )
                 }
 
                 PropertyAccessResult::IsUnknown => {

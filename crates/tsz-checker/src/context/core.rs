@@ -509,6 +509,14 @@ impl<'a> CheckerContext<'a> {
         self.diagnostic_dedup_key_from_parts(diag.start, diag.code, &diag.message_text)
     }
 
+    pub fn rebuild_emitted_diagnostics_from_current(&mut self) {
+        self.emitted_diagnostics.clear();
+        for diag in &self.diagnostics {
+            let key = self.diagnostic_dedup_key(diag);
+            self.emitted_diagnostics.insert(key);
+        }
+    }
+
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
     /// Exceptions:

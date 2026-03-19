@@ -89,7 +89,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
-
         let (function_is_async, function_is_generator) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 (func.is_async, func.asterisk_token)
@@ -159,13 +158,9 @@ impl<'a> CheckerState<'a> {
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
+        let mut contextual_signature_type_param_updates = Vec::new();
         let mut has_jsdoc_type_function = false;
         let mut ctx_helper = if let Some(ctx_type) = contextual_type {
-            tracing::debug!(
-                "function_type: contextual_type = {:?}, is_closure = {}",
-                ctx_type,
-                is_closure
-            );
             use tsz_solver::type_queries::{
                 EvaluationNeeded, classify_for_evaluation, get_lazy_def_id, get_type_application,
             };
@@ -192,6 +187,27 @@ impl<'a> CheckerState<'a> {
             // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
             let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
             let evaluated_type = self.normalize_contextual_signature_with_env(evaluated_type);
+            let helper_probe = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let evaluated_type = if helper_probe.get_this_type().is_none()
+                && helper_probe.get_return_type().is_none()
+                && helper_probe.get_parameter_type(0).is_none()
+                && helper_probe.get_rest_parameter_type(0).is_none()
+                && !tsz_solver::is_union_type(self.ctx.types, evaluated_type)
+                && !tsz_solver::is_intersection_type(self.ctx.types, evaluated_type)
+            {
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    evaluated_type,
+                )
+                .map(|shape| self.ctx.types.factory().function(shape))
+                .unwrap_or(evaluated_type)
+            } else {
+                evaluated_type
+            };
 
             contextual_signature_type_params =
                 self.contextual_type_params_from_expected(evaluated_type);
@@ -227,6 +243,8 @@ impl<'a> CheckerState<'a> {
             && type_params.is_empty()
             && let Some(contextual_type_params) = contextual_signature_type_params
         {
+            contextual_signature_type_param_updates =
+                self.push_contextual_type_parameter_infos(&contextual_type_params);
             type_params = contextual_type_params;
         }
 
@@ -367,6 +385,11 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or_default();
 
+        if is_closure && ctx_helper.is_some() {
+            self.ctx.implicit_any_contextual_closures.insert(idx);
+            self.ctx.implicit_any_checked_closures.insert(idx);
+        }
+
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -390,11 +413,26 @@ impl<'a> CheckerState<'a> {
                 let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
                     let expected_contextual_type = helper.expected().and_then(|expected| {
-                        self.contextual_parameter_type_with_env_from_expected(
-                            expected,
-                            contextual_index,
-                            param.dot_dot_dot_token,
-                        )
+                        if param.dot_dot_dot_token {
+                            self.contextual_parameter_type_with_env_from_expected(
+                                expected,
+                                contextual_index,
+                                true,
+                            )
+                        } else {
+                            self.contextual_parameter_type_for_call_with_env_from_expected(
+                                expected,
+                                contextual_index,
+                                parameters.nodes.len(),
+                            )
+                            .or_else(|| {
+                                self.contextual_parameter_type_with_env_from_expected(
+                                    expected,
+                                    contextual_index,
+                                    false,
+                                )
+                            })
+                        }
                     });
                     let direct = if param.dot_dot_dot_token {
                         // Rest parameter: get the full tuple/array type from context,
@@ -412,6 +450,30 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     extracted,
                                 );
+                            let direct_is_constrained_type_param = extracted != from_expected
+                                && tsz_solver::type_queries::get_type_parameter_constraint(
+                                    self.ctx.types,
+                                    extracted,
+                                )
+                                .is_some_and(|constraint| {
+                                    let evaluated_constraint =
+                                        self.evaluate_type_with_env(constraint);
+                                    evaluated_constraint == from_expected
+                                        || self
+                                            .is_assignable_to(from_expected, evaluated_constraint)
+                                });
+                            let direct_is_rest_tuple_container = !param.dot_dot_dot_token
+                                && extracted != from_expected
+                                && (tsz_solver::type_queries::get_tuple_elements(
+                                    self.ctx.types,
+                                    extracted,
+                                )
+                                .is_some()
+                                    || tsz_solver::type_queries::get_array_element_type(
+                                        self.ctx.types,
+                                        extracted,
+                                    )
+                                    .is_some());
                             let expected_is_more_informative = from_expected != TypeId::ANY
                                 && from_expected != TypeId::UNKNOWN
                                 && !tsz_solver::type_queries::contains_infer_types_db(
@@ -421,7 +483,9 @@ impl<'a> CheckerState<'a> {
                             let direct_is_strict_subtype = extracted != from_expected
                                 && self.is_subtype_of(extracted, from_expected)
                                 && !self.is_subtype_of(from_expected, extracted);
-                            if (direct_is_placeholderish && expected_is_more_informative)
+                            if direct_is_rest_tuple_container
+                                || (direct_is_placeholderish && expected_is_more_informative)
+                                || direct_is_constrained_type_param
                                 || direct_is_strict_subtype
                             {
                                 Some(from_expected)
@@ -453,6 +517,10 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .and_then(tsz_solver::ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::UNKNOWN);
+                let has_never_expected_context = ctx_helper
+                    .as_ref()
+                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .is_some_and(|t| t == TypeId::NEVER);
                 // TS7006: In TS files, contextual `unknown` is still a concrete contextual
                 // type and should suppress implicit-any reporting for callback parameters.
                 // Keep the old JS behavior where weak contextual `unknown` is treated as no context.
@@ -463,29 +531,32 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
                     || (has_unknown_expected_context && !is_js_file)
                     || (param.dot_dot_dot_token && ctx_helper.is_some());
-                if is_closure && has_contextual_type {
+                let suppresses_implicit_any_context =
+                    has_contextual_type && !has_never_expected_context;
+                if is_closure && suppresses_implicit_any_context {
                     self.ctx.implicit_any_contextual_closures.insert(idx);
                 }
                 // Use type annotation if present, otherwise infer from context
-                let type_id = if param.type_annotation.is_some() {
+                let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {
                     // Check parameter type for parameter properties in function types
                     self.check_type_for_parameter_properties(param.type_annotation);
                     // Check for undefined type names in parameter type
                     self.check_type_for_missing_names(param.type_annotation);
-                    self.get_type_from_type_node(param.type_annotation)
+                    (self.get_type_from_type_node(param.type_annotation), false)
                 } else if is_this_param {
                     // For `this` parameter without type annotation:
                     // - Arrow functions: inherit outer `this` type to preserve lexical scoping
                     // - Regular functions: use ANY (will trigger TS2683 when used, not TS2571)
                     // - Contextual type: if provided, use it (for function types with explicit `this`)
-                    if let Some(ref helper) = ctx_helper {
+                    let ty = if let Some(ref helper) = ctx_helper {
                         helper
                             .get_this_type()
                             .or(outer_this_type)
                             .unwrap_or(TypeId::ANY)
                     } else {
                         outer_this_type.unwrap_or(TypeId::ANY)
-                    }
+                    };
+                    (ty, false)
                 } else {
                     // In JS files with JSDoc, @param {Type} annotations provide explicit
                     // parameter types that take priority over contextual types.
@@ -524,6 +595,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
+                    let has_external_binding_context = contextual_type.is_some()
+                        || iife_arg_type.is_some()
+                        || jsdoc_param_type.is_some();
                     let inferred_type = if let Some(jsdoc_type) = jsdoc_param_type {
                         jsdoc_type
                     } else if is_js_file {
@@ -559,7 +633,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         inferred_type
                     };
-                    if inferred_type == TypeId::ANY && param.initializer.is_some() {
+                    let ty = if inferred_type == TypeId::ANY && param.initializer.is_some() {
                         let mut init_type = self.get_type_of_node(param.initializer);
                         if self.is_js_file()
                             && (init_type == TypeId::ANY || init_type == TypeId::UNKNOWN)
@@ -617,7 +691,8 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         inferred_type
-                    }
+                    };
+                    (ty, has_external_binding_context)
                 };
                 let mut element_type_from_pattern = None;
                 if let Some(name_node) = self.ctx.arena.get(param.name)
@@ -629,7 +704,20 @@ impl<'a> CheckerState<'a> {
                         element_type_from_pattern = Some(pattern_type);
                     }
                 }
-                let binding_context_type = type_id;
+                let cached_param_type = (!has_contextual_type && param.type_annotation.is_none())
+                    .then(|| {
+                        self.ctx
+                            .node_types
+                            .get(&param.name.0)
+                            .copied()
+                            .or_else(|| self.ctx.node_types.get(&param_idx.0).copied())
+                    })
+                    .flatten()
+                    .filter(|cached_param_type| {
+                        *cached_param_type != TypeId::ANY
+                            && *cached_param_type != TypeId::UNKNOWN
+                            && *cached_param_type != TypeId::ERROR
+                    });
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
                         || (has_contextual_type
@@ -656,6 +744,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     type_id
                 };
+                if let Some(cached_param_type) = cached_param_type {
+                    type_id = cached_param_type;
+                }
+                let has_effective_contextual_type =
+                    has_contextual_type || cached_param_type.is_some();
+                let binding_context_type = (has_external_binding_context
+                    || cached_param_type.is_some())
+                .then_some(type_id);
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);
@@ -666,40 +762,41 @@ impl<'a> CheckerState<'a> {
                 }
                 // TS7006: Check for implicit any. Skip closures during build_type_environment
                 // (no contextual type yet). JSDoc @param/@type annotations suppress TS7006.
-                let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
-                    let from_func_jsdoc = if let Some(ref jsdoc) = func_jsdoc {
-                        let pname = self.effective_jsdoc_param_name(
-                            param.name,
-                            &jsdoc_param_names,
-                            contextual_index,
-                        );
-                        let has_callable_jsdoc_type = has_jsdoc_type_function
-                            || (is_js_file
-                                && is_function_declaration
-                                && self
-                                    .jsdoc_callable_type_annotation_for_function(idx)
-                                    .is_some())
-                            || self
-                                .extract_type_predicate_from_jsdoc_type_tag(jsdoc)
-                                .is_some()
-                            || self.jsdoc_type_tag_references_callback_typedef(idx, jsdoc);
-                        Self::jsdoc_has_param_type(jsdoc, &pname)
-                            || has_callable_jsdoc_type
-                            || Self::jsdoc_type_tag_declares_callable(jsdoc)
-                            || self.ctx.arena.get(param.name).is_some_and(|n| {
-                                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            }) && Self::jsdoc_has_type_annotations(jsdoc)
+                let has_jsdoc_param =
+                    if !has_effective_contextual_type && param.type_annotation.is_none() {
+                        let from_func_jsdoc = if let Some(ref jsdoc) = func_jsdoc {
+                            let pname = self.effective_jsdoc_param_name(
+                                param.name,
+                                &jsdoc_param_names,
+                                contextual_index,
+                            );
+                            let has_callable_jsdoc_type = has_jsdoc_type_function
+                                || (is_js_file
+                                    && is_function_declaration
+                                    && self
+                                        .jsdoc_callable_type_annotation_for_function(idx)
+                                        .is_some())
+                                || self
+                                    .extract_type_predicate_from_jsdoc_type_tag(jsdoc)
+                                    .is_some()
+                                || self.jsdoc_type_tag_references_callback_typedef(idx, jsdoc);
+                            Self::jsdoc_has_param_type(jsdoc, &pname)
+                                || has_callable_jsdoc_type
+                                || Self::jsdoc_type_tag_declares_callable(jsdoc)
+                                || self.ctx.arena.get(param.name).is_some_and(|n| {
+                                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                }) && Self::jsdoc_has_type_annotations(jsdoc)
+                        } else {
+                            false
+                        };
+                        from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
                     } else {
                         false
                     };
-                    from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
-                } else {
-                    false
-                };
                 let implicit_any_type_hint = if self.is_js_file()
                     && param.initializer.is_some()
-                    && !has_contextual_type
+                    && !has_effective_contextual_type
                     && !has_jsdoc_param
                     && param.type_annotation.is_none()
                 {
@@ -755,16 +852,16 @@ impl<'a> CheckerState<'a> {
                 let skip_implicit_any = is_setter
                     || (is_closure
                         && !self.ctx.is_checking_statements
-                        && !has_contextual_type
+                        && !has_effective_contextual_type
                         && !ctx_helper_expected_is_never)
-                    || (is_in_decorator && !has_contextual_type)
+                    || (is_in_decorator && !has_effective_contextual_type)
                     || is_in_jsdoc_type_cast
                     || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter_with_type_hint(
                         param,
-                        has_contextual_type || has_jsdoc_param,
+                        has_effective_contextual_type || has_jsdoc_param,
                         contextual_index,
                         implicit_any_type_hint,
                     );
@@ -850,7 +947,7 @@ impl<'a> CheckerState<'a> {
                     type_id
                 };
                 param_types.push(Some(cached_type));
-                destructuring_context_param_types.push(Some(binding_context_type));
+                destructuring_context_param_types.push(binding_context_type);
                 contextual_index += 1;
             }
         }
@@ -1083,7 +1180,14 @@ impl<'a> CheckerState<'a> {
                             .and_then(tsz_solver::ContextualTypeContext::get_return_type)
                             .or_else(|| {
                                 contextual_type.and_then(|ty| {
-                                    tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                                        self.ctx.types,
+                                        ty,
+                                    )
+                                    .map(|shape| shape.return_type)
+                                    .or_else(|| {
+                                        tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                    })
                                 })
                             })
                     })
@@ -1662,7 +1766,14 @@ impl<'a> CheckerState<'a> {
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
                         .or_else(|| {
                             outer_ctx.and_then(|ty| {
-                                tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                crate::query_boundaries::checkers::call::get_contextual_signature(
+                                    self.ctx.types,
+                                    ty,
+                                )
+                                .map(|shape| shape.return_type)
+                                .or_else(|| {
+                                    tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                })
                             })
                         });
                     let suppress_contextual_return_for_conditional_body = jsdoc_return_context
@@ -1696,13 +1807,7 @@ impl<'a> CheckerState<'a> {
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
-                let body_request = request
-                    .read()
-                    .normal_origin()
-                    .contextual_opt(effective_body_ctx);
-                self.run_with_typing_context(&body_request, |checker| {
-                    checker.check_statement(body);
-                });
+                self.check_statement_with_request(body, &TypingRequest::NONE);
 
                 if let Some(snap) = &diag_snap {
                     self.ctx.rollback_diagnostics(snap);
@@ -1931,6 +2036,7 @@ impl<'a> CheckerState<'a> {
         let function_type = self.ctx.types.factory().function(shape);
 
         self.pop_type_parameters(jsdoc_type_param_updates);
+        self.pop_type_parameters(contextual_signature_type_param_updates);
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_type_param_updates);
 
