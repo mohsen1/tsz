@@ -90,7 +90,8 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        if let Some(normalized) = normalize_fresh_object_literal_union_members(self.interner, &unique)
+        if let Some(normalized) =
+            normalize_fresh_object_literal_union_members(self.interner, &unique)
         {
             return self.interner.union(normalized);
         }

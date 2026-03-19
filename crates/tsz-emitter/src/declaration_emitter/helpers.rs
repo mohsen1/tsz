@@ -4798,7 +4798,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .first()
                     .and_then(|&p_idx| self.arena.get(p_idx))
                     .and_then(|p_node| self.arena.get_parameter(p_node))
-                    .and_then(|param| self.infer_fallback_type_text_at(param.type_annotation, depth))
+                    .and_then(|param| {
+                        self.infer_fallback_type_text_at(param.type_annotation, depth)
+                    })
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -5245,8 +5247,11 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
                 continue;
             };
-            let preserve_computed_syntax = name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                && self.resolved_computed_property_name_text(name_idx).is_none();
+            let preserve_computed_syntax = name_node.kind
+                == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && self
+                    .resolved_computed_property_name_text(name_idx)
+                    .is_none();
             let Some(member_text) = self.infer_object_member_type_text_named_at(
                 member_idx,
                 &name_text,
@@ -5346,7 +5351,11 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(unquoted) = name_text
             .strip_prefix('"')
             .and_then(|name| name.strip_suffix('"'))
-            .or_else(|| name_text.strip_prefix('\'').and_then(|name| name.strip_suffix('\'')))
+            .or_else(|| {
+                name_text
+                    .strip_prefix('\'')
+                    .and_then(|name| name.strip_suffix('\''))
+            })
         {
             prefixes.push(format!("\"{unquoted}\":"));
             prefixes.push(format!("'{unquoted}':"));
@@ -8035,14 +8044,20 @@ impl<'a> DeclarationEmitter<'a> {
         let source_file_node = self.arena.get(source_file_idx)?;
         let source_file = self.arena.get_source_file(source_file_node)?;
 
-        source_file.statements.nodes.iter().copied().find_map(|decl_idx| {
-            let decl_node = self.arena.get(decl_idx)?;
-            let func = self.arena.get_function(decl_node)?;
-            let same_name = self
-                .get_identifier_text(func.name)
-                .is_some_and(|name| name == callee_name);
-            (same_name && func.body.is_some() && func.parameters.nodes.len() == 1).then_some(func)
-        })
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+                let func = self.arena.get_function(decl_node)?;
+                let same_name = self
+                    .get_identifier_text(func.name)
+                    .is_some_and(|name| name == callee_name);
+                (same_name && func.body.is_some() && func.parameters.nodes.len() == 1)
+                    .then_some(func)
+            })
     }
 
     fn is_import_meta_url_expression(&self, expr_idx: NodeIndex) -> bool {

@@ -2682,7 +2682,9 @@ export const Baa = {
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
     type_cache.node_types.insert(computed_expr.0, banana_type);
-    type_cache.node_types.insert(baa_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(baa_decl.initializer.0, object_type);
 
     let mut emitter =
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);

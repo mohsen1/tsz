@@ -115,10 +115,7 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         let shape = fresh_literal_shape(interner, member)?;
         // Object literals containing spreads are not fresh, and open/symbol-backed
         // objects should not participate in this normalization.
-        if shape.symbol.is_some()
-            || shape.string_index.is_some()
-            || shape.number_index.is_some()
-        {
+        if shape.symbol.is_some() || shape.string_index.is_some() || shape.number_index.is_some() {
             return None;
         }
         object_members.push((member, shape));

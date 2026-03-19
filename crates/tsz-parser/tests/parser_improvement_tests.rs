@@ -423,15 +423,15 @@ fn test_array_literal_semicolon_recovers_as_missing_comma() {
     let close_bracket_pos = source.rfind(']').expect("close bracket position") as u32;
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == semicolon_pos && diag.message == "',' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == semicolon_pos
+            && diag.message == "',' expected."),
         "Expected missing comma at the array literal semicolon, got {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == 1005 && diag.start == close_bracket_pos && diag.message == "';' expected."),
+        diagnostics.iter().any(|diag| diag.code == 1005
+            && diag.start == close_bracket_pos
+            && diag.message == "';' expected."),
         "Expected trailing ';' recovery at the array close bracket, got {diagnostics:?}"
     );
 }
