@@ -468,11 +468,18 @@ fn test_bct_fresh_object_literals_preserve_normalized_union() {
 
     let result = ctx.best_common_type(&[obj1, obj2, obj3]);
     let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
-        panic!("expected normalized union, got {:?}", interner.lookup(result));
+        panic!(
+            "expected normalized union, got {:?}",
+            interner.lookup(result)
+        );
     };
 
     let members = interner.type_list(list_id);
-    assert_eq!(members.len(), 3, "expected all object-literal candidates to survive");
+    assert_eq!(
+        members.len(),
+        3,
+        "expected all object-literal candidates to survive"
+    );
 }
 
 // =============================================================================
