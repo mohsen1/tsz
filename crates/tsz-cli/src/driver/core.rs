@@ -979,8 +979,7 @@ fn compile_inner(
                 let file_display = file_path.to_string_lossy();
                 let root_display = root_dir_path.to_string_lossy();
                 let message = format!(
-                    "File '{}' is not under 'rootDir' '{}'. 'rootDir' is expected to contain all source files.",
-                    file_display, root_display
+                    "File '{file_display}' is not under 'rootDir' '{root_display}'. 'rootDir' is expected to contain all source files."
                 );
                 config_diagnostics.push(Diagnostic::error(
                     String::new(),

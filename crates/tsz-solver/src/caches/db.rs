@@ -86,7 +86,7 @@ pub trait TypeDatabase {
     }
     /// Get the TypeId for an already-interned Object shape (O(1) cache hit).
     fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
-    /// Get the TypeId for an already-interned ObjectWithIndex shape.
+    /// Get the TypeId for an already-interned `ObjectWithIndex` shape.
     fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
     /// Create a fresh object type with both widened properties (for type checking)
     /// and display properties (for error messages, implementing tsc's freshness model).

@@ -11,7 +11,7 @@ use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    GuardSense, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
+    GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     type_queries::{
         PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
         stringify_literal_type,

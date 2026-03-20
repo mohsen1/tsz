@@ -562,7 +562,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {
+    const fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {
         if info.is_method || info.is_accessor {
             ClassMemberKind::MethodLike
         } else {

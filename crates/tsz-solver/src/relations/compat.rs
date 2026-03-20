@@ -263,7 +263,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         )
     }
 
-    fn uses_generic_failure_surface(reason: &SubtypeFailureReason) -> bool {
+    const fn uses_generic_failure_surface(reason: &SubtypeFailureReason) -> bool {
         matches!(
             reason,
             SubtypeFailureReason::TypeMismatch { .. }

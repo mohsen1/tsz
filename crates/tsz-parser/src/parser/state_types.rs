@@ -464,7 +464,7 @@ impl ParserState {
         )
     }
 
-    fn is_intrinsic_type_keyword(&self) -> bool {
+    const fn is_intrinsic_type_keyword(&self) -> bool {
         matches!(self.token(), SyntaxKind::VoidKeyword)
     }
 

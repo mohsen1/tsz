@@ -10,7 +10,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries::is_unit_type;
-use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredicate};
+use tsz_solver::{ParamInfo, QueryDatabase, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;

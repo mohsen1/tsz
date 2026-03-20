@@ -211,7 +211,12 @@ impl<'a> InferenceContext<'a> {
             // Without this, `<T>(x: { [K in keyof T]: T[K] })` matched against a
             // concrete mapped type over `keyof U` falls back to `T = unknown`,
             // which makes later assignability too permissive.
-            (Some(TypeData::KeyOf(source_inner)), Some(TypeData::KeyOf(target_inner))) => {
+            // KeyOf and ReadonlyType: unwrap structural wrappers and infer inner types
+            (Some(TypeData::KeyOf(source_inner)), Some(TypeData::KeyOf(target_inner)))
+            | (
+                Some(TypeData::ReadonlyType(source_inner)),
+                Some(TypeData::ReadonlyType(target_inner)),
+            ) => {
                 self.infer_from_types(source_inner, target_inner, priority)?;
             }
 
@@ -229,14 +234,6 @@ impl<'a> InferenceContext<'a> {
                     target_mapped.constraint,
                     priority,
                 )?;
-            }
-
-            // ReadonlyType: unwrap if both are readonly (e.g. readonly [T] vs readonly [number])
-            (
-                Some(TypeData::ReadonlyType(source_inner)),
-                Some(TypeData::ReadonlyType(target_inner)),
-            ) => {
-                self.infer_from_types(source_inner, target_inner, priority)?;
             }
 
             // Unwrap ReadonlyType when only target is readonly (mutable source is compatible)

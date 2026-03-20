@@ -829,8 +829,8 @@ impl<'a> CheckerState<'a> {
             match self.resolve_property_access_with_env(obj_type, prop_name) {
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id, ..
-                } => return type_id,
-                tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                }
+                | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
                     property_type: Some(type_id),
                     ..
                 } => return type_id,
