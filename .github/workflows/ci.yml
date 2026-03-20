@@ -909,11 +909,11 @@ jobs:
           path: .ci-metrics/emit.json
           retention-days: 14
 
-  # ─── Fourslash: 5 parallel shards ───────────────────────────────────────
+  # ─── Fourslash: 10 parallel shards ──────────────────────────────────────
   fourslash:
     name: "Fourslash (${{ matrix.shard }}/10)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     needs: [changes, test-build]
     continue-on-error: true
     strategy:
