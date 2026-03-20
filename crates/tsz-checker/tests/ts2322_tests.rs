@@ -382,6 +382,47 @@ fn test_ts2322_variable_declaration_wrong_array_element() {
     ));
 }
 
+#[test]
+fn mapped_numeric_handler_context_does_not_falsely_drop_to_implicit_any() {
+    let source = r#"
+type TypesMap = {
+    [0]: { foo: 'bar' };
+    [1]: { a: 'b' };
+};
+
+type P<T extends keyof TypesMap> = { t: T } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+const typeHandlers: TypeHandlers = {
+    [0]: (p) => p.foo,
+    [1]: (p) => p.a,
+};
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        !relevant.iter().any(|(code, _)| {
+            *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+        }),
+        "mapped handler context should not be misclassified as a primitive-union overload case, got: {relevant:?}"
+    );
+}
+
 // =============================================================================
 // Assignment Expression Tests (TS2322)
 // =============================================================================
