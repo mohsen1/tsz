@@ -1,6 +1,7 @@
 //! Circular initializer/return-site helpers for variable checking.
 
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -319,5 +320,181 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    pub(crate) fn class_property_initializer_has_non_deferred_circularity(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+            return false;
+        };
+        if prop.initializer.is_none() {
+            return false;
+        }
+
+        let Some(target_name) = self.get_property_name(prop.name) else {
+            return false;
+        };
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        let is_static = self.has_static_modifier(&prop.modifiers);
+        let mut visited_members = FxHashSet::default();
+        visited_members.insert(member_idx.0);
+        self.class_property_initializer_reaches_circular_reference(
+            prop.initializer,
+            target_name.as_str(),
+            class_info.name.as_str(),
+            is_static,
+            &mut visited_members,
+        )
+    }
+
+    fn class_property_initializer_reaches_circular_reference(
+        &self,
+        initializer_idx: NodeIndex,
+        target_name: &str,
+        class_name: &str,
+        is_static: bool,
+        visited_members: &mut FxHashSet<u32>,
+    ) -> bool {
+        let mut referenced_members = Vec::new();
+        self.collect_non_deferred_class_property_initializer_references(
+            initializer_idx,
+            class_name,
+            is_static,
+            &mut referenced_members,
+        );
+
+        for referenced_name in referenced_members {
+            if referenced_name == target_name {
+                return true;
+            }
+
+            let Some(next_member_idx) =
+                self.enclosing_class_property_member_by_name(referenced_name.as_str(), is_static)
+            else {
+                continue;
+            };
+            if !visited_members.insert(next_member_idx.0) {
+                continue;
+            }
+
+            let Some(next_member_node) = self.ctx.arena.get(next_member_idx) else {
+                continue;
+            };
+            let Some(next_prop) = self.ctx.arena.get_property_decl(next_member_node) else {
+                continue;
+            };
+            if next_prop.initializer.is_some()
+                && self.class_property_initializer_reaches_circular_reference(
+                    next_prop.initializer,
+                    target_name,
+                    class_name,
+                    is_static,
+                    visited_members,
+                )
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn collect_non_deferred_class_property_initializer_references(
+        &self,
+        node_idx: NodeIndex,
+        class_name: &str,
+        is_static: bool,
+        referenced_members: &mut Vec<String>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return;
+        }
+
+        if let Some(name_idx) = self.this_access_name_node(node_idx)
+            && let Some(name) = self.get_property_name(name_idx)
+        {
+            referenced_members.push(name);
+            return;
+        }
+
+        if is_static
+            && let Some(name_idx) = self.static_class_access_name_node(node_idx, class_name)
+            && let Some(name) = self.get_property_name(name_idx)
+        {
+            referenced_members.push(name);
+            return;
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_non_deferred_class_property_initializer_references(
+                child_idx,
+                class_name,
+                is_static,
+                referenced_members,
+            );
+        }
+    }
+
+    fn static_class_access_name_node(
+        &self,
+        access_idx: NodeIndex,
+        class_name: &str,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(access_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let expr_node = self.ctx.arena.get(access.expression)?;
+        let expr_ident = self.ctx.arena.get_identifier(expr_node)?;
+        if expr_ident.escaped_text != class_name {
+            return None;
+        }
+
+        Some(access.name_or_argument)
+    }
+
+    fn enclosing_class_property_member_by_name(
+        &self,
+        property_name: &str,
+        is_static: bool,
+    ) -> Option<NodeIndex> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+
+        class_info.member_nodes.iter().copied().find(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.has_static_modifier(&prop.modifiers) == is_static
+                && self.get_property_name(prop.name).as_deref() == Some(property_name)
+        })
     }
 }
