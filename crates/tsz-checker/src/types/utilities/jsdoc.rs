@@ -341,14 +341,14 @@ impl<'a> CheckerState<'a> {
     fn jsdoc_typedef_template_constraints_before(
         &mut self,
         typedef_name: &str,
-        anchor_pos: u32,
+        _anchor_pos: u32,
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Vec<Option<TypeId>> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
         let mut result = Vec::new();
         for comment in comments {
-            if comment.end > anchor_pos || !is_jsdoc_comment(comment, source_text) {
+            if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
             let content = get_jsdoc_content(comment, source_text);
@@ -1805,20 +1805,21 @@ impl<'a> CheckerState<'a> {
             declaration_order: (existing_props.len() + 1) as u32,
         })
     }
-    /// Resolve a `@typedef` referenced by name from preceding JSDoc comments.
+    /// Resolve a `@typedef` referenced by name from JSDoc comments.
+    ///
+    /// In tsc, `@typedef`/`@callback` declarations are hoisted to file scope,
+    /// so forward references (usage before definition) are valid.  We scan all
+    /// comments in the file regardless of position, matching tsc's behavior.
     pub(crate) fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
-        anchor_pos: u32,
+        _anchor_pos: u32,
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Option<TypeId> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
         let mut best_def: Option<JsdocTypedefInfo> = None;
         for comment in comments {
-            if comment.end > anchor_pos {
-                continue;
-            }
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
@@ -2094,10 +2095,9 @@ impl<'a> CheckerState<'a> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         let source_file = self.ctx.arena.source_files.first()?;
-        let anchor_pos = self.ctx.jsdoc_typedef_anchor_pos.get();
         let mut best_def = None;
         for comment in &source_file.comments {
-            if comment.end > anchor_pos || !is_jsdoc_comment(comment, &source_file.text) {
+            if !is_jsdoc_comment(comment, &source_file.text) {
                 continue;
             }
             let content = get_jsdoc_content(comment, &source_file.text);
