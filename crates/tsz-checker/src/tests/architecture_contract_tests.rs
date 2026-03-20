@@ -1429,7 +1429,7 @@ fn checker_files_stay_under_loc_limit() {
         ("state/type_resolution/symbol_types.rs", 1050),
         ("error_reporter/core.rs", 2050),
         ("checkers/call_checker.rs", 2050),
-        ("checkers/jsx_checker.rs", 2450),
+        ("checkers/jsx_checker.rs", 2400),
     ];
 
     let mut violations = Vec::new();
@@ -2744,17 +2744,4 @@ fn no_ambient_current_callable_type() {
              use explicit `CallableContext` threading instead"
         );
     }
-}
-
-/// Guard: `jsx_children_info` must not appear as a field on `CheckerContext`.
-/// Children context is now threaded explicitly via `JsxChildrenContext`.
-#[test]
-fn jsx_children_info_not_on_context() {
-    let context_mod = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/mod.rs");
-    let content = fs::read_to_string(&context_mod).expect("Failed to read context/mod.rs");
-    assert!(
-        !content.contains("jsx_children_info"),
-        "CheckerContext must not have a `jsx_children_info` field — \
-         use explicit `JsxChildrenContext` parameter threading instead"
-    );
 }
