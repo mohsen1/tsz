@@ -642,6 +642,11 @@ impl FunctionTypeChecker {
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
                 info.constraint.is_some_and(|c| Self::check(types, c))
             }
+            // The global `Function` interface is typeof "function" at runtime.
+            // Check if this Lazy type is the known boxed Function type.
+            Some(TypeData::Lazy(def_id)) => {
+                types.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Function)
+            }
             _ => false,
         }
     }
@@ -658,10 +663,7 @@ impl ObjectTypeChecker {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
-                | TypeData::Mapped(_)
-                // Lazy types represent unresolved type references (interfaces, classes,
-                // type aliases). Treat as object-like for typeof "object" narrowing.
-                | TypeData::Lazy(_),
+                | TypeData::Mapped(_),
             ) => true,
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
@@ -673,6 +675,13 @@ impl ObjectTypeChecker {
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
                 .is_some_and(|constraint| Self::check(types, constraint)),
+            // Lazy types represent unresolved type references (interfaces, classes).
+            // Most are object-like at runtime (interfaces/classes), but the global
+            // `Function` interface is typeof "function". Check if this Lazy type
+            // is the known boxed Function — if so, it's NOT object-like.
+            Some(TypeData::Lazy(def_id)) => {
+                !types.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Function)
+            }
             _ => false,
         }
     }
