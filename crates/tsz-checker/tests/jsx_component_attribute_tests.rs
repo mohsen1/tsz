@@ -436,6 +436,35 @@ let x = <Comp name="hi" data-testid="foo" aria-label="bar" />;
     );
 }
 
+#[test]
+fn test_declared_hyphenated_attr_uses_synthesized_assignability_error() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        test1: { "data-foo"?: string };
+    }
+}
+
+<test1 data-foo={32} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("\"data-foo\": number")
+        }),
+        "Declared hyphenated attrs should use synthesized JSX-attrs assignability, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'number' is not assignable to type 'string'")
+        }),
+        "Declared hyphenated attrs should not use the per-attribute TS2322 path, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // TS2604: JSX element type without call/construct signatures
 // =============================================================================
