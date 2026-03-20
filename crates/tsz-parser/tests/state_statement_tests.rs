@@ -132,6 +132,44 @@ let b: number;
 }
 
 #[test]
+fn variable_declaration_recovery_prefers_ts1134_over_regex_tail_ts1161() {
+    let (parser, _root) = parse_source("var v = /[]/]/");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 from the malformed declaration tail, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        "expected TS1134 at the trailing slash, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL),
+        "should not reparse the trailing slash as a fresh regex literal, got {codes:?}"
+    );
+}
+
+#[test]
+fn variable_declaration_recovery_prefers_ts1134_over_negated_regex_tail_ts1161() {
+    let (parser, _root) = parse_source("var v = /[^]/]/");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 from the malformed declaration tail, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        "expected TS1134 at the trailing slash, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL),
+        "should not reparse the trailing slash as a fresh regex literal, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_invalid_import_expression_start_reports_ts1109() {
     // `import 10;` — `10` is not a valid import clause start (not an identifier,
     // not `*`, `{`, `type`, or `defer`). tsc emits TS1109 "Expression expected"

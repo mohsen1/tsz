@@ -1593,6 +1593,7 @@ impl ParserState {
                 // subsequent statement-parsing loop can emit them.
                 // Example: `var a = q~;` → tsc emits `var a = q;\n~;`
                 if !self.is_statement_start() {
+                    let unexpected_token = self.token();
                     // When a `.` separates what looks like two declarations
                     // (e.g., `const x: "".typeof(...)`), tsc treats the `.` as
                     // a missing `,` and continues the declaration list. When the
@@ -1601,8 +1602,24 @@ impl ParserState {
                     // declaration name". Emit the same diagnostic here, bypassing
                     // `error_reserved_word_in_variable_declaration` which would be
                     // suppressed by `should_report_error` proximity heuristic.
-                    let was_dot = self.is_token(SyntaxKind::DotToken);
+                    let was_dot = unexpected_token == SyntaxKind::DotToken;
                     self.next_token();
+                    if matches!(
+                        unexpected_token,
+                        SyntaxKind::CloseBracketToken | SyntaxKind::CloseParenToken
+                    ) && matches!(
+                        self.token(),
+                        SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken
+                    ) {
+                        // Keep malformed tails like `var v = /[]/]/` inside the
+                        // declaration-list recovery so the trailing slash becomes
+                        // TS1134 instead of a fresh unterminated regex statement.
+                        self.parse_error_at_current_token(
+                            "Variable declaration expected.",
+                            diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                        );
+                        self.next_token();
+                    }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
                         let word = self.current_keyword_text();
