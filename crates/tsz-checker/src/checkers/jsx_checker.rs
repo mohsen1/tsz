@@ -2305,10 +2305,7 @@ impl<'a> CheckerState<'a> {
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let is_special_named_attr = attr_name.contains('-') || attr_name.contains(':');
-                let (
-                    expected_type,
-                    expected_type_is_boolean_literal,
-                ) = match self
+                let (expected_type, expected_type_is_boolean_literal) = match self
                     .resolve_property_access_with_env(props_type, &attr_name)
                 {
                     PropertyAccessResult::Success {
@@ -2320,21 +2317,20 @@ impl<'a> CheckerState<'a> {
                         if is_data_or_aria && from_index_signature {
                             continue;
                         }
-                        let write_check_type = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        let write_check_type =
+                            tsz_solver::remove_undefined(self.ctx.types, type_id);
                         // Strip undefined from optional props (write-position checking).
                         (
                             write_check_type,
                             matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
                         )
                     }
-                    PropertyAccessResult::PossiblyNullOrUndefined {
-                        property_type,
-                        ..
-                    } => {
+                    PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                         let Some(type_id) = property_type else {
                             continue;
                         };
-                        let write_check_type = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        let write_check_type =
+                            tsz_solver::remove_undefined(self.ctx.types, type_id);
                         (
                             write_check_type,
                             matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
