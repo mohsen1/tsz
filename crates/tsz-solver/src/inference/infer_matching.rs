@@ -308,34 +308,58 @@ impl<'a> InferenceContext<'a> {
                     target_string_idx.value_type,
                     priority,
                 )?;
-            } else if !source_shape.properties.is_empty() {
-                // Implicit index signature inference: when the source has no explicit
-                // string index but has named properties, synthesize an implicit index
-                // from the union of all property value types. This matches tsc's behavior
-                // where `{ a: string, b: number }` is implicitly indexable as
-                // `{ [x: string]: string | number }` for inference purposes.
-                // Only applies to anonymous object types (no symbol = not a named class/interface).
-                if source_shape.symbol.is_none() {
-                    // For optional properties, strip the `undefined` that comes from
-                    // optionality before contributing to the implicit index signature.
-                    // This matches tsc behavior where `{ a: string, b?: number }` infers
-                    // T as `string | number` (not `string | number | undefined`) when
-                    // matched against `{ [x: string]: T }`.
-                    let prop_types: Vec<TypeId> = source_shape
-                        .properties
-                        .iter()
-                        .map(|p| {
-                            if p.optional {
+            } else {
+                // Source has no explicit string index. Collect contributions from:
+                // 1. Number index (JS converts numeric keys to strings, so a number
+                //    index implies string-indexability)
+                // 2. Named properties (implicit index signature)
+                //
+                // This matches tsc's behavior where `typeof E1` (numeric enum with
+                // number index + named members) infers T from all value types when
+                // matched against `{ [x: string]: T }`.
+                let mut implicit_parts: Vec<TypeId> = Vec::new();
+
+                // Contribution from number index: in JS, numeric keys are converted
+                // to strings, so a source number index contributes to string index
+                // inference. E.g., enum namespace `typeof E1` has `[n: number]: string`
+                // for reverse mappings.
+                if let Some(s_number_idx) = &source_shape.number_index {
+                    implicit_parts.push(s_number_idx.value_type);
+                }
+
+                // Contribution from named properties (implicit index signature).
+                // For anonymous object types (no symbol), all property values
+                // contribute. For enum namespace types (ENUM_NAMESPACE flag), named
+                // properties also contribute — tsc treats enum namespaces as
+                // having implicit string index signatures derived from their members.
+                //
+                // Named class/interface instance types are excluded — they must
+                // declare an explicit index signature.
+                if !source_shape.properties.is_empty() {
+                    let has_implicit_index = source_shape.symbol.is_none()
+                        || source_shape
+                            .flags
+                            .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
+                    if has_implicit_index {
+                        for p in &source_shape.properties {
+                            // For optional properties, strip `undefined` from optionality.
+                            // tsc: `{ a: string, b?: number }` infers T as `string | number`
+                            // (not `string | number | undefined`).
+                            let prop_type = if p.optional {
                                 crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
                             } else {
                                 p.type_id
-                            }
-                        })
-                        .collect();
-                    let implicit_index_type = if prop_types.len() == 1 {
-                        prop_types[0]
+                            };
+                            implicit_parts.push(prop_type);
+                        }
+                    }
+                }
+
+                if !implicit_parts.is_empty() {
+                    let implicit_index_type = if implicit_parts.len() == 1 {
+                        implicit_parts[0]
                     } else {
-                        self.interner.union(prop_types)
+                        self.interner.union(implicit_parts)
                     };
                     self.infer_from_types(
                         implicit_index_type,
@@ -354,25 +378,32 @@ impl<'a> InferenceContext<'a> {
                     target_number_idx.value_type,
                     priority,
                 )?;
-            } else if !source_shape.properties.is_empty() && source_shape.symbol.is_none() {
-                // Implicit number index: collect types of numeric-named properties
-                let numeric_types: Vec<TypeId> = source_shape
-                    .properties
-                    .iter()
-                    .filter(|p| crate::utils::is_numeric_property_name(self.interner, p.name))
-                    .map(|p| p.type_id)
-                    .collect();
-                if !numeric_types.is_empty() {
-                    let implicit_index_type = if numeric_types.len() == 1 {
-                        numeric_types[0]
-                    } else {
-                        self.interner.union(numeric_types)
-                    };
-                    self.infer_from_types(
-                        implicit_index_type,
-                        target_number_idx.value_type,
-                        priority,
-                    )?;
+            } else if !source_shape.properties.is_empty() {
+                // Implicit number index: collect types of numeric-named properties.
+                // Same rule as string index: allow anonymous types and enum namespaces.
+                let has_implicit_index = source_shape.symbol.is_none()
+                    || source_shape
+                        .flags
+                        .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
+                if has_implicit_index {
+                    let numeric_types: Vec<TypeId> = source_shape
+                        .properties
+                        .iter()
+                        .filter(|p| crate::utils::is_numeric_property_name(self.interner, p.name))
+                        .map(|p| p.type_id)
+                        .collect();
+                    if !numeric_types.is_empty() {
+                        let implicit_index_type = if numeric_types.len() == 1 {
+                            numeric_types[0]
+                        } else {
+                            self.interner.union(numeric_types)
+                        };
+                        self.infer_from_types(
+                            implicit_index_type,
+                            target_number_idx.value_type,
+                            priority,
+                        )?;
+                    }
                 }
             }
         }

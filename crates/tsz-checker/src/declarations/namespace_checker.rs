@@ -743,9 +743,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        self.ctx
-            .types
-            .factory()
-            .object_with_symbol(properties, Some(sym_id))
+        self.ctx.types.object_with_flags_and_symbol(
+            properties,
+            tsz_solver::ObjectFlags::ENUM_NAMESPACE,
+            Some(tsz_binder::SymbolId(sym_id.0)),
+        )
     }
 }
