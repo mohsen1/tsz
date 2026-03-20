@@ -5454,9 +5454,7 @@ impl<'a> DeclarationEmitter<'a> {
         for (name_text, member_text) in overridden_members {
             let replacement = format!("{indent}{member_text};");
             if let Some(existing_idx) = lines.iter().position(|line| {
-                let trimmed = line.trim();
-                trimmed.starts_with(&format!("{name_text}:"))
-                    || trimmed.starts_with(&format!("readonly {name_text}:"))
+                Self::object_literal_property_line_matches(line, &name_text, &replacement)
             }) {
                 lines[existing_idx] = replacement;
             } else {
@@ -5466,14 +5464,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let insert_at = lines.len().saturating_sub(1);
-        for (offset, (name_text, member_text)) in computed_members.into_iter().enumerate() {
+        let mut actual_insertions = 0usize;
+        for (name_text, member_text) in computed_members {
             let line = format!("{indent}{member_text};");
             if let Some(existing_idx) = lines.iter().position(|existing| {
                 Self::object_literal_property_line_matches(existing, &name_text, &line)
             }) {
                 lines[existing_idx] = line;
-            } else if !lines.iter().any(|existing| existing.trim() == line.trim()) {
-                lines.insert(insert_at + offset, line);
+            } else {
+                let line_trimmed = line.trim();
+                if !lines.iter().any(|existing| existing.trim() == line_trimmed) {
+                    lines.insert(insert_at + actual_insertions, line);
+                    actual_insertions += 1;
+                }
             }
         }
 

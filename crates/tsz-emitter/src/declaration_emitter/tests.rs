@@ -5355,3 +5355,82 @@ class BitOps {
         "Expected bitwise and to return number: {output}"
     );
 }
+
+// =============================================================================
+// Computed property names in declaration emit
+// =============================================================================
+
+#[test]
+fn test_object_literal_computed_property_names_no_crash() {
+    // Regression test: the declaration emitter used to panic with
+    // "insertion index should be <= len" when an object literal had multiple
+    // computed property members and some matched existing printed lines while
+    // others didn't. The `offset` counter incremented per loop iteration
+    // rather than per actual insertion, causing out-of-bounds Vec::insert.
+    let output = emit_dts(
+        r#"
+export const D = {
+    [Symbol.iterator]: 1,
+    [1]: 2,
+    ["2"]: 3,
+};
+"#,
+    );
+    // Should not crash — any output is acceptable
+    assert!(!output.is_empty(), "Expected non-empty declaration output");
+}
+
+#[test]
+fn test_interface_computed_property_legal_names_emitted() {
+    // Numeric and string literal computed property names are legal in .d.ts
+    let output = emit_dts(
+        r#"
+export interface Foo {
+    [1]: number;
+    ["hello"]: string;
+}
+"#,
+    );
+    assert!(
+        output.contains("[1]") || output.contains("1:"),
+        "Expected numeric computed property to be emitted: {output}"
+    );
+    assert!(
+        output.contains("hello"),
+        "Expected string literal computed property to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_type_alias_computed_property_names_no_crash() {
+    let output = emit_dts(
+        r#"
+export type A = {
+    [Symbol.iterator]: number;
+    [1]: number;
+    ["2"]: number;
+};
+"#,
+    );
+    assert!(
+        !output.is_empty(),
+        "Expected non-empty output for type alias with computed properties"
+    );
+}
+
+#[test]
+fn test_class_computed_property_names_no_crash() {
+    let output = emit_dts(
+        r#"
+export class C {
+    [Symbol.iterator]: number = 1;
+    [1]: number = 1;
+    ["2"]: number = 1;
+}
+"#,
+    );
+    assert!(
+        !output.is_empty(),
+        "Expected non-empty output for class with computed properties"
+    );
+}
