@@ -43,6 +43,110 @@ pub(crate) struct JsdocCallbackInfo {
     pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
 impl<'a> CheckerState<'a> {
+    fn jsdoc_type_expr_is_broad_function(type_expr: &str) -> bool {
+        let trimmed = type_expr.trim();
+        trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
+    }
+
+    fn jsdoc_concrete_callable_type_from_expr(
+        &mut self,
+        type_expr: &str,
+        anchor_pos: u32,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<TypeId> {
+        let type_expr = type_expr.trim();
+        if type_expr.is_empty() || Self::jsdoc_type_expr_is_broad_function(type_expr) {
+            return None;
+        }
+
+        let mut candidates = Vec::new();
+
+        if let Some(ty) = self.jsdoc_type_from_expression(type_expr) {
+            candidates.push(ty);
+            candidates.push(self.judge_evaluate(ty));
+            candidates.push(self.evaluate_contextual_type(ty));
+        }
+
+        if let Some(ty) = self.resolve_jsdoc_typedef_type(type_expr, anchor_pos, comments, source_text)
+        {
+            candidates.push(ty);
+            candidates.push(self.judge_evaluate(ty));
+            candidates.push(self.evaluate_contextual_type(ty));
+        }
+
+        if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
+            candidates.push(resolved);
+            candidates.push(self.judge_evaluate(resolved));
+            candidates.push(self.evaluate_contextual_type(resolved));
+        }
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if !matches!(resolved, TypeId::ERROR | TypeId::UNKNOWN) {
+                candidates.push(resolved);
+                candidates.push(self.judge_evaluate(resolved));
+                candidates.push(self.evaluate_contextual_type(resolved));
+            }
+        }
+
+        for ty in candidates {
+            let ty = self.evaluate_application_type(ty);
+            if tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
+                    .is_some_and(|sigs| !sigs.is_empty())
+            {
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn jsdoc_callable_type_annotation_for_node(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(idx)?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+
+        self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
+    }
+
+    pub(crate) fn jsdoc_callable_type_annotation_for_node_direct(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(idx)?;
+        let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+
+        self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
+    }
+
     pub(crate) fn resolve_global_jsdoc_typedef_type(&mut self, name: &str) -> Option<TypeId> {
         if !self.ctx.should_resolve_jsdoc() {
             return None;
