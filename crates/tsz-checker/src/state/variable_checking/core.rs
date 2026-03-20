@@ -1436,6 +1436,10 @@ impl<'a> CheckerState<'a> {
                     syntax_kind_ext::SATISFIES_EXPRESSION | syntax_kind_ext::AS_EXPRESSION
                 )
             });
+            let has_jsdoc_satisfies_wrapper = {
+                self.has_satisfies_jsdoc_comment(decl_idx)
+                    || self.has_satisfies_jsdoc_comment(var_decl.initializer)
+            };
             // When a var declaration merges with a parameter (e.g.,
             // `constructor(options?) { var options = (options || 0); }`),
             // the initializer reference to the parameter is not circular
@@ -1452,12 +1456,14 @@ impl<'a> CheckerState<'a> {
             let is_skip_circularity = init_kind
                 .is_some_and(|k| k == syntax_kind_ext::CLASS_EXPRESSION)
                 || has_type_wrapper
+                || has_jsdoc_satisfies_wrapper
                 || all_refs_deferred
                 || is_merged_with_parameter;
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
                 && has_recorded_circular_return
+                && !has_jsdoc_satisfies_wrapper
                 && !is_direct_deferred_initializer
             {
                 self.suppress_circular_initializer_relation_diagnostics(

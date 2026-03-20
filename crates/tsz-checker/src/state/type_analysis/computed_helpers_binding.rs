@@ -638,6 +638,7 @@ impl<'a> CheckerState<'a> {
         if let Some((expr_idx, export_decl_idx)) =
             self.default_export_wrapper_expression(value_decl)
             && self.jsdoc_type_annotation_for_node(value_decl).is_none()
+            && !self.has_satisfies_jsdoc_comment(expr_idx)
         {
             let snap = self.ctx.snapshot_diagnostics();
             let wrapped_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);

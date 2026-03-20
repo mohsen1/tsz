@@ -121,3 +121,24 @@ engine.run(42);
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// Export-default `@satisfies` should not introduce TS7022; keep behavior aligned
+/// with explicit `satisfies` expression typing.
+#[test]
+fn test_jsdoc_satisfies_export_default_skips_self_reference_circularity() {
+    let source = r#"
+/**
+ * @typedef {Object} Foo
+ * @property {number} a
+ */
+export default /** @satisfies {Foo} */ ({});
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts7022 = diagnostics.iter().filter(|d| d.code == 7022).count();
+    assert_eq!(
+        ts7022,
+        0,
+        "Expected no TS7022 for export-default @satisfies wrapper, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
