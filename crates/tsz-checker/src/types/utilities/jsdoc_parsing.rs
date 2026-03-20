@@ -642,23 +642,33 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<JsdocPropertyTagInfo> {
         let mut rest = line.trim();
-        if !rest.starts_with("@property") {
+        if let Some(after_tag) = rest.strip_prefix("@property") {
+            rest = after_tag.trim();
+        } else if let Some(after_tag) = rest.strip_prefix("@prop") {
+            rest = after_tag.trim();
+        } else {
             return None;
         }
-        rest = &rest["@property".len()..];
-        rest = rest.trim();
-        let prop_type = if rest.starts_with('{') {
+
+        let (raw_name, prop_type) = if rest.starts_with('{') {
             let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
-            rest = after_expr.trim();
-            expr.trim().to_string()
+            let raw_name = after_expr.trim().split_whitespace().next()?;
+            (raw_name, expr.trim().to_string())
         } else {
-            "any".to_string()
+            let raw_name = rest.split_whitespace().next()?;
+            let after_name = rest[raw_name.len()..].trim();
+            let prop_type = if after_name.starts_with('{') {
+                let (expr, _after_expr) = Self::parse_jsdoc_curly_type_expr(after_name)?;
+                expr.trim().to_string()
+            } else {
+                "any".to_string()
+            };
+            (raw_name, prop_type)
         };
-        let raw_name = rest.split_whitespace().next()?;
+
+        let raw_name = raw_name.trim_end_matches(',').trim();
         let optional = raw_name.starts_with('[') || prop_type.trim_end().ends_with('=');
         let name = raw_name
-            .trim_end_matches(',')
-            .trim()
             .trim_start_matches('[')
             .trim_end_matches(']')
             .split('=')
@@ -669,6 +679,7 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() {
             return None;
         }
+
         Some(JsdocPropertyTagInfo {
             name,
             type_expr: prop_type,
