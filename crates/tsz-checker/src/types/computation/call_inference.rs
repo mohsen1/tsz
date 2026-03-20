@@ -1016,6 +1016,28 @@ impl<'a> CheckerState<'a> {
             .iter()
             .zip(arg_types.iter().copied())
             .map(|(&arg_idx, arg_type)| {
+                // Resolve enum types to their namespace object representation.
+                // When an enum identifier (like `E1`) is used as a call argument,
+                // get_type_of_node returns TypeData::Enum(def_id, structural_type).
+                // For inference against index-signature targets like `{ [x: string]: T }`,
+                // the inference engine needs to see the namespace Object type with
+                // named member properties. This mirrors tsc's behavior where `typeof E1`
+                // (the enum namespace) has an implicit string index signature.
+                let enum_def = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, arg_type);
+                let arg_type = if let Some(def_id) = enum_def {
+                    let sym_id = self.ctx.def_to_symbol_id(def_id);
+                    let ns_type =
+                        sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
+                    if let Some(ns) = ns_type {
+                        changed = true;
+                        ns
+                    } else {
+                        arg_type
+                    }
+                } else {
+                    arg_type
+                };
+
                 let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
                 if sanitized != arg_type {
                     changed = true;
