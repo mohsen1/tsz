@@ -10663,7 +10663,6 @@ b = a;
 }
 
 #[test]
-#[ignore = "typeof display changed after merge"]
 fn class_expression_assignment_preserves_typeof_variable_name_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
