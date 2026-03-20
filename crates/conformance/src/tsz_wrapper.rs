@@ -39,7 +39,7 @@ fn has_test_option_pragma(text: &str, key: &str) -> bool {
     header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
 }
 
-fn has_source_compiler_option_pragmas(text: &str) -> bool {
+fn has_source_compiler_option_pragmas_without_strict(text: &str) -> bool {
     const SOURCE_OPTION_PRAGMAS: &[&str] = &[
         "@strict",
         "@noimplicitany",
@@ -66,9 +66,11 @@ fn has_source_compiler_option_pragmas(text: &str) -> bool {
         "@ignoredeprecations",
     ];
 
-    SOURCE_OPTION_PRAGMAS
-        .iter()
-        .any(|pragma| has_test_option_pragma(text, pragma))
+    !has_test_option_pragma(text, "@strict")
+        && SOURCE_OPTION_PRAGMAS
+            .iter()
+            .filter(|&&pragma| pragma != "@strict")
+            .any(|pragma| has_test_option_pragma(text, pragma))
 }
 
 /// Prepare a test directory with files and tsconfig.json for compilation.
@@ -235,19 +237,17 @@ pub fn prepare_test_dir(
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);
     if !has_tsconfig_file {
-        let strict_explicit = options.keys().any(|key| key.eq_ignore_ascii_case("strict"));
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
-            if !strict_explicit && has_source_compiler_option_pragmas(content) {
+            if has_source_compiler_option_pragmas_without_strict(content) {
                 // The conformance runner strips source pragmas before invoking tsz.
-                // When a test uses source-level compiler pragmas without `@strict`,
-                // TypeScript treats the remaining strict-family options as false;
-                // write the relevant sub-option baseline into tsconfig so the
-                // stripped-file run matches without synthesizing explicit
-                // `strict`/`alwaysStrict` options and their related TS5107 noise.
+                // When a test uses source-level compiler pragmas without
+                // `@strict`, some strict-family settings still need an explicit
+                // false baseline after the source comments are stripped. Keep
+                // `noImplicitThis` out of that synthesized baseline so
+                // class-member `this` tests still see the harness default.
                 for key in [
                     "noImplicitAny",
-                    "noImplicitThis",
                     "strictNullChecks",
                     "strictFunctionTypes",
                     "strictBindCallApply",

@@ -377,7 +377,6 @@ class C<T> {
 
     for key in [
         "noImplicitAny",
-        "noImplicitThis",
         "strictNullChecks",
         "strictFunctionTypes",
         "strictBindCallApply",
@@ -391,6 +390,10 @@ class C<T> {
         );
     }
     assert!(
+        !compiler_options.contains_key("noImplicitThis"),
+        "noImplicitThis should not be synthesized into the stripped-source baseline"
+    );
+    assert!(
         !compiler_options.contains_key("strict"),
         "strict should stay omitted when only source pragmas are present"
     );
@@ -398,6 +401,48 @@ class C<T> {
         !compiler_options.contains_key("alwaysStrict"),
         "alwaysStrict should stay omitted when only source pragmas are present"
     );
+}
+
+#[test]
+fn test_prepare_test_dir_keeps_default_strict_family_when_only_non_strict_pragmas_exist() {
+    let content = r#"
+// @target: es2015
+class C {
+    static value = function () { return this; }
+}
+"#;
+
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
+    let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
+        .expect("tsconfig should be written");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&tsconfig).expect("tsconfig should be valid json");
+    let compiler_options = parsed["compilerOptions"]
+        .as_object()
+        .expect("compilerOptions should be an object");
+
+    for key in [
+        "noImplicitThis",
+    ] {
+        assert!(
+            !compiler_options.contains_key(key),
+            "Did not expect {key} to be synthesized for non-strict source pragmas"
+        );
+    }
+    for key in [
+        "noImplicitAny",
+        "strictNullChecks",
+        "strictFunctionTypes",
+        "strictBindCallApply",
+        "strictPropertyInitialization",
+        "useUnknownInCatchVariables",
+    ] {
+        assert_eq!(
+            compiler_options.get(key),
+            Some(&serde_json::Value::Bool(false)),
+            "Expected {key} to keep the stripped-source false baseline"
+        );
+    }
 }
 
 #[test]
