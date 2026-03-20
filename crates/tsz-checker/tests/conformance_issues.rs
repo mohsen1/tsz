@@ -7416,9 +7416,7 @@ const fn1 = () => {
 
 /// TS7023 should fire for function expression variables that call themselves in return.
 /// From: implicitAnyFromCircularInference.ts
-/// TODO: Circular inference detection not yet implemented.
 #[test]
-#[ignore = "circular inference detection not yet implemented"]
 fn test_ts7023_function_expression_self_call() {
     let opts = CheckerOptions {
         no_implicit_any: true,
@@ -7444,9 +7442,7 @@ var f1 = function () {
 
 /// TS7023 should fire for arrow function variables that call themselves in return.
 /// From: implicitAnyFromCircularInference.ts
-/// TODO: Circular inference detection not yet implemented.
 #[test]
-#[ignore = "circular inference detection not yet implemented"]
 fn test_ts7023_arrow_function_self_call() {
     let opts = CheckerOptions {
         no_implicit_any: true,
