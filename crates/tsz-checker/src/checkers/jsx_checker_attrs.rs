@@ -166,7 +166,6 @@ impl<'a> CheckerState<'a> {
         Some(sig.return_type)
     }
 
-
     // ── JSX Overload Resolution ───────────────────────────────────────────
 
     /// JSX overload resolution for overloaded Stateless Function Components.

@@ -2442,10 +2442,7 @@ impl<'a> CheckerState<'a> {
                     self.get_intrinsic_attributes_type().is_some_and(|ia_type| {
                         let resolved_ia = self.resolve_type_for_property_access(ia_type);
                         matches!(
-                            self.resolve_property_access_with_env(
-                                resolved_ia,
-                                &children_prop_name
-                            ),
+                            self.resolve_property_access_with_env(resolved_ia, &children_prop_name),
                             PropertyAccessResult::Success { .. }
                         )
                     });

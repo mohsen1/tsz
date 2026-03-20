@@ -62,9 +62,10 @@ impl<'a> CheckerState<'a> {
                 vec![non_nullish_left, right_type]
             };
 
-            if let Some(normalized) =
-                tsz_solver::normalize_object_union_members_for_write_target(self.ctx.types, &members)
-            {
+            if let Some(normalized) = tsz_solver::normalize_object_union_members_for_write_target(
+                self.ctx.types,
+                &members,
+            ) {
                 return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
             }
         }

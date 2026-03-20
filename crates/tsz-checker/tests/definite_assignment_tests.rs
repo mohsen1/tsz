@@ -2,8 +2,8 @@ use crate::CheckerState;
 use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
 use tsz_common::common::ScriptTarget;
+use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
