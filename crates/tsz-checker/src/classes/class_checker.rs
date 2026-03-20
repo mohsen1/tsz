@@ -590,6 +590,7 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&prop.modifiers);
+                let is_accessor = self.has_accessor_modifier(&prop.modifiers);
                 let prop_type = if let Some(declared_type) =
                     self.effective_class_property_declared_type(member_idx, prop)
                 {
@@ -612,7 +613,7 @@ impl<'a> CheckerState<'a> {
                     visibility,
                     is_method: false,
                     is_static,
-                    is_accessor: false,
+                    is_accessor,
                     is_abstract,
                     has_override: self.has_override_modifier(&prop.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
