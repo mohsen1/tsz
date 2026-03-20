@@ -195,6 +195,7 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         attributes_idx: NodeIndex,
         tag_name_idx: NodeIndex,
+        children_ctx: Option<super::JsxChildrenContext>,
     ) {
         let Some(sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
@@ -218,12 +219,10 @@ impl<'a> CheckerState<'a> {
 
         // Include synthesized children from JSX element body
         let children_prop_name = self.get_jsx_children_prop_name();
-        if let Some((_child_count, _has_text, synthesized_type, _text_indices)) =
-            self.ctx.jsx_children_info.take()
-        {
+        if let Some(children) = children_ctx {
             attrs_info.attrs.push(JsxAttrInfo {
                 name: children_prop_name,
-                type_id: synthesized_type,
+                type_id: children.synthesized_type,
                 from_spread: false,
             });
         }
@@ -513,6 +512,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
+        children_ctx: Option<super::JsxChildrenContext>,
     ) {
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -606,9 +606,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Include synthesized children prop if body children exist
-        let children_info = self.ctx.jsx_children_info.take();
-        if let Some((_child_count, _has_text, synthesized_type, _text_indices)) = children_info {
-            provided_attrs.push((self.get_jsx_children_prop_name(), synthesized_type));
+        if let Some(children) = children_ctx {
+            provided_attrs.push((self.get_jsx_children_prop_name(), children.synthesized_type));
         }
 
         // Skip union check when there are no concrete attributes to check,
