@@ -20,6 +20,36 @@ pub mod signature_builder;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_solver::TypeId;
 
+// ── Stack-overflow breaker ──────────────────────────────────────────────
+// Shared thread-local flag set when stacker::remaining_stack() detects
+// critically low stack.  Once tripped, all guarded recursive entry points
+// bail with TypeId::ERROR for the remainder of this thread's lifetime.
+// This prevents both the initial crash AND the hang that would otherwise
+// result when the cycle re-enters at shallow depth.
+//
+// Reset between files in batch mode via `reset_stack_overflow_flag()`.
+thread_local! {
+    static STACK_OVERFLOW_TRIPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Returns `true` if the stack overflow breaker has been tripped.
+pub fn stack_overflow_tripped() -> bool {
+    STACK_OVERFLOW_TRIPPED.get()
+}
+
+/// Trip the stack overflow breaker.  Called from guards in dispatch.rs and
+/// state/type_analysis/core.rs when `stacker::remaining_stack()` reports
+/// < 256 KB remaining.
+pub fn trip_stack_overflow() {
+    STACK_OVERFLOW_TRIPPED.set(true);
+}
+
+/// Reset the breaker.  Called between files in batch mode so that one
+/// pathological file doesn't poison all subsequent files.
+pub fn reset_stack_overflow_flag() {
+    STACK_OVERFLOW_TRIPPED.set(false);
+}
+
 /// Explicit context for synthesized JSX children, threaded from dispatch
 /// into the JSX checking path instead of stored as ambient mutable state
 /// on `CheckerContext`.

@@ -774,8 +774,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         request: &TypingRequest,
     ) -> TypeId {
         // Hard stack guard: bail when remaining stack is critically low.
-        // Catches deep recursion through any code path (checker/solver/lowering).
-        if stacker::remaining_stack().is_some_and(|r| r < 256 * 1024) {
+        if crate::checkers_domain::stack_overflow_tripped()
+            || stacker::remaining_stack().is_some_and(|r| r < 256 * 1024)
+        {
+            crate::checkers_domain::trip_stack_overflow();
             return TypeId::ERROR;
         }
         let Some(node) = self.checker.ctx.arena.get(idx) else {
