@@ -2659,8 +2659,31 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_class_missing_props_assignability = if !reported_custom_children_assignability
+            && !has_excess_property_error
+            && !spread_covers_all
+            && !skip_prop_checks
+            && !display_target.is_empty()
+            && component_type.is_some_and(|comp| {
+                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, comp)
+                    .is_some_and(|sigs| !sigs.is_empty())
+            })
+            && self.jsx_has_missing_required_props(props_type, &provided_attrs)
+        {
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+            self.report_jsx_synthesized_props_assignability_error(
+                attrs_type,
+                &display_target,
+                tag_name_idx,
+            );
+            true
+        } else {
+            false
+        };
+
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
+            && !reported_class_missing_props_assignability
             && !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks
