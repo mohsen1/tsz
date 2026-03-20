@@ -1399,6 +1399,39 @@ let x = <Foo a={{1}} d={{1}} {{...p}} {{...{{ d: 1 }}}} />;
     );
 }
 
+#[test]
+fn test_intrinsic_later_inferred_spread_emits_ts2783_and_ts2322() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        test1: { x: string; y?: number; z?: string };
+    }
+}
+
+var obj5 = { x: 32, y: 32 };
+<test1 x="ok" {...obj5} />;
+
+var obj7 = { x: 'foo' };
+<test1 x={32} {...obj7} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    let ts2783_count = diags
+        .iter()
+        .filter(|(code, _)| {
+            *code == diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        })
+        .count();
+    assert!(
+        ts2783_count == 2,
+        "Later inferred spreads should emit TS2783 for each overwritten explicit attr, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Later inferred spreads should still report the spread-side TS2322 mismatch, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // JSX Children Contextual Typing
 // =============================================================================

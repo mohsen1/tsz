@@ -906,8 +906,10 @@ impl<'a> CheckerState<'a> {
                 let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(later_node) else {
                     continue;
                 };
-                let spread_type = self.compute_type_of_node(spread_data.expression);
-                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                    spread_data.expression,
+                    &crate::context::TypingRequest::NONE,
+                );
 
                 // Skip any/error/unknown — they might cover everything but we
                 // can't tell which specific properties they contain.
@@ -928,21 +930,18 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .any(|p| p.name == attr_atom && !p.optional);
                     if has_required_prop {
-                        // TS2783: only emitted under strictNullChecks (matching tsc)
-                        if self.ctx.strict_null_checks() {
-                            use tsz_common::diagnostics::{
-                                diagnostic_codes, diagnostic_messages, format_message,
-                            };
-                            let message = format_message(
-                                diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                                &[attr_name],
-                            );
-                            self.error_at_node(
-                                attr_name_idx,
-                                &message,
-                                diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                            );
-                        }
+                        use tsz_common::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let message = format_message(
+                            diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                            &[attr_name],
+                        );
+                        self.error_at_node(
+                            attr_name_idx,
+                            &message,
+                            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                        );
                         // Attribute is overwritten regardless of SNC
                         return true;
                     }

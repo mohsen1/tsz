@@ -2452,9 +2452,10 @@ impl<'a> CheckerState<'a> {
                 } else {
                     request.read().normal_origin().contextual_opt(None)
                 };
-                let spread_type =
-                    self.compute_type_of_node_with_request(spread_expr_idx, &spread_request);
-                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                    spread_expr_idx,
+                    &spread_request,
+                );
 
                 // any/error/unknown spread covers all properties.
                 if spread_type == TypeId::ANY
@@ -2482,8 +2483,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2783: Check if any earlier explicit attributes will be
                 // overwritten by required (non-optional) properties from this spread.
-                // Only when strict null checks are enabled (matches tsc behavior).
-                if self.ctx.strict_null_checks() && !named_attr_nodes.is_empty() {
+                if !named_attr_nodes.is_empty() {
                     let spread_props = self.collect_object_spread_properties(spread_type);
                     for sp in &spread_props {
                         if !sp.optional {
@@ -2547,10 +2547,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for &(spread_type, _spread_expr_idx, _spread_pos) in &spread_entries {
-                // Skip props that also appear as explicit attributes.
+            for &(spread_type, _spread_expr_idx, spread_pos) in &spread_entries {
+                // Only later explicit attributes override the current spread.
                 let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()
+                    .filter(|(attr_pos, _)| *attr_pos > spread_pos)
                     .map(|(_, name)| name.as_str())
                     .collect();
 
