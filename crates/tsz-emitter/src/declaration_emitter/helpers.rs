@@ -4184,10 +4184,74 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
                 .preferred_expression_type_text(node_id)
                 .or_else(|| Some("any[]".to_string())),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self
+                .infer_arithmetic_binary_type_text(node_id, depth)
+                .or_else(|| {
+                    self.get_node_type(node_id)
+                        .map(|type_id| self.print_type_id(type_id))
+                }),
             _ => self
                 .get_node_type(node_id)
                 .map(|type_id| self.print_type_id(type_id)),
         }
+    }
+
+    /// Infer the type of an arithmetic binary expression for declaration emit.
+    /// For numeric operators (`+`, `-`, `*`, `/`, `%`, `**`, bitwise), if both
+    /// operands resolve to `number`, the result is `number`.
+    /// For `+` specifically, if either operand is `string`, the result is `string`.
+    fn infer_arithmetic_binary_type_text(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let node = self.arena.get(node_id)?;
+        let binary = self.arena.get_binary_expr(node)?;
+        let op = binary.operator_token;
+
+        let is_numeric_op = op == SyntaxKind::MinusToken as u16
+            || op == SyntaxKind::AsteriskToken as u16
+            || op == SyntaxKind::AsteriskAsteriskToken as u16
+            || op == SyntaxKind::SlashToken as u16
+            || op == SyntaxKind::PercentToken as u16
+            || op == SyntaxKind::LessThanLessThanToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16
+            || op == SyntaxKind::AmpersandToken as u16
+            || op == SyntaxKind::BarToken as u16
+            || op == SyntaxKind::CaretToken as u16;
+
+        let is_plus = op == SyntaxKind::PlusToken as u16;
+
+        if !is_numeric_op && !is_plus {
+            return None;
+        }
+
+        // Purely numeric operators always produce number
+        if is_numeric_op {
+            return Some("number".to_string());
+        }
+
+        // For `+`, resolve both operands
+        let left_type = self.infer_operand_type_text(binary.left, depth + 1)?;
+        let right_type = self.infer_operand_type_text(binary.right, depth + 1)?;
+
+        if left_type == "string" || right_type == "string" {
+            Some("string".to_string())
+        } else if left_type == "number" && right_type == "number" {
+            Some("number".to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Resolve the primitive type of an operand for arithmetic type inference.
+    fn infer_operand_type_text(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
+        // Try preferred expression first (finds declared types)
+        if let Some(text) = self.preferred_expression_type_text(node_id) {
+            return Some(text);
+        }
+        // Then try structural fallback
+        self.infer_fallback_type_text_at(node_id, depth)
     }
 
     pub(crate) fn preferred_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -4376,11 +4440,29 @@ impl<'a> DeclarationEmitter<'a> {
 
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
+            // Variable declarations (var/let/const)
             if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
-                let type_text = self.emit_type_node_text(var_decl.type_annotation)?;
-                let trimmed = type_text.trim_end();
-                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                return Some(trimmed.to_string());
+                if let Some(type_text) = self.emit_type_node_text(var_decl.type_annotation) {
+                    let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                    return Some(trimmed.to_string());
+                }
+            }
+            // Property declarations (class members)
+            if let Some(prop_decl) = self.arena.get_property_decl(decl_node) {
+                if let Some(type_text) = self.emit_type_node_text(prop_decl.type_annotation) {
+                    let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                    return Some(trimmed.to_string());
+                }
+            }
+            // Parameters (function/method parameters)
+            if let Some(param) = self.arena.get_parameter(decl_node) {
+                if let Some(type_text) = self.emit_type_node_text(param.type_annotation) {
+                    let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                    return Some(trimmed.to_string());
+                }
             }
         }
 
@@ -7855,6 +7937,9 @@ impl<'a> DeclarationEmitter<'a> {
             let ident = self.get_identifier_text(expr_idx)?;
             return self.resolve_identifier_symbol(expr_idx, &ident);
         }
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return self.resolve_enclosing_class_symbol(expr_idx);
+        }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(expr_node)?;
             if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
@@ -7866,12 +7951,47 @@ impl<'a> DeclarationEmitter<'a> {
             let base_sym_id = self.value_reference_symbol(access.expression)?;
             let base_symbol = binder.symbols.get(base_sym_id)?;
             let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return base_symbol
+            // Try exports first (for namespaces, static class members via class name)
+            if let Some(sym_id) = base_symbol
                 .exports
                 .as_ref()
-                .and_then(|exports| exports.get(&member_name));
+                .and_then(|exports| exports.get(&member_name))
+            {
+                return Some(sym_id);
+            }
+            // Also try members (for class instance members via `this`)
+            return base_symbol
+                .members
+                .as_ref()
+                .and_then(|members| members.get(&member_name));
         }
         binder.get_node_symbol(expr_idx)
+    }
+
+    /// Resolve `this` to the innermost enclosing class symbol by position.
+    fn resolve_enclosing_class_symbol(&self, this_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let this_node = self.arena.get(this_idx)?;
+        let this_pos = this_node.pos;
+
+        let mut best: Option<(SymbolId, u32)> = None; // (sym_id, span_size)
+        for sym in binder.symbols.iter() {
+            if (sym.flags & tsz_binder::symbol_flags::CLASS) == 0 {
+                continue;
+            }
+            for &decl_idx in &sym.declarations {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if this_pos >= decl_node.pos && this_pos < decl_node.end {
+                    let span = decl_node.end - decl_node.pos;
+                    if best.is_none_or(|(_, best_span)| span < best_span) {
+                        best = Some((sym.id, span));
+                    }
+                }
+            }
+        }
+        best.map(|(id, _)| id)
     }
 
     /// Get the text of an identifier node.

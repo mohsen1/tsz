@@ -5218,3 +5218,140 @@ fn test_destructuring_parameter_properties_emit_individual_class_properties() {
         "Did not expect destructuring pattern to be emitted as a property name: {output}"
     );
 }
+
+// =============================================================================
+// Method return type inference from arithmetic body expressions
+// =============================================================================
+
+#[test]
+fn method_return_type_inferred_from_addition_of_number_properties() {
+    let output = emit_dts_with_binding(
+        r#"
+class Calculator {
+    public x: number;
+    public add(b: number) {
+        return this.x + b;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("add(b: number): number;"),
+        "Expected method return type to be inferred as number from this.x + b: {output}"
+    );
+}
+
+#[test]
+fn method_return_type_inferred_from_subtraction() {
+    let output = emit_dts_with_binding(
+        r#"
+class Calc {
+    public value: number;
+    public sub(b: number) {
+        return this.value - b;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("sub(b: number): number;"),
+        "Expected method return type to be inferred as number from subtraction: {output}"
+    );
+}
+
+#[test]
+fn method_return_type_inferred_from_multiplication() {
+    let output = emit_dts_with_binding(
+        r#"
+class Calc {
+    public value: number;
+    public mul(b: number) {
+        return this.value * b;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("mul(b: number): number;"),
+        "Expected method return type to be inferred as number from multiplication: {output}"
+    );
+}
+
+#[test]
+fn static_method_return_type_inferred_from_addition() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {
+    static s1: number;
+    static add(b: number) {
+        return C.s1 + b;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("static add(b: number): number;"),
+        "Expected static method return type to be inferred as number: {output}"
+    );
+}
+
+#[test]
+fn method_return_type_string_concatenation() {
+    let output = emit_dts_with_binding(
+        r#"
+class Greeter {
+    public name: string;
+    public greet() {
+        return "Hello, " + this.name;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("greet(): string;"),
+        "Expected method return type to be inferred as string from string concatenation: {output}"
+    );
+}
+
+#[test]
+fn reference_declared_type_annotation_resolves_property_declarations() {
+    let output = emit_dts_with_binding(
+        r#"
+class Foo {
+    public x: number;
+    public getX() {
+        return this.x;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("getX(): number;"),
+        "Expected method returning this.x to be inferred as number: {output}"
+    );
+}
+
+#[test]
+fn method_return_type_bitwise_operations_produce_number() {
+    let output = emit_dts_with_binding(
+        r#"
+class BitOps {
+    public a: number;
+    public shiftLeft(n: number) {
+        return this.a << n;
+    }
+    public bitwiseAnd(n: number) {
+        return this.a & n;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("shiftLeft(n: number): number;"),
+        "Expected shift left to return number: {output}"
+    );
+    assert!(
+        output.contains("bitwiseAnd(n: number): number;"),
+        "Expected bitwise and to return number: {output}"
+    );
+}
