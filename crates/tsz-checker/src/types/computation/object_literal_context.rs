@@ -217,8 +217,7 @@ impl<'a> CheckerState<'a> {
 
                 let resolved_type = self.resolve_type_for_property_access(evaluated_type);
                 if resolved_type != evaluated_type {
-                    return self
-                        .union_with_non_nullish_non_object_member(resolved_type, depth - 1);
+                    return self.union_with_non_nullish_non_object_member(resolved_type, depth - 1);
                 }
 
                 false

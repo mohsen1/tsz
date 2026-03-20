@@ -224,7 +224,11 @@ impl<'a> InferenceContext<'a> {
                 let source_mapped = self.interner.mapped_type(source_mapped);
                 let target_mapped = self.interner.mapped_type(target_mapped);
 
-                self.infer_from_types(source_mapped.constraint, target_mapped.constraint, priority)?;
+                self.infer_from_types(
+                    source_mapped.constraint,
+                    target_mapped.constraint,
+                    priority,
+                )?;
             }
 
             // ReadonlyType: unwrap if both are readonly (e.g. readonly [T] vs readonly [number])

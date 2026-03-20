@@ -27,7 +27,8 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::BINARY_EXPRESSION => {
                     let binary = self.ctx.arena.get_binary_expr(parent_node)?;
-                    if binary.right != current || !self.is_assignment_operator(binary.operator_token)
+                    if binary.right != current
+                        || !self.is_assignment_operator(binary.operator_token)
                     {
                         return None;
                     }
@@ -131,7 +132,13 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(func_idx)
             .and_then(|node| self.ctx.arena.get_function(node))
-            .and_then(|func| if func.body.is_none() { None } else { Some(func.body) })?;
+            .and_then(|func| {
+                if func.body.is_none() {
+                    None
+                } else {
+                    Some(func.body)
+                }
+            })?;
         let body_node = self.ctx.arena.get(body_idx)?;
         let block = self.ctx.arena.get_block(body_node)?;
 
@@ -201,7 +208,12 @@ impl<'a> CheckerState<'a> {
         if properties.is_empty() {
             None
         } else {
-            Some(self.ctx.types.factory().object(properties.into_values().collect()))
+            Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .object(properties.into_values().collect()),
+            )
         }
     }
 
@@ -477,8 +489,8 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let prototype_owner_target =
-            prototype_owner_expr.and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr));
+        let prototype_owner_target = prototype_owner_expr
+            .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr));
         let js_constructor_target = if self.is_js_file() && !is_arrow_function {
             if is_function_declaration {
                 Some(idx)
@@ -578,8 +590,9 @@ impl<'a> CheckerState<'a> {
         let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
             self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
         });
-        let js_prototype_owner_instance_type = prototype_owner_target
-            .and_then(|owner_target| self.js_constructor_body_instance_type_for_function(owner_target));
+        let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
+            self.js_constructor_body_instance_type_for_function(owner_target)
+        });
 
         // Check if this closure is inside a decorator expression.
         // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006

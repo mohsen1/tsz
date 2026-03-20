@@ -7253,23 +7253,23 @@ class A {
     );
 
     assert!(
-        diagnostics.iter().any(
-            |(code, message)| *code == 7022 && message.contains("'#foo' implicitly has type 'any'")
-        ),
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 7022
+                && message.contains("'#foo' implicitly has type 'any'")),
         "Expected TS7022 for circular private field '#foo'.\nActual errors: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(
-            |(code, message)| *code == 7022 && message.contains("'#bar' implicitly has type 'any'")
-        ),
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 7022
+                && message.contains("'#bar' implicitly has type 'any'")),
         "Expected TS7022 for circular private field '#bar'.\nActual errors: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(
-            |(code, message)| {
-                *code == 7022 && message.contains("'[\"#baz\"]' implicitly has type 'any'")
-            }
-        ),
+        diagnostics.iter().any(|(code, message)| {
+            *code == 7022 && message.contains("'[\"#baz\"]' implicitly has type 'any'")
+        }),
         "Expected TS7022 for computed class field '[\"#baz\"]'.\nActual errors: {diagnostics:#?}"
     );
 }
@@ -7292,11 +7292,9 @@ function foo({
     );
 
     assert!(
-        diagnostics.iter().any(
-            |(code, message)| {
-                *code == 7022 && message.contains("'value1' implicitly has type 'any'")
-            }
-        ),
+        diagnostics.iter().any(|(code, message)| {
+            *code == 7022 && message.contains("'value1' implicitly has type 'any'")
+        }),
         "Expected TS7022 for destructured parameter binding captured by sibling defaults.\nActual errors: {diagnostics:#?}"
     );
 }

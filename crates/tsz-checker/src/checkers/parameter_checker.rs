@@ -65,10 +65,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn emit_circular_implicit_any_for_parameter_pattern(
-        &mut self,
-        pattern_idx: NodeIndex,
-    ) {
+    fn emit_circular_implicit_any_for_parameter_pattern(&mut self, pattern_idx: NodeIndex) {
         let mut leaf_bindings = Vec::new();
         self.collect_parameter_pattern_leaf_bindings(pattern_idx, &mut leaf_bindings);
 
@@ -76,14 +73,16 @@ impl<'a> CheckerState<'a> {
             let self_referential_default = initializer_idx.is_some()
                 && self.initializer_has_non_deferred_self_reference_by_name(initializer_idx, name);
             let captured_by_sibling_default = initializer_idx.is_none()
-                && leaf_bindings.iter().any(|&(other_name_idx, _, other_initializer_idx)| {
-                    other_name_idx != name_idx
-                        && other_initializer_idx.is_some()
-                        && self.initializer_has_non_deferred_self_reference_by_name(
-                            other_initializer_idx,
-                            name,
-                        )
-                });
+                && leaf_bindings
+                    .iter()
+                    .any(|&(other_name_idx, _, other_initializer_idx)| {
+                        other_name_idx != name_idx
+                            && other_initializer_idx.is_some()
+                            && self.initializer_has_non_deferred_self_reference_by_name(
+                                other_initializer_idx,
+                                name,
+                            )
+                    });
 
             if self_referential_default || captured_by_sibling_default {
                 use crate::diagnostics::diagnostic_codes;

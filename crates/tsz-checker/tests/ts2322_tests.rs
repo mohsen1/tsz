@@ -298,7 +298,10 @@ takesString(id);
 "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let relevant: Vec<_> = diagnostics.iter().filter(|(code, _)| *code != 2318).collect();
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
 
     assert!(
         !relevant.iter().any(|(code, _)| {
@@ -416,9 +419,9 @@ const typeHandlers: TypeHandlers = {
         .collect();
 
     assert!(
-        !relevant.iter().any(|(code, _)| {
-            *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
-        }),
+        !relevant
+            .iter()
+            .any(|(code, _)| { *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE }),
         "mapped handler context should not be misclassified as a primitive-union overload case, got: {relevant:?}"
     );
 }

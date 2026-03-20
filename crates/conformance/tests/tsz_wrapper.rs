@@ -421,9 +421,7 @@ class C {
         .as_object()
         .expect("compilerOptions should be an object");
 
-    for key in [
-        "noImplicitThis",
-    ] {
+    for key in ["noImplicitThis"] {
         assert!(
             !compiler_options.contains_key(key),
             "Did not expect {key} to be synthesized for non-strict source pragmas"

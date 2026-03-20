@@ -905,8 +905,7 @@ impl<'a> CheckerState<'a> {
             return result_type;
         }
 
-        if self.is_immediate_call_or_new_callee(idx)
-            || !self.is_immediate_call_or_new_argument(idx)
+        if self.is_immediate_call_or_new_callee(idx) || !self.is_immediate_call_or_new_argument(idx)
         {
             return result_type;
         }

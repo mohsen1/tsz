@@ -1170,7 +1170,8 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 "bind" => {
-                    let fixed_prefix_count = sig.params.iter().take_while(|param| !param.rest).count();
+                    let fixed_prefix_count =
+                        sig.params.iter().take_while(|param| !param.rest).count();
                     for prefix_len in 0..=fixed_prefix_count {
                         let this_arg_type =
                             bind_this_arg_type(sig, is_constructor, receiver_this_type);
@@ -1183,7 +1184,8 @@ impl<'a> CheckerState<'a> {
                         });
                         params.extend(sig.params.iter().take(prefix_len).cloned());
 
-                        let remaining_params = sig.params.iter().skip(prefix_len).cloned().collect();
+                        let remaining_params =
+                            sig.params.iter().skip(prefix_len).cloned().collect();
                         let method_sig = tsz_solver::CallSignature {
                             type_params: sig.type_params.clone(),
                             params,
@@ -1232,7 +1234,6 @@ impl<'a> CheckerState<'a> {
                             if !method_signatures.contains(&generic_bind_sig) {
                                 method_signatures.push(generic_bind_sig);
                             }
-
                         }
                     }
                 }
