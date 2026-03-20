@@ -222,138 +222,119 @@ impl<'a> CheckerState<'a> {
         // reference `this.annotatedProp` can resolve correctly.
         let mut pushed_prescan_this = false;
         {
+            // PERF: Single pass over class members for prescan (was 3 separate loops).
             let mut prescan_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                    continue;
-                };
-                if self.has_static_modifier(&prop.modifiers) {
-                    continue;
-                }
-                let declared_type = if let Some(dt) =
-                    self.effective_class_property_declared_type(member_idx, prop)
-                {
-                    dt
-                } else if prop.initializer.is_some() {
-                    // Unannotated properties with initializers should still appear in
-                    // the pre-scan type so that `this.prop` in other property initializers
-                    // doesn't produce a false TS2339. Use `any` as a provisional type;
-                    // the real type will be inferred during Phase 1.
-                    TypeId::ANY
-                } else {
-                    continue;
-                };
-                let Some(name) = self.get_property_name_resolved(prop.name) else {
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
-                let is_readonly = self.has_readonly_modifier(&prop.modifiers)
-                    || self.jsdoc_has_readonly_tag(member_idx);
-                let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
-                prescan_props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id: declared_type,
-                    write_type: declared_type,
-                    optional: prop.question_token,
-                    readonly: is_readonly,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility,
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                });
-            }
-
-            // Also prescan methods so that property initializers with arrow functions
-            // like `handler = () => this.method()` can resolve `this.method`.
-            // Methods use `any` as their provisional type; full signatures are built
-            // in Phase 2 after properties are known.
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
-                    continue;
-                }
-                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                    continue;
-                };
-                if self.has_static_modifier(&method.modifiers) {
-                    continue;
-                }
-                let Some(name) = self.get_property_name_resolved(method.name) else {
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
-                let visibility = self.get_member_visibility(&method.modifiers, method.name);
-                prescan_props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id: TypeId::ANY,
-                    write_type: TypeId::ANY,
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    is_class_prototype: false,
-                    visibility,
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                });
-            }
-
-            // Also prescan constructor parameter properties (e.g. `constructor(private field: string)`)
-            // so that property initializers like `handler = () => { this.field }` can resolve them.
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
-                    continue;
-                }
-                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                    continue;
-                };
-                if ctor.body.is_none() {
-                    continue;
-                }
-                for &param_idx in &ctor.parameters.nodes {
-                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                        continue;
-                    };
-                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                        continue;
-                    };
-                    if !self.has_parameter_property_modifier(&param.modifiers) {
-                        continue;
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&prop.modifiers) {
+                            continue;
+                        }
+                        let declared_type = if let Some(dt) =
+                            self.effective_class_property_declared_type(member_idx, prop)
+                        {
+                            dt
+                        } else if prop.initializer.is_some() {
+                            TypeId::ANY
+                        } else {
+                            continue;
+                        };
+                        let Some(name) = self.get_property_name_resolved(prop.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        let is_readonly = self.has_readonly_modifier(&prop.modifiers)
+                            || self.jsdoc_has_readonly_tag(member_idx);
+                        let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
+                        prescan_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: declared_type,
+                            write_type: declared_type,
+                            optional: prop.question_token,
+                            readonly: is_readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility,
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                        });
                     }
-                    let Some(name) = self.get_property_name(param.name) else {
-                        continue;
-                    };
-                    let name_atom = self.ctx.types.intern_string(&name);
-                    let is_readonly = self.has_readonly_modifier(&param.modifiers);
-                    let declared_type = if param.type_annotation.is_some() {
-                        self.get_type_from_type_node(param.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-                    let visibility = self.get_visibility_from_modifiers(&param.modifiers);
-                    prescan_props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id: declared_type,
-                        write_type: declared_type,
-                        optional: param.question_token,
-                        readonly: is_readonly,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility,
-                        parent_id: current_sym,
-                        declaration_order: 0,
-                    });
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&method.modifiers) {
+                            continue;
+                        }
+                        let Some(name) = self.get_property_name_resolved(method.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        let visibility =
+                            self.get_member_visibility(&method.modifiers, method.name);
+                        prescan_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: TypeId::ANY,
+                            write_type: TypeId::ANY,
+                            optional: false,
+                            readonly: false,
+                            is_method: true,
+                            is_class_prototype: false,
+                            visibility,
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                        });
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                            continue;
+                        };
+                        if ctor.body.is_none() {
+                            continue;
+                        }
+                        for &param_idx in &ctor.parameters.nodes {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                continue;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                continue;
+                            };
+                            if !self.has_parameter_property_modifier(&param.modifiers) {
+                                continue;
+                            }
+                            let Some(name) = self.get_property_name(param.name) else {
+                                continue;
+                            };
+                            let name_atom = self.ctx.types.intern_string(&name);
+                            let is_readonly = self.has_readonly_modifier(&param.modifiers);
+                            let declared_type = if param.type_annotation.is_some() {
+                                self.get_type_from_type_node(param.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            let visibility =
+                                self.get_visibility_from_modifiers(&param.modifiers);
+                            prescan_props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: declared_type,
+                                write_type: declared_type,
+                                optional: param.question_token,
+                                readonly: is_readonly,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility,
+                                parent_id: current_sym,
+                                declaration_order: 0,
+                            });
+                        }
+                    }
+                    _ => {}
                 }
             }
 
