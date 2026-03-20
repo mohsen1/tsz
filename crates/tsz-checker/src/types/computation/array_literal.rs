@@ -464,14 +464,14 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref _expected) = tuple_context {
                         // For tuple context, add each element with spread flag
                         for elem in &elems {
-                            let (name, optional) =
+                            let optional =
                                 match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                                    Some(el) => (el.name, el.optional),
-                                    None => (None, false),
+                                    Some(el) => el.optional,
+                                    None => false,
                                 };
                             tuple_elements.push(TupleElement {
                                 type_id: elem.type_id,
-                                name,
+                                name: None,
                                 optional,
                                 rest: false, // Individual tuple elements are not spreads
                             });
@@ -495,14 +495,13 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if let Some(ref _expected) = tuple_context {
-                    let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index))
-                    {
-                        Some(el) => (el.name, el.optional),
-                        None => (None, false),
+                    let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
+                        Some(el) => el.optional,
+                        None => false,
                     };
                     tuple_elements.push(TupleElement {
                         type_id: elem_type,
-                        name,
+                        name: None,
                         optional,
                         rest: true, // Mark as spread for non-tuple spreads in tuple context
                     });
@@ -520,13 +519,13 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(ref _expected) = tuple_context {
-                let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                    Some(el) => (el.name, el.optional),
-                    None => (None, false),
+                let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
+                    Some(el) => el.optional,
+                    None => false,
                 };
                 tuple_elements.push(TupleElement {
                     type_id: elem_type,
-                    name,
+                    name: None,
                     optional,
                     rest: false,
                 });
