@@ -4,6 +4,9 @@
 //! has been extracted to `condition_narrowing.rs`.
 
 use super::{FlowAnalyzer, PropertyKey};
+use crate::query_boundaries::common::{
+    TypeSubstitution, construct_signatures_for_type, instantiate_type,
+};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, are_types_mutually_subtype_with_env, call_signatures_for_type,
     enum_member_domain, fallback_compound_assignment_result, function_return_type,
@@ -531,6 +534,10 @@ impl<'a> FlowAnalyzer<'a> {
             return self.fallback_call_expression_type(rhs);
         }
 
+        if rhs_node.kind == syntax_kind_ext::NEW_EXPRESSION {
+            return self.fallback_new_expression_type(rhs);
+        }
+
         if rhs_node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
             return self.fallback_await_expression_type(rhs);
         }
@@ -561,6 +568,7 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.fallback_object_literal_type_from_syntax(expr)
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self.fallback_new_expression_type(expr),
             _ => None,
         }
     }
@@ -781,6 +789,55 @@ impl<'a> FlowAnalyzer<'a> {
                 self.extend_call_return_types(decl_type, &mut return_types);
             }
         }
+        self.union_types_if_any(return_types)
+    }
+
+    fn fallback_new_expression_type(&self, new_expr: NodeIndex) -> Option<TypeId> {
+        let new_node = self.arena.get(new_expr)?;
+        if new_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(new_node)?;
+        let callee = self.skip_parens_and_assertions(call.expression);
+        let ctor_type = self
+            .fallback_type_for_reference(callee)
+            .or_else(|| self.fallback_expression_type_from_syntax(callee))
+            .map(|ty| self.resolve_lazy_via_env(ty))?;
+
+        let signatures = construct_signatures_for_type(self.interner, ctor_type)?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let mut explicit_type_args = Vec::new();
+        if let Some(type_arguments) = call.type_arguments.as_ref() {
+            for &arg_idx in &type_arguments.nodes {
+                explicit_type_args.push(self.fallback_type_from_type_node_syntax(arg_idx)?);
+            }
+        }
+
+        let mut return_types = Vec::with_capacity(signatures.len());
+        for sig in signatures {
+            let return_type = if explicit_type_args.is_empty() || sig.type_params.is_empty() {
+                sig.return_type
+            } else {
+                let mut applied_args = explicit_type_args.clone();
+                if applied_args.len() < sig.type_params.len() {
+                    for param in sig.type_params.iter().skip(applied_args.len()) {
+                        applied_args.push(param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN));
+                    }
+                }
+                if applied_args.len() > sig.type_params.len() {
+                    applied_args.truncate(sig.type_params.len());
+                }
+                let substitution =
+                    TypeSubstitution::from_args(self.interner, &sig.type_params, &applied_args);
+                instantiate_type(self.interner, sig.return_type, &substitution)
+            };
+            return_types.push(return_type);
+        }
+
         self.union_types_if_any(return_types)
     }
 

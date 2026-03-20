@@ -2842,6 +2842,64 @@ function test() {
     );
 }
 
+#[test]
+fn test_assignment_then_instanceof_merge_keeps_assigned_set_type() {
+    use crate::CheckerState;
+    use crate::diagnostics::diagnostic_codes;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+function f1(s: Set<string> | Set<number>) {
+    s = new Set<number>();
+    s;
+    if (s instanceof Set) {
+        s;
+    }
+    s;
+    s.add(42);
+}
+
+function f2(s: Set<string> | Set<number>) {
+    s = new Set<number>();
+    s;
+    if (s instanceof Promise) {
+        s;
+    }
+    s;
+    s.add(42);
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "instanceof merges should collapse back to the assigned Set<number> type, got: {ts2339:?}"
+    );
+}
+
 /// Exhaustive switch without default should satisfy return-path checking.
 #[test]
 fn test_ts2366_not_emitted_for_exhaustive_switch_without_default() {
