@@ -2900,6 +2900,80 @@ function f2(s: Set<string> | Set<number>) {
     );
 }
 
+#[test]
+fn test_instanceof_accepts_annotated_union_after_function_augmentation() {
+    use crate::CheckerState;
+    use crate::diagnostics::diagnostic_codes;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+declare global {
+    interface Function {
+        now(): string;
+    }
+}
+
+Function.prototype.now = function () {
+    return "now";
+};
+
+class X {
+    static now() {
+        return {};
+    }
+
+    why() {}
+}
+
+export const x: X | number = Math.random() > 0.5 ? new X() : 1;
+
+if (x instanceof X) {
+    x.why();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2358: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP
+        })
+        .collect();
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .collect();
+
+    assert!(
+        ts2358.is_empty(),
+        "annotated union lhs should stay valid for instanceof, got: {ts2358:?}"
+    );
+    assert!(
+        ts2339.is_empty(),
+        "instanceof narrowing should preserve X in the true branch, got: {ts2339:?}"
+    );
+}
+
 /// Exhaustive switch without default should satisfy return-path checking.
 #[test]
 fn test_ts2366_not_emitted_for_exhaustive_switch_without_default() {

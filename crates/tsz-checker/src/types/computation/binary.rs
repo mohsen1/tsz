@@ -7,7 +7,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{BinaryOpEvaluator, TypeId};
 
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
@@ -24,6 +24,70 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    fn declared_instanceof_left_operand_type(
+        &mut self,
+        left_idx: NodeIndex,
+        left_type: TypeId,
+    ) -> TypeId {
+        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        if evaluator.is_valid_instanceof_left_operand(left_type) {
+            return left_type;
+        }
+
+        let Some(node) = self.ctx.arena.get(left_idx) else {
+            return left_type;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return left_type;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(left_idx) else {
+            return left_type;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return left_type;
+        };
+
+        let mut decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+            return left_type;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_idx = ext.parent;
+            decl_node = parent_node;
+        }
+        if !self.is_const_variable_declaration(decl_idx) {
+            return left_type;
+        }
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return left_type;
+        };
+        if var_decl.type_annotation.is_none() {
+            return left_type;
+        }
+        if !self
+            .ctx
+            .binder
+            .get_node_flow(left_idx)
+            .and_then(|flow_id| self.ctx.binder.flow_nodes.get(flow_id))
+            .is_some_and(|flow| flow.has_any_flags(tsz_binder::flow_flags::ASSIGNMENT))
+        {
+            return left_type;
+        }
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if evaluator.is_valid_instanceof_left_operand(declared_type) {
+            declared_type
+        } else {
+            left_type
+        }
+    }
+
     pub(crate) fn get_type_of_write_target_base_expression(&mut self, idx: NodeIndex) -> TypeId {
         let logical_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(node) = self.ctx.arena.get(logical_idx)
@@ -727,10 +791,15 @@ impl<'a> CheckerState<'a> {
                         );
                 }
 
-                let eval_left = self.evaluate_type_for_assignability(left_type);
-                if eval_left != TypeId::ERROR {
+                // `instanceof` left-operand validity is about the expression's semantic
+                // value type, not the relation-normalized type used for assignability.
+                // Running it through assignability evaluation can erase object members
+                // from unions before we validate TS2358.
+                if left_type != TypeId::ERROR {
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    if !evaluator.is_valid_instanceof_left_operand(eval_left) {
+                    let lhs_type =
+                        self.declared_instanceof_left_operand_type(left_idx, left_type);
+                    if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
                         self.error_at_node_msg(
                             left_idx,
                             diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
