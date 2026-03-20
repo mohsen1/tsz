@@ -1355,13 +1355,57 @@ impl<'a> CheckerState<'a> {
 
         use tsz_solver::PendingDiagnostic;
 
-        let Some(anchor) =
-            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::OverloadPrimary)
-        else {
+        let mut formatter = self.ctx.create_type_formatter();
+        let argument_failures: Vec<_> = failures
+            .iter()
+            .filter(|failure| {
+                failure.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            })
+            .collect();
+        let identical_argument_failures = argument_failures
+            .first()
+            .map(|first| {
+                let rendered_first = formatter.render(first);
+                argument_failures.iter().skip(1).all(|failure| {
+                    formatter.render(failure).message == rendered_first.message
+                })
+            })
+            .unwrap_or(false);
+        let remaining_failures: Vec<_> = failures
+            .iter()
+            .filter(|failure| {
+                failure.code
+                    != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            })
+            .collect();
+        let remaining_failures_are_count_mismatches = remaining_failures.iter().all(|failure| {
+            matches!(
+                failure.code,
+                diagnostic_codes::EXPECTED_ARGUMENTS_BUT_GOT
+                    | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
+            )
+        });
+        let anchor_first_argument = identical_argument_failures
+            && !remaining_failures.is_empty()
+            && remaining_failures_are_count_mismatches;
+
+        let anchor_kind = if anchor_first_argument {
+            self.first_call_argument_anchor(idx)
+                .map(|_| DiagnosticAnchorKind::Exact)
+                .unwrap_or(DiagnosticAnchorKind::OverloadPrimary)
+        } else {
+            DiagnosticAnchorKind::OverloadPrimary
+        };
+        let anchor_idx = if anchor_first_argument {
+            self.first_call_argument_anchor(idx).unwrap_or(idx)
+        } else {
+            idx
+        };
+        let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, anchor_kind) else {
             return;
         };
 
-        let mut formatter = self.ctx.create_type_formatter();
         let mut related = Vec::new();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
@@ -1397,6 +1441,12 @@ impl<'a> CheckerState<'a> {
             length: anchor.length,
             related_information: related,
         });
+    }
+
+    fn first_call_argument_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+        call.arguments.as_ref()?.nodes.first().copied()
     }
 
     pub(super) fn is_concat_call(&self, expr: NodeIndex) -> bool {
