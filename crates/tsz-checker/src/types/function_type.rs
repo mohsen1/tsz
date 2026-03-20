@@ -1100,6 +1100,15 @@ impl<'a> CheckerState<'a> {
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
+            let refresh_body_for_contextual_param_retyping =
+                is_closure && (ctx_helper.is_some() || func_jsdoc.is_some());
+            if refresh_body_for_contextual_param_retyping {
+                // Function expressions are often visited once during environment building
+                // and again with contextual/JSDoc parameter types during checked mode.
+                // Re-evaluate the body from the shared cached parameter types so reads like
+                // `acceptNum(b)` see the same optionality/type-tag result as the signature.
+                self.clear_type_cache_recursive(body);
+            }
             self.record_destructured_parameter_binding_groups(
                 &parameters.nodes,
                 &destructuring_context_param_types,
