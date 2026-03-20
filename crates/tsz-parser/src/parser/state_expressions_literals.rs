@@ -1862,8 +1862,14 @@ impl ParserState {
             self.parse_type_parameters()
         });
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
+        let had_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if !had_open_paren {
+            // If ( was missing entirely, don't consume following tokens as parameters.
+            // They belong to the enclosing context (e.g., object literal list).
+            // This prevents `get e,` from consuming `,` as a parameter delimiter
+            // and cascading errors into subsequent properties.
+            self.make_node_list(vec![])
+        } else if self.is_token(SyntaxKind::CloseParenToken) {
             self.make_node_list(vec![])
         } else if self.is_token(SyntaxKind::CommaToken) {
             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1893,7 +1899,10 @@ impl ParserState {
         };
         // Save end of ) for error reporting - get it BEFORE consuming the token
         let close_paren_end = self.token_end();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        // Only expect ) if ( was actually found
+        if had_open_paren {
+            self.parse_expected(SyntaxKind::CloseParenToken);
+        }
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
@@ -1963,15 +1972,21 @@ impl ParserState {
             self.parse_type_parameters()
         });
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
+        let had_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if !had_open_paren {
+            // If ( was missing entirely, don't consume following tokens as parameters.
+            // They belong to the enclosing context (e.g., object literal list).
+            self.make_node_list(vec![])
+        } else if self.is_token(SyntaxKind::CloseParenToken) {
             self.make_node_list(vec![])
         } else {
             self.parse_parameter_list()
         };
         // Save end of ) for error reporting - get it BEFORE consuming the token
         let close_paren_end = self.token_end();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        if had_open_paren {
+            self.parse_expected(SyntaxKind::CloseParenToken);
+        }
 
         if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
