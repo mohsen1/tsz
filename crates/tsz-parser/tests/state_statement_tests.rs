@@ -187,6 +187,36 @@ fn parse_invalid_import_expression_start_reports_ts1109() {
 }
 
 #[test]
+fn function_signature_invalid_character_prefers_ts1127_over_ts1144() {
+    let (parser, _root) = parse_source("function Foo() ¬ { }");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::INVALID_CHARACTER),
+        "expected TS1127 for invalid character after function signature, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::OR_EXPECTED),
+        "should not fall back to TS1144 after the invalid character, got {codes:?}"
+    );
+}
+
+#[test]
+fn parameter_list_colon_start_prefers_ts1138_over_ts1003() {
+    let (parser, _root) = parse_source("namespace M {\nfunction a(\n    : T) { }\n}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "expected TS1138 for colon-led parameter recovery, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "should not emit generic TS1003 for the colon-led parameter, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
     let (parser, _root) = parse_source("var foo = 1;\n#!/usr/bin/env node\n");
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();

@@ -2062,16 +2062,25 @@ impl ParserState {
             // Consume the semicolon if present (overload signature).
             // Use can_parse_semicolon() which handles ASI: a preceding line break
             // acts as an implicit semicolon (matching tsc's parseFunctionBlockOrSemicolon).
-            if self.can_parse_semicolon() {
+            if self.is_token(SyntaxKind::Unknown) {
+                self.error_token_expected("{");
+                self.next_token();
+                if self.is_token(SyntaxKind::OpenBraceToken) {
+                    self.parse_block()
+                } else {
+                    NodeIndex::NONE
+                }
+            } else if self.can_parse_semicolon() {
                 self.parse_semicolon();
+                NodeIndex::NONE
             } else {
                 // TS1144: '{' or ';' expected — unexpected token after function signature
                 self.parse_error_at_current_token(
                     "'{' or ';' expected.",
                     diagnostic_codes::OR_EXPECTED,
                 );
+                NodeIndex::NONE
             }
-            NodeIndex::NONE
         };
         self.pop_label_scope();
 

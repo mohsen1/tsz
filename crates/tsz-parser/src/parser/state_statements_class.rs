@@ -125,6 +125,37 @@ impl ParserState {
                 break;
             }
 
+            if self.is_token(SyntaxKind::ColonToken) {
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.parse_error_at_current_token(
+                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                );
+                self.next_token();
+                if !matches!(
+                    self.token(),
+                    SyntaxKind::CommaToken
+                        | SyntaxKind::CloseParenToken
+                        | SyntaxKind::OpenBraceToken
+                        | SyntaxKind::EndOfFileToken
+                ) {
+                    let recover_start = self.token_pos();
+                    let _ = self.parse_type();
+                    if self.token_pos() == recover_start
+                        && !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::OpenBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        )
+                    {
+                        self.next_token();
+                    }
+                }
+                break;
+            }
+
             // TS1014: A rest parameter must be last in a parameter list
             // Check BEFORE parsing the next parameter (but only emit once)
             if seen_rest_parameter && !emitted_rest_error {
