@@ -26,6 +26,51 @@ pub struct PreparedTest {
     pub temp_dir: tempfile::TempDir,
 }
 
+fn header_comment_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines().take(32).map(str::trim).take_while(|trimmed| {
+        trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+    })
+}
+
+fn has_test_option_pragma(text: &str, key: &str) -> bool {
+    header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
+}
+
+fn has_source_compiler_option_pragmas(text: &str) -> bool {
+    const SOURCE_OPTION_PRAGMAS: &[&str] = &[
+        "@strict",
+        "@noimplicitany",
+        "@useunknownincatchvariables",
+        "@noimplicitthis",
+        "@strictpropertyinitialization",
+        "@strictnullchecks",
+        "@strictfunctiontypes",
+        "@strictbindcallapply",
+        "@noimplicitreturns",
+        "@noimplicitoverride",
+        "@nopropertyaccessfromindexsignature",
+        "@nounusedlocals",
+        "@nounusedparameters",
+        "@alwaysstrict",
+        "@noimplicitusestrict",
+        "@allowunreachablecode",
+        "@allowunusedlabels",
+        "@target",
+        "@module",
+        "@allowjs",
+        "@checkjs",
+        "@experimentaldecorators",
+        "@ignoredeprecations",
+    ];
+
+    SOURCE_OPTION_PRAGMAS
+        .iter()
+        .any(|pragma| has_test_option_pragma(text, pragma))
+}
+
 /// Prepare a test directory with files and tsconfig.json for compilation.
 ///
 /// Returns a `PreparedTest` whose temp directory must be kept alive during compilation.
@@ -190,8 +235,29 @@ pub fn prepare_test_dir(
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);
     if !has_tsconfig_file {
+        let strict_explicit = options.keys().any(|key| key.eq_ignore_ascii_case("strict"));
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
+            if !strict_explicit && has_source_compiler_option_pragmas(content) {
+                // The conformance runner strips source pragmas before invoking tsz.
+                // When a test uses source-level compiler pragmas without `@strict`,
+                // TypeScript treats the remaining strict-family options as false;
+                // write that baseline into tsconfig so the stripped-file run matches.
+                for key in [
+                    "strict",
+                    "noImplicitAny",
+                    "noImplicitThis",
+                    "strictNullChecks",
+                    "strictFunctionTypes",
+                    "strictBindCallApply",
+                    "strictPropertyInitialization",
+                    "useUnknownInCatchVariables",
+                    "alwaysStrict",
+                ] {
+                    map.entry(key.to_string())
+                        .or_insert(serde_json::Value::Bool(false));
+                }
+            }
             // Remap virtual absolute typeRoots paths to real tmpdir paths.
             // Tests use `/types` as a virtual FS root; files are written at
             // `<tmpdir>/types/...`, so typeRoots must point there.
