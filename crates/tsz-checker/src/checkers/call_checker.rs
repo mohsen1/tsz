@@ -15,6 +15,32 @@ use tsz_solver::{
     AssignabilityChecker, CallResult, ContextualTypeContext, PendingDiagnosticBuilder, TypeId,
 };
 
+/// Call-local context carrying the callable type during argument collection.
+///
+/// Replaces the ambient `ctx.current_callable_type` field. Threaded explicitly
+/// through `collect_call_argument_types_with_context` and its transitive callees
+/// so that rest-parameter position checks (TS2556) and generic excess-property
+/// skip decisions can query the callable shape without ambient mutable state.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CallableContext {
+    /// The callable type of the call expression being processed.
+    pub callable_type: Option<TypeId>,
+}
+
+impl CallableContext {
+    pub fn new(callable_type: TypeId) -> Self {
+        Self {
+            callable_type: Some(callable_type),
+        }
+    }
+
+    pub fn none() -> Self {
+        Self {
+            callable_type: None,
+        }
+    }
+}
+
 pub(crate) struct OverloadResolution {
     pub(crate) arg_types: Vec<TypeId>,
     pub(crate) result: CallResult,
@@ -1053,6 +1079,7 @@ impl<'a> CheckerState<'a> {
         mut expected_for_index: F,
         check_excess_properties: bool,
         skip_sensitive_indices: Option<&[bool]>,
+        callable_ctx: CallableContext,
     ) -> Vec<TypeId>
     where
         F: FnMut(usize, usize) -> Option<TypeId>,
@@ -1268,7 +1295,7 @@ impl<'a> CheckerState<'a> {
                             // when no callable type is set (callee is any/error/unknown),
                             // fall back to the large-index probe heuristic.
                             let at_rest_position =
-                                if let Some(callable_type) = self.ctx.current_callable_type {
+                                if let Some(callable_type) = callable_ctx.callable_type {
                                     let ctx = tsz_solver::ContextualTypeContext::with_expected(
                                         self.ctx.types,
                                         callable_type,
@@ -1333,7 +1360,7 @@ impl<'a> CheckerState<'a> {
                         let current_expected = expected_for_index(effective_index, expanded_count);
 
                         let at_rest_position = if let Some(callable_type) =
-                            self.ctx.current_callable_type
+                            callable_ctx.callable_type
                         {
                             let ctx = tsz_solver::ContextualTypeContext::with_expected(
                                 self.ctx.types,
@@ -1393,6 +1420,7 @@ impl<'a> CheckerState<'a> {
                 arg_idx,
                 Some(effective_index),
                 Some(expanded_count),
+                callable_ctx,
             );
             let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
                 tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
@@ -1402,7 +1430,7 @@ impl<'a> CheckerState<'a> {
                     )
             });
             let callable_context_requires_generic_epc_skip =
-                self.ctx.current_callable_type.is_some_and(|callable_type| {
+                callable_ctx.callable_type.is_some_and(|callable_type| {
                     let ctx =
                         tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     ctx.get_parameter_type_for_call(effective_index, expanded_count)
@@ -1866,8 +1894,7 @@ impl<'a> CheckerState<'a> {
             self.clear_contextual_resolution_cache();
             self.clear_type_cache_recursive(arg_idx);
         }
-        let prev_callable_type = self.ctx.current_callable_type;
-        self.ctx.current_callable_type = Some(union_contextual);
+        let union_callable_ctx = CallableContext::new(union_contextual);
         // Preserve literal types during overload argument collection so that
         // string/number literal arguments keep their literal types (e.g., "canvas"
         // stays as literal "canvas" instead of widening to string).  This is
@@ -1881,9 +1908,9 @@ impl<'a> CheckerState<'a> {
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             false,
             None, // No skipping needed for overload resolution
+            union_callable_ctx,
         );
         self.ctx.preserve_literal_types = prev_preserve_literals;
-        self.ctx.current_callable_type = prev_callable_type;
         let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
         self.ctx.node_types = std::mem::take(&mut original_node_types);
@@ -1959,8 +1986,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.node_types = Default::default();
                         refresh_all_args(self);
 
-                        let prev_callable_type = self.ctx.current_callable_type;
-                        self.ctx.current_callable_type = Some(func_type);
+                        let sig_callable_ctx = CallableContext::new(func_type);
                         let refreshed_contextual_types = self
                             .contextual_param_types_from_instantiated_params(
                                 instantiated_params,
@@ -1971,8 +1997,8 @@ impl<'a> CheckerState<'a> {
                             |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
                             false,
                             None,
+                            sig_callable_ctx,
                         );
-                        self.ctx.current_callable_type = prev_callable_type;
                         did_instantiated_retry = true;
                         refreshed_arg_types
                     } else {
@@ -2076,8 +2102,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types = Default::default();
             refresh_all_args(self);
 
-            let prev_callable_type = self.ctx.current_callable_type;
-            self.ctx.current_callable_type = Some(func_type);
+            let candidate_callable_ctx = CallableContext::new(func_type);
             let prev_preserve_literals2 = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;
             let mut sig_arg_types = self.collect_call_argument_types_with_context(
@@ -2085,9 +2110,9 @@ impl<'a> CheckerState<'a> {
                 |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                 false,
                 None,
+                candidate_callable_ctx,
             );
             self.ctx.preserve_literal_types = prev_preserve_literals2;
-            self.ctx.current_callable_type = prev_callable_type;
 
             self.ensure_relation_input_ready(func_type);
 
@@ -2122,8 +2147,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types = Default::default();
                 refresh_all_args(self);
 
-                let prev_callable_type = self.ctx.current_callable_type;
-                self.ctx.current_callable_type = Some(func_type);
+                let retry_callable_ctx = CallableContext::new(func_type);
                 let refreshed_contextual_types = self
                     .contextual_param_types_from_instantiated_params(
                         instantiated_params,
@@ -2134,8 +2158,8 @@ impl<'a> CheckerState<'a> {
                     |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
                     false,
                     None,
+                    retry_callable_ctx,
                 );
-                self.ctx.current_callable_type = prev_callable_type;
 
                 let (retry_result, _retry_predicate, _retry_instantiated_params) = self
                     .resolve_call_with_checker_adapter(

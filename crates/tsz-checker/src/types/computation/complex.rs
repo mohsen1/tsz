@@ -3,6 +3,7 @@
 //! Contextual sensitivity analysis is in `contextual.rs`.
 //! Union/intersection/keyof/class helpers are in `type_operators.rs`.
 
+use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::type_computation::complex as query;
@@ -488,6 +489,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| None, // No parameter type info for ANY callee
                 check_excess_properties,
                 None, // No skipping needed
+                CallableContext::none(),
             );
 
             return TypeId::ANY;
@@ -512,6 +514,7 @@ impl<'a> CheckerState<'a> {
                     |_i, _arg_count| None,
                     check_excess_properties,
                     None,
+                    CallableContext::none(),
                 );
                 return TypeId::ERROR;
             }
@@ -526,6 +529,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| None,
                 check_excess_properties,
                 None,
+                CallableContext::none(),
             );
             return TypeId::ANY;
         }
@@ -715,6 +719,7 @@ impl<'a> CheckerState<'a> {
                         },
                         check_excess_properties,
                         Some(&sensitive_args),
+                        CallableContext::none(),
                     );
 
                     // For sensitive object literal arguments, extract a partial type
@@ -980,6 +985,7 @@ impl<'a> CheckerState<'a> {
                         },
                         check_excess_properties,
                         None,
+                        CallableContext::none(),
                     )
                 } else {
                     self.collect_call_argument_types_with_context(
@@ -987,6 +993,7 @@ impl<'a> CheckerState<'a> {
                         |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                         check_excess_properties,
                         None,
+                        CallableContext::none(),
                     )
                 }
             } else {
@@ -995,6 +1002,7 @@ impl<'a> CheckerState<'a> {
                     |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                     check_excess_properties,
                     None,
+                    CallableContext::none(),
                 )
             }
         } else {
@@ -1003,6 +1011,7 @@ impl<'a> CheckerState<'a> {
                 |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                 check_excess_properties,
                 None,
+                CallableContext::none(),
             )
         };
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
