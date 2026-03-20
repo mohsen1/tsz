@@ -1,6 +1,6 @@
 //! Common types and utilities for the tsz TypeScript compiler.
 //!
-//! This crate provides foundational types used across all tsz crates:
+//! Provides foundational types used across all tsz crates:
 //! - String interning (`Atom`, `Interner`, `ShardedInterner`)
 //! - Common enums (`ModuleKind`, `NewLineKind`, `ScriptTarget`)
 //! - Source spans (`Span`, `Spanned`, `SpanBuilder`, `ByteSpan`)

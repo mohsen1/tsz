@@ -153,7 +153,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
@@ -359,7 +359,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
@@ -556,7 +556,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
@@ -757,7 +757,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
@@ -951,7 +951,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
@@ -1171,7 +1171,7 @@ impl<'a> CheckerContext<'a> {
             typeof_param_scope: FxHashMap::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
-            jsx_children_info: None,
+
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,

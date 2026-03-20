@@ -1882,13 +1882,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         }
                         child_types.push(child_type);
                     }
-                    // Store children info for use in check_jsx_attributes_against_props.
                     // Synthesize the children type:
                     // - 0 children → None (no children prop synthesized)
                     // - 1 child → the child's type directly
                     // - 2+ children → array of union of child types
-                    let prev_children_info = self.checker.ctx.jsx_children_info.take();
-                    if !child_types.is_empty() {
+                    let children_ctx = if !child_types.is_empty() {
                         let synthesized_type = if child_types.len() == 1 && !has_spread_child {
                             child_types[0]
                         } else {
@@ -1903,30 +1901,30 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         } else {
                             child_types.len()
                         };
-                        self.checker.ctx.jsx_children_info = Some((
-                            normalized_child_count,
+                        Some(crate::checkers_domain::JsxChildrenContext {
+                            child_count: normalized_child_count,
                             has_text_child,
                             synthesized_type,
                             text_child_indices,
-                        ));
-                    }
+                        })
+                    } else {
+                        None
+                    };
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)
                     self.checker
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
-                    let result = self
-                        .checker
-                        .get_type_of_jsx_opening_element_with_request(jsx.opening_element, request);
-
-                    // Restore previous children info (for nested JSX elements)
-                    self.checker.ctx.jsx_children_info = prev_children_info;
-                    result
+                    self.checker.get_type_of_jsx_opening_element_with_children(
+                        jsx.opening_element,
+                        request,
+                        children_ctx,
+                    )
                 } else {
                     TypeId::ERROR
                 }
             }
             k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => self
                 .checker
-                .get_type_of_jsx_opening_element_with_request(idx, request),
+                .get_type_of_jsx_opening_element_with_children(idx, request, None),
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_fragment(node) {
                     for &child in &jsx.children.nodes {

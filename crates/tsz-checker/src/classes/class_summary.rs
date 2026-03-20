@@ -156,6 +156,95 @@ impl<'a> CheckerState<'a> {
             .initialization
     }
 
+    /// Collect only member info (names, types, visibility, kinds) for a class.
+    /// Skips all initialization tracking (`property_requires_initialization`,
+    /// constructor assignment analysis, field key sets) since chain summaries
+    /// only need member info for override/property access checks.
+    fn collect_class_members_for_chain(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> ClassOwnMemberSummary {
+        let mut summary = ClassOwnMemberSummary::default();
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if let Some(info) = self.extract_class_member_info(member_idx, true) {
+                Self::record_own_member_info(
+                    info,
+                    &mut summary.visible_instance_members,
+                    &mut summary.visible_static_members,
+                    &mut summary.visible_instance_member_display_names,
+                    &mut summary.visible_static_member_display_names,
+                    &mut summary.visible_instance_member_kinds,
+                    &mut summary.visible_static_member_kinds,
+                    self,
+                );
+            }
+
+            if let Some(info) = self.extract_class_member_info(member_idx, false) {
+                Self::record_own_member_info(
+                    info,
+                    &mut summary.all_instance_members,
+                    &mut summary.all_static_members,
+                    &mut summary.all_instance_member_display_names,
+                    &mut summary.all_static_member_display_names,
+                    &mut summary.all_instance_member_kinds,
+                    &mut summary.all_static_member_kinds,
+                    self,
+                );
+            }
+
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    continue;
+                };
+                for &param_idx in &ctor.parameters.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    if !self.has_parameter_property_modifier(&param.modifiers) {
+                        continue;
+                    }
+                    if let Some(info) = self.parameter_property_member_info(param_idx, param, true)
+                    {
+                        Self::record_own_member_info(
+                            info,
+                            &mut summary.visible_instance_members,
+                            &mut summary.visible_static_members,
+                            &mut summary.visible_instance_member_display_names,
+                            &mut summary.visible_static_member_display_names,
+                            &mut summary.visible_instance_member_kinds,
+                            &mut summary.visible_static_member_kinds,
+                            self,
+                        );
+                    }
+                    if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
+                    {
+                        Self::record_own_member_info(
+                            info,
+                            &mut summary.all_instance_members,
+                            &mut summary.all_static_members,
+                            &mut summary.all_instance_member_display_names,
+                            &mut summary.all_static_member_display_names,
+                            &mut summary.all_instance_member_kinds,
+                            &mut summary.all_static_member_kinds,
+                            self,
+                        );
+                    }
+                }
+            }
+        }
+
+        self.collect_js_implicit_member_kinds(class, &mut summary);
+        summary
+    }
+
     fn summarize_own_class_members(
         &mut self,
         _class_idx: NodeIndex,
@@ -393,7 +482,6 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn summarize_class_chain(&mut self, class_idx: NodeIndex) -> ClassChainSummary {
         let mut summary = ClassChainSummary::default();
-        let mut own_summary_cache = FxHashMap::default();
         let mut visited = FxHashSet::default();
         let mut current = Some(class_idx);
 
@@ -406,13 +494,10 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            let own_summary = if let Some(cached) = own_summary_cache.get(&current_idx).cloned() {
-                cached
-            } else {
-                let built = self.summarize_own_class_members(current_idx, class);
-                own_summary_cache.insert(current_idx, built.clone());
-                built
-            };
+            // Use the lighter member-info-only path: skips property_requires_initialization,
+            // constructor assignment analysis, and field key set tracking — none of which
+            // are used by the chain summary.
+            let own_summary = self.collect_class_members_for_chain(class);
 
             for info in own_summary.visible_instance_members {
                 let name = info.name.clone();

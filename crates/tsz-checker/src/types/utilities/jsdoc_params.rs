@@ -403,12 +403,11 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = self.source_file_data_for_node(func_idx) else {
             return false;
         };
-        let Some(node) = self.ctx.arena.get(func_idx) else {
-            return false;
-        };
 
+        // Scan all comments — @callback/@typedef are hoisted to file scope
+        // in tsc, so forward references must be supported.
         for comment in &sf.comments {
-            if comment.end > node.pos || !is_jsdoc_comment(comment, &sf.text) {
+            if !is_jsdoc_comment(comment, &sf.text) {
                 continue;
             }
             let content = get_jsdoc_content(comment, &sf.text);

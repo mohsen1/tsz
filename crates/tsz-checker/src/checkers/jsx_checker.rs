@@ -570,13 +570,14 @@ impl<'a> CheckerState<'a> {
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
     #[allow(dead_code)]
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
-        self.get_type_of_jsx_opening_element_with_request(idx, &TypingRequest::NONE)
+        self.get_type_of_jsx_opening_element_with_children(idx, &TypingRequest::NONE, None)
     }
 
-    pub(crate) fn get_type_of_jsx_opening_element_with_request(
+    pub(crate) fn get_type_of_jsx_opening_element_with_children(
         &mut self,
         idx: NodeIndex,
         request: &TypingRequest,
+        children_ctx: Option<super::JsxChildrenContext>,
     ) -> TypeId {
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
@@ -672,6 +673,7 @@ impl<'a> CheckerState<'a> {
                     false, // intrinsic elements never have raw type params
                     display_target,
                     request,
+                    children_ctx,
                 );
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
@@ -766,6 +768,7 @@ impl<'a> CheckerState<'a> {
                     false,
                     display_target,
                     request,
+                    children_ctx,
                 );
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
                     let lib_binders = self.get_lib_binders();
@@ -833,6 +836,7 @@ impl<'a> CheckerState<'a> {
                     raw_has_type_params,
                     display_target,
                     request,
+                    children_ctx,
                 );
             } else if self.is_overloaded_sfc(resolved_component_type) {
                 // JSX overload resolution: try each non-generic call signature against
@@ -841,6 +845,7 @@ impl<'a> CheckerState<'a> {
                     resolved_component_type,
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
+                    children_ctx,
                 );
             } else {
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
@@ -2171,6 +2176,7 @@ impl<'a> CheckerState<'a> {
     /// for excess properties. tsc uses `IntrinsicAttributes & PropsType` (or
     /// `IntrinsicAttributes & IntrinsicClassAttributes<T> & PropsType`) rather
     /// than just `PropsType`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_jsx_attributes_against_props(
         &mut self,
         attributes_idx: NodeIndex,
@@ -2180,22 +2186,18 @@ impl<'a> CheckerState<'a> {
         raw_props_has_type_params: bool,
         display_target: String,
         request: &TypingRequest,
+        children_ctx: Option<super::JsxChildrenContext>,
     ) {
         // Grammar check: TS17000 for empty expressions in JSX attributes.
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
-
-        // Take children_info EARLY — nested JSX in attribute values would steal it.
-        let children_info = self.ctx.jsx_children_info.take();
 
         // Resolve Lazy(DefId) props before any checks (TS2698 needs this too).
         let props_type = self.resolve_type_for_property_access(props_type);
 
         // Union props: delegate to whole-object assignability checking.
         if tsz_solver::is_union_type(self.ctx.types, props_type) {
-            // Restore children_info for the union path which takes it independently
-            self.ctx.jsx_children_info = children_info;
-            self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx);
+            self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx, children_ctx);
             return;
         }
         // Skip attribute-vs-props checking for any/error props.
@@ -2601,8 +2603,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // JSX children synthesis: incorporate body children into provided props.
-        if let Some((child_count, has_text_child, synthesized_type, text_child_indices)) =
-            children_info
+        if let Some(super::JsxChildrenContext {
+            child_count,
+            has_text_child,
+            synthesized_type,
+            text_child_indices,
+        }) = children_ctx
         {
             // TS2710: explicit children attr + body children = double specification.
             // Error location: the first JSX attribute (matching tsc's span).

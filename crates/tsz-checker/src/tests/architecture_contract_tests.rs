@@ -2745,3 +2745,16 @@ fn no_ambient_current_callable_type() {
         );
     }
 }
+
+/// Guard: `jsx_children_info` must not appear as a field on `CheckerContext`.
+/// Children context is now threaded explicitly via `JsxChildrenContext`.
+#[test]
+fn jsx_children_info_not_on_context() {
+    let context_mod = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/mod.rs");
+    let content = fs::read_to_string(&context_mod).expect("Failed to read context/mod.rs");
+    assert!(
+        !content.contains("jsx_children_info"),
+        "CheckerContext must not have a `jsx_children_info` field — \
+         use explicit `JsxChildrenContext` parameter threading instead"
+    );
+}
