@@ -1147,7 +1147,19 @@ impl<'a> CheckerState<'a> {
             } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
                 && let Some(name) = self.get_property_name_resolved(shorthand.name)
             {
-                present_property_names.push(name);
+                present_property_names.push(name.clone());
+                // For shorthand properties like `{ kind }` where `const kind = "a"`,
+                // resolve the identifier to its const declaration and extract the literal
+                // type from the initializer. This enables discriminant narrowing for
+                // shorthand properties, matching tsc behavior.
+                if let Some(lit_type) = self
+                    .shorthand_const_literal_type(shorthand.name)
+                    .or_else(|| self.literal_type_from_initializer(shorthand.name))
+                {
+                    if tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type) {
+                        unit_discriminants.push((name, lit_type));
+                    }
+                }
             }
         }
 
@@ -1265,6 +1277,37 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .union_preserve_members(matching_members)
         }
+    }
+
+    /// For a shorthand property identifier (e.g., `kind` in `{ kind }`),
+    /// resolve it to its declaration. If the declaration is a `const` variable
+    /// with a literal initializer, return the literal type.
+    fn shorthand_const_literal_type(
+        &self,
+        name_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let sym_id = self.resolve_identifier_symbol_without_tracking(name_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        // Only handle VariableDeclaration nodes
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        // Check if it's a const declaration
+        if !self.ctx.arena.is_const_variable_declaration(decl_idx) {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        self.literal_type_from_initializer(var_decl.initializer)
     }
 
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
