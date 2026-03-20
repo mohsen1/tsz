@@ -63,6 +63,7 @@ fn discover_files_defaults_exclude_common_dirs() {
         out_dir: Some(PathBuf::from("dist")),
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -90,6 +91,7 @@ fn discover_files_with_include_exclude() {
         out_dir: None,
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -115,6 +117,7 @@ fn discover_files_includes_explicit_files() {
         out_dir: None,
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -136,6 +139,7 @@ fn discover_files_missing_explicit_file_errors() {
         out_dir: None,
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let err = discover_ts_files(&options).expect_err("missing file should error");
@@ -167,6 +171,7 @@ fn discover_files_follow_links_when_enabled() {
         out_dir: None,
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let files = discover_ts_files(&options).expect("discover without links");

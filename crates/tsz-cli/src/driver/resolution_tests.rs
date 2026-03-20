@@ -292,6 +292,37 @@ fn test_collect_module_specifiers_finds_dynamic_imports() {
 }
 
 #[test]
+fn test_collect_module_specifiers_finds_plain_require_calls() {
+    let text = r#"const data = require("./data.json");"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./data.json".to_string()),
+        "Should find require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"const data = require("./data.json");"#;
+    let file_name = "test.js".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./data.json"),
+        "Should find CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"import("./foo").then(x => x);"#;

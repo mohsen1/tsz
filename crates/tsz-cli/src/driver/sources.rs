@@ -353,6 +353,7 @@ pub(super) fn build_discovery_options(
             out_dir: out_dir.map(Path::to_path_buf),
             follow_links,
             allow_js: resolved.allow_js,
+            resolve_json_module: resolved.resolve_json_module,
         });
     }
 
@@ -366,6 +367,7 @@ pub(super) fn build_discovery_options(
     let mut options = FileDiscoveryOptions::from_tsconfig(tsconfig_path, config, out_dir);
     options.follow_links = follow_links;
     options.allow_js = resolved.allow_js;
+    options.resolve_json_module = resolved.resolve_json_module;
     Ok(options)
 }
 
