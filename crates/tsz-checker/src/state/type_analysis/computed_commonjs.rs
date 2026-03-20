@@ -717,6 +717,7 @@ impl<'a> CheckerState<'a> {
             .literal_type_from_initializer(rhs_expr)
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
+        ty = tsz_solver::relations::freshness::widen_freshness(checker.ctx.types, ty);
         for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
             self.ctx
                 .cross_file_symbol_targets

@@ -1137,7 +1137,11 @@ impl<'a> CheckerState<'a> {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn is_unshadowed_commonjs_require_identifier(&mut self, idx: NodeIndex) -> bool {
-        if !self.ctx.compiler_options.module.is_commonjs() {
+        // JavaScript/checkJs files use CommonJS-style `require(...)` value resolution
+        // even when the `module` compiler option stays at its default script mode.
+        // Keep the special module-value path available there so property presence,
+        // assignment compatibility, and call diagnostics all see the same module type.
+        if !self.ctx.compiler_options.module.is_commonjs() && !self.is_js_file() {
             return false;
         }
 
