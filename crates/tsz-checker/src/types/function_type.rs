@@ -1052,6 +1052,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     };
+                let has_broad_jsdoc_function_type = param.type_annotation.is_none()
+                    && func_jsdoc
+                        .as_ref()
+                        .is_some_and(|jsdoc| Self::jsdoc_type_tag_is_broad_function(jsdoc));
                 let implicit_any_type_hint = if self.is_js_file()
                     && param.initializer.is_some()
                     && !has_effective_contextual_type
@@ -1117,12 +1121,27 @@ impl<'a> CheckerState<'a> {
                     || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {
-                    self.maybe_report_implicit_any_parameter_with_type_hint(
-                        param,
-                        has_effective_contextual_type || has_jsdoc_param,
-                        contextual_index,
-                        implicit_any_type_hint,
-                    );
+                    if has_broad_jsdoc_function_type
+                        && !param.dot_dot_dot_token
+                        && param.initializer.is_none()
+                        && !self.is_this_parameter_name(param.name)
+                    {
+                        let param_name = self.parameter_name_for_error(param.name);
+                        if !param_name.is_empty() {
+                            self.error_at_node_msg(
+                                param.name,
+                                crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                                &[&param_name, "any"],
+                            );
+                        }
+                    } else {
+                        self.maybe_report_implicit_any_parameter_with_type_hint(
+                            param,
+                            has_effective_contextual_type || has_jsdoc_param,
+                            contextual_index,
+                            implicit_any_type_hint,
+                        );
+                    }
                 }
                 // In JS files, params without type annotations are implicitly optional
                 // unless a JSDoc @param tag or @type function annotation exists.

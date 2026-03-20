@@ -732,20 +732,27 @@ impl<'a> CheckerState<'a> {
                                     | syntax_kind_ext::ARROW_FUNCTION
                             )
                         });
+                    let jsdoc_callable_context = initializer_is_function
+                        .then(|| {
+                            if var_decl.type_annotation.is_none() {
+                                checker.jsdoc_callable_type_annotation_for_node(decl_idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .flatten()
+                        .map(|ty| checker.contextual_type_for_expression(ty));
                     let jsdoc_blocks_callable_context = initializer_is_function
                         && var_decl.type_annotation.is_none()
-                        && checker
-                            .find_jsdoc_for_function(decl_idx)
-                            .as_ref()
-                            .is_some_and(|jsdoc| {
-                                !CheckerState::jsdoc_type_tag_declares_callable(jsdoc)
-                                    && !query::is_callable_type(checker.ctx.types, evaluated_type)
-                            });
+                        && checker.jsdoc_type_annotation_for_node(decl_idx).is_some()
+                        && jsdoc_callable_context.is_none();
                     let suppress_initializer_context = evaluated_type != TypeId::ANY
                         && checker.suppress_initializer_contextual_type_for_generic_call(
                             var_decl.initializer,
                         );
-                    let request = if evaluated_type != TypeId::ANY
+                    let request = if let Some(jsdoc_callable_context) = jsdoc_callable_context {
+                        TypingRequest::with_contextual_type(jsdoc_callable_context)
+                    } else if evaluated_type != TypeId::ANY
                         && !jsdoc_blocks_callable_context
                         && !suppress_initializer_context
                     {
@@ -753,6 +760,17 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypingRequest::NONE
                     };
+                    if initializer_is_function && jsdoc_blocks_callable_context {
+                        checker
+                            .ctx
+                            .implicit_any_contextual_closures
+                            .remove(&var_decl.initializer);
+                        checker
+                            .ctx
+                            .implicit_any_checked_closures
+                            .remove(&var_decl.initializer);
+                        checker.clear_type_cache_recursive(var_decl.initializer);
+                    }
                     let conditional_branch_ranges = checker
                         .ctx
                         .arena

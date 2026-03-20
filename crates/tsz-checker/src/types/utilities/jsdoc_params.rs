@@ -387,48 +387,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         func_idx: NodeIndex,
     ) -> Option<TypeId> {
-        let jsdoc = self.get_jsdoc_for_function(func_idx)?;
-        let sf = self.source_file_data_for_node(func_idx)?;
-        if sf.comments.is_empty() {
-            return None;
-        }
-        let source_text = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(func_idx)?;
-        let mut candidates = Vec::new();
-
-        if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc) {
-            if let Some(ty) = self.resolve_jsdoc_type_str(&type_expr) {
-                candidates.push(ty);
-                candidates.push(self.judge_evaluate(ty));
-                candidates.push(self.evaluate_contextual_type(ty));
-            }
-            if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(&type_expr, node.pos, &comments, &source_text)
-            {
-                candidates.push(ty);
-                candidates.push(self.judge_evaluate(ty));
-                candidates.push(self.evaluate_contextual_type(ty));
-            }
-        }
-
-        if let Some(ty) = self.jsdoc_type_annotation_for_node(func_idx) {
-            candidates.push(ty);
-            candidates.push(self.judge_evaluate(ty));
-            candidates.push(self.evaluate_contextual_type(ty));
-        }
-
-        for ty in candidates {
-            let ty = self.evaluate_application_type(ty);
-            if tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
-                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
-                    .is_some_and(|sigs| !sigs.is_empty())
-            {
-                return Some(ty);
-            }
-        }
-
-        None
+        self.jsdoc_callable_type_annotation_for_node(func_idx)
     }
 
     pub(crate) fn jsdoc_type_tag_references_callback_typedef(
@@ -1534,6 +1493,14 @@ impl<'a> CheckerState<'a> {
             || expr
                 .strip_prefix("function")
                 .is_some_and(|rest| rest.trim_start().starts_with('('))
+    }
+
+    pub(crate) fn jsdoc_type_tag_is_broad_function(jsdoc: &str) -> bool {
+        let Some(expr) = Self::jsdoc_extract_type_tag_expr_braceless(jsdoc) else {
+            return false;
+        };
+        let expr = expr.trim();
+        expr.eq_ignore_ascii_case("function") || expr.eq_ignore_ascii_case("Function")
     }
 
     pub(crate) fn jsdoc_type_tag_function_missing_return(jsdoc: &str) -> bool {

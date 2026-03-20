@@ -224,6 +224,9 @@ impl<'a> CheckerState<'a> {
                     // - The @type type is used as contextual type so literals are preserved
                     // This matches tsc behavior for JS files with checkJs/ts-check.
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
+                    let jsdoc_callable_context_type = initializer_is_function_like
+                        .then(|| self.jsdoc_callable_type_annotation_for_node_direct(elem_idx))
+                        .flatten();
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
@@ -259,13 +262,19 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let initializer_context_type = if jsdoc_declared_type.is_none() {
+                    let initializer_context_type = if let Some(jsdoc_callable_context_type) =
+                        jsdoc_callable_context_type
+                    {
+                        Some(jsdoc_callable_context_type)
+                    } else if jsdoc_declared_type.is_none() {
                         self.function_initializer_context_type(
                             contextual_type,
                             &name,
                             property_context_type,
                             prop.initializer,
                         )
+                    } else if initializer_is_function_like {
+                        None
                     } else {
                         jsdoc_declared_type
                     };
@@ -927,6 +936,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
+                    let jsdoc_method_context_type =
+                        self.jsdoc_callable_type_annotation_for_node_direct(elem_idx);
                     let method_context_type = contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
@@ -936,7 +947,7 @@ impl<'a> CheckerState<'a> {
                     );
                     let method_request =
                         base_request.contextual_opt(self.contextual_type_option_for_expression(
-                            jsdoc_declared_type.or(method_context_type),
+                            jsdoc_method_context_type.or(method_context_type),
                         ));
 
                     // If no explicit ThisType marker exists, use the object literal's
