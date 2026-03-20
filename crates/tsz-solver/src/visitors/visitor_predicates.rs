@@ -663,7 +663,8 @@ impl ObjectTypeChecker {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
-                | TypeData::Mapped(_),
+                | TypeData::Mapped(_)
+                | TypeData::Application(_),
             ) => true,
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
