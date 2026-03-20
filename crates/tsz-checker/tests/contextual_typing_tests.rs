@@ -235,7 +235,6 @@ var r5b = _.map<number, string>(c2, rf1);
 }
 
 #[test]
-#[ignore = "contextual optional parameter typing changed after merge"]
 fn test_contextual_optional_parameter_question_token_in_named_function_expression() {
     let source = r#"
 function acceptNum(num: number) {}
@@ -252,21 +251,78 @@ const f2: (a: string, b: number) => void = function self(a, b?: number) {
   self("", undefined);
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+
+    assert_eq!(
+        ts2345_errors.len(),
+        2,
+        "Expected two TS2345 errors for optional contextual parameters, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_contextual_optional_parameter_jsdoc_in_named_function_expression() {
+    let source = r#"
+/**
+ * @param {number} num
+ */
+function acceptNum(num) {}
+
+/**
+ * @typedef {(a: string, b: number) => void} Fn
+ */
+
+/** @type {Fn} */
+const fn1 =
+  /**
+   * @param [b]
+   */
+  function self(a, b) {
+    acceptNum(b);
+    self("");
+    self("", undefined);
+  };
+
+/** @type {Fn} */
+const fn2 =
+  /**
+   * @param {number} [b]
+   */
+  function self(a, b) {
+    acceptNum(b);
+    self("");
+    self("", undefined);
+  };
+"#;
+
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
-        options,
+        "test.js".to_string(),
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
     );
 
     checker.check_source_file(root);
@@ -276,7 +332,7 @@ const f2: (a: string, b: number) => void = function self(a, b?: number) {
     assert_eq!(
         ts2345_errors.len(),
         2,
-        "Expected two TS2345 errors for optional contextual parameters, got diagnostics={diagnostics:?}"
+        "Expected two TS2345 errors for optional contextual JSDoc parameters, got diagnostics={diagnostics:?}"
     );
 }
 
