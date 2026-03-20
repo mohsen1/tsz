@@ -491,6 +491,14 @@ class DerivedYadda extends YaddaBase {
             .all(|(code, _)| *code != 2339 && *code != 7053),
         "Expected JS super implicit-field checks to avoid TS2339/TS7053 fallback noise, got: {diagnostics:?}"
     );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2855
+                && message
+                    .contains("Class field ''literalElementAccess'' defined by the parent class")
+        }),
+        "Expected TS2855 to preserve string-literal member display text, got: {diagnostics:?}"
+    );
 }
 
 #[test]

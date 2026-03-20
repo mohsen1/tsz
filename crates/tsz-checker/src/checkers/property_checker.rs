@@ -167,11 +167,12 @@ impl<'a> CheckerState<'a> {
                 .insert(member_sym_id);
         }
 
+        let class_chain_summary = self.summarize_class_chain(class_idx);
+
         if self.is_super_expression(object_expr)
             && !is_static
             && matches!(
-                self.summarize_class_chain(class_idx)
-                    .member_kind(property_name, false, true),
+                class_chain_summary.member_kind(property_name, false, true),
                 Some(ClassMemberKind::FieldLike)
             )
         {
@@ -181,9 +182,12 @@ impl<'a> CheckerState<'a> {
             // (target >= ES2022 or explicit useDefineForClassFields: true).
             if self.ctx.compiler_options.target.supports_es2022() {
                 use crate::diagnostics::format_message;
+                let display_name = class_chain_summary
+                    .member_display_name(property_name, false, true)
+                    .unwrap_or(property_name);
                 let message = format_message(
                     diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-                    &[property_name],
+                    &[display_name],
                 );
                 self.error_at_node(
                     error_node,
