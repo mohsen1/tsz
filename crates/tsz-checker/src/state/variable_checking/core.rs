@@ -1464,6 +1464,8 @@ impl<'a> CheckerState<'a> {
                 && var_decl.initializer.is_some()
                 && has_recorded_circular_return
                 && !has_jsdoc_satisfies_wrapper
+                && !has_type_wrapper
+                && !is_merged_with_parameter
                 && !is_direct_deferred_initializer
             {
                 self.suppress_circular_initializer_relation_diagnostics(

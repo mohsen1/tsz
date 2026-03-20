@@ -135,12 +135,13 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        if let Some(init_sym) = self.ctx.binder.get_node_symbol(init_idx)
-            && has_circular_return_in_all_paths(init_sym)
-        {
-            return true;
-        }
-
+        // Only check the outer variable's symbol (function_sym), not the
+        // function expression's own name binding (init_sym).  A named function
+        // expression referencing itself via its name (e.g.,
+        // `const F = function Named() { return new Named(); }`) is NOT
+        // circular in the TS7023 sense — the function's name is its own
+        // complete, non-circular binding.  Only references to the enclosing
+        // variable would create genuine circular return-type inference.
         has_circular_return_in_all_paths(function_sym)
     }
 
