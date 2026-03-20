@@ -68,7 +68,8 @@ impl<'a> CheckerState<'a> {
             candidates.push(self.evaluate_contextual_type(ty));
         }
 
-        if let Some(ty) = self.resolve_jsdoc_typedef_type(type_expr, anchor_pos, comments, source_text)
+        if let Some(ty) =
+            self.resolve_jsdoc_typedef_type(type_expr, anchor_pos, comments, source_text)
         {
             candidates.push(ty);
             candidates.push(self.judge_evaluate(ty));

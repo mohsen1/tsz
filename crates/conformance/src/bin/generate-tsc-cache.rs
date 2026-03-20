@@ -307,7 +307,7 @@ fn process_test_file(
     node_sem: &CountingSemaphore,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
-    use tsz_conformance::text_decode::{DecodedSourceText, decode_source_text};
+    use tsz_conformance::text_decode::{decode_source_text, DecodedSourceText};
 
     let bytes = fs::read(path)?;
     let decoded = decode_source_text(&bytes);

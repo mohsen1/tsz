@@ -262,22 +262,21 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let initializer_context_type = if let Some(jsdoc_callable_context_type) =
-                        jsdoc_callable_context_type
-                    {
-                        Some(jsdoc_callable_context_type)
-                    } else if jsdoc_declared_type.is_none() {
-                        self.function_initializer_context_type(
-                            contextual_type,
-                            &name,
-                            property_context_type,
-                            prop.initializer,
-                        )
-                    } else if initializer_is_function_like {
-                        None
-                    } else {
-                        jsdoc_declared_type
-                    };
+                    let initializer_context_type =
+                        if let Some(jsdoc_callable_context_type) = jsdoc_callable_context_type {
+                            Some(jsdoc_callable_context_type)
+                        } else if jsdoc_declared_type.is_none() {
+                            self.function_initializer_context_type(
+                                contextual_type,
+                                &name,
+                                property_context_type,
+                                prop.initializer,
+                            )
+                        } else if initializer_is_function_like {
+                            None
+                        } else {
+                            jsdoc_declared_type
+                        };
                     // Set contextual type for property value.
                     // When a JSDoc @type is present, use it as the contextual type
                     // so that literal values like `"a"` preserve their literal type
