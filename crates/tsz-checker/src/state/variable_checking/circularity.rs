@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    pub(super) fn suppress_circular_initializer_relation_diagnostics(
+    pub(crate) fn suppress_circular_initializer_relation_diagnostics(
         &mut self,
         snap: &crate::context::speculation::DiagnosticSnapshot,
         init_idx: NodeIndex,

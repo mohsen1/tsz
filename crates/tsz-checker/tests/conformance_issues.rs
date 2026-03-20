@@ -7171,6 +7171,43 @@ function f(yield = yield) {
     );
 }
 
+#[test]
+fn test_ts7022_emitted_for_default_export_self_import_initializer() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "QSpinner.js",
+            r#"
+import DefaultSpinner from './QSpinner'
+
+export default {
+  mixins: [DefaultSpinner],
+  name: 'QSpinner'
+}
+"#,
+        )],
+        "QSpinner.js",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            strict: true,
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for a default export that self-imports through its own initializer.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostic_message(&diagnostics, 7022)
+            .is_some_and(|message| message.contains("'default' implicitly has type 'any'")),
+        "Expected TS7022 to point at the synthetic default export symbol.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7022 should NOT fire when noImplicitAny is off (like all 7xxx diagnostics).
 #[test]
 fn test_ts7022_not_emitted_without_no_implicit_any() {

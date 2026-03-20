@@ -580,12 +580,94 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.node_symbols.get(&clause_idx.0).copied()
     }
 
+    fn default_export_wrapper_expression(
+        &self,
+        value_decl: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let export_decl_idx = self
+            .ctx
+            .arena
+            .get(value_decl)
+            .filter(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
+            .map(|_| value_decl)
+            .or_else(|| {
+                self.ctx
+                    .arena
+                    .get_extended(value_decl)
+                    .map(|ext| ext.parent)
+                    .filter(|parent| {
+                        self.ctx
+                            .arena
+                            .get(*parent)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
+                    })
+            })?;
+
+        let export_decl = self
+            .ctx
+            .arena
+            .get(export_decl_idx)
+            .and_then(|node| self.ctx.arena.get_export_decl(node))?;
+
+        if !export_decl.is_default_export || export_decl.export_clause.is_none() {
+            return None;
+        }
+
+        Some((export_decl.export_clause, export_decl_idx))
+    }
+
+    fn default_export_expression_is_directly_deferred(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+            )
+        })
+    }
+
     pub(super) fn compute_local_export_value_wrapper_type(
         &mut self,
         sym_id: SymbolId,
         value_decl: NodeIndex,
         escaped_name: &str,
     ) -> Option<TypeId> {
+        if let Some((expr_idx, export_decl_idx)) =
+            self.default_export_wrapper_expression(value_decl)
+            && self.jsdoc_type_annotation_for_node(value_decl).is_none()
+        {
+            let snap = self.ctx.snapshot_diagnostics();
+            let wrapped_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+            let sym_cached_as_error = self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
+
+            if self.ctx.no_implicit_any()
+                && sym_cached_as_error
+                && !self.default_export_expression_is_directly_deferred(expr_idx)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+                self.suppress_circular_initializer_relation_diagnostics(&snap, expr_idx);
+                let message = format_message(
+                    diagnostic_messages::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                    &["default"],
+                );
+
+                self.error_at_node(
+                    export_decl_idx,
+                    &message,
+                    diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                );
+
+                return Some(TypeId::ANY);
+            }
+
+            return Some(wrapped_type);
+        }
+
         if value_decl.is_none() {
             return None;
         }
