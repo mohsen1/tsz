@@ -41,7 +41,9 @@ c.foo.bind(undefined);
         .find(|diag| diag.code == 2769)
         .expect("expected TS2769");
 
-    let arg_start = source.find("undefined").expect("expected undefined argument") as u32;
+    let arg_start = source
+        .find("undefined")
+        .expect("expected undefined argument") as u32;
     assert_eq!(
         diag.start, arg_start,
         "TS2769 should anchor at the thisArg, got: {diag:?}"

@@ -80,7 +80,11 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_node_symbol(decl_idx)
                         .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
-                        .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, var_decl.name)
+                        });
                 }
                 return None;
             }
@@ -711,7 +715,11 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_node_symbol(decl_idx)
                 .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, var_decl.name)
+                });
             let Some(sym_id) = sym_id else {
                 continue;
             };
@@ -784,7 +792,11 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_node_symbol(decl_idx)
                 .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, var_decl.name)
+                });
             let Some(sym_id) = sym_id else {
                 continue;
             };
@@ -1450,7 +1462,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn expression_references_identifier_name(&self, node_idx: NodeIndex, target_name: &str) -> bool {
+    fn expression_references_identifier_name(
+        &self,
+        node_idx: NodeIndex,
+        target_name: &str,
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };

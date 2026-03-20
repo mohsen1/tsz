@@ -1721,10 +1721,7 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
 
-        if could_be_in_initializer
-            && !found_decl_in_path
-            && !in_for_of_header_expression
-        {
+        if could_be_in_initializer && !found_decl_in_path && !in_for_of_header_expression {
             // It was >= pos, but wasn't actually inside the declaration's AST.
             // This means it's strictly AFTER the declaration.
             return false;

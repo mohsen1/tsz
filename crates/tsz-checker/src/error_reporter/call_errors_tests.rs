@@ -244,7 +244,10 @@ fn(true);
         diag.start, arg_start,
         "TS2769 should anchor at the argument for plain overload calls"
     );
-    assert_eq!(diag.length, 4, "TS2769 should cover only the argument token");
+    assert_eq!(
+        diag.length, 4,
+        "TS2769 should cover only the argument token"
+    );
     assert!(
         diag.related_information.len() >= 2,
         "expected overload related info, got: {diag:?}"
@@ -285,7 +288,10 @@ var x = foo([{a:'bar'}]);
         diag.start, prop_start,
         "TS2769 should anchor at the offending nested property, got: {diag:?}"
     );
-    assert_eq!(diag.length, 1, "TS2769 should cover only the property token");
+    assert_eq!(
+        diag.length, 1,
+        "TS2769 should cover only the property token"
+    );
 }
 
 #[test]
@@ -308,7 +314,10 @@ var x = foo([{}]);
         diag.start, object_start,
         "TS2769 should anchor at the object literal with the missing property, got: {diag:?}"
     );
-    assert_eq!(diag.length, 2, "TS2769 should cover the empty object literal");
+    assert_eq!(
+        diag.length, 2,
+        "TS2769 should cover the empty object literal"
+    );
 }
 
 #[test]
