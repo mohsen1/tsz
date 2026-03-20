@@ -2305,7 +2305,10 @@ impl<'a> CheckerState<'a> {
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let is_special_named_attr = attr_name.contains('-') || attr_name.contains(':');
-                let expected_type = match self
+                let (
+                    expected_type,
+                    expected_type_is_boolean_literal,
+                ) = match self
                     .resolve_property_access_with_env(props_type, &attr_name)
                 {
                     PropertyAccessResult::Success {
@@ -2317,8 +2320,25 @@ impl<'a> CheckerState<'a> {
                         if is_data_or_aria && from_index_signature {
                             continue;
                         }
+                        let write_check_type = tsz_solver::remove_undefined(self.ctx.types, type_id);
                         // Strip undefined from optional props (write-position checking).
-                        tsz_solver::remove_undefined(self.ctx.types, type_id)
+                        (
+                            write_check_type,
+                            matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
+                        )
+                    }
+                    PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type,
+                        ..
+                    } => {
+                        let Some(type_id) = property_type else {
+                            continue;
+                        };
+                        let write_check_type = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        (
+                            write_check_type,
+                            matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
+                        )
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
                         // Compute actual value type (replacing ANY placeholder) for error messages.
@@ -2372,8 +2392,9 @@ impl<'a> CheckerState<'a> {
 
                 // Check attribute value assignability
                 if attr_data.initializer.is_none() {
-                    // Shorthand boolean: tsc uses literal `true` for both assignability
-                    // and error messages in the per-attribute path.
+                    // Shorthand boolean is represented as `true`, but TS reports the
+                    // source as `true` only for boolean-literal targets and `boolean`
+                    // for non-literal targets (for example `string`).
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
@@ -2381,10 +2402,15 @@ impl<'a> CheckerState<'a> {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
+                        let source_str = if expected_type_is_boolean_literal {
+                            "true"
+                        } else {
+                            "boolean"
+                        };
                         let target_str = self.format_type(expected_type);
                         let message = format_message(
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &["true", &target_str],
+                            &[source_str, &target_str],
                         );
                         self.error_at_node(
                             attr_data.name,
