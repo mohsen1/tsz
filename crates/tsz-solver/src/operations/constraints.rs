@@ -118,6 +118,52 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::KeyOf(s_inner)), Some(TypeData::KeyOf(t_inner))) => {
                 self.constrain_types(ctx, var_map, t_inner, s_inner, priority);
             }
+            // Reverse keyof inference: source <: keyof T.
+            // When a string/number literal is passed as `keyof T`, infer that T has
+            // a property with that key. This matches tsc's inferToKeyof behavior
+            // where `bar<T>(x: keyof T, y: keyof T)` called with `('a', 'b')`
+            // infers T = { a: any } & { b: any }.
+            (_, Some(TypeData::KeyOf(keyof_inner))) => {
+                if let Some(&var) = var_map.get(&keyof_inner) {
+                    // Reverse keyof inference: source <: keyof T → T has property source.
+                    // Construct an object `{ [source]: any }` and add it as a contra
+                    // candidate — contra candidates combine via intersection, matching
+                    // tsc's behavior where `bar<T>(x: keyof T, y: keyof T)` called with
+                    // `('a', 'b')` infers T = { a: any } & { b: any }.
+                    let key_atom = crate::type_queries::extended::get_literal_property_name(
+                        self.interner,
+                        source,
+                    );
+                    if let Some(key_atom) = key_atom {
+                        let prop = PropertyInfo::new(key_atom, TypeId::ANY);
+                        let obj = self.interner.object(vec![prop]);
+                        ctx.add_contra_candidate(var, obj, priority);
+                    } else if let Some(TypeData::Union(source_members)) =
+                        self.interner.lookup(source)
+                    {
+                        let members = self.interner.type_list(source_members);
+                        for &member in members.iter() {
+                            self.constrain_types(ctx, var_map, member, target, priority);
+                        }
+                    }
+                } else {
+                    // keyof_inner is not a bare placeholder — it might contain
+                    // placeholders deeper (e.g., keyof Application<T>). Try evaluating.
+                    let mut visited = FxHashSet::default();
+                    if self.type_contains_placeholder(keyof_inner, var_map, &mut visited) {
+                        // Contains placeholders — skip for now, will be resolved later
+                    } else {
+                        // No placeholders — evaluate the keyof and retry
+                        let evaluated = crate::evaluation::evaluate::evaluate_type(
+                            self.interner.as_type_database(),
+                            target,
+                        );
+                        if evaluated != target {
+                            self.constrain_types(ctx, var_map, source, evaluated, priority);
+                        }
+                    }
+                }
+            }
             (
                 Some(TypeData::TemplateLiteral(s_spans)),
                 Some(TypeData::TemplateLiteral(t_spans)),
