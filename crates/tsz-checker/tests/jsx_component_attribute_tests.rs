@@ -746,28 +746,41 @@ let p = <Poisoned x />;
 
 /// Helper to compile a multi-file JSX project and return diagnostics for the main file.
 fn cross_file_jsx_diagnostics(lib_source: &str, main_source: &str) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_mode(lib_source, main_source, JsxMode::Preserve)
+}
+
+fn cross_file_jsx_diagnostics_with_mode(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+) -> Vec<(u32, String)> {
     // Parse and bind lib file (react.d.ts equivalent)
     let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
     let root_lib = parser_lib.parse_source_file();
     let mut binder_lib = tsz_binder::BinderState::new();
     binder_lib.bind_source_file(parser_lib.get_arena(), root_lib);
+    let arena_lib = Arc::new(parser_lib.get_arena().clone());
+    let binder_lib = Arc::new(binder_lib);
 
     // Parse and bind main file
     let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
     let root_main = parser_main.parse_source_file();
     let mut binder_main = tsz_binder::BinderState::new();
+    let raw_lib_contexts = vec![tsz_binder::state::LibContext {
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    }];
+    binder_main.merge_lib_contexts_into_binder(&raw_lib_contexts);
     binder_main.bind_source_file(parser_main.get_arena(), root_main);
 
-    let arena_lib = Arc::new(parser_lib.get_arena().clone());
     let arena_main = Arc::new(parser_main.get_arena().clone());
-    let binder_lib = Arc::new(binder_lib);
     let binder_main = Arc::new(binder_main);
 
     let all_arenas = Arc::new(vec![Arc::clone(&arena_main), Arc::clone(&arena_lib)]);
     let all_binders = Arc::new(vec![Arc::clone(&binder_main), Arc::clone(&binder_lib)]);
 
     let options = CheckerOptions {
-        jsx_mode: JsxMode::Preserve,
+        jsx_mode,
         ..CheckerOptions::default()
     };
 
@@ -783,6 +796,13 @@ fn cross_file_jsx_diagnostics(lib_source: &str, main_source: &str) -> Vec<(u32, 
     checker.ctx.set_all_arenas(all_arenas);
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(0);
+    checker
+        .ctx
+        .set_lib_contexts(vec![tsz_checker::context::LibContext {
+            arena: Arc::clone(&arena_lib),
+            binder: Arc::clone(&binder_lib),
+        }]);
+    checker.ctx.set_actual_lib_file_count(1);
 
     checker.check_source_file(root_main);
     checker
@@ -1773,6 +1793,31 @@ declare namespace JSX {
 }
 "#;
 
+const JSX_PREAMBLE_REQUIRED_CLASS_REF: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface IntrinsicClassAttributes<T> {
+        ref: T
+    }
+}
+"#;
+
+const JSX_PREAMBLE_REQUIRED_CLASS_REF_NO_PROPS_INFRA: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface IntrinsicClassAttributes<T> {
+        ref: T
+    }
+}
+"#;
+
 #[test]
 fn test_required_intrinsic_attribute_missing_emits_ts2741() {
     // When IntrinsicAttributes has a required property (key without ?),
@@ -1822,6 +1867,95 @@ let x = <Greet name="world" />;
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
         ),
         "Should not emit TS2741 when IntrinsicAttributes has no required props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_required_intrinsic_class_attribute_missing_emits_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_REQUIRED_CLASS_REF}
+class App {{
+    props = {{}};
+    render() {{
+        return <div />;
+    }}
+}}
+let x = <App />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Expected TS2741 for missing required 'ref' from IntrinsicClassAttributes<T>, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_required_intrinsic_class_attribute_missing_without_props_infra_emits_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_REQUIRED_CLASS_REF_NO_PROPS_INFRA}
+class App {{}}
+let x = <App />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        diags.iter().any(|(code, msg)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                && msg.contains("ref")
+        }),
+        "Expected TS2741 for missing required 'ref' even without ElementAttributesProperty, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_required_intrinsic_class_attribute_satisfied_for_class_component() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_REQUIRED_CLASS_REF}
+class App {{
+    props = {{}};
+    render() {{
+        return <div />;
+    }}
+}}
+const app = new App();
+let x = <App ref={{app}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Should not emit TS2741 when required IntrinsicClassAttributes<T> are provided, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_required_intrinsic_class_attribute_not_required_for_sfc() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_REQUIRED_CLASS_REF}
+function App(props: {{ label: string }}) {{
+    return <div />;
+}}
+let x = <App label="ok" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|(code, msg)| {
+            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                && msg.contains("ref")
+        }),
+        "Should not emit missing required 'ref' for function components, got: {diags:?}"
     );
 }
 

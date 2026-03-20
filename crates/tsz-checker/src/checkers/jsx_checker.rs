@@ -668,6 +668,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     evaluated_props,
                     jsx_opening.tag_name,
+                    None,
                     false, // intrinsic elements never have raw type params
                     display_target,
                     request,
@@ -761,6 +762,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     props_type,
                     jsx_opening.tag_name,
+                    None,
                     false,
                     display_target,
                     request,
@@ -827,6 +829,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     props_type,
                     jsx_opening.tag_name,
+                    Some(resolved_component_type),
                     raw_has_type_params,
                     display_target,
                     request,
@@ -848,9 +851,11 @@ impl<'a> CheckerState<'a> {
                 self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
 
                 // Even when we can't extract component props (e.g., no ElementAttributesProperty),
-                // check IntrinsicAttributes for required properties (e.g., required `key`).
-                // tsc checks IntrinsicAttributes independently of component props extraction.
+                // check IntrinsicAttributes / IntrinsicClassAttributes<T> for required
+                // properties (e.g., required `key`/`ref`). tsc checks these independently
+                // of component props extraction.
                 self.check_jsx_intrinsic_attributes_only(
+                    resolved_component_type,
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
@@ -2173,6 +2178,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
+        component_type: Option<TypeId>,
         raw_props_has_type_params: bool,
         display_target: String,
         request: &TypingRequest,
@@ -2669,6 +2675,19 @@ impl<'a> CheckerState<'a> {
         {
             self.check_missing_required_jsx_props(
                 intrinsic_attrs_type,
+                &provided_attrs,
+                tag_name_idx,
+            );
+        }
+
+        if !has_excess_property_error
+            && !spread_covers_all
+            && let Some(comp) = component_type
+            && let Some(intrinsic_class_attrs_type) =
+                self.get_intrinsic_class_attributes_type_for_component(comp)
+        {
+            self.check_missing_required_jsx_props(
+                intrinsic_class_attrs_type,
                 &provided_attrs,
                 tag_name_idx,
             );

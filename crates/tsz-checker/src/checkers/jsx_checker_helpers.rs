@@ -97,7 +97,11 @@ impl<'a> CheckerState<'a> {
         provided_attrs: &[(String, TypeId)],
         attributes_idx: NodeIndex,
     ) {
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        let resolved_props_type = self.evaluate_type_with_env(props_type);
+        let resolved_props_type = self.resolve_type_for_property_access(resolved_props_type);
+        let resolved_props_type = self.evaluate_type_with_env(resolved_props_type);
+        let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
         else {
             return;
         };
@@ -815,12 +819,16 @@ impl<'a> CheckerState<'a> {
     /// Fallback: check `IntrinsicAttributes` when component props couldn't be extracted.
     pub(super) fn check_jsx_intrinsic_attributes_only(
         &mut self,
+        component_type: TypeId,
         attributes_idx: NodeIndex,
         tag_name_idx: NodeIndex,
     ) {
-        let Some(intrinsic_attrs_type) = self.get_intrinsic_attributes_type() else {
+        let intrinsic_attrs_type = self.get_intrinsic_attributes_type();
+        let intrinsic_class_attrs_type =
+            self.get_intrinsic_class_attributes_type_for_component(component_type);
+        if intrinsic_attrs_type.is_none() && intrinsic_class_attrs_type.is_none() {
             return;
-        };
+        }
 
         // Collect provided attribute names with types
         let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
@@ -853,7 +861,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_missing_required_jsx_props(intrinsic_attrs_type, &provided_attrs, tag_name_idx);
+        if let Some(intrinsic_attrs_type) = intrinsic_attrs_type {
+            self.check_missing_required_jsx_props(
+                intrinsic_attrs_type,
+                &provided_attrs,
+                tag_name_idx,
+            );
+        }
+        if let Some(intrinsic_class_attrs_type) = intrinsic_class_attrs_type {
+            self.check_missing_required_jsx_props(
+                intrinsic_class_attrs_type,
+                &provided_attrs,
+                tag_name_idx,
+            );
+        }
     }
 
     /// TS2322: Check spread attributes against `IntrinsicAttributes` for generic SFCs.
