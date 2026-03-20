@@ -170,19 +170,53 @@ fn variable_declaration_recovery_prefers_ts1134_over_negated_regex_tail_ts1161()
 }
 
 #[test]
-fn parse_invalid_import_expression_start_reports_ts1109() {
+fn parse_invalid_import_non_clause_start_reports_ts1128() {
     // `import 10;` — `10` is not a valid import clause start (not an identifier,
-    // not `*`, `{`, `type`, or `defer`). tsc emits TS1109 "Expression expected"
-    // because `10` can't be used as a module specifier expression.
+    // not `*`, `{`, `type`, or `defer`). tsc emits TS1128 "Declaration or statement
+    // expected" because `import` followed by a non-import-clause token is treated
+    // as an invalid statement, not an invalid expression.
     let (parser, _root) = parse_source("import 10;");
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "expected TS1109 for invalid import module specifier, got {codes:?}"
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for import followed by non-clause token, got {codes:?}"
     );
     assert!(
-        !codes.contains(&diagnostic_codes::EXPECTED),
-        "should not emit generic TS1005 'from' expected, got {codes:?}"
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "should not emit TS1109 for non-clause import, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_import_with_operator_reports_ts1128() {
+    // `import + x;` — operator after import can't start an import clause.
+    let (parser, _root) = parse_source("import + x;");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for import followed by operator, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_import_string_literal_still_works() {
+    // `import "module";` — valid import declaration, should produce no TS1128.
+    let (parser, _root) = parse_source("import \"module\";");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "valid import should not emit TS1128, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_import_identifier_from_still_works() {
+    // `import x from "module";` — valid default import.
+    let (parser, _root) = parse_source("import x from \"module\";");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "valid default import should not emit TS1128, got {codes:?}"
     );
 }
 

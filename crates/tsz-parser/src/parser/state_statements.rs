@@ -855,12 +855,34 @@ impl ParserState {
             self.parse_expression_statement()
         } else if self.look_ahead_is_import_equals() {
             self.parse_import_equals_declaration()
-        } else {
-            // Always parse as declaration — matches tsc which always enters
-            // parseImportDeclarationOrImportEqualsDeclaration for import at
-            // statement level. The import clause logic inside handles the case
-            // where the token after `import` can't start a valid clause.
+        } else if self.look_ahead_is_import_declaration() {
             self.parse_import_declaration()
+        } else {
+            // `import` followed by a token that can't start any valid import form
+            // (e.g., `import 10;`). tsc emits TS1128 "Declaration or statement expected"
+            // at the `import` position. Emit the error, consume remaining tokens on the
+            // line, and return an expression statement to avoid infinite recovery loops.
+            let start_pos = self.token_pos();
+            self.parse_error_at(
+                start_pos,
+                6, // length of "import"
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            self.next_token(); // consume 'import'
+            // Consume remaining tokens until statement boundary
+            while !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::SemicolonToken) {
+                self.next_token();
+            }
+            let end_pos = self.token_end();
+            self.arena
+                .add_token(syntax_kind_ext::EMPTY_STATEMENT, start_pos, end_pos)
         }
     }
 
