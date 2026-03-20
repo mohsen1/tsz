@@ -190,7 +190,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated_type = self.evaluate_type_with_env(type_id);
-        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
         let evaluated_type = self.resolve_lazy_type(evaluated_type);
         let evaluated_type = self.evaluate_application_type(evaluated_type);
 
@@ -211,7 +210,19 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .copied()
                 .any(|member| self.union_with_non_nullish_non_object_member(member, depth - 1)),
-            ExcessPropertiesKind::NotObject => true,
+            ExcessPropertiesKind::NotObject => {
+                if tsz_solver::is_primitive_type(self.ctx.types, evaluated_type) {
+                    return true;
+                }
+
+                let resolved_type = self.resolve_type_for_property_access(evaluated_type);
+                if resolved_type != evaluated_type {
+                    return self
+                        .union_with_non_nullish_non_object_member(resolved_type, depth - 1);
+                }
+
+                false
+            }
         }
     }
 
