@@ -376,7 +376,6 @@ class C<T> {
         .expect("compilerOptions should be an object");
 
     for key in [
-        "strict",
         "noImplicitAny",
         "noImplicitThis",
         "strictNullChecks",
@@ -384,7 +383,6 @@ class C<T> {
         "strictBindCallApply",
         "strictPropertyInitialization",
         "useUnknownInCatchVariables",
-        "alwaysStrict",
     ] {
         assert_eq!(
             compiler_options.get(key),
@@ -392,6 +390,14 @@ class C<T> {
             "Expected {key} to be forced false for stripped source pragmas"
         );
     }
+    assert!(
+        !compiler_options.contains_key("strict"),
+        "strict should stay omitted when only source pragmas are present"
+    );
+    assert!(
+        !compiler_options.contains_key("alwaysStrict"),
+        "alwaysStrict should stay omitted when only source pragmas are present"
+    );
 }
 
 #[test]

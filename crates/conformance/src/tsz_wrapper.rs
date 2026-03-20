@@ -242,9 +242,10 @@ pub fn prepare_test_dir(
                 // The conformance runner strips source pragmas before invoking tsz.
                 // When a test uses source-level compiler pragmas without `@strict`,
                 // TypeScript treats the remaining strict-family options as false;
-                // write that baseline into tsconfig so the stripped-file run matches.
+                // write the relevant sub-option baseline into tsconfig so the
+                // stripped-file run matches without synthesizing explicit
+                // `strict`/`alwaysStrict` options and their related TS5107 noise.
                 for key in [
-                    "strict",
                     "noImplicitAny",
                     "noImplicitThis",
                     "strictNullChecks",
@@ -252,7 +253,6 @@ pub fn prepare_test_dir(
                     "strictBindCallApply",
                     "strictPropertyInitialization",
                     "useUnknownInCatchVariables",
-                    "alwaysStrict",
                 ] {
                     map.entry(key.to_string())
                         .or_insert(serde_json::Value::Bool(false));
