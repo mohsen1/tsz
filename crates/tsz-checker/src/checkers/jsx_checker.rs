@@ -69,6 +69,144 @@ impl<'a> CheckerState<'a> {
         literal_name.map(|name| self.ctx.types.resolve_atom(name).as_str().to_string())
     }
 
+    fn get_jsx_intrinsic_props_from_template_literal_index_signatures(
+        &mut self,
+        tag: &str,
+    ) -> Option<TypeId> {
+        let intrinsic_elements_sym_id = self.get_intrinsic_elements_symbol_id()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(intrinsic_elements_sym_id, &lib_binders)?;
+        let mut declarations = Vec::new();
+        if symbol.value_declaration.is_some() {
+            declarations.push(symbol.value_declaration);
+        }
+        declarations.extend(symbol.declarations.iter().copied());
+
+        let tag_literal = tsz_solver::type_queries::create_string_literal_type(self.ctx.types, tag);
+        let mut candidates = Vec::new();
+
+        for mut decl_idx in declarations {
+            let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && parent.is_some()
+            {
+                decl_idx = parent;
+                let Some(parent_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                decl_node = parent_node;
+            }
+
+            let members = match decl_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
+                        continue;
+                    };
+                    &iface.members.nodes
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                        continue;
+                    };
+                    let Some(type_node) = self.ctx.arena.get(alias.type_node) else {
+                        continue;
+                    };
+                    if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                        continue;
+                    }
+                    let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+                        continue;
+                    };
+                    &type_lit.members.nodes
+                }
+                _ => continue,
+            };
+
+            for &member_idx in members {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                    continue;
+                };
+                let Some(param_idx) = index_sig.parameters.nodes.first().copied() else {
+                    continue;
+                };
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if param.type_annotation.is_none() {
+                    continue;
+                }
+
+                let key_type = self.get_type_from_type_node(param.type_annotation);
+                let key_type = self.evaluate_type_with_env(key_type);
+                if !tsz_solver::visitor::is_template_literal_type(self.ctx.types, key_type)
+                    || !self.is_assignable_to(tag_literal, key_type)
+                {
+                    continue;
+                }
+
+                let value_type = if index_sig.type_annotation.is_some() {
+                    let value_type = self.get_type_from_type_node(index_sig.type_annotation);
+                    self.evaluate_type_with_env(value_type)
+                } else {
+                    TypeId::ANY
+                };
+                candidates.push((key_type, value_type));
+            }
+        }
+
+        let mut best_matches: Vec<(TypeId, TypeId)> = Vec::new();
+        for (candidate_key, candidate_value) in candidates {
+            let mut candidate_is_best = true;
+            let mut i = 0;
+            while i < best_matches.len() {
+                let (best_key, _) = best_matches[i];
+                let candidate_more_specific = self.is_assignable_to(candidate_key, best_key)
+                    && !self.is_assignable_to(best_key, candidate_key);
+                if candidate_more_specific {
+                    best_matches.swap_remove(i);
+                    continue;
+                }
+
+                let best_more_specific = self.is_assignable_to(best_key, candidate_key)
+                    && !self.is_assignable_to(candidate_key, best_key);
+                if best_more_specific {
+                    candidate_is_best = false;
+                    break;
+                }
+                i += 1;
+            }
+
+            if candidate_is_best {
+                best_matches.push((candidate_key, candidate_value));
+            }
+        }
+
+        match best_matches.len() {
+            0 => None,
+            1 => best_matches.first().map(|(_, value_type)| *value_type),
+            _ => Some(
+                self.ctx.types.factory().union(
+                    best_matches
+                        .into_iter()
+                        .map(|(_, value_type)| value_type)
+                        .collect(),
+                ),
+            ),
+        }
+    }
+
     fn get_jsx_intrinsic_props_for_tag(
         &mut self,
         element_idx: NodeIndex,
@@ -87,25 +225,42 @@ impl<'a> CheckerState<'a> {
         }
 
         use crate::query_boundaries::common::PropertyAccessResult;
+        let template_literal_props =
+            self.get_jsx_intrinsic_props_from_template_literal_index_signatures(tag);
         let props = match self.resolve_property_access_with_env(evaluated_ie, tag) {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
-            PropertyAccessResult::PropertyNotFound { .. } => {
-                if report_missing {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    let message =
-                        format!("Property '{tag}' does not exist on type 'JSX.IntrinsicElements'.");
-                    self.error_at_node(
-                        element_idx,
-                        &message,
-                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                    );
-                    self.ctx
-                        .jsx_intrinsic_props_cache
-                        .insert(cache_key, TypeId::ERROR);
+            PropertyAccessResult::Success {
+                type_id,
+                from_index_signature,
+                ..
+            } => {
+                if from_index_signature {
+                    template_literal_props.unwrap_or(type_id)
+                } else {
+                    type_id
                 }
-                TypeId::ERROR
             }
-            _ => TypeId::ANY,
+            PropertyAccessResult::PropertyNotFound { .. } => {
+                if let Some(props) = template_literal_props {
+                    props
+                } else {
+                    if report_missing {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        let message = format!(
+                            "Property '{tag}' does not exist on type 'JSX.IntrinsicElements'."
+                        );
+                        self.error_at_node(
+                            element_idx,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                        self.ctx
+                            .jsx_intrinsic_props_cache
+                            .insert(cache_key, TypeId::ERROR);
+                    }
+                    TypeId::ERROR
+                }
+            }
+            _ => template_literal_props.unwrap_or(TypeId::ANY),
         };
 
         if props != TypeId::ERROR || report_missing {
@@ -895,8 +1050,7 @@ impl<'a> CheckerState<'a> {
 
     // JSX Intrinsic Elements Type
 
-    /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
-    pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
+    fn get_intrinsic_elements_symbol_id(&mut self) -> Option<SymbolId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
         let symbol = self
@@ -904,7 +1058,12 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
         let exports = symbol.exports.as_ref()?;
-        let intrinsic_elements_sym_id = exports.get("IntrinsicElements")?;
+        exports.get("IntrinsicElements")
+    }
+
+    /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
+    pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
+        let intrinsic_elements_sym_id = self.get_intrinsic_elements_symbol_id()?;
         Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
     }
 
@@ -1878,9 +2037,6 @@ impl<'a> CheckerState<'a> {
         };
 
         let props_type = if is_intrinsic {
-            // Intrinsic: look up IntrinsicElements[tag]
-            let ie_type = self.get_intrinsic_elements_type()?;
-            let evaluated_ie = self.evaluate_type_with_env(ie_type);
             let tag_name = if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 self.ctx
                     .arena
@@ -1904,11 +2060,12 @@ impl<'a> CheckerState<'a> {
                         Some(format!("{ns_text}:{name_text}"))
                     })
             }?;
-            use crate::query_boundaries::common::PropertyAccessResult;
-            match self.resolve_property_access_with_env(evaluated_ie, &tag_name) {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
-                _ => return None,
+            let props =
+                self.get_jsx_intrinsic_props_for_tag(opening_element_idx, &tag_name, false)?;
+            if props == TypeId::ERROR {
+                return None;
             }
+            props
         } else {
             // Component: resolve tag name to get component type, extract props
             let component_type = self.compute_type_of_node(tag_name_idx);
