@@ -1786,6 +1786,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
                     self.write(": void");
+                } else if let Some(type_text) =
+                    self.function_body_preferred_return_type_text(method_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write(": any");
                 }
@@ -1857,6 +1862,10 @@ impl<'a> DeclarationEmitter<'a> {
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
                     self.write("void");
+                } else if let Some(type_text) =
+                    self.function_body_preferred_return_type_text(method_body)
+                {
+                    self.write(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
                 }
