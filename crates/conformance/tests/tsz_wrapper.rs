@@ -391,7 +391,7 @@ class C<T> {
     }
     assert!(
         !compiler_options.contains_key("noImplicitThis"),
-        "noImplicitThis should not be synthesized into the stripped-source baseline"
+        "noImplicitThis should not be synthesized into the stripped-source tsconfig"
     );
     assert!(
         !compiler_options.contains_key("strict"),
@@ -404,7 +404,7 @@ class C<T> {
 }
 
 #[test]
-fn test_prepare_test_dir_keeps_default_strict_family_when_only_non_strict_pragmas_exist() {
+fn test_prepare_test_dir_keeps_target_only_tsconfig_minimal() {
     let content = r#"
 // @target: es2015
 class C {
@@ -433,7 +433,7 @@ class C {
     ] {
         assert!(
             !compiler_options.contains_key(key),
-            "Did not expect {key} to be synthesized for non-strict source pragmas"
+            "Did not expect {key} to be synthesized for target-only source pragmas"
         );
     }
 }

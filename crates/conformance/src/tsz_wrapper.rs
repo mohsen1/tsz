@@ -39,9 +39,8 @@ fn has_test_option_pragma(text: &str, key: &str) -> bool {
     header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
 }
 
-fn has_source_compiler_option_pragmas_without_strict(text: &str) -> bool {
-    const SOURCE_OPTION_PRAGMAS: &[&str] = &[
-        "@strict",
+fn has_source_strictness_pragmas_without_strict(text: &str) -> bool {
+    const STRICTNESS_PRAGMAS: &[&str] = &[
         "@noimplicitany",
         "@useunknownincatchvariables",
         "@noimplicitthis",
@@ -56,20 +55,11 @@ fn has_source_compiler_option_pragmas_without_strict(text: &str) -> bool {
         "@nounusedparameters",
         "@alwaysstrict",
         "@noimplicitusestrict",
-        "@allowunreachablecode",
-        "@allowunusedlabels",
-        "@target",
-        "@module",
-        "@allowjs",
-        "@checkjs",
-        "@experimentaldecorators",
-        "@ignoredeprecations",
     ];
 
     !has_test_option_pragma(text, "@strict")
-        && SOURCE_OPTION_PRAGMAS
+        && STRICTNESS_PRAGMAS
             .iter()
-            .filter(|&&pragma| pragma != "@strict")
             .any(|pragma| has_test_option_pragma(text, pragma))
 }
 
@@ -241,7 +231,7 @@ pub fn prepare_test_dir(
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
             let should_synthesize_non_strict_baseline =
-                has_source_compiler_option_pragmas_without_strict(content)
+                has_source_strictness_pragmas_without_strict(content)
                     && expected_error_codes.is_some_and(|codes| {
                         !codes.iter().any(|code| matches!(code, 2454 | 2564 | 2565))
                     });

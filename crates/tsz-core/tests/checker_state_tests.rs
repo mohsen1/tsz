@@ -27743,6 +27743,79 @@ class MyClass {
     );
 }
 
+#[test]
+fn test_function_overload_implementation_return_type_mismatch_reports_ts2322() {
+    use crate::checker::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
+
+    let source = r#"
+function foo(bar: { a:number }[]): number;
+function foo(bar: { a:string }[]): string;
+function foo([x]: { a:number | string }[]): string | number {
+    if (x) {
+        return x.a;
+    }
+
+    return undefined;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let arena = parser.get_arena();
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let impl_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .rev()
+        .copied()
+        .find(|&idx| {
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        })
+        .expect("implementation function");
+    let impl_node = arena.get(impl_idx).expect("impl node");
+    let func = arena.get_function(impl_node).expect("function data");
+    assert!(
+        func.type_annotation.is_some(),
+        "expected overload implementation to keep its explicit return annotation"
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected TS2322 for overload implementation return mismatch, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 /// Test TS2705: Async function must return Promise
 ///
 /// Test TS2705: Async function must return Promise
