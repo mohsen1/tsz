@@ -1319,6 +1319,14 @@ impl ParserState {
         self.parse_expected(SyntaxKind::RequireKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
         let expression = self.parse_string_literal();
+        // If parse_string_literal failed (non-string token), skip past the invalid token
+        // so we can find the closing paren and avoid cascading errors (e.g. TS1128).
+        if expression == NodeIndex::NONE
+            && !self.is_token(SyntaxKind::CloseParenToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            self.next_token();
+        }
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // Return the string literal as the module reference
