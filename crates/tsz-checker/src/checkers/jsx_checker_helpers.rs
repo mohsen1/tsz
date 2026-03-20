@@ -12,6 +12,84 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn build_jsx_provided_attrs_object_type(
+        &mut self,
+        provided_attrs: &[(String, TypeId)],
+    ) -> TypeId {
+        let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
+            .iter()
+            .map(|(name, type_id)| {
+                let name_atom = self.ctx.types.intern_string(name);
+                let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
+                    TypeId::BOOLEAN
+                } else {
+                    *type_id
+                };
+                tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: display_type,
+                    write_type: display_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: tsz_solver::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                }
+            })
+            .collect();
+        self.ctx.types.factory().object(properties)
+    }
+
+    pub(super) fn should_report_custom_jsx_children_via_assignability(
+        &mut self,
+        props_type: TypeId,
+        provided_attrs: &[(String, TypeId)],
+    ) -> bool {
+        let children_prop_name = self.get_jsx_children_prop_name();
+        if children_prop_name == "children" {
+            return false;
+        }
+        if provided_attrs
+            .iter()
+            .any(|(name, _)| name == &children_prop_name)
+        {
+            return false;
+        }
+
+        let resolved = self.resolve_type_for_property_access(props_type);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+        else {
+            return false;
+        };
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional && self.ctx.types.resolve_atom(prop.name) == children_prop_name
+        })
+    }
+
+    pub(super) fn report_jsx_synthesized_props_assignability_error(
+        &mut self,
+        attrs_type: TypeId,
+        display_target: &str,
+        tag_name_idx: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let source_str = self.format_type(attrs_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, display_target],
+        );
+        self.error_at_node(
+            tag_name_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+    }
+
     /// Check that all required properties in the props type are provided. Emits TS2741.
     pub(super) fn check_missing_required_jsx_props(
         &mut self,
@@ -84,6 +162,7 @@ impl<'a> CheckerState<'a> {
         synthesized_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
+        let children_prop_name = self.get_jsx_children_prop_name();
         let Some(children_type) = self.get_jsx_children_prop_type(props_type) else {
             return;
         };
@@ -106,7 +185,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     tag_name_idx,
                     diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
-                    &["children", &children_type_str],
+                    &[&children_prop_name, &children_type_str],
                 );
             }
             _ => {
@@ -140,7 +219,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     tag_name_idx,
                     diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
-                    &["children", &children_type_str],
+                    &[&children_prop_name, &children_type_str],
                 );
             }
         }
@@ -158,10 +237,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved = self.resolve_type_for_property_access(props_type);
-        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
-            _ => return None,
-        };
+        let children_prop_name = self.get_jsx_children_prop_name();
+        let children_type =
+            match self.resolve_property_access_with_env(resolved, &children_prop_name) {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                _ => return None,
+            };
         let children_type = self.evaluate_type_with_env(children_type);
         if matches!(children_type, TypeId::ANY | TypeId::ERROR) {
             return None;
@@ -282,10 +363,12 @@ impl<'a> CheckerState<'a> {
 
     fn get_direct_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
         let resolved = self.resolve_type_for_property_access(props_type);
-        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
-            _ => return None,
-        };
+        let children_prop_name = self.get_jsx_children_prop_name();
+        let children_type =
+            match self.resolve_property_access_with_env(resolved, &children_prop_name) {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                _ => return None,
+            };
         let children_type = self.evaluate_type_with_env(children_type);
         if matches!(children_type, TypeId::ANY | TypeId::ERROR) {
             return None;

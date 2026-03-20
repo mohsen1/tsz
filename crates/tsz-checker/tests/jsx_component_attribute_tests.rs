@@ -12,6 +12,10 @@ use tsz_solver::TypeInterner;
 
 /// Compile JSX source with inline JSX namespace and return diagnostics.
 fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {
+    jsx_diagnostics_with_mode(source, JsxMode::Preserve)
+}
+
+fn jsx_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<(u32, String)> {
     let file_name = "test.tsx";
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -20,7 +24,7 @@ fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {
     binder.bind_source_file(parser.get_arena(), root);
 
     let options = CheckerOptions {
-        jsx_mode: JsxMode::Preserve,
+        jsx_mode,
         ..CheckerOptions::default()
     };
 
@@ -48,6 +52,10 @@ fn has_code(diags: &[(u32, String)], code: u32) -> bool {
 
 /// Return diagnostics with position info (code, start, message).
 fn jsx_diagnostics_with_pos(source: &str) -> Vec<(u32, u32, String)> {
+    jsx_diagnostics_with_pos_mode(source, JsxMode::Preserve)
+}
+
+fn jsx_diagnostics_with_pos_mode(source: &str, jsx_mode: JsxMode) -> Vec<(u32, u32, String)> {
     let file_name = "test.tsx";
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -56,7 +64,7 @@ fn jsx_diagnostics_with_pos(source: &str) -> Vec<(u32, u32, String)> {
     binder.bind_source_file(parser.get_arena(), root);
 
     let options = CheckerOptions {
-        jsx_mode: JsxMode::Preserve,
+        jsx_mode,
         ..CheckerOptions::default()
     };
 
@@ -489,6 +497,112 @@ var CustomTag = "h1";
             diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
         ),
         "Should NOT emit TS2604 for string-typed JSX tag, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_literal_component_tag_uses_intrinsic_lookup() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+}
+var CustomTag: "h1" = "h1";
+<CustomTag />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected TS2339 for missing JSX.IntrinsicElements['h1'], got: {diags:?}"
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Expected TS2604 after intrinsic lookup fails for literal string tag, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_literal_component_tag_succeeds_when_intrinsic_exists() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+        h1: any;
+    }
+}
+var CustomTag: "h1" = "h1";
+<CustomTag />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Should not emit TS2339 when the literal string tag exists in IntrinsicElements, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Should not emit TS2604 when the literal string tag resolves as an intrinsic element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_property_access_string_literal_tag_keeps_dynamic_component_behavior() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+}
+const tags: { header: "h1" } = { header: "h1" };
+<tags.header />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Property access tags should not be forced through intrinsic lookup, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Property access literal tags should keep dynamic-tag behavior, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_missing_intrinsic_name_reports_opening_and_closing_tag_errors() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+}
+<customTag> Hello World </customTag>;
+"#;
+    let diags = jsx_diagnostics_with_pos(source);
+    let ts2339_count = diags
+        .iter()
+        .filter(|(code, _, message)| {
+            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && message.contains(
+                    "Property 'customTag' does not exist on type 'JSX.IntrinsicElements'.",
+                )
+        })
+        .count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected TS2339 on both opening and closing tags for missing intrinsic name, got: {diags:?}"
     );
 }
 
@@ -2046,6 +2160,105 @@ let k = <Comp a={{10}} />;
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
         ),
         "Missing required children should emit TS2741, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_custom_element_children_attribute_uses_assignability_path() {
+    let source = r#"
+// @strict: true
+export {}
+
+declare global {
+    namespace JSX {
+        type Element = any;
+        interface ElementAttributesProperty { __properties__: {} }
+        interface IntrinsicElements { [key: string]: string }
+        interface ElementChildrenAttribute { __children__: {} }
+    }
+}
+
+interface MockComponentInterface {
+    new (): {
+        __properties__: { bar?: number } & { __children__: () => number };
+    };
+}
+
+declare const MockComponent: MockComponentInterface;
+
+<MockComponent>{}</MockComponent>;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Custom ElementChildrenAttribute should route body children through TS2322 assignability, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Custom ElementChildrenAttribute should not fall back to TS2741 missing-prop, got: {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(_, msg)| msg.contains("Type '{}' is not assignable to type")),
+        "Custom ElementChildrenAttribute should format the synthesized JSX attrs object as '{{}}', got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_generic_component_explicit_children_gets_contextual_return_type() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface LitProps<T> {{ prop: T, children: (x: this) => T }}
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+const arg = <ElemLit prop="x" children={{p => "y"}} />;
+const mismatched = <ElemLit prop="x" children={{() => 12}} />;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && (message.contains("Type '\"y\"' is not assignable to type '\"x\"'.")
+                    || message.contains("is not assignable to type '\"x\"'."))
+        })
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Generic JSX children attr should get contextual return typing, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_generic_component_body_children_gets_contextual_return_type() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface LitProps<T> {{ prop: T, children: (x: this) => T }}
+const ElemLit = <T extends string>(p: LitProps<T>) => <div></div>;
+const argchild = <ElemLit prop="x">{{p => "y"}}</ElemLit>;
+const mismatched = <ElemLit prop="x">{{() => 12}}</ElemLit>;
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    let ts2322_count = diags
+        .iter()
+        .filter(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && (message.contains("Type '\"y\"' is not assignable to type '\"x\"'.")
+                    || message.contains("is not assignable to type '\"x\"'."))
+        })
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Generic JSX body children should get contextual return typing, got: {diags:?}"
     );
 }
 

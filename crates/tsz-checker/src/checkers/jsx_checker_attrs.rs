@@ -125,6 +125,15 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         component_type: Option<TypeId>,
     ) -> String {
+        self.build_jsx_display_target_with_preferred_props(props_type, component_type, None)
+    }
+
+    pub(crate) fn build_jsx_display_target_with_preferred_props(
+        &mut self,
+        props_type: TypeId,
+        component_type: Option<TypeId>,
+        preferred_props_display: Option<&str>,
+    ) -> String {
         let mut parts = Vec::new();
         if let Some(ia) = self.get_intrinsic_attributes_lazy_type() {
             parts.push(self.format_type(ia));
@@ -138,7 +147,9 @@ impl<'a> CheckerState<'a> {
         }
         // Skip empty object types (`{}`) in the display — tsc simplifies
         // `IntrinsicAttributes & {}` to just `IntrinsicAttributes`.
-        let props_str = self.format_type(props_type);
+        let props_str = preferred_props_display
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.format_type(props_type));
         if props_str != "{}" {
             parts.push(props_str);
         }
@@ -154,6 +165,7 @@ impl<'a> CheckerState<'a> {
         }
         Some(sig.return_type)
     }
+
 
     // ── JSX Overload Resolution ───────────────────────────────────────────
 
@@ -193,11 +205,12 @@ impl<'a> CheckerState<'a> {
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
 
         // Include synthesized children from JSX element body
+        let children_prop_name = self.get_jsx_children_prop_name();
         if let Some((_child_count, _has_text, synthesized_type, _text_indices)) =
             self.ctx.jsx_children_info.take()
         {
             attrs_info.attrs.push(JsxAttrInfo {
-                name: "children".to_string(),
+                name: children_prop_name,
                 type_id: synthesized_type,
                 from_spread: false,
             });
@@ -583,7 +596,7 @@ impl<'a> CheckerState<'a> {
         // Include synthesized children prop if body children exist
         let children_info = self.ctx.jsx_children_info.take();
         if let Some((_child_count, _has_text, synthesized_type, _text_indices)) = children_info {
-            provided_attrs.push(("children".to_string(), synthesized_type));
+            provided_attrs.push((self.get_jsx_children_prop_name(), synthesized_type));
         }
 
         // Skip union check when there are no concrete attributes to check,
@@ -962,10 +975,12 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
         let resolved = self.resolve_type_for_property_access(props_type);
-        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
-            PropertyAccessResult::Success { type_id, .. } => type_id,
-            _ => return,
-        };
+        let children_prop_name = self.get_jsx_children_prop_name();
+        let children_type =
+            match self.resolve_property_access_with_env(resolved, &children_prop_name) {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                _ => return,
+            };
         let children_type = self.evaluate_type_with_env(children_type);
         if children_type == TypeId::ANY || children_type == TypeId::ERROR {
             return;
@@ -985,7 +1000,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node_msg(
                 text_idx,
                 diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
-                &[&component_name, "children", &children_type_str],
+                &[&component_name, &children_prop_name, &children_type_str],
             );
         }
     }
