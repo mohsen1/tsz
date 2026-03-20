@@ -606,6 +606,75 @@ declare namespace JSX {
     );
 }
 
+#[test]
+fn test_intrinsic_template_literal_index_signature_checks_attributes() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [k: `foo${string}`]: { prop: string };
+    }
+}
+<foobaz prop={10} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 when intrinsic template-literal index signature requires string props, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Template-literal intrinsic match should not fall through to TS2339, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_template_literal_index_signature_prefers_more_specific_match() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [k: `foo${string}`]: { prop: string };
+        [k: `foobar${string}`]: { prop: 'literal' };
+    }
+}
+<foobarbaz prop="smth" />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 from the more specific template-literal intrinsic match, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "More specific template-literal intrinsic match should not fall through to TS2339, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_template_literal_index_signature_accepts_valid_values() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [k: `foo${string}`]: { prop: string };
+        [k: `foobar${string}`]: { prop: 'literal' };
+    }
+}
+<foobaz prop="smth" />;
+<foobarbaz prop="literal" />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Valid intrinsic template-literal props should not emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Valid intrinsic template-literal props should not emit TS2339, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // Class component attribute checking (DEBUG)
 // =============================================================================
