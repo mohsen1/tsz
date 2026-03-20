@@ -3,6 +3,7 @@ use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
+use tsz_common::common::ScriptTarget;
 use tsz_solver::TypeInterner;
 
 fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
@@ -1541,6 +1542,48 @@ fn test_ts2564_no_false_positive_generic_class_with_base() {
         ),
         1,
         "TS2564 should fire once for the generic base-class field in the superWithTypeArgument3-style case, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_super_with_type_argument3_no_ts2564_without_strict_property_initialization() {
+    let source = r"
+        class C<T> {
+            foo: T;
+            bar<U>(x: U) { }
+        }
+
+        class D<T> extends C<T> {
+            constructor() {
+                super<T>();
+            }
+            bar() {
+                super.bar<T>(null);
+            }
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: false,
+            no_implicit_any: false,
+            strict_null_checks: false,
+            strict_property_initialization: false,
+            no_implicit_this: false,
+            strict_function_types: false,
+            use_unknown_in_catch_variables: false,
+            strict_bind_call_apply: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "TS2564 should stay off when strict property initialization is disabled, got: {diags:?}"
     );
 }
 
