@@ -368,7 +368,7 @@ fn test_build_info_builder_normalizes_relative_paths_and_preserves_options() {
     std::fs::write(&file, "export const main = 1;\n").unwrap();
     std::fs::write(&dep, "export const dep = 1;\n").unwrap();
 
-    let mut builder = BuildInfoBuilder::new(base_dir.clone());
+    let mut builder = BuildInfoBuilder::new(base_dir);
     builder
         .set_root_files(vec!["src/nested/main.ts".to_string()])
         .set_options(BuildInfoOptions {
@@ -379,7 +379,7 @@ fn test_build_info_builder_normalizes_relative_paths_and_preserves_options() {
         })
         .add_file(&file, &["main".to_string()])
         .unwrap()
-        .set_file_dependencies(&file, vec![dep.clone()]);
+        .set_file_dependencies(&file, vec![dep]);
 
     let build_info = builder.build();
 
