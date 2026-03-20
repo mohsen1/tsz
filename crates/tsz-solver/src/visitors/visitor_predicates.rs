@@ -658,7 +658,10 @@ impl ObjectTypeChecker {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
-                | TypeData::Mapped(_),
+                | TypeData::Mapped(_)
+                // Lazy types represent unresolved type references (interfaces, classes,
+                // type aliases). Treat as object-like for typeof "object" narrowing.
+                | TypeData::Lazy(_),
             ) => true,
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)

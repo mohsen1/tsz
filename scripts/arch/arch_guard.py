@@ -90,8 +90,10 @@ CHECKS = [
             "exclude_dirs": {"tests"},
             "ignore_comment_lines": True,
             # Pre-existing: type_environment uses ObjectFlags for const enum checks
+            # namespace_checker creates enum namespace objects with ENUM_NAMESPACE flag
             "exclude_files": {
                 "crates/tsz-checker/src/state/type_environment/core.rs",
+                "crates/tsz-checker/src/declarations/namespace_checker.rs",
             },
         },
     ),

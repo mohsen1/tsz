@@ -17111,3 +17111,112 @@ matcher({
          \nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+// =============================================================================
+// Chain summary optimization regression tests
+// Verify that the lighter member-info-only path used by summarize_class_chain
+// (which skips initialization analysis) doesn't break override checks or
+// property access through class hierarchies.
+// =============================================================================
+
+#[test]
+fn test_chain_summary_override_with_parameter_properties() {
+    let source = r#"
+        class Base {
+            name: string;
+            constructor(public id: number) {
+                this.name = 'base';
+            }
+            greet(): string { return this.name; }
+        }
+
+        class Derived extends Base {
+            constructor(id: number, public extra: string) {
+                super(id);
+            }
+            greet(): string { return this.extra; }
+        }
+    "#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        strict_property_initialization: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let ts2564_count = diagnostics.iter().filter(|(c, _)| *c == 2564).count();
+    assert_eq!(
+        ts2564_count, 0,
+        "No TS2564: name assigned in constructor, id/extra are param properties.\
+         \nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_chain_summary_base_member_access_with_initializer() {
+    let source = r#"
+        class Animal {
+            name: string = 'animal';
+            legs: number = 4;
+        }
+
+        class Dog extends Animal {
+            breed: string;
+            constructor(breed: string) {
+                super();
+                this.breed = breed;
+            }
+        }
+
+        const d = new Dog('lab');
+        const n: string = d.name;
+        const l: number = d.legs;
+        const b: string = d.breed;
+    "#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        strict_property_initialization: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let ts2564_count = diagnostics.iter().filter(|(c, _)| *c == 2564).count();
+    let ts2339_count = diagnostics.iter().filter(|(c, _)| *c == 2339).count();
+    assert_eq!(
+        ts2564_count, 0,
+        "No TS2564: all fields have initializers or constructor assignments.\
+         \nActual: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339_count, 0,
+        "No TS2339: base class members accessible on derived instances.\
+         \nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_chain_summary_deep_hierarchy_property_access() {
+    let source = r#"
+        class A { a: number = 1; }
+        class B extends A { b: number = 2; }
+        class C extends B { c: number = 3; }
+
+        const obj = new C();
+        const va: number = obj.a;
+        const vb: number = obj.b;
+        const vc: number = obj.c;
+    "#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        strict_property_initialization: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let ts2339_count = diagnostics.iter().filter(|(c, _)| *c == 2339).count();
+    assert_eq!(
+        ts2339_count, 0,
+        "No TS2339: deep hierarchy properties accessible.\
+         \nActual: {diagnostics:#?}"
+    );
+}

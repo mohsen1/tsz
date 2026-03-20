@@ -16,3 +16,21 @@ pub mod parameter_checker;
 pub mod promise_checker;
 pub mod property_checker;
 pub mod signature_builder;
+
+use tsz_parser::parser::base::NodeIndex;
+use tsz_solver::TypeId;
+
+/// Explicit context for synthesized JSX children, threaded from dispatch
+/// into the JSX checking path instead of stored as ambient mutable state
+/// on `CheckerContext`.
+#[derive(Clone)]
+pub struct JsxChildrenContext {
+    /// Number of children in the JSX body.
+    pub child_count: usize,
+    /// Whether any `JsxText` children exist.
+    pub has_text_child: bool,
+    /// The type to use as the `children` prop value.
+    pub synthesized_type: TypeId,
+    /// Node indices of `JsxText` children (for TS2747 location reporting).
+    pub text_child_indices: Vec<NodeIndex>,
+}
