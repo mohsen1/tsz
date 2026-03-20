@@ -117,6 +117,10 @@ mod control_flow_validation_tests;
 #[path = "../tests/regex_flag_tests.rs"]
 mod regex_flag_tests;
 
+#[cfg(test)]
+#[path = "../tests/strict_bind_call_apply_tests.rs"]
+mod strict_bind_call_apply_tests;
+
 // Binder types and implementation - re-exported from tsz-binder workspace crate
 pub use tsz_binder as binder;
 

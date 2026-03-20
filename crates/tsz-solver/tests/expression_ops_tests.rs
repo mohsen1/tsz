@@ -300,6 +300,33 @@ fn test_bct_enum_members_widen_to_parent_enum() {
     assert_eq!(result, parent_enum_type);
 }
 
+#[test]
+fn test_bct_preserves_undefined_in_mixed_nullable_candidates() {
+    let interner = TypeInterner::new();
+    let result = compute_best_common_type::<NoopResolver>(
+        &interner,
+        &[TypeId::NUMBER, TypeId::UNDEFINED],
+        None,
+    );
+    let members = crate::type_queries::get_union_members(&interner, result)
+        .expect("expected number | undefined union");
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(members.contains(&TypeId::UNDEFINED));
+}
+
+#[test]
+fn test_bct_preserves_null_in_mixed_nullable_candidates() {
+    let interner = TypeInterner::new();
+    let result =
+        compute_best_common_type::<NoopResolver>(&interner, &[TypeId::STRING, TypeId::NULL], None);
+    let members = crate::type_queries::get_union_members(&interner, result)
+        .expect("expected string | null union");
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&TypeId::STRING));
+    assert!(members.contains(&TypeId::NULL));
+}
+
 // =========================================================================
 // Template Literal Expression Tests
 // =========================================================================
