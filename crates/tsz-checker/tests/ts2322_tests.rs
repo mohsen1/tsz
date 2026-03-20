@@ -904,6 +904,40 @@ fn test_ts2322_check_cjs_false_does_not_enforce_annotation_type() {
 }
 
 #[test]
+fn test_conflicting_private_intersection_reduces_before_missing_property_classification() {
+    let diags = with_lib_contexts(
+        r#"
+class A { private x: unknown; y?: string; }
+class B { private x: unknown; y?: string; }
+
+declare let ab: A & B;
+ab.y = 'hello';
+ab = {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for impossible private-brand intersection assignment, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected TS2339 on property access through never, got: {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "Intersection should reduce before TS2741 missing-property classification, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
     // No @ts-check: JSDoc types should NOT be enforced when checkJs is false.
     let source = r#"

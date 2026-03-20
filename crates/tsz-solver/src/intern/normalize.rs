@@ -601,6 +601,50 @@ impl TypeInterner {
         false
     }
 
+    pub(crate) fn intersection_has_conflicting_private_brands(&self, members: &[TypeId]) -> bool {
+        let mut brand_sets: SmallVec<[FxHashSet<Atom>; 8]> = SmallVec::new();
+
+        for &member in members {
+            let Some(type_data) = self.lookup(member) else {
+                continue;
+            };
+            let properties: &[PropertyInfo] = match type_data {
+                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                    &self.object_shape(shape_id).properties
+                }
+                TypeData::Callable(callable_id) => &self.callable_shape(callable_id).properties,
+                _ => continue,
+            };
+
+            let brands: FxHashSet<Atom> = properties
+                .iter()
+                .filter_map(|prop| {
+                    let name = self.resolve_atom(prop.name);
+                    name.starts_with("__private_brand_").then_some(prop.name)
+                })
+                .collect();
+            if !brands.is_empty() {
+                brand_sets.push(brands);
+            }
+        }
+
+        if brand_sets.len() < 2 {
+            return false;
+        }
+
+        let mut all_brands = FxHashSet::default();
+        for brands in &brand_sets {
+            all_brands.extend(brands.iter().copied());
+        }
+        if all_brands.len() < 2 {
+            return false;
+        }
+
+        !brand_sets
+            .iter()
+            .any(|brands| all_brands.iter().all(|brand| brands.contains(brand)))
+    }
+
     fn object_literals_disjoint(&self, left: &[PropertyInfo], right: &[PropertyInfo]) -> bool {
         let (small, large) = if left.len() <= right.len() {
             (left, right)

@@ -219,8 +219,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_identifier(name_node)
-            .filter(|ident| ident.atom != tsz_common::interner::Atom::none())
-            .map(|ident| ident.atom);
+            .map(|ident| ident.escaped_text.clone());
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text.is_empty()
         {
@@ -374,15 +373,10 @@ impl<'a> CheckerState<'a> {
                 || self.should_skip_property_result_flow_narrowing(idx));
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
 
-        let original_object_type = if skip_flow_narrowing {
-            let object_type_no_flow = self.get_type_of_node_with_request(
-                access.expression,
-                &TypingRequest::for_write_context(),
-            );
+        let (original_object_type, write_presence_only) = if skip_flow_narrowing {
+            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
 
-            let can_use_no_flow = if let Some(probe_atom) = property_name_for_probe {
-                let property_name_arc = self.ctx.types.resolve_atom_ref(probe_atom);
-                let property_name: &str = &property_name_arc;
+            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
                 !matches!(
@@ -394,24 +388,35 @@ impl<'a> CheckerState<'a> {
             };
 
             if can_use_no_flow {
-                object_type_no_flow
+                let read_object_type =
+                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
+                let read_has_property = if let Some(property_name) = property_name_for_probe.as_deref()
+                {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    !matches!(
+                        self.resolve_property_access_with_env(resolved_read, property_name),
+                        PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                    )
+                } else {
+                    false
+                };
+                (object_type_no_flow, !read_has_property)
             } else {
-                self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
+                (
+                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
+                    false,
+                )
             }
         } else if skip_optional_base_flow {
-            self.get_type_of_node_with_request(
-                access.expression,
-                &TypingRequest::for_write_context(),
+            (
+                self.get_type_of_write_target_base_expression(access.expression),
+                false,
             )
         } else if skip_result_flow {
-            let object_type_no_flow = self.get_type_of_node_with_request(
-                access.expression,
-                &TypingRequest::for_write_context(),
-            );
+            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
 
-            let can_use_no_flow = if let Some(probe_atom) = property_name_for_probe {
-                let property_name_arc = self.ctx.types.resolve_atom_ref(probe_atom);
-                let property_name: &str = &property_name_arc;
+            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
                 !matches!(
@@ -425,12 +430,30 @@ impl<'a> CheckerState<'a> {
             };
 
             if can_use_no_flow {
-                object_type_no_flow
+                (object_type_no_flow, false)
             } else {
-                self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
+                (
+                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
+                    false,
+                )
             }
         } else {
-            self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE)
+            (
+                self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
+                false,
+            )
+        };
+
+        let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
+            if skip_flow_narrowing {
+                if write_presence_only {
+                    TypeId::ANY
+                } else {
+                    write_type.unwrap_or(type_id)
+                }
+            } else {
+                type_id
+            }
         };
 
         // Compute a display type for error messages that preserves literal types.
@@ -635,11 +658,7 @@ impl<'a> CheckerState<'a> {
                                 .property_cache
                                 .borrow_mut()
                                 .insert((resolved_base, prop_atom), Some(type_id));
-                            let mut result_type = if skip_flow_narrowing {
-                                write_type.unwrap_or(type_id)
-                            } else {
-                                type_id
-                            };
+                            let mut result_type = effective_write_result(type_id, write_type);
                             if base_nullish.is_some()
                                 && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                             {
@@ -1129,11 +1148,7 @@ impl<'a> CheckerState<'a> {
                     }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
-                    let effective_type = if skip_flow_narrowing {
-                        write_type.unwrap_or(prop_type)
-                    } else {
-                        prop_type
-                    };
+                    let effective_type = effective_write_result(prop_type, write_type);
                     self.finalize_property_access_result(
                         idx,
                         effective_type,

@@ -6,6 +6,7 @@
 
 use crate::intern::TypeInterner;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::operations::expression_ops::normalize_object_union_members_for_write_target;
 use crate::types::*;
 
 // =============================================================================
@@ -243,6 +244,64 @@ fn test_union_property_missing_on_fresh_object_literal_member_yields_undefined()
     };
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
     assert_eq!(type_id, expected);
+}
+
+#[test]
+fn test_union_property_missing_on_non_fresh_member_stays_missing_with_fresh_empty_object() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x = interner.intern_string("x");
+    let declared = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+    let fresh_empty = interner.object_fresh(vec![]);
+    let union = interner.union(vec![declared, fresh_empty]);
+
+    assert_property_not_found(&evaluator.resolve_property_access(union, "x"));
+}
+
+#[test]
+fn test_union_property_missing_on_fresh_empty_object_member_yields_undefined() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x = interner.intern_string("x");
+    let fresh_with_x = interner.object_fresh(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+    let fresh_empty = interner.object_fresh(vec![]);
+    let union = interner.union(vec![fresh_with_x, fresh_empty]);
+
+    let result = evaluator.resolve_property_access(union, "x");
+    let Some((type_id, _)) = result.success_info() else {
+        panic!("expected Success, got {result:?}");
+    };
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    assert_eq!(type_id, expected);
+}
+
+#[test]
+fn test_write_target_normalization_optionalizes_fresh_empty_object_member() {
+    let interner = TypeInterner::new();
+
+    let x = interner.intern_string("x");
+    let declared = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+    let fresh_empty = interner.object_fresh(vec![]);
+
+    let normalized =
+        normalize_object_union_members_for_write_target(&interner, &[declared, fresh_empty])
+            .expect("expected write-target normalization");
+
+    let union = interner.union(normalized);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let result = evaluator.resolve_property_access(union, "x");
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    match result {
+        PropertyAccessResult::Success {
+            type_id,
+            ..
+        } => {
+            assert_eq!(type_id, expected);
+        }
+        _ => panic!("expected Success, got {result:?}"),
+    }
 }
 
 #[test]

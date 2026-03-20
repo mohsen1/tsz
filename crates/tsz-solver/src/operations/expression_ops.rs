@@ -78,6 +78,89 @@ pub fn compute_conditional_expression_type(
     interner.union2(true_type, false_type)
 }
 
+pub fn normalize_object_union_members_for_write_target(
+    interner: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<Vec<TypeId>> {
+    let mut object_members = Vec::with_capacity(members.len());
+    let mut saw_fresh_member = false;
+
+    for &member in members {
+        let shape = fresh_literal_shape(interner, member).or_else(|| {
+            let shape_id = match interner.lookup(member)? {
+                TypeData::Object(id) | TypeData::ObjectWithIndex(id) => id,
+                _ => return None,
+            };
+            Some((*interner.object_shape(shape_id)).clone())
+        })?;
+        if shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+            saw_fresh_member = true;
+        }
+        if shape.symbol.is_some() || shape.string_index.is_some() || shape.number_index.is_some() {
+            return None;
+        }
+        object_members.push((member, shape));
+    }
+
+    if !saw_fresh_member || object_members.len() < 2 {
+        return None;
+    }
+
+    let mut all_props: Vec<PropertyInfo> = Vec::new();
+    for (_, shape) in &object_members {
+        for prop in &shape.properties {
+            if !all_props.iter().any(|existing| existing.name == prop.name) {
+                all_props.push(prop.clone());
+            }
+        }
+    }
+
+    if all_props.is_empty() {
+        return None;
+    }
+
+    let mut changed = false;
+    let mut normalized = Vec::with_capacity(object_members.len());
+    for (original_type, mut shape) in object_members {
+        let next_order = shape
+            .properties
+            .iter()
+            .map(|p| p.declaration_order)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        let mut append_order = next_order;
+
+        for prop in &all_props {
+            if shape
+                .properties
+                .iter()
+                .any(|existing| existing.name == prop.name)
+            {
+                continue;
+            }
+            changed = true;
+            let mut synthetic = PropertyInfo::opt(prop.name, TypeId::UNDEFINED);
+            synthetic.declaration_order = append_order;
+            append_order = append_order.saturating_add(1);
+            shape.properties.push(synthetic);
+        }
+
+        if changed {
+            shape.flags.remove(ObjectFlags::FRESH_LITERAL);
+            let widened = interner.object_with_flags(shape.properties, shape.flags);
+            if let Some(display_props) = interner.get_display_properties(original_type) {
+                interner.store_display_properties(widened, display_props.as_ref().clone());
+            }
+            normalized.push(widened);
+        } else {
+            normalized.push(original_type);
+        }
+    }
+
+    changed.then_some(normalized)
+}
+
 fn complement_fresh_object_literal_union(
     interner: &dyn TypeDatabase,
     left: TypeId,
