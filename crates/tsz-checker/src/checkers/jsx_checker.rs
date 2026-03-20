@@ -5,6 +5,7 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -18,6 +19,397 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(resolved);
         let resolved = self.evaluate_application_type(resolved);
         self.evaluate_type_with_env(resolved)
+    }
+
+    fn get_jsx_specific_string_literal_component_tag_name(
+        &self,
+        tag_name_idx: NodeIndex,
+        component_type: TypeId,
+    ) -> Option<String> {
+        let tag_name_node = self.ctx.arena.get(tag_name_idx)?;
+        if tag_name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = self
+            .ctx
+            .arena
+            .get_identifier(tag_name_node)?
+            .escaped_text
+            .as_str();
+        if ident
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+        {
+            return None;
+        }
+
+        self.get_jsx_single_string_literal_tag_name(component_type)
+    }
+
+    fn get_jsx_single_string_literal_tag_name(&self, type_id: TypeId) -> Option<String> {
+        if let Some(name) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, type_id)
+        {
+            return Some(self.ctx.types.resolve_atom(name).as_str().to_string());
+        }
+
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)?;
+        let mut literal_name = None;
+        for member in members {
+            let name = tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)?;
+            match literal_name {
+                Some(existing) if existing != name => return None,
+                Some(_) => {}
+                None => literal_name = Some(name),
+            }
+        }
+
+        literal_name.map(|name| self.ctx.types.resolve_atom(name).as_str().to_string())
+    }
+
+    fn get_jsx_intrinsic_props_for_tag(
+        &mut self,
+        element_idx: NodeIndex,
+        tag: &str,
+        report_missing: bool,
+    ) -> Option<TypeId> {
+        let intrinsic_elements_type = self.get_intrinsic_elements_type()?;
+        let evaluated_ie = self.evaluate_type_with_env(intrinsic_elements_type);
+        let tag_atom = self.ctx.types.intern_string(tag);
+        let cache_key = (intrinsic_elements_type, tag_atom);
+
+        if let Some(&cached) = self.ctx.jsx_intrinsic_props_cache.get(&cache_key)
+            && (!report_missing || cached != TypeId::ERROR)
+        {
+            return Some(cached);
+        }
+
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let props = match self.resolve_property_access_with_env(evaluated_ie, tag) {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            PropertyAccessResult::PropertyNotFound { .. } => {
+                if report_missing {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let message =
+                        format!("Property '{tag}' does not exist on type 'JSX.IntrinsicElements'.");
+                    self.error_at_node(
+                        element_idx,
+                        &message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    self.ctx
+                        .jsx_intrinsic_props_cache
+                        .insert(cache_key, TypeId::ERROR);
+                }
+                TypeId::ERROR
+            }
+            _ => TypeId::ANY,
+        };
+
+        if props != TypeId::ERROR || report_missing {
+            self.ctx.jsx_intrinsic_props_cache.insert(cache_key, props);
+        }
+
+        Some(props)
+    }
+
+    fn get_jsx_intrinsic_tag_name(&self, tag_name_idx: NodeIndex) -> Option<String> {
+        let tag_name_node = self.ctx.arena.get(tag_name_idx)?;
+        if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .map(|id| id.escaped_text.as_str().to_string());
+        }
+
+        if tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            return self
+                .ctx
+                .arena
+                .get_jsx_namespaced_name(tag_name_node)
+                .and_then(|ns| {
+                    let ns_id = self.ctx.arena.get(ns.namespace)?;
+                    let ns_text = self.ctx.arena.get_identifier(ns_id)?.escaped_text.as_str();
+                    let name_id = self.ctx.arena.get(ns.name)?;
+                    let name_text = self
+                        .ctx
+                        .arena
+                        .get_identifier(name_id)?
+                        .escaped_text
+                        .as_str();
+                    Some(format!("{ns_text}:{name_text}"))
+                });
+        }
+
+        None
+    }
+
+    fn get_jsx_component_props_display_text(&mut self, tag_name_idx: NodeIndex) -> Option<String> {
+        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let props_name = self.get_element_attributes_property_name_with_check(None)?;
+        if props_name.is_empty() {
+            return None;
+        }
+        self.get_jsx_component_props_display_text_for_symbol(sym_id, &props_name)
+    }
+
+    fn get_jsx_component_props_display_text_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        props_name: &str,
+    ) -> Option<String> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decls = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decls.push(symbol.value_declaration);
+        }
+        decls.extend(symbol.declarations.iter().copied());
+
+        for decl_idx in decls {
+            if let Some(display) =
+                self.get_jsx_component_props_display_text_from_declaration(decl_idx, props_name)
+            {
+                return Some(display);
+            }
+        }
+        None
+    }
+
+    fn get_jsx_component_props_display_text_from_declaration(
+        &mut self,
+        decl_idx: NodeIndex,
+        props_name: &str,
+    ) -> Option<String> {
+        let mut decl_idx = decl_idx;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && parent.is_some()
+        {
+            decl_idx = parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                if decl.type_annotation.is_none() {
+                    return None;
+                }
+                self.get_jsx_component_props_display_text_from_type_node(
+                    decl.type_annotation,
+                    props_name,
+                )
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                let iface = self.ctx.arena.get_interface(decl_node)?;
+                self.get_jsx_component_props_display_text_from_members(&iface.members, props_name)
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let alias = self.ctx.arena.get_type_alias(decl_node)?;
+                self.get_jsx_component_props_display_text_from_type_node(
+                    alias.type_node,
+                    props_name,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn get_jsx_component_props_display_text_from_type_node(
+        &mut self,
+        type_node_idx: NodeIndex,
+        props_name: &str,
+    ) -> Option<String> {
+        let type_node = self.ctx.arena.get(type_node_idx)?;
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let type_ref = self.ctx.arena.get_type_ref(type_node)?;
+                let TypeSymbolResolution::Type(target_sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                else {
+                    return None;
+                };
+                self.get_jsx_component_props_display_text_for_symbol(target_sym_id, props_name)
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                let type_lit = self.ctx.arena.get_type_literal(type_node)?;
+                self.get_jsx_component_props_display_text_from_members(
+                    &type_lit.members,
+                    props_name,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn get_jsx_component_props_display_text_from_members(
+        &mut self,
+        members: &tsz_parser::parser::NodeList,
+        props_name: &str,
+    ) -> Option<String> {
+        for &member_idx in &members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                continue;
+            }
+            let sig = self.ctx.arena.get_signature(member_node)?;
+            let return_type_idx = sig.type_annotation;
+            let return_type_node = self.ctx.arena.get(return_type_idx)?;
+            if return_type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                continue;
+            }
+            let type_lit = self.ctx.arena.get_type_literal(return_type_node)?;
+            for &instance_member_idx in &type_lit.members.nodes {
+                let instance_member_node = self.ctx.arena.get(instance_member_idx)?;
+                if instance_member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                    continue;
+                }
+                let prop_sig = self.ctx.arena.get_signature(instance_member_node)?;
+                let prop_name_text = self.node_text(prop_sig.name)?.trim().to_string();
+                if prop_name_text != props_name || prop_sig.type_annotation.is_none() {
+                    continue;
+                }
+                return self.format_jsx_props_display_text_from_type_node(prop_sig.type_annotation);
+            }
+        }
+        None
+    }
+
+    fn format_jsx_props_display_text_from_type_node(
+        &mut self,
+        type_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = self.ctx.arena.get(type_node_idx)?;
+        if type_node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            let composite = self.ctx.arena.get_composite_type(type_node)?;
+            let parts: Vec<String> = composite
+                .types
+                .nodes
+                .iter()
+                .filter_map(|&member_idx| {
+                    let member_type = self.get_type_from_type_node(member_idx);
+                    let formatted = self.format_type(member_type);
+                    (!formatted.is_empty()).then_some(formatted)
+                })
+                .collect();
+            if !parts.is_empty() {
+                return Some(parts.join(" & "));
+            }
+        }
+
+        let type_id = self.get_type_from_type_node(type_node_idx);
+        Some(self.format_type(type_id))
+    }
+
+    fn instantiate_jsx_function_shape_with_substitution(
+        &self,
+        func: &tsz_solver::FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> tsz_solver::FunctionShape {
+        tsz_solver::FunctionShape {
+            params: func
+                .params
+                .iter()
+                .map(|param| tsz_solver::ParamInfo {
+                    name: param.name,
+                    type_id: crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        param.type_id,
+                        substitution,
+                    ),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            return_type: crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                func.return_type,
+                substitution,
+            ),
+            this_type: func.this_type.map(|this_type| {
+                crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    this_type,
+                    substitution,
+                )
+            }),
+            type_params: vec![],
+            type_predicate: func.type_predicate.as_ref().map(|predicate| {
+                tsz_solver::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target.clone(),
+                    type_id: predicate.type_id.map(|tid| {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            tid,
+                            substitution,
+                        )
+                    }),
+                    parameter_index: predicate.parameter_index,
+                }
+            }),
+            is_constructor: func.is_constructor,
+            is_method: func.is_method,
+        }
+    }
+
+    fn infer_jsx_generic_component_props_type(
+        &mut self,
+        attributes_idx: NodeIndex,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        let function_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            component_type,
+        )?;
+        if function_shape.type_params.is_empty() || function_shape.params.is_empty() {
+            return None;
+        }
+
+        let children_prop_name = self.get_jsx_children_prop_name();
+        let provided_attrs = self.collect_jsx_union_resolution_attrs(attributes_idx)?;
+        let provided_attrs: Vec<(String, TypeId)> = provided_attrs
+            .into_iter()
+            .filter_map(|(name, ty)| {
+                if name == children_prop_name {
+                    return None;
+                }
+                ty.map(|ty| (name, ty))
+            })
+            .collect();
+        if provided_attrs.is_empty() {
+            return None;
+        }
+
+        let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            crate::query_boundaries::checkers::call::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &function_shape,
+                &[attrs_type],
+                None,
+            )
+        };
+        let instantiated =
+            self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
+        let props_type = instantiated.params.first()?.type_id;
+        let props_type = self.resolve_type_for_property_access(props_type);
+        let props_type = self.evaluate_type_with_env(props_type);
+        if props_type == TypeId::ANY
+            || props_type == TypeId::UNKNOWN
+            || props_type == TypeId::ERROR
+            || tsz_solver::contains_type_parameters(self.ctx.types, props_type)
+        {
+            return None;
+        }
+        Some(props_type)
     }
 
     /// Get the type of a JSX opening element (Rule #36: case-sensitive tag lookup).
@@ -107,51 +499,11 @@ impl<'a> CheckerState<'a> {
             let ie_type = self.get_intrinsic_elements_type();
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
             if let Some(tag) = effective_tag
-                && let Some(intrinsic_elements_type) = ie_type
+                && ie_type.is_some()
             {
-                // Evaluate IntrinsicElements from Lazy(DefId) to its concrete Object form.
-                // The solver's PropertyAccessEvaluator can't resolve Lazy types without
-                // the checker's type environment, so we must evaluate before property access.
-                let evaluated_ie = self.evaluate_type_with_env(intrinsic_elements_type);
-
-                let tag_atom = self.ctx.types.intern_string(tag);
-                let cache_key = (intrinsic_elements_type, tag_atom);
-
-                // Use cached result if available
-                let evaluated_props = if let Some(&cached) =
-                    self.ctx.jsx_intrinsic_props_cache.get(&cache_key)
-                {
-                    cached
-                } else {
-                    // Resolve the tag name as a property on the evaluated IntrinsicElements
-                    use crate::query_boundaries::common::PropertyAccessResult;
-                    let result = self.resolve_property_access_with_env(evaluated_ie, tag);
-                    let props = match result {
-                        PropertyAccessResult::Success { type_id, .. } => type_id,
-                        PropertyAccessResult::PropertyNotFound { .. } => {
-                            // TS2339: Property 'span' does not exist on type
-                            // 'JSX.IntrinsicElements'.
-                            // Use `idx` (the JSX element node) for the span — tsc
-                            // points at `<tagName .../>`, not just the identifier.
-                            // Format the type as "JSX.IntrinsicElements" (qualified name).
-                            {
-                                use tsz_common::diagnostics::diagnostic_codes;
-                                let message = format!(
-                                    "Property '{tag}' does not exist on type 'JSX.IntrinsicElements'."
-                                );
-                                self.error_at_node(
-                                    idx,
-                                    &message,
-                                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                );
-                            }
-                            TypeId::ERROR
-                        }
-                        _ => TypeId::ANY,
-                    };
-                    self.ctx.jsx_intrinsic_props_cache.insert(cache_key, props);
-                    props
-                };
+                let evaluated_props = self
+                    .get_jsx_intrinsic_props_for_tag(idx, tag, true)
+                    .unwrap_or(TypeId::ANY);
 
                 // Check JSX attributes against the resolved props type.
                 // For intrinsic elements, the display target is just the props type
@@ -238,12 +590,47 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
             let resolved_component_type =
                 self.normalize_jsx_component_type_for_resolution(component_type);
+            let specific_intrinsic_tag = self.get_jsx_specific_string_literal_component_tag_name(
+                tag_name_idx,
+                resolved_component_type,
+            );
+            let tried_specific_intrinsic_lookup =
+                specific_intrinsic_tag.is_some() && self.get_intrinsic_elements_type().is_some();
+
+            if let Some(tag) = specific_intrinsic_tag.as_deref()
+                && let Some(props_type) = self.get_jsx_intrinsic_props_for_tag(idx, tag, true)
+                && props_type != TypeId::ERROR
+            {
+                let display_target = self.build_jsx_display_target(props_type, None);
+                self.check_jsx_attributes_against_props(
+                    jsx_opening.attributes,
+                    props_type,
+                    jsx_opening.tag_name,
+                    false,
+                    display_target,
+                    request,
+                );
+                if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(element_sym_id) = exports.get("Element")
+                    {
+                        return self.type_reference_symbol_type(element_sym_id);
+                    }
+                }
+                return TypeId::ANY;
+            }
 
             // If the resolved type is string-like or a keyof type (e.g., `keyof ReactHTML`),
             // treat it as an intrinsic element. tsc allows `<Tag>` where Tag has a string
             // type without emitting TS2604.
-            if self.is_jsx_string_tag_type(resolved_component_type)
-                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, resolved_component_type)
+            if (self.is_jsx_string_tag_type(resolved_component_type)
+                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, resolved_component_type))
+                && !tried_specific_intrinsic_lookup
             {
                 self.check_grammar_jsx_element(jsx_opening.attributes);
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
@@ -274,8 +661,13 @@ impl<'a> CheckerState<'a> {
             {
                 let props_type =
                     self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
-                let display_target =
-                    self.build_jsx_display_target(props_type, Some(resolved_component_type));
+                let preferred_props_display =
+                    self.get_jsx_component_props_display_text(tag_name_idx);
+                let display_target = self.build_jsx_display_target_with_preferred_props(
+                    props_type,
+                    Some(resolved_component_type),
+                    preferred_props_display.as_deref(),
+                );
                 self.check_jsx_attributes_against_props(
                     jsx_opening.attributes,
                     props_type,
@@ -324,7 +716,15 @@ impl<'a> CheckerState<'a> {
                 // For generic components, set UNKNOWN contextual type to prevent
                 // false TS7006 on callback parameters in JSX attributes.
                 let gen_ctx = self.is_generic_jsx_component(resolved_component_type);
-                let attr_request = if gen_ctx {
+                let inferred_generic_props = if gen_ctx {
+                    self.infer_jsx_generic_component_props_type(
+                        jsx_opening.attributes,
+                        resolved_component_type,
+                    )
+                } else {
+                    None
+                };
+                let attr_request = if gen_ctx && inferred_generic_props.is_none() {
                     request.read().normal_origin().contextual(TypeId::UNKNOWN)
                 } else {
                     request.read().normal_origin().contextual_opt(None)
@@ -338,17 +738,58 @@ impl<'a> CheckerState<'a> {
                                 if let Some(spread_data) =
                                     self.ctx.arena.get_jsx_spread_attribute(attr_node)
                                 {
+                                    let spread_request = inferred_generic_props
+                                        .map(|props| {
+                                            request.read().normal_origin().contextual(props)
+                                        })
+                                        .unwrap_or_else(|| attr_request.clone());
                                     self.compute_type_of_node_with_request(
                                         spread_data.expression,
-                                        &attr_request,
+                                        &spread_request,
                                     );
                                 }
                             } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                                 && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
                                 && !attr_data.initializer.is_none()
                             {
+                                let attr_value_idx = if let Some(init_node) =
+                                    self.ctx.arena.get(attr_data.initializer)
+                                {
+                                    if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                                        self.ctx
+                                            .arena
+                                            .get_jsx_expression(init_node)
+                                            .map(|expr| expr.expression)
+                                            .unwrap_or(attr_data.initializer)
+                                    } else {
+                                        attr_data.initializer
+                                    }
+                                } else {
+                                    continue;
+                                };
+                                let attr_request = if let Some(props_type) = inferred_generic_props
+                                {
+                                    let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                                        continue;
+                                    };
+                                    let Some(attr_name) = self.get_jsx_attribute_name(name_node)
+                                    else {
+                                        continue;
+                                    };
+                                    match self.resolve_property_access_with_env(props_type, &attr_name) {
+                                        crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                                            request
+                                                .read()
+                                                .normal_origin()
+                                                .contextual(tsz_solver::remove_undefined(self.ctx.types, type_id))
+                                        }
+                                        _ => attr_request.clone(),
+                                    }
+                                } else {
+                                    attr_request.clone()
+                                };
                                 self.compute_type_of_node_with_request(
-                                    attr_data.initializer,
+                                    attr_value_idx,
                                     &attr_request,
                                 );
                             }
@@ -420,6 +861,15 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
                 &["IntrinsicElements"],
             );
+            return;
+        }
+
+        if is_intrinsic
+            && let Some(tag_name) = self.get_jsx_intrinsic_tag_name(tag_name_idx)
+            && let Some(props) = self.get_jsx_intrinsic_props_for_tag(idx, &tag_name, true)
+            && props == TypeId::ERROR
+        {
+            return;
         }
     }
 
@@ -627,7 +1077,12 @@ impl<'a> CheckerState<'a> {
         // string literals are valid JSX and should be treated like intrinsic
         // element lookups. A structural relation check here is unnecessarily
         // heavy for `React.ReactType`-style unions.
-        if self.is_jsx_string_tag_type(component_type) {
+        if self.is_jsx_string_tag_type(component_type)
+            && !(self
+                .get_jsx_specific_string_literal_component_tag_name(tag_name_idx, component_type)
+                .is_some()
+                && self.get_intrinsic_elements_type().is_some())
+        {
             return;
         }
         // Skip if file has parse errors (avoid cascading diagnostics)
@@ -653,14 +1108,8 @@ impl<'a> CheckerState<'a> {
         });
 
         if !has_signatures {
-            // TSC uses the tag name (variable name) in the message, not the resolved type
-            let tag_text = self
-                .ctx
-                .arena
-                .get(tag_name_idx)
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .map(|id| id.escaped_text.as_str().to_owned())
-                .unwrap_or_else(|| self.format_type(component_type));
+            // TSC uses the JSX tag text, not the resolved type.
+            let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 tag_name_idx,
@@ -1092,10 +1541,7 @@ impl<'a> CheckerState<'a> {
                 let evaluated_instance = self.evaluate_type_with_env(instance_type);
                 use crate::query_boundaries::common::PropertyAccessResult;
                 match self.resolve_property_access_with_env(evaluated_instance, name) {
-                    PropertyAccessResult::Success { type_id, .. } => {
-                        let evaluated = self.evaluate_type_with_env(type_id);
-                        Some(evaluated)
-                    }
+                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
                     // Instance type doesn't have the ElementAttributesProperty member.
                     // This can happen when class inheritance doesn't include inherited
                     // members in the construct signature return type.
@@ -1182,6 +1628,52 @@ impl<'a> CheckerState<'a> {
         Some(String::new()) // Default: empty (instance type is props)
     }
 
+    pub(super) fn get_jsx_children_prop_name(&mut self) -> String {
+        use tsz_common::checker_options::JsxMode;
+
+        if matches!(
+            self.ctx.compiler_options.jsx_mode,
+            JsxMode::ReactJsx | JsxMode::ReactJsxDev
+        ) {
+            return "children".to_string();
+        }
+
+        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
+            return "children".to_string();
+        };
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        else {
+            return "children".to_string();
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return "children".to_string();
+        };
+        let Some(eca_sym_id) = exports.get("ElementChildrenAttribute") else {
+            return "children".to_string();
+        };
+
+        let eca_type = self.type_reference_symbol_type(eca_sym_id);
+        let evaluated = self.evaluate_type_with_env(eca_type);
+        if evaluated == TypeId::UNKNOWN || evaluated == TypeId::ERROR {
+            return "children".to_string();
+        }
+
+        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+        else {
+            return "children".to_string();
+        };
+
+        shape
+            .properties
+            .first()
+            .map(|prop| self.ctx.types.resolve_atom(prop.name))
+            .unwrap_or_else(|| "children".to_string())
+    }
+
     // JSX Children Contextual Typing
 
     fn collect_jsx_union_resolution_attrs(
@@ -1252,12 +1744,13 @@ impl<'a> CheckerState<'a> {
             provided.push((attr_name, attr_type));
         }
 
+        let children_prop_name = self.get_jsx_children_prop_name();
         if self
             .get_jsx_body_child_nodes(attributes_idx)
             .is_some_and(|children| !children.is_empty())
-            && !provided.iter().any(|(name, _)| name == "children")
+            && !provided.iter().any(|(name, _)| name == &children_prop_name)
         {
-            provided.push(("children".to_string(), None));
+            provided.push((children_prop_name, None));
         }
 
         Some(provided)
@@ -1276,11 +1769,12 @@ impl<'a> CheckerState<'a> {
         let Some(provided_attrs) = self.collect_jsx_union_resolution_attrs(attributes_idx) else {
             return props_type;
         };
+        let children_prop_name = self.get_jsx_children_prop_name();
         let provided_names: rustc_hash::FxHashSet<&str> = provided_attrs
             .iter()
             .map(|(name, _type_id)| name.as_str())
             .collect();
-        let prefer_children_specificity = provided_names.contains("children");
+        let prefer_children_specificity = provided_names.contains(children_prop_name.as_str());
 
         let compatible: Vec<TypeId> = members
             .into_iter()
@@ -1316,7 +1810,7 @@ impl<'a> CheckerState<'a> {
                             return true;
                         }
                         let prop_name = self.ctx.types.resolve_atom(prop.name);
-                        prop_name.as_str() == "children"
+                        prop_name.as_str() == children_prop_name.as_str()
                             || provided_names.contains(prop_name.as_str())
                     })
                 } else {
@@ -1420,10 +1914,23 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
             let resolved_component_type =
                 self.normalize_jsx_component_type_for_resolution(component_type);
-            if let Some((props, _raw_has_type_params)) =
+            if let Some(tag) = self.get_jsx_specific_string_literal_component_tag_name(
+                tag_name_idx,
+                resolved_component_type,
+            ) && let Some(props) =
+                self.get_jsx_intrinsic_props_for_tag(opening_element_idx, &tag, false)
+                && props != TypeId::ERROR
+            {
+                props
+            } else if let Some((props, _raw_has_type_params)) =
                 self.get_jsx_props_type_for_component(resolved_component_type, None)
             {
                 self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
+            } else if let Some(props) = self.infer_jsx_generic_component_props_type(
+                jsx_opening.attributes,
+                resolved_component_type,
+            ) {
+                props
             } else if self.is_generic_jsx_component(resolved_component_type) {
                 // Generic component: return UNKNOWN to prevent false TS7006
                 return Some(TypeId::UNKNOWN);
@@ -1899,8 +2406,9 @@ impl<'a> CheckerState<'a> {
         {
             // TS2710: explicit children attr + body children = double specification.
             // Error location: the first JSX attribute (matching tsc's span).
+            let children_prop_name = self.get_jsx_children_prop_name();
             let has_explicit_children_attr =
-                self.has_explicit_jsx_attribute(attributes_idx, "children");
+                self.has_explicit_jsx_attribute(attributes_idx, &children_prop_name);
             if has_explicit_children_attr && !skip_prop_checks {
                 // tsc reports TS2710 on the JsxAttributes node, which spans from
                 // the first attribute to the closing >. Our parser sets JsxAttributes.pos
@@ -1909,11 +2417,11 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     attributes_idx,
                     diagnostic_codes::ARE_SPECIFIED_TWICE_THE_ATTRIBUTE_NAMED_WILL_BE_OVERWRITTEN,
-                    &["children"],
+                    &[&children_prop_name],
                 );
             }
 
-            provided_attrs.push(("children".to_string(), synthesized_type));
+            provided_attrs.push((children_prop_name.clone(), synthesized_type));
             if child_count > 0
                 && !has_explicit_children_attr
                 && !skip_prop_checks
@@ -1927,14 +2435,17 @@ impl<'a> CheckerState<'a> {
                     .any(|(name, _)| name == "key" || name == "ref");
                 use crate::query_boundaries::common::PropertyAccessResult;
                 let props_has_children = matches!(
-                    self.resolve_property_access_with_env(props_type, "children"),
+                    self.resolve_property_access_with_env(props_type, &children_prop_name),
                     PropertyAccessResult::Success { .. }
                 );
                 let intrinsic_has_children =
                     self.get_intrinsic_attributes_type().is_some_and(|ia_type| {
                         let resolved_ia = self.resolve_type_for_property_access(ia_type);
                         matches!(
-                            self.resolve_property_access_with_env(resolved_ia, "children"),
+                            self.resolve_property_access_with_env(
+                                resolved_ia,
+                                &children_prop_name
+                            ),
                             PropertyAccessResult::Success { .. }
                         )
                     });
@@ -1969,8 +2480,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For nonstandard ElementChildrenAttribute names, tsc reports the
+        // missing required children property through whole-object
+        // assignability (TS2322) rather than the generic TS2741 JSX fallback.
+        let reported_custom_children_assignability = if !has_excess_property_error
+            && !spread_covers_all
+            && !skip_prop_checks
+            && self.should_report_custom_jsx_children_via_assignability(props_type, &provided_attrs)
+        {
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+            self.report_jsx_synthesized_props_assignability_error(
+                attrs_type,
+                &display_target,
+                tag_name_idx,
+            );
+            true
+        } else {
+            false
+        };
+
         // TS2741: missing required properties.
-        if !has_excess_property_error && !spread_covers_all && !skip_prop_checks {
+        if !reported_custom_children_assignability
+            && !has_excess_property_error
+            && !spread_covers_all
+            && !skip_prop_checks
+        {
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
 
