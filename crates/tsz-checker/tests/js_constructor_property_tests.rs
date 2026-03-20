@@ -764,7 +764,6 @@ b.m("still nope");
 
 /// Generic constructor function with @template: instance properties get instantiated types
 #[test]
-#[ignore = "pre-existing: generic constructor function template instantiation"]
 fn test_generic_constructor_function_template_instantiation() {
     let source = r#"
 /**

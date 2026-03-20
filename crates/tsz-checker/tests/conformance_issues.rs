@@ -1986,7 +1986,6 @@ exports.y = 2;
 }
 
 #[test]
-#[ignore = "pre-existing: JS constructor instance missing property typeof display"]
 fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
