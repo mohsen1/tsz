@@ -1481,6 +1481,17 @@ impl<'a> CheckerState<'a> {
     /// type T = string;         // get_type_of_symbol(T) → string
     /// ```
     pub fn get_type_of_symbol(&mut self, sym_id: SymbolId) -> TypeId {
+        // Hard stack guard: bail with ERROR when remaining stack is critically
+        // low.  Prevents SIGSEGV on circular type graphs (e.g. React's
+        // `type ReactInstance = Component<any>` where `Component` references
+        // `ReactInstance`).
+        if crate::checkers_domain::stack_overflow_tripped()
+            || stacker::remaining_stack().is_some_and(|r| r < 256 * 1024)
+        {
+            crate::checkers_domain::trip_stack_overflow();
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            return TypeId::ERROR;
+        }
         use tsz_solver::SymbolRef;
         let factory = self.ctx.types.factory();
         self.record_symbol_dependency(sym_id);
