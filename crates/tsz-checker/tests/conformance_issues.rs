@@ -7085,9 +7085,7 @@ function f(yield = yield) {
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 7022
-                && message.contains("'yield'")
-                && message.contains("its own initializer")
+            *code == 7022 && message.contains("'yield'") && message.contains("its own initializer")
         }),
         "Should emit TS7022 for the self-referential default parameter under noImplicitAny.\nActual errors: {diagnostics:#?}"
     );
