@@ -4441,28 +4441,28 @@ impl<'a> DeclarationEmitter<'a> {
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
             // Variable declarations (var/let/const)
-            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
-                if let Some(type_text) = self.emit_type_node_text(var_decl.type_annotation) {
-                    let trimmed = type_text.trim_end();
-                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                    return Some(trimmed.to_string());
-                }
+            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
+                && let Some(type_text) = self.emit_type_node_text(var_decl.type_annotation)
+            {
+                let trimmed = type_text.trim_end();
+                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                return Some(trimmed.to_string());
             }
             // Property declarations (class members)
-            if let Some(prop_decl) = self.arena.get_property_decl(decl_node) {
-                if let Some(type_text) = self.emit_type_node_text(prop_decl.type_annotation) {
-                    let trimmed = type_text.trim_end();
-                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                    return Some(trimmed.to_string());
-                }
+            if let Some(prop_decl) = self.arena.get_property_decl(decl_node)
+                && let Some(type_text) = self.emit_type_node_text(prop_decl.type_annotation)
+            {
+                let trimmed = type_text.trim_end();
+                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                return Some(trimmed.to_string());
             }
             // Parameters (function/method parameters)
-            if let Some(param) = self.arena.get_parameter(decl_node) {
-                if let Some(type_text) = self.emit_type_node_text(param.type_annotation) {
-                    let trimmed = type_text.trim_end();
-                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                    return Some(trimmed.to_string());
-                }
+            if let Some(param) = self.arena.get_parameter(decl_node)
+                && let Some(type_text) = self.emit_type_node_text(param.type_annotation)
+            {
+                let trimmed = type_text.trim_end();
+                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                return Some(trimmed.to_string());
             }
         }
 
