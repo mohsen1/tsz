@@ -28,13 +28,13 @@ pub(crate) struct CallableContext {
 }
 
 impl CallableContext {
-    pub fn new(callable_type: TypeId) -> Self {
+    pub const fn new(callable_type: TypeId) -> Self {
         Self {
             callable_type: Some(callable_type),
         }
     }
 
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self {
             callable_type: None,
         }

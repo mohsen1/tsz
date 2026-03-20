@@ -670,16 +670,14 @@ impl<'a> CheckerState<'a> {
         if node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(node) {
                 let ident_text = &ident.escaped_text;
-                if let Some(local_sym_id) = self.ctx.binder.file_locals.get(ident_text) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
-                        && symbol.flags & symbol_flags::ALIAS != 0
-                        && let Some(ref import_module) = symbol.import_module
-                    {
-                        let last_segment =
-                            import_module.rsplit('/').next().unwrap_or(import_module);
-                        if last_segment == file_stem {
-                            return true;
-                        }
+                if let Some(local_sym_id) = self.ctx.binder.file_locals.get(ident_text)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
+                    && symbol.flags & symbol_flags::ALIAS != 0
+                    && let Some(ref import_module) = symbol.import_module
+                {
+                    let last_segment = import_module.rsplit('/').next().unwrap_or(import_module);
+                    if last_segment == file_stem {
+                        return true;
                     }
                 }
             }
