@@ -258,6 +258,26 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
+                for prop in &typedef_info.properties {
+                    let expr = prop.type_expr.trim().trim_end_matches('=').trim();
+                    if expr.is_empty() || expr == "Object" || expr == "object" {
+                        continue;
+                    }
+                    if !Self::is_simple_type_name(expr) {
+                        continue;
+                    }
+                    if template_names.iter().any(|t| t == expr) {
+                        continue;
+                    }
+                    if self.resolve_jsdoc_type_str(expr).is_none() {
+                        self.emit_jsdoc_cannot_find_name(
+                            expr,
+                            comment.pos,
+                            comment.end,
+                            &source_text,
+                        );
+                    }
+                }
                 if let Some(ref base_type) = typedef_info.base_type {
                     let expr = base_type.trim();
                     if expr == "Object" || expr == "object" || expr.is_empty() {
