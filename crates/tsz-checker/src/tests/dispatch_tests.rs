@@ -886,6 +886,58 @@ foo({ x: "abc" });
 }
 
 #[test]
+fn jsdoc_typedef_property_name_then_type_syntax_stays_optional_in_param_tags() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @typedef {Object} AnotherOpts
+ * @property anotherX {string}
+ * @property anotherY {string=}
+ *
+ * @param {AnotherOpts} opts
+ */
+function foo(opts) {
+    opts.anotherX;
+}
+
+foo({ anotherX: "world" });
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected alternate @property name {{type}} syntax to preserve optionality at param-tag call sites, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_prop_alias_uses_same_property_parser() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @typedef {Object} AliasOpts
+ * @prop aliasX {string}
+ * @prop [aliasY="hi"] {string}
+ *
+ * @param {AliasOpts} opts
+ */
+function foo(opts) {
+    opts.aliasX;
+}
+
+foo({ aliasX: "world" });
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected @prop alias tags to share typedef property parsing semantics, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn jsdoc_constructor_template_scope_flows_to_prototype_methods() {
     let diags = check_js_source_diagnostics(
         r#"
