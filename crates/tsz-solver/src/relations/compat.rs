@@ -1121,8 +1121,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
 
-        // Null/undefined in non-strict null check mode
-        if !self.strict_null_checks && source.is_nullish() {
+        // Null/undefined in non-strict null check mode.
+        // Exception: nullish values are NOT assignable to type parameters even
+        // without strictNullChecks. In tsc, type parameters are opaque —
+        // `null` cannot be assigned to `T` because `T` could be instantiated
+        // as `never` or any non-nullable type. The structural subtype check
+        // at core.rs:830-889 correctly rejects concrete <: TypeParam, so we
+        // must not short-circuit here.
+        if !self.strict_null_checks
+            && source.is_nullish()
+            && !matches!(
+                self.interner.lookup(target),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        {
             return Some(true);
         }
 
@@ -1175,7 +1187,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == target {
             return true;
         }
-        if !self.strict_null_checks && source.is_nullish() {
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // EXCEPT type parameters (which are opaque and could be any type).
+        if !self.strict_null_checks
+            && source.is_nullish()
+            && !matches!(
+                self.interner.lookup(target),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        {
             return true;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
@@ -1230,7 +1250,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if target == TypeId::UNKNOWN {
             return None;
         }
-        if !self.strict_null_checks && source.is_nullish() {
+        if !self.strict_null_checks
+            && source.is_nullish()
+            && !matches!(
+                self.interner.lookup(target),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        {
             return None;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
