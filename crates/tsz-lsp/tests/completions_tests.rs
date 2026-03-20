@@ -289,8 +289,7 @@ fn test_completions_member_list_of_class_exact() {
     assert_eq!(
         names.len(),
         2,
-        "Expected exactly 2 completions (pubMeth, pubProp), got: {:?}",
-        names
+        "Expected exactly 2 completions (pubMeth, pubProp), got: {names:?}"
     );
     assert!(names.contains(&"pubMeth"), "Should suggest pubMeth");
     assert!(names.contains(&"pubProp"), "Should suggest pubProp");
