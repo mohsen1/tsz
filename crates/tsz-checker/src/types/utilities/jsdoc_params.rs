@@ -545,6 +545,25 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if `idx` or an ancestor has a leading JSDoc comment containing `@satisfies`.
+    ///
+    /// This is used by contextual typing code paths that need to treat inline JSDoc
+    /// wrappers like `/** @satisfies ... */ expr` as an explicit typing boundary.
+    pub(crate) fn has_satisfies_jsdoc_comment(&self, idx: NodeIndex) -> bool {
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        if let Some(jsdoc) = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text) {
+            return jsdoc.contains("@satisfies");
+        }
+
+        false
+    }
+
     /// Try to find a leading `JSDoc` comment before a given position.
     pub(crate) fn try_leading_jsdoc(
         &self,
