@@ -197,7 +197,7 @@ impl<'a> CheckerState<'a> {
 
             let prop_name = self.ctx.types.resolve_atom(prop.name);
 
-            // 'children' is now handled via jsx_children_info synthesis in
+            // 'children' is now handled via JsxChildrenContext synthesis in dispatch
             if provided_attrs.iter().any(|(a, _)| a == &prop_name) {
                 continue;
             }
