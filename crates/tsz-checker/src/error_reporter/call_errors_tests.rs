@@ -264,6 +264,37 @@ fn(true);
 }
 
 #[test]
+fn ts2345_single_arity_overload_mismatch_does_not_emit_ts2769() {
+    let source = r#"
+declare function fn(value: string): void;
+declare function fn(value: number, extra: number): void;
+fn(true);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2345),
+        "expected TS2345 for the single arity-compatible overload, got: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2769),
+        "should not emit TS2769 when only one overload survives arity filtering, got: {diagnostics:?}"
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+    let arg_start = source.find("true").expect("expected argument") as u32;
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2345 should anchor at the argument"
+    );
+    assert_eq!(diag.length, 4, "TS2345 should cover only the argument span");
+}
+
+#[test]
 fn ts2554_excess_argument_span_starts_at_first_excess_argument() {
     let source = r#"
 declare function takes(): void;
