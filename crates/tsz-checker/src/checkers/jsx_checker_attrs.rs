@@ -118,6 +118,20 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(ica_sym_id))
     }
 
+    pub(crate) fn get_intrinsic_class_attributes_type_for_component(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        let ica = self.get_intrinsic_class_attributes_lazy_type()?;
+        let inst = self.get_class_instance_type_for_component(component_type)?;
+        let app = self.ctx.types.factory().application(ica, vec![inst]);
+        let evaluated = self.evaluate_type_with_env(app);
+        if evaluated == TypeId::ANY || evaluated == TypeId::ERROR {
+            return None;
+        }
+        Some(app)
+    }
+
     /// Build pre-formatted display string for JSX TS2322 messages.
     /// Returns e.g. `IntrinsicAttributes & PropsType` with correct member order.
     pub(crate) fn build_jsx_display_target(
@@ -139,11 +153,10 @@ impl<'a> CheckerState<'a> {
             parts.push(self.format_type(ia));
         }
         if let Some(comp) = component_type
-            && let Some(ica) = self.get_intrinsic_class_attributes_lazy_type()
-            && let Some(inst) = self.get_class_instance_type_for_component(comp)
+            && let Some(intrinsic_class_attrs) =
+                self.get_intrinsic_class_attributes_type_for_component(comp)
         {
-            let app = self.ctx.types.factory().application(ica, vec![inst]);
-            parts.push(self.format_type(app));
+            parts.push(self.format_type(intrinsic_class_attrs));
         }
         // Skip empty object types (`{}`) in the display — tsc simplifies
         // `IntrinsicAttributes & {}` to just `IntrinsicAttributes`.
