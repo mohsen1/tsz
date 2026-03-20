@@ -207,6 +207,26 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_types(source_idx, target_idx, priority)?;
             }
 
+            // Preserve structure through keyof when inferring mapped/apparent relations.
+            // Without this, `<T>(x: { [K in keyof T]: T[K] })` matched against a
+            // concrete mapped type over `keyof U` falls back to `T = unknown`,
+            // which makes later assignability too permissive.
+            (Some(TypeData::KeyOf(source_inner)), Some(TypeData::KeyOf(target_inner))) => {
+                self.infer_from_types(source_inner, target_inner, priority)?;
+            }
+
+            // Mapped-to-mapped inference: walk both the key space and the template
+            // so generic source parameters can retain the target's apparent-member
+            // constraint. We intentionally do NOT infer from the templates here:
+            // inferring `T` from `T[K]` against `Obj[K]` would incorrectly add
+            // `T <: Obj`, collapsing array-constrained sources to plain objects.
+            (Some(TypeData::Mapped(source_mapped)), Some(TypeData::Mapped(target_mapped))) => {
+                let source_mapped = self.interner.mapped_type(source_mapped);
+                let target_mapped = self.interner.mapped_type(target_mapped);
+
+                self.infer_from_types(source_mapped.constraint, target_mapped.constraint, priority)?;
+            }
+
             // ReadonlyType: unwrap if both are readonly (e.g. readonly [T] vs readonly [number])
             (
                 Some(TypeData::ReadonlyType(source_inner)),

@@ -269,6 +269,46 @@ fn test_ts2322_return_alias_instantiation_mismatch() {
 }
 
 #[test]
+fn mapped_type_inference_from_apparent_type_reports_ts2322() {
+    let source = r#"
+type Obj = {
+    [s: string]: number;
+};
+
+type foo = <T>(target: { [K in keyof T]: T[K] }) => void;
+type bar = <U extends string[]>(source: { [K in keyof U]: Obj[K] }) => void;
+
+declare let f: foo;
+declare let b: bar;
+b = f;
+"#;
+
+    assert!(
+        has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "generic mapped assignment should preserve the apparent array constraint and report TS2322"
+    );
+}
+
+#[test]
+fn generic_function_identifier_argument_still_contextually_instantiates() {
+    let source = r#"
+declare function takesString(fn: (x: string) => string): void;
+declare function id<T>(x: T): T;
+takesString(id);
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let relevant: Vec<_> = diagnostics.iter().filter(|(code, _)| *code != 2318).collect();
+
+    assert!(
+        !relevant.iter().any(|(code, _)| {
+            *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        }),
+        "generic function identifiers should still use call-argument contextual instantiation, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_generator_yield_missing_value() {
     let source = r"
         interface IterableIterator<T> {}
