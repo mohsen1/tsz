@@ -187,6 +187,42 @@ pub(crate) struct PredicateSignature {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    fn flow_merge_member_subsumes(&self, candidate_super: TypeId, candidate_sub: TypeId) -> bool {
+        if candidate_super == candidate_sub {
+            return true;
+        }
+
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            return query::is_assignable_with_env(
+                self.interner,
+                &env,
+                candidate_sub,
+                candidate_super,
+                false,
+            );
+        }
+
+        query::is_assignable(self.interner, candidate_sub, candidate_super)
+    }
+
+    fn simplify_flow_merge_types(&self, types: Vec<TypeId>) -> Vec<TypeId> {
+        let mut simplified = Vec::with_capacity(types.len());
+        for ty in types {
+            if simplified
+                .iter()
+                .copied()
+                .any(|existing| self.flow_merge_member_subsumes(existing, ty))
+            {
+                continue;
+            }
+
+            simplified.retain(|&existing| !self.flow_merge_member_subsumes(ty, existing));
+            simplified.push(ty);
+        }
+        simplified
+    }
+
     /// Create a new `FlowAnalyzer`.
     pub fn new(
         arena: &'a NodeArena,
@@ -703,6 +739,8 @@ impl<'a> FlowAnalyzer<'a> {
         in_worklist.insert(flow_id);
         let step_budget = flow_step_budget(self.binder.flow_nodes.len());
         let mut steps = 0usize;
+        let mut cacheable_walk = true;
+        let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
 
         // Process worklist until empty
         while let Some((current_flow, current_type)) = worklist.pop_front() {
@@ -1111,6 +1149,10 @@ impl<'a> FlowAnalyzer<'a> {
                                 self.narrow_assignment(narrowing_base, assigned_type)
                             }
                         } else {
+                            // This walk is provisional: assignment typing has not been computed
+                            // for the RHS yet. Do not publish the declared-type result into the
+                            // shared flow cache or later reads will reuse a stale answer.
+                            cacheable_walk = false;
                             // If we can't resolve the RHS type, conservatively return declared type
                             // The value HAS changed, so we can't continue to antecedent
                             if self.is_await_assignment_for_reference(flow.node, reference) {
@@ -1379,6 +1421,7 @@ impl<'a> FlowAnalyzer<'a> {
                         types.push(t);
                     }
                 }
+                let types = self.simplify_flow_merge_types(types);
                 if types.len() == 1 {
                     types[0]
                 } else {
@@ -1415,6 +1458,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     all_ant_types
                 };
+                let ant_types = self.simplify_flow_merge_types(ant_types);
 
                 if ant_types.len() == 1 {
                     ant_types[0]
@@ -1435,17 +1479,24 @@ impl<'a> FlowAnalyzer<'a> {
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
             // Also skip caching UNREACHABLE_NEVER as it's an internal sentinel.
             if final_type != Self::UNREACHABLE_NEVER
+                && cacheable_walk
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
-                && let Some(cache) = self.flow_cache
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 
                 // Only cache if neither initial nor final types contain type parameters
                 if !initial_has_type_params && !final_has_type_params {
                     let key = (current_flow, cache_symbol, initial_type);
-                    cache.borrow_mut().insert(key, final_type);
+                    pending_cache_writes.push((key, final_type));
                 }
+            }
+        }
+
+        if cacheable_walk && let Some(cache) = self.flow_cache {
+            let mut cache = cache.borrow_mut();
+            for (key, value) in pending_cache_writes {
+                cache.insert(key, value);
             }
         }
 
