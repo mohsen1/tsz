@@ -108,6 +108,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 "evaluate_conditional"
             );
 
+            // PERF: Cache predicate results for extends_type once per iteration.
+            // type_contains_infer is called up to 5 times and contains_type_parameters
+            // at least once, each creating fresh FxHashSet/FxHashMap allocations.
+            let extends_has_infer = self.type_contains_infer(extends_type);
+            let extends_has_type_params =
+                crate::visitor::contains_type_parameters(self.interner(), extends_type);
+
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
             }
@@ -117,7 +124,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // When X contains infer patterns, perform infer pattern matching
                 // so the infer variables get bound to `any` and properly substituted.
                 // e.g., `any extends infer U ? U : never` → union(any, never) → any
-                if self.type_contains_infer(extends_type) {
+                if extends_has_infer {
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
                     let mut checker =
@@ -265,7 +272,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // try to infer from the constraint. This handles cases like:
                 // R extends Reducer<infer S, any> ? S : never
                 // where R is constrained to Reducer<any, any>
-                if self.type_contains_infer(extends_type)
+                if extends_has_infer
                     && let Some(constraint) = param.constraint
                 {
                     let mut checker =
@@ -342,7 +349,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // Only defer when extends_type has no infer patterns (those need pattern
             // matching first — Step 3 handles them with its own deferral logic).
-            if !self.type_contains_infer(extends_type)
+            if !extends_has_infer
                 && self.type_is_compound_generic(cond.check_type)
             {
                 return self.interner().conditional(*cond);
@@ -364,7 +371,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // We evaluate true/false types so the deferred conditional has
             // consistent types (enables Extract pattern recognition in the
             // subtype checker's get_conditional_constraint).
-            if !self.type_contains_infer(extends_type)
+            if !extends_has_infer
                 && matches!(
                     self.interner().lookup(check_type),
                     Some(TypeData::Conditional(_))
@@ -391,13 +398,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Step 3: Perform subtype check or infer pattern matching
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
-            checker.allow_bivariant_rest = true;
             // Reuse pre-allocated bindings/visited from outside the loop
             loop_bindings.clear();
             loop_visited.clear();
 
-            if self.type_contains_infer(extends_type) {
+            if extends_has_infer {
+                // PERF: Only allocate SubtypeChecker when infer matching is needed.
+                let mut checker =
+                    SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
                 if self.match_infer_pattern(
                     check_type,
                     extends_type,
@@ -569,7 +578,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
-            } else if crate::visitor::contains_type_parameters(self.interner(), extends_type)
+            } else if extends_has_type_params
                 // Also check if the evaluated check_type is a direct Lazy reference
                 // (or a union/intersection of Lazy refs). Type parameters in generic
                 // function bodies are Lazy(DefId) and contains_type_parameters doesn't
