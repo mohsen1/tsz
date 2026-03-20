@@ -624,9 +624,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check that overload signatures for a method agree on access modifiers (TS2385)
-    /// and optionality (TS2386). Called for method implementations that have overload
-    /// declarations.
+    /// Check that overload signatures for a method agree on optionality (TS2386).
+    ///
+    /// TS2385 is emitted from the duplicate-identifier pass, which has the full
+    /// declaration group and already serves as the canonical overload-modifier path.
+    /// Re-emitting it here duplicates diagnostics for class methods.
     pub(crate) fn check_overload_modifier_agreement(&mut self, impl_node_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_scanner::SyntaxKind;
@@ -664,70 +666,109 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2385: Check access modifier consistency
-        let get_access = |idx: NodeIndex| -> u8 {
-            let Some(node) = self.ctx.arena.get(idx) else {
-                return 0;
-            };
-            let modifiers = match node.kind {
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+        // TS2385: static method overloads still need the implementation-vs-overload
+        // agreement check here. Instance methods get their canonical TS2385s from the
+        // duplicate-identifier pass, and re-emitting them here duplicates diagnostics.
+        let impl_is_static = self
+            .ctx
+            .arena
+            .get(impl_node_idx)
+            .and_then(|node| self.ctx.arena.get_method_decl(node))
+            .and_then(|method| method.modifiers.as_ref())
+            .is_some_and(|mods| {
+                self.ctx
+                    .arena
+                    .has_modifier_ref(Some(mods), SyntaxKind::StaticKeyword)
+            });
+        if impl_is_static {
+            let get_access = |idx: NodeIndex| -> u8 {
+                let Some(node) = self.ctx.arena.get(idx) else {
+                    return 0;
+                };
+                let modifiers = match node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                        .ctx
+                        .arena
+                        .get_signature(node)
+                        .and_then(|s| s.modifiers.as_ref()),
+                    _ => None,
+                };
+                let Some(mods) = modifiers else {
+                    return 0;
+                };
+                if self
                     .ctx
                     .arena
-                    .get_method_decl(node)
-                    .and_then(|m| m.modifiers.as_ref()),
-                k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                    .has_modifier_ref(Some(mods), SyntaxKind::PrivateKeyword)
+                {
+                    1
+                } else if self
                     .ctx
                     .arena
-                    .get_signature(node)
-                    .and_then(|s| s.modifiers.as_ref()),
-                _ => None,
+                    .has_modifier_ref(Some(mods), SyntaxKind::ProtectedKeyword)
+                {
+                    2
+                } else {
+                    0
+                }
             };
-            let Some(mods) = modifiers else {
-                return 0;
-            };
-            if self
-                .ctx
-                .arena
-                .has_modifier_ref(Some(mods), SyntaxKind::PrivateKeyword)
-            {
-                1
-            } else if self
-                .ctx
-                .arena
-                .has_modifier_ref(Some(mods), SyntaxKind::ProtectedKeyword)
-            {
-                2
-            } else {
-                0
-            }
-        };
 
-        // Use implementation's access modifier as the canonical reference
-        let impl_access = get_access(impl_node_idx);
-        for &decl_idx in &overload_decls {
-            if decl_idx == impl_node_idx {
-                continue;
-            }
-            if get_access(decl_idx) != impl_access {
-                let error_node = self
+            let impl_access = get_access(impl_node_idx);
+            for &decl_idx in &overload_decls {
+                if decl_idx == impl_node_idx {
+                    continue;
+                }
+                let decl_is_static = self
                     .ctx
                     .arena
                     .get(decl_idx)
-                    .and_then(|n| match n.kind {
-                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                            self.ctx.arena.get_method_decl(n).map(|m| m.name)
-                        }
-                        k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                            self.ctx.arena.get_signature(n).map(|s| s.name)
-                        }
+                    .and_then(|node| match node.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(node)
+                            .and_then(|method| method.modifiers.as_ref()),
+                        k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                            .ctx
+                            .arena
+                            .get_signature(node)
+                            .and_then(|sig| sig.modifiers.as_ref()),
                         _ => None,
                     })
-                    .unwrap_or(decl_idx);
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
-                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
-                );
+                    .is_some_and(|mods| {
+                        self.ctx
+                            .arena
+                            .has_modifier_ref(Some(mods), SyntaxKind::StaticKeyword)
+                    });
+                if decl_is_static != impl_is_static {
+                    continue;
+                }
+                if get_access(decl_idx) != impl_access {
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|n| match n.kind {
+                            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                self.ctx.arena.get_method_decl(n).map(|m| m.name)
+                            }
+                            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                                self.ctx.arena.get_signature(n).map(|s| s.name)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(decl_idx);
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                        diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                    );
+                }
             }
         }
 
