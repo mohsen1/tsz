@@ -305,6 +305,10 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_lib_binders()
         };
+        let in_decorator_expr = self.is_in_decorator_expression(idx);
+        let decorator_owner = in_decorator_expr
+            .then(|| self.decorator_owner_declaration(idx))
+            .flatten();
         let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
         let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
 
@@ -325,8 +329,18 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if let Some(owner_idx) = decorator_owner
+                        && symbol.declarations.iter().any(|&decl_idx| {
+                            self.node_is_within_decorator_owner(decl_idx, owner_idx)
+                        })
+                    {
+                        return false;
+                    }
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
+                        if in_decorator_expr {
+                            return false;
+                        }
                         return is_from_lib(sym_id)
                             && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                     }
@@ -429,9 +443,19 @@ impl<'a> CheckerState<'a> {
                     if should_skip_lib_symbol(sym_id) {
                         return false;
                     }
+                    if let Some(owner_idx) = decorator_owner
+                        && symbol.declarations.iter().any(|&decl_idx| {
+                            self.node_is_within_decorator_owner(decl_idx, owner_idx)
+                        })
+                    {
+                        return false;
+                    }
 
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
+                        if in_decorator_expr {
+                            return false;
+                        }
                         return is_from_lib(sym_id)
                             && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                     }

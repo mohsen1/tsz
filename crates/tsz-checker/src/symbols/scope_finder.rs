@@ -10,6 +10,121 @@ use tsz_scanner::SyntaxKind;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Check whether a node appears inside a decorator expression.
+    ///
+    /// Decorators execute in the surrounding scope, not inside the class/member they
+    /// decorate, so bare identifier lookup from this region must not see class members.
+    pub(crate) fn is_in_decorator_expression(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::DECORATOR;
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == DECORATOR {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Return the declaration or class/member node that owns the nearest enclosing decorator.
+    ///
+    /// Decorator expressions execute before their owning declaration/class member is
+    /// created, so bare-name lookup from within the decorator must ignore declarations
+    /// nested inside this owner.
+    pub(crate) fn decorator_owner_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, DECORATOR, GET_ACCESSOR,
+            METHOD_DECLARATION, PARAMETER, PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == DECORATOR {
+                let mut owner = current;
+                let mut owner_iterations = 0;
+                while owner.is_some() {
+                    owner_iterations += 1;
+                    if owner_iterations > MAX_TREE_WALK_ITERATIONS {
+                        return None;
+                    }
+                    let ext = self.ctx.arena.get_extended(owner)?;
+                    if ext.parent.is_none() {
+                        return None;
+                    }
+                    owner = ext.parent;
+                    let node = self.ctx.arena.get(owner)?;
+                    if matches!(
+                        node.kind,
+                        k if k == CLASS_DECLARATION
+                            || k == CLASS_EXPRESSION
+                            || k == PROPERTY_DECLARATION
+                            || k == METHOD_DECLARATION
+                            || k == GET_ACCESSOR
+                            || k == SET_ACCESSOR
+                            || k == CONSTRUCTOR
+                            || k == PARAMETER
+                    ) {
+                        return Some(owner);
+                    }
+                }
+                return None;
+            }
+        }
+        None
+    }
+
+    pub(crate) fn node_is_within_decorator_owner(
+        &self,
+        idx: NodeIndex,
+        owner_idx: NodeIndex,
+    ) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            if current == owner_idx {
+                return true;
+            }
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     // =========================================================================
     // Function Enclosure
     // =========================================================================
