@@ -885,6 +885,10 @@ bitflags::bitflags! {
         /// Const enums have no runtime object, so Object.prototype members
         /// (constructor, hasOwnProperty, etc.) must not be accessible.
         const CONST_ENUM = 1 << 2;
+        /// This object represents an enum namespace type (`typeof E`).
+        /// Enum namespaces get implicit index signatures for inference and
+        /// subtype checking, unlike regular named interfaces/classes.
+        const ENUM_NAMESPACE = 1 << 3;
     }
 }
 

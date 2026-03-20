@@ -655,10 +655,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             None => {
                 // TypeScript only synthesizes an implicit numeric index signature
-                // for anonymous object types. Named interface/class instance types
-                // must declare a real number/string index signature to satisfy
-                // arbitrary numeric indexing.
-                if source.symbol.is_some() {
+                // for anonymous object types and enum namespaces. Named class/interface
+                // instance types must declare a real number/string index signature.
+                // Check if source is a named type that ISN'T an enum namespace.
+                if source.symbol.is_some() && !source.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
                     return SubtypeResult::False;
                 }
 

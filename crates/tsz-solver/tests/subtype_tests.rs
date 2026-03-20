@@ -26095,3 +26095,127 @@ fn test_plain_object_target_produces_missing_property() {
         "Expected MissingProperty for plain object target, got: {reason:?}"
     );
 }
+
+// =========================================================================
+// Enum namespace implicit index signature tests
+// =========================================================================
+
+#[test]
+fn test_enum_namespace_satisfies_string_index_target() {
+    // An enum namespace type (flagged with ENUM_NAMESPACE) should have an
+    // implicit string index signature derived from its property types.
+    // This matches tsc: `typeof E1` (numeric enum) is assignable to
+    // `{ [x: string]: T }` when all property types are compatible.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Source: enum namespace { A: number, B: number } with ENUM_NAMESPACE flag
+    let source = {
+        let shape = ObjectShape {
+            properties: vec![
+                PropertyInfo::new(interner.intern_string("A"), TypeId::NUMBER),
+                PropertyInfo::new(interner.intern_string("B"), TypeId::NUMBER),
+            ],
+            flags: ObjectFlags::ENUM_NAMESPACE,
+            symbol: Some(SymbolId(100)),
+            ..Default::default()
+        };
+        interner.object_with_index(shape)
+    };
+
+    // Target: { [x: string]: number }
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    // Enum namespace should satisfy string index target via implicit index
+    assert!(
+        checker.is_subtype_of(source, target),
+        "Enum namespace with all-number properties should satisfy {{ [x: string]: number }}"
+    );
+}
+
+#[test]
+fn test_enum_namespace_rejects_incompatible_string_index() {
+    // When enum namespace has mixed types, it should NOT satisfy a specific
+    // string index target.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Source: enum namespace { A: number, B: string } with ENUM_NAMESPACE flag
+    let source = {
+        let shape = ObjectShape {
+            properties: vec![
+                PropertyInfo::new(interner.intern_string("A"), TypeId::NUMBER),
+                PropertyInfo::new(interner.intern_string("B"), TypeId::STRING),
+            ],
+            flags: ObjectFlags::ENUM_NAMESPACE,
+            symbol: Some(SymbolId(101)),
+            ..Default::default()
+        };
+        interner.object_with_index(shape)
+    };
+
+    // Target: { [x: string]: number } — string property B is incompatible
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Enum namespace with mixed types should NOT satisfy {{ [x: string]: number }}"
+    );
+}
+
+#[test]
+fn test_regular_named_object_still_rejects_number_index() {
+    // Named objects without ENUM_NAMESPACE flag should still reject
+    // implicit number index signatures (existing behavior preserved).
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(
+            interner.intern_string("one"),
+            TypeId::NUMBER,
+        )],
+        ObjectFlags::empty(),
+        Some(SymbolId(1)),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        string_index: None,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Regular named object (no ENUM_NAMESPACE flag) should NOT satisfy number index target"
+    );
+}
