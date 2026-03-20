@@ -136,6 +136,10 @@ name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
 
 [[test]]
+name = "commonjs_require_value_tests"
+path = "tests/commonjs_require_value_tests.rs"
+
+[[test]]
 name = "speculation_rollback_tests"
 path = "tests/speculation_rollback_tests.rs"
 
