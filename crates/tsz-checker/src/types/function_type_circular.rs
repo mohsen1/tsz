@@ -135,10 +135,10 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        if let Some(init_sym) = self.ctx.binder.get_node_symbol(init_idx) {
-            if has_circular_return_in_all_paths(init_sym) {
-                return true;
-            }
+        if let Some(init_sym) = self.ctx.binder.get_node_symbol(init_idx)
+            && has_circular_return_in_all_paths(init_sym)
+        {
+            return true;
         }
 
         has_circular_return_in_all_paths(function_sym)
@@ -304,14 +304,6 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-            syntax_kind_ext::FUNCTION_DECLARATION
-            | syntax_kind_ext::FUNCTION_EXPRESSION
-            | syntax_kind_ext::ARROW_FUNCTION
-            | syntax_kind_ext::METHOD_DECLARATION
-            | syntax_kind_ext::GET_ACCESSOR
-            | syntax_kind_ext::SET_ACCESSOR
-            | syntax_kind_ext::CLASS_DECLARATION
-            | syntax_kind_ext::CLASS_EXPRESSION => {}
             _ => {}
         }
     }
