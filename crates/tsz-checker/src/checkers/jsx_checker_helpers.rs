@@ -14,6 +14,16 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn compute_normalized_jsx_spread_type_with_request(
+        &mut self,
+        spread_expr_idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let spread_type = self.compute_type_of_node_with_request(spread_expr_idx, request);
+        let spread_type = self.evaluate_type_with_env(spread_type);
+        self.resolve_type_for_property_access(spread_type)
+    }
+
     pub(super) fn build_jsx_provided_attrs_object_type(
         &mut self,
         provided_attrs: &[(String, TypeId)],
