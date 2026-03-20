@@ -29,6 +29,116 @@ impl ForOfProtocolRole {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_for_of_header_expression_symbol(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
+        let mut current = idx;
+
+        while current.is_some() {
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            let parent = ext.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
+                && for_data.expression == current
+            {
+                let list_node = self.ctx.arena.get(for_data.initializer)?;
+                if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    return None;
+                }
+                let list = self.ctx.arena.get_variable(list_node)?;
+                for &decl_idx in &list.declarations.nodes {
+                    let decl_node = match self.ctx.arena.get(decl_idx) {
+                        Some(node) => node,
+                        None => continue,
+                    };
+                    let var_decl = match self.ctx.arena.get_variable_declaration(decl_node) {
+                        Some(decl) => decl,
+                        None => continue,
+                    };
+                    let name_node = match self.ctx.arena.get(var_decl.name) {
+                        Some(node) => node,
+                        None => continue,
+                    };
+                    if name_node.kind != SyntaxKind::Identifier as u16 {
+                        continue;
+                    }
+                    let ident = match self.ctx.arena.get_identifier(name_node) {
+                        Some(ident) => ident,
+                        None => continue,
+                    };
+                    if ident.escaped_text.as_str() != name {
+                        continue;
+                    }
+                    return self
+                        .ctx
+                        .binder
+                        .get_node_symbol(decl_idx)
+                        .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
+                        .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
+                }
+                return None;
+            }
+            current = parent;
+        }
+
+        None
+    }
+
+    pub(crate) fn is_in_for_of_header_expression_of_declaration(
+        &self,
+        usage_idx: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_info) = self.ctx.arena.node_info(decl_idx) else {
+            return false;
+        };
+        let decl_list_idx = decl_info.parent;
+        let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) else {
+            return false;
+        };
+        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        let Some(for_info) = self.ctx.arena.node_info(decl_list_idx) else {
+            return false;
+        };
+        let for_idx = for_info.parent;
+        let Some(for_node) = self.ctx.arena.get(for_idx) else {
+            return false;
+        };
+        if for_node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
+            return false;
+        }
+        let Some(for_data) = self.ctx.arena.get_for_in_of(for_node) else {
+            return false;
+        };
+
+        let mut current = usage_idx;
+        while current.is_some() {
+            if current == for_data.expression {
+                return true;
+            }
+            if current == for_idx {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+
+        false
+    }
+
     pub(crate) fn is_deferred_object_like_for_in(&mut self, expr_type: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
 
@@ -576,10 +686,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decl_list_idx: NodeIndex,
     ) -> usize {
-        if !self.ctx.no_implicit_any() {
-            return 0;
-        }
-
         let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
             return 0;
         };
@@ -604,7 +710,8 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_node_symbol(decl_idx)
-                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name));
+                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
             let Some(sym_id) = sym_id else {
                 continue;
             };
@@ -651,10 +758,6 @@ impl<'a> CheckerState<'a> {
         decl_list_idx: NodeIndex,
         expression_idx: NodeIndex,
     ) {
-        if !self.ctx.no_implicit_any() {
-            return;
-        }
-
         let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
             return;
         };
@@ -680,11 +783,14 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_node_symbol(decl_idx)
-                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name));
+                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, var_decl.name));
             let Some(sym_id) = sym_id else {
                 continue;
             };
 
+            // Get the variable name for the diagnostic
+            let var_name = self.get_identifier_text_from_idx(var_decl.name);
             let mut circular_return_sites = self.take_pending_circular_return_sites(sym_id);
             for site_idx in
                 self.collect_for_of_protocol_circular_return_sites(expression_idx, sym_id)
@@ -694,12 +800,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let has_direct_reference = self.expression_references_symbol(expression_idx, sym_id);
-            if circular_return_sites.is_empty() && !has_direct_reference {
+            let has_name_reference = var_name.as_ref().is_some_and(|name| {
+                self.expression_references_identifier_name(expression_idx, name)
+            });
+            if circular_return_sites.is_empty() && !has_direct_reference && !has_name_reference {
                 continue;
             }
-
-            // Get the variable name for the diagnostic
-            let var_name = self.get_identifier_text_from_idx(var_decl.name);
 
             if let Some(name) = var_name {
                 use crate::diagnostics::diagnostic_codes;
@@ -774,10 +880,8 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self
-                .ctx
-                .binder
-                .get_node_symbol(expr_idx)
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx));
+                .resolve_for_of_header_expression_symbol(expr_idx)
+                .or_else(|| self.resolve_identifier_symbol_without_tracking(expr_idx));
             if let Some(sym_id) = sym_id {
                 self.collect_for_of_protocol_sites_from_symbol(
                     sym_id,
@@ -1315,10 +1419,8 @@ impl<'a> CheckerState<'a> {
         // Check if this node is an identifier referencing the target symbol
         if node.kind == SyntaxKind::Identifier as u16 {
             let ref_sym = self
-                .ctx
-                .binder
-                .get_node_symbol(node_idx)
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx));
+                .resolve_for_of_header_expression_symbol(node_idx)
+                .or_else(|| self.resolve_identifier_symbol_without_tracking(node_idx));
             if ref_sym == Some(target_sym) {
                 return true;
             }
@@ -1341,6 +1443,44 @@ impl<'a> CheckerState<'a> {
         // Recurse into children
         for child_idx in self.ctx.arena.get_children(node_idx) {
             if self.expression_references_symbol(child_idx, target_sym) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn expression_references_identifier_name(&self, node_idx: NodeIndex, target_name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16
+            && self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text.as_str() == target_name)
+        {
+            return true;
+        }
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.expression_references_identifier_name(child_idx, target_name) {
                 return true;
             }
         }

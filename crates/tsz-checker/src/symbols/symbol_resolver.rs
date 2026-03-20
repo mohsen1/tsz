@@ -292,6 +292,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
+        if let Some(sym_id) = self.resolve_for_of_header_expression_symbol(idx) {
+            return Some(sym_id);
+        }
+
         // Get identifier name for tracing
         let ident_name = self
             .ctx

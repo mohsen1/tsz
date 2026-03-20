@@ -7808,6 +7808,31 @@ for (var v of new MyIterator()) {}
     );
 }
 
+#[test]
+fn test_ts2448_and_ts7022_emitted_for_for_of_header_shadowing_self_reference() {
+    let opts = CheckerOptions {
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+let v = [1];
+for (let v of v) {
+    v;
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 2448),
+        "Should emit TS2448 when a for-of header expression reads the loop binding in its own TDZ.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 when a for-of header expression circularly infers the loop binding.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
 // From: typeSatisfaction_asConstArrays.ts
 
