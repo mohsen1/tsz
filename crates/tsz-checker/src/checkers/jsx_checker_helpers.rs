@@ -5,7 +5,9 @@
 //! generic SFC spread checking.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::common::PropertyAccessResult;
+use crate::query_boundaries::common::{
+    PropertyAccessResult, array_element_type, tuple_elements, unwrap_readonly,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -88,6 +90,73 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
+    }
+
+    pub(crate) fn normalize_jsx_spread_child_type(
+        &mut self,
+        spread_child_idx: NodeIndex,
+        spread_type: TypeId,
+    ) -> TypeId {
+        let spread_type = self.evaluate_type_with_env(spread_type);
+        let spread_type = unwrap_readonly(self.ctx.types, spread_type);
+
+        if matches!(spread_type, TypeId::ANY | TypeId::ERROR) {
+            return TypeId::ANY;
+        }
+
+        if let Some(element_type) = array_element_type(self.ctx.types, spread_type) {
+            return self.evaluate_type_with_env(element_type);
+        }
+
+        if let Some(elements) = tuple_elements(self.ctx.types, spread_type) {
+            let element_types: Vec<TypeId> = elements.iter().map(|elem| elem.type_id).collect();
+            return match element_types.as_slice() {
+                [] => TypeId::NEVER,
+                [element_type] => self.evaluate_type_with_env(*element_type),
+                _ => self.ctx.types.factory().union(element_types),
+            };
+        }
+
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, spread_type)
+        {
+            let mut element_types = Vec::with_capacity(members.len());
+            for &member in &members {
+                let member = unwrap_readonly(self.ctx.types, self.evaluate_type_with_env(member));
+                if matches!(member, TypeId::ANY | TypeId::ERROR) {
+                    return TypeId::ANY;
+                }
+                if let Some(element_type) = array_element_type(self.ctx.types, member) {
+                    element_types.push(self.evaluate_type_with_env(element_type));
+                    continue;
+                }
+                if let Some(elements) = tuple_elements(self.ctx.types, member) {
+                    element_types.extend(elements.iter().map(|elem| elem.type_id));
+                    continue;
+                }
+
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    spread_child_idx,
+                    diagnostic_messages::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE,
+                    diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE,
+                );
+                return TypeId::ANY;
+            }
+
+            return match element_types.as_slice() {
+                [] => TypeId::NEVER,
+                [element_type] => self.evaluate_type_with_env(*element_type),
+                _ => self.ctx.types.factory().union(element_types),
+            };
+        }
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.error_at_node(
+            spread_child_idx,
+            diagnostic_messages::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE,
+        );
+        TypeId::ANY
     }
 
     pub(super) fn normalize_jsx_required_props_target(&mut self, props_type: TypeId) -> TypeId {
