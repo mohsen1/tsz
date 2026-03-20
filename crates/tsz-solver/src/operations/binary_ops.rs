@@ -164,6 +164,11 @@ impl<'a> TypeVisitor for InstanceofLeftOperandVisitor<'a> {
     fn visit_application(&mut self, _app_id: u32) -> bool {
         true
     }
+    fn visit_lazy(&mut self, _def_id: u32) -> bool {
+        // Lazy types represent interfaces/classes which are object types —
+        // valid left operands for instanceof.
+        true
+    }
     fn visit_readonly_type(&mut self, _type_id: TypeId) -> bool {
         true
     }
