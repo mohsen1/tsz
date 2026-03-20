@@ -3,7 +3,7 @@ use crate::query_boundaries::common::object_shape_for_type;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -629,6 +629,88 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Check if the export default expression contains an identifier that is an
+    /// import alias from the same file (self-import). This indicates genuine
+    /// circular self-reference for TS7022 purposes.
+    ///
+    /// Example: in `QSpinner.js`, `import DefaultSpinner from './QSpinner'`
+    /// followed by `export default { mixins: [DefaultSpinner] }` is self-referential.
+    fn expression_has_self_file_import(&self, node_idx: NodeIndex) -> bool {
+        let file_stem = self.current_file_stem();
+        self.expression_has_self_file_import_inner(node_idx, &file_stem)
+    }
+
+    /// Extract the file stem (base name without extension) from the current file.
+    fn current_file_stem(&self) -> String {
+        let file_name = &self.ctx.file_name;
+        let base = file_name.rsplit('/').next().unwrap_or(file_name);
+        // Also handle Windows path separators
+        let base = base.rsplit('\\').next().unwrap_or(base);
+        for ext in &[
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+            ".mjs", ".cjs",
+        ] {
+            if let Some(stem) = base.strip_suffix(ext) {
+                return stem.to_string();
+            }
+        }
+        base.to_string()
+    }
+
+    fn expression_has_self_file_import_inner(&self, node_idx: NodeIndex, file_stem: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check if this identifier references an import alias from the same file.
+        // NOTE: We look up by identifier text in file_locals rather than using
+        // get_node_symbol/resolve_identifier, because the binder may resolve
+        // import aliases to their target symbols (e.g., DefaultSpinner → default
+        // export symbol), losing the import_module information we need.
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                let ident_text = &ident.escaped_text;
+                if let Some(local_sym_id) = self.ctx.binder.file_locals.get(ident_text) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
+                        && symbol.flags & symbol_flags::ALIAS != 0
+                        && let Some(ref import_module) = symbol.import_module
+                    {
+                        let last_segment =
+                            import_module.rsplit('/').next().unwrap_or(import_module);
+                        if last_segment == file_stem {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Stop at deferred boundaries — self-references inside these are benign
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
+        }
+
+        // Recurse into children
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.expression_has_self_file_import_inner(child_idx, file_stem) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(super) fn compute_local_export_value_wrapper_type(
         &mut self,
         sym_id: SymbolId,
@@ -642,10 +724,22 @@ impl<'a> CheckerState<'a> {
         {
             let snap = self.ctx.snapshot_diagnostics();
             let wrapped_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
-            let sym_cached_as_error = self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
+            // Detect genuine circular self-reference for TS7022.
+            //
+            // We're inside compute_type_of_symbol, which always sets an ERROR
+            // placeholder for non-named-entity symbols before computing. This means
+            // `sym_cached_as_error` is unreliable (always true). Instead, check
+            // whether the expression contains an identifier that imports from the
+            // same file — the defining characteristic of a self-referential export
+            // default (e.g., `import X from './SameFile'; export default { x: X }`).
+            //
+            // This avoids false-positive TS7022 for:
+            //   - Type-only exports: `export default InterfaceName`
+            //   - Non-circular imports: `export default wrapClass(0)`
+            //   - Ambient declarations: `export default 2 + 2` in .d.ts
             if self.ctx.no_implicit_any()
-                && sym_cached_as_error
+                && self.expression_has_self_file_import(expr_idx)
                 && !self.default_export_expression_is_directly_deferred(expr_idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
