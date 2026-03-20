@@ -295,6 +295,51 @@ fn(true);
 }
 
 #[test]
+fn ts2769_multiple_arity_compatible_mismatches_stay_overload_errors() {
+    let source = r#"
+declare function fn(value: 1): void;
+declare function fn<T extends 1>(value: T): void;
+fn(2);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2769),
+        "expected TS2769 when multiple arity-compatible overloads fail, got: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2345),
+        "should not collapse multiple arity-compatible overload failures to TS2345, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2769_array_best_common_type_keeps_nullable_member() {
+    let source = r#"
+class Box {
+    take(value: boolean): number;
+    take(value: string): number;
+    take(value: number): number;
+    take(value: any): any { return value; }
+}
+
+<number>(new Box().take([4, 2, undefined][0]));
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2769),
+        "expected TS2769 when array BCT preserves undefined, got: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2345),
+        "multi-overload nullable mismatch should stay TS2769, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts2554_excess_argument_span_starts_at_first_excess_argument() {
     let source = r#"
 declare function takes(): void;

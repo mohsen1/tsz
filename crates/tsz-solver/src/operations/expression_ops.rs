@@ -505,6 +505,21 @@ pub fn compute_best_common_type<R: TypeResolver>(
         }
     }
 
+    // Preserve nullish members in best-common-type results. The subtype-based
+    // tournament below can otherwise collapse `[T, undefined]` to `T`
+    // (and `[T, null]` to `T`), which masks strict-null and overload failures
+    // that should still see the nullable member.
+    let has_nullable_member = widened.iter().copied().any(|ty| {
+        ty.is_nullable() || crate::narrowing::remove_nullish(interner, ty) != ty
+    });
+    let has_non_nullable_member = widened.iter().copied().any(|ty| {
+        let non_nullish = crate::narrowing::remove_nullish(interner, ty);
+        non_nullish != TypeId::NEVER
+    });
+    if has_nullable_member && has_non_nullable_member {
+        return interner.union(widened);
+    }
+
     // Step 2: Find the best common type from the candidate types
     // TypeScript rule: The best common type must be one of the input types
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)

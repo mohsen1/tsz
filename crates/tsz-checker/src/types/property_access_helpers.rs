@@ -959,11 +959,103 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         property_name: &str,
     ) -> Option<TypeId> {
-        if property_name != "apply" {
+        if !matches!(property_name, "apply" | "bind" | "call") {
             return None;
         }
 
-        let factory = self.ctx.types.factory();
+        fn method_this_arg_type(
+            sig: &tsz_solver::CallSignature,
+            is_constructor: bool,
+            receiver_this_type: Option<TypeId>,
+        ) -> TypeId {
+            if is_constructor {
+                sig.return_type
+            } else if sig.this_type.is_some() {
+                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+            } else {
+                TypeId::ANY
+            }
+        }
+
+        fn bind_this_arg_type(
+            sig: &tsz_solver::CallSignature,
+            is_constructor: bool,
+            receiver_this_type: Option<TypeId>,
+        ) -> TypeId {
+            if is_constructor {
+                TypeId::ANY
+            } else if sig.this_type.is_some() {
+                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+            } else {
+                TypeId::ANY
+            }
+        }
+
+        fn signature_to_call_signature(
+            shape: &tsz_solver::FunctionShape,
+        ) -> tsz_solver::CallSignature {
+            tsz_solver::CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate.clone(),
+                is_method: shape.is_method,
+            }
+        }
+
+        fn signature_params_as_tuple(
+            factory: tsz_solver::TypeFactory<'_>,
+            params: &[tsz_solver::ParamInfo],
+        ) -> TypeId {
+            let tuple_elements: Vec<tsz_solver::TupleElement> = params
+                .iter()
+                .map(|param| tsz_solver::TupleElement {
+                    type_id: param.type_id,
+                    name: param.name,
+                    optional: param.optional && !param.rest,
+                    rest: param.rest,
+                })
+                .collect();
+            factory.tuple(tuple_elements)
+        }
+
+        fn bound_callable_return_type(
+            factory: tsz_solver::TypeFactory<'_>,
+            sig: &tsz_solver::CallSignature,
+            remaining_params: Vec<tsz_solver::ParamInfo>,
+            is_constructor: bool,
+        ) -> TypeId {
+            if is_constructor {
+                return factory.callable(tsz_solver::CallableShape {
+                    call_signatures: Vec::new(),
+                    construct_signatures: vec![tsz_solver::CallSignature {
+                        type_params: sig.type_params.clone(),
+                        params: remaining_params,
+                        this_type: None,
+                        return_type: sig.return_type,
+                        type_predicate: None,
+                        is_method: false,
+                    }],
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                });
+            }
+
+            factory.function(tsz_solver::FunctionShape {
+                type_params: sig.type_params.clone(),
+                params: remaining_params,
+                this_type: None,
+                return_type: sig.return_type,
+                type_predicate: sig.type_predicate.clone(),
+                is_constructor: false,
+                is_method: false,
+            })
+        }
+
         let mut candidates = vec![object_type];
         if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
             let sym_type = self.get_type_of_symbol(sym_id);
@@ -972,59 +1064,203 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut resolved_shape = None;
+        let receiver_this_type = self
+            .ctx
+            .arena
+            .get(object_expr_idx)
+            .and_then(|node| self.ctx.arena.get_access_expr(node))
+            .map(|access| self.get_type_of_node(access.expression))
+            .filter(|ty| *ty != TypeId::ERROR);
+
+        let mut call_targets = Vec::new();
+        let mut construct_targets = Vec::new();
         for candidate in candidates {
             if let Some(shape) =
                 crate::query_boundaries::property_access::function_shape(self.ctx.types, candidate)
             {
-                resolved_shape = Some((shape.params.clone(), shape.return_type));
-                break;
+                let sig = signature_to_call_signature(&shape);
+                if !call_targets.contains(&sig) {
+                    call_targets.push(sig);
+                }
             }
+
             if let Some(shape) =
                 crate::query_boundaries::property_access::callable_shape(self.ctx.types, candidate)
-                && let Some(sig) = shape.call_signatures.first()
             {
-                resolved_shape = Some((sig.params.clone(), sig.return_type));
-                break;
+                for sig in &shape.call_signatures {
+                    if !call_targets.contains(sig) {
+                        call_targets.push(sig.clone());
+                    }
+                }
+                for sig in &shape.construct_signatures {
+                    if !construct_targets.contains(sig) {
+                        construct_targets.push(sig.clone());
+                    }
+                }
             }
         }
 
-        let (params, return_type) = resolved_shape?;
+        let factory = self.ctx.types.factory();
+        let mut method_signatures = Vec::new();
 
-        let tuple_elements: Vec<tsz_solver::TupleElement> = params
+        for (sig, is_constructor) in call_targets
             .iter()
-            .map(|param| tsz_solver::TupleElement {
-                type_id: param.type_id,
-                name: param.name,
-                optional: param.optional && !param.rest,
-                rest: param.rest,
-            })
-            .collect();
-        let args_tuple = factory.tuple(tuple_elements);
-        let method_shape = tsz_solver::FunctionShape {
-            params: vec![
-                tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string("thisArg")),
-                    type_id: TypeId::ANY,
-                    optional: false,
-                    rest: false,
-                },
-                tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string("args")),
-                    type_id: args_tuple,
-                    optional: true,
-                    rest: false,
-                },
-            ],
-            this_type: None,
-            return_type,
-            type_params: vec![],
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        };
+            .map(|sig| (sig, false))
+            .chain(construct_targets.iter().map(|sig| (sig, true)))
+        {
+            match property_name {
+                "apply" => {
+                    let method_sig = tsz_solver::CallSignature {
+                        type_params: sig.type_params.clone(),
+                        params: vec![
+                            tsz_solver::ParamInfo {
+                                name: Some(self.ctx.types.intern_string("thisArg")),
+                                type_id: method_this_arg_type(
+                                    sig,
+                                    is_constructor,
+                                    receiver_this_type,
+                                ),
+                                optional: false,
+                                rest: false,
+                            },
+                            tsz_solver::ParamInfo {
+                                name: Some(self.ctx.types.intern_string("args")),
+                                type_id: signature_params_as_tuple(factory, &sig.params),
+                                optional: true,
+                                rest: false,
+                            },
+                        ],
+                        this_type: None,
+                        return_type: if is_constructor {
+                            TypeId::VOID
+                        } else {
+                            sig.return_type
+                        },
+                        type_predicate: None,
+                        is_method: false,
+                    };
+                    if !method_signatures.contains(&method_sig) {
+                        method_signatures.push(method_sig);
+                    }
+                }
+                "call" => {
+                    let mut params = Vec::with_capacity(1 + sig.params.len());
+                    params.push(tsz_solver::ParamInfo {
+                        name: Some(self.ctx.types.intern_string("thisArg")),
+                        type_id: method_this_arg_type(sig, is_constructor, receiver_this_type),
+                        optional: false,
+                        rest: false,
+                    });
+                    params.extend(sig.params.clone());
 
-        Some(factory.function(method_shape))
+                    let method_sig = tsz_solver::CallSignature {
+                        type_params: sig.type_params.clone(),
+                        params,
+                        this_type: None,
+                        return_type: if is_constructor {
+                            TypeId::VOID
+                        } else {
+                            sig.return_type
+                        },
+                        type_predicate: None,
+                        is_method: false,
+                    };
+                    if !method_signatures.contains(&method_sig) {
+                        method_signatures.push(method_sig);
+                    }
+                }
+                "bind" => {
+                    let fixed_prefix_count = sig.params.iter().take_while(|param| !param.rest).count();
+                    for prefix_len in 0..=fixed_prefix_count {
+                        let this_arg_type =
+                            bind_this_arg_type(sig, is_constructor, receiver_this_type);
+                        let mut params = Vec::with_capacity(1 + prefix_len);
+                        params.push(tsz_solver::ParamInfo {
+                            name: Some(self.ctx.types.intern_string("thisArg")),
+                            type_id: this_arg_type,
+                            optional: false,
+                            rest: false,
+                        });
+                        params.extend(sig.params.iter().take(prefix_len).cloned());
+
+                        let remaining_params = sig.params.iter().skip(prefix_len).cloned().collect();
+                        let method_sig = tsz_solver::CallSignature {
+                            type_params: sig.type_params.clone(),
+                            params,
+                            this_type: None,
+                            return_type: bound_callable_return_type(
+                                factory,
+                                sig,
+                                remaining_params,
+                                is_constructor,
+                            ),
+                            type_predicate: None,
+                            is_method: false,
+                        };
+                        if !method_signatures.contains(&method_sig) {
+                            method_signatures.push(method_sig);
+                        }
+
+                        if prefix_len == 0 && sig.this_type.is_some() && !is_constructor {
+                            let generic_this_param = tsz_solver::TypeParamInfo {
+                                name: self.ctx.types.intern_string("TThis"),
+                                constraint: Some(this_arg_type),
+                                default: None,
+                                is_const: false,
+                            };
+                            let generic_this_type = factory.type_param(generic_this_param.clone());
+                            let generic_bind_sig = tsz_solver::CallSignature {
+                                type_params: std::iter::once(generic_this_param)
+                                    .chain(sig.type_params.clone().into_iter())
+                                    .collect(),
+                                params: vec![tsz_solver::ParamInfo {
+                                    name: Some(self.ctx.types.intern_string("thisArg")),
+                                    type_id: generic_this_type,
+                                    optional: false,
+                                    rest: false,
+                                }],
+                                this_type: None,
+                                return_type: bound_callable_return_type(
+                                    factory,
+                                    sig,
+                                    sig.params.clone(),
+                                    is_constructor,
+                                ),
+                                type_predicate: None,
+                                is_method: false,
+                            };
+                            if !method_signatures.contains(&generic_bind_sig) {
+                                method_signatures.push(generic_bind_sig);
+                            }
+
+                        }
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        match method_signatures.len() {
+            0 => None,
+            1 => Some(factory.function(tsz_solver::FunctionShape {
+                type_params: method_signatures[0].type_params.clone(),
+                params: method_signatures[0].params.clone(),
+                this_type: None,
+                return_type: method_signatures[0].return_type,
+                type_predicate: method_signatures[0].type_predicate.clone(),
+                is_constructor: false,
+                is_method: false,
+            })),
+            _ => Some(factory.callable(tsz_solver::CallableShape {
+                call_signatures: method_signatures,
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            })),
+        }
     }
 
     /// Emit TS1470 if `import.meta` appears in a file that builds to CommonJS output.

@@ -2053,8 +2053,6 @@ impl<'a> CheckerState<'a> {
         let mut min_expected = usize::MAX;
         let mut max_expected = 0usize;
         let mut type_mismatch_count = 0usize;
-        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
-        let mut all_mismatches_identical = true;
         let mut has_non_count_non_type_failure = false;
         let mut best_type_mismatch: Option<(OverloadResolution, FxHashMap<u32, TypeId>)> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
@@ -2252,7 +2250,6 @@ impl<'a> CheckerState<'a> {
                     {
                         type_mismatch_count += 1;
                         if type_mismatch_count == 1 {
-                            first_type_mismatch = Some((index, expected, actual));
                             best_type_mismatch = Some((
                                 OverloadResolution {
                                     arg_types: sig_arg_types.clone(),
@@ -2265,8 +2262,6 @@ impl<'a> CheckerState<'a> {
                                 },
                                 std::mem::take(&mut self.ctx.node_types),
                             ));
-                        } else if first_type_mismatch != Some((index, expected, actual)) {
-                            all_mismatches_identical = false;
                         }
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
@@ -2339,8 +2334,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !has_non_count_non_type_failure
-            && type_mismatch_count > 0
-            && all_mismatches_identical
+            && type_mismatch_count == 1
             && let Some((best_type_mismatch, sig_node_types)) = best_type_mismatch
         {
             self.ctx
