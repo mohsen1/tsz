@@ -253,6 +253,29 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
+    /// Check whether a mapped template actually depends on the source object's
+    /// indexed member type `source_obj[K]`. Array/tuple preservation is only
+    /// valid for these homomorphic-style templates; unrelated templates like
+    /// `Obj[K]` must degrade to ordinary object expansion.
+    fn mapped_template_uses_source_index(
+        interner: &dyn TypeDatabase,
+        template: TypeId,
+        source_obj: TypeId,
+        param_name: Atom,
+    ) -> bool {
+        crate::visitor::collect_all_types(interner, template)
+            .into_iter()
+            .any(|candidate| match interner.lookup(candidate) {
+                Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
+                    matches!(
+                        interner.lookup(idx),
+                        Some(TypeData::TypeParameter(info)) if info.name == param_name
+                    )
+                }
+                _ => false,
+            })
+    }
+
     /// Instantiate a slice of properties by substituting type IDs.
     fn instantiate_properties(&mut self, properties: &[PropertyInfo]) -> Vec<PropertyInfo> {
         properties
@@ -793,11 +816,23 @@ impl<'a> TypeInstantiator<'a> {
                 // This must be done BEFORE standard instantiation because instantiating
                 // `keyof T` eagerly evaluates it to a flat union, losing the homomorphic
                 // structure needed for array/tuple preservation.
-                if mapped.name_type.is_none()
+                let has_identity_name_type = mapped.name_type.is_some_and(|name_type| {
+                    matches!(
+                        self.interner.lookup(name_type),
+                        Some(TypeData::TypeParameter(info)) if info.name == mapped.type_param.name
+                    )
+                });
+                if (mapped.name_type.is_none() || has_identity_name_type)
                     && let Some(TypeData::KeyOf(keyof_source)) =
                         self.interner.lookup(mapped.constraint)
                     && let Some(TypeData::TypeParameter(tp_info)) =
                         self.interner.lookup(keyof_source)
+                    && Self::mapped_template_uses_source_index(
+                        self.interner,
+                        mapped.template,
+                        keyof_source,
+                        mapped.type_param.name,
+                    )
                     && !self.is_shadowed(tp_info.name)
                     && let Some(substituted) = self.substitution.get(tp_info.name)
                 {

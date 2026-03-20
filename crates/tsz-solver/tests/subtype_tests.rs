@@ -258,6 +258,104 @@ fn test_apparent_string_member_subtyping() {
 }
 
 #[test]
+fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let obj = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let t_key = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(t_type)),
+        default: None,
+        is_const: false,
+    };
+    let t_key_type = interner.type_param(t_key);
+    let foo_param_type = interner.mapped(MappedType {
+        type_param: t_key,
+        constraint: interner.keyof(t_type),
+        name_type: None,
+        template: interner.index_access(t_type, t_key_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let foo = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("target")),
+            type_id: foo_param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![t_param],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(interner.array(TypeId::STRING)),
+        default: None,
+        is_const: false,
+    };
+    let u_type = interner.type_param(u_param);
+    let u_key = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(u_type)),
+        default: None,
+        is_const: false,
+    };
+    let u_key_type = interner.type_param(u_key);
+    let bar_param_type = interner.mapped(MappedType {
+        type_param: u_key,
+        constraint: interner.keyof(u_type),
+        name_type: None,
+        template: interner.index_access(obj, u_key_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let bar = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("source")),
+            type_id: bar_param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![u_param],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(
+        !checker.is_subtype_of(foo, bar),
+        "target constraint must remain visible so mapped apparent members stay incompatible"
+    );
+}
+
+#[test]
 fn test_apparent_string_length_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);

@@ -58,6 +58,32 @@ fn resolve_contextual_source_inference_candidate(
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn type_param_appears_in_mapped_context(&self, type_id: TypeId, param_name: tsz_common::interner::Atom) -> bool {
+        crate::visitor::collect_all_types(self.interner, type_id)
+            .into_iter()
+            .any(|candidate| match self.interner.lookup(candidate) {
+                Some(TypeData::Mapped(mapped_id)) => {
+                    let mapped = self.interner.get_mapped(mapped_id);
+                    crate::visitor::contains_type_parameter_named(
+                        self.interner,
+                        mapped.constraint,
+                        param_name,
+                    ) || crate::visitor::contains_type_parameter_named(
+                        self.interner,
+                        mapped.template,
+                        param_name,
+                    ) || mapped.name_type.is_some_and(|name_type| {
+                        crate::visitor::contains_type_parameter_named(
+                            self.interner,
+                            name_type,
+                            param_name,
+                        )
+                    })
+                }
+                _ => false,
+            })
+    }
+
     fn has_conflicting_contextual_param_candidates(
         &mut self,
         source: &FunctionShape,
@@ -810,6 +836,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
+            let (upper_bounds, has_any_bounds) = infer_ctx
+                .find_type_param(renamed_tp.name)
+                .and_then(|var| infer_ctx.get_constraints(var))
+                .map(|constraints| {
+                    let has_any_bounds =
+                        !constraints.lower_bounds.is_empty() || !constraints.upper_bounds.is_empty();
+                    (constraints.upper_bounds, has_any_bounds)
+                })
+                .unwrap_or_default();
             let inferred_ty = inferred.as_ref().ok().and_then(|results| {
                 results
                     .iter()
@@ -846,16 +881,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 None
             };
+            let inferred_is_unconstrained_unknown =
+                inferred_ty == Some(TypeId::UNKNOWN) && !has_any_bounds && upper_bounds.is_empty();
+            let preserve_uninferred_type_param = (inferred_ty.is_none() || inferred_is_unconstrained_unknown)
+                && fallback_ty.is_none()
+                && original_tp.constraint.is_none()
+                && (source
+                    .params
+                    .iter()
+                    .any(|param| {
+                        self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
+                    })
+                    || source
+                        .this_type
+                        .is_some_and(|this_type| {
+                            self.type_param_appears_in_mapped_context(this_type, original_tp.name)
+                        })
+                    || self.type_param_appears_in_mapped_context(
+                        source.return_type,
+                        original_tp.name,
+                    ));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
                 TypeId::ANY
             };
             let resolved_ty = inferred_ty
+                .filter(|ty| !(*ty == TypeId::UNKNOWN && preserve_uninferred_type_param))
                 .map(|ty| resolve_contextual_source_inference_candidate(&lower_bounds, ty))
-                .or(fallback_ty)
-                .unwrap_or(fallback);
-            substitution.insert(original_tp.name, resolved_ty);
+                .or(fallback_ty);
+            if let Some(resolved_ty) = resolved_ty {
+                substitution.insert(original_tp.name, resolved_ty);
+            } else if !preserve_uninferred_type_param {
+                substitution.insert(original_tp.name, fallback);
+            }
         }
         Ok(substitution)
     }
@@ -902,8 +961,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
 
-            // Check constraint compatibility bidirectionally — accept if either direction holds.
-            let all_constraints_compatible = source_instantiated
+            let mapped_constraint_sensitive = source_instantiated.type_params.iter().any(|tp| {
+                source_instantiated.params.iter().any(|param| {
+                    self.type_param_appears_in_mapped_context(param.type_id, tp.name)
+                }) || source_instantiated.this_type.is_some_and(|this_type| {
+                    self.type_param_appears_in_mapped_context(this_type, tp.name)
+                }) || self.type_param_appears_in_mapped_context(
+                    source_instantiated.return_type,
+                    tp.name,
+                ) || target_instantiated.params.iter().any(|param| {
+                    self.type_param_appears_in_mapped_context(param.type_id, tp.name)
+                }) || target_instantiated.this_type.is_some_and(|this_type| {
+                    self.type_param_appears_in_mapped_context(this_type, tp.name)
+                }) || self.type_param_appears_in_mapped_context(
+                    target_instantiated.return_type,
+                    tp.name,
+                )
+            });
+
+            // Mapped/indexed generic signatures are constraint-sensitive: a stricter
+            // target constraint like `U extends string[]` must stay visible rather
+            // than being alpha-renamed onto an unconstrained source parameter `T`,
+            // or apparent-member facts can be erased and make the signatures look
+            // spuriously compatible. Outside that lane, keep the broader one-way
+            // compatibility that TypeScript uses for generic function directionality.
+            let constraints_allow_alpha_rename = source_instantiated
                 .type_params
                 .iter()
                 .zip(target_instantiated.type_params.iter())
@@ -918,11 +1000,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             )
                         });
 
-                    self.check_subtype(target_constraint, source_constraint)
-                        .is_true()
+                    let target_to_source = self
+                        .check_subtype(target_constraint, source_constraint)
+                        .is_true();
+                    if !target_to_source {
+                        return false;
+                    }
+
+                    !mapped_constraint_sensitive
+                        || self
+                            .check_subtype(source_constraint, target_constraint)
+                            .is_true()
                 });
 
-            if all_constraints_compatible {
+            if constraints_allow_alpha_rename {
                 // Strategy 1: alpha-rename — both shapes use source type param identities.
                 //
                 // Establish type parameter equivalences for structural comparison.
@@ -960,6 +1051,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     erase_type_params_to_constraints(&target_instantiated.type_params);
                 target_instantiated =
                     self.instantiate_function_shape(&target_instantiated, &canonical_substitution);
+                target_instantiated.type_params.clear();
             }
         }
 
@@ -1459,8 +1551,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This matches tsc's `getErasedSignature` behavior for interface extension
         // checks (TS2430) where inference over-constrains type parameters by
         // intersecting inferred types with their constraints.
+        let source_before_has_mapped_type_param_context = source_before_generic_instantiation
+            .as_ref()
+            .is_some_and(|source_before| {
+                source_before.type_params.iter().any(|tp| {
+                    source_before.params.iter().any(|param| {
+                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
+                    }) || source_before.this_type.is_some_and(|this_type| {
+                        self.type_param_appears_in_mapped_context(this_type, tp.name)
+                    }) || self.type_param_appears_in_mapped_context(
+                        source_before.return_type,
+                        tp.name,
+                    )
+                })
+            });
         if !result.is_true()
             && used_inference_for_generic_source
+            && !source_before_has_mapped_type_param_context
             && let Some(source_before) = source_before_generic_instantiation
         {
             let erasure_sub = erase_type_params_to_constraints(&source_before.type_params);

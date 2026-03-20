@@ -111,6 +111,44 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_immediate_call_or_new_argument(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..100 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    current = parent_idx;
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    return self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent)
+                        .and_then(|call| call.arguments.as_ref())
+                        .is_some_and(|args| args.nodes.contains(&current));
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub(crate) fn object_literal_function_like_param_spans(
         &self,
         arg_idx: NodeIndex,
@@ -867,7 +905,9 @@ impl<'a> CheckerState<'a> {
             return result_type;
         }
 
-        if self.is_immediate_call_or_new_callee(idx) {
+        if self.is_immediate_call_or_new_callee(idx)
+            || !self.is_immediate_call_or_new_argument(idx)
+        {
             return result_type;
         }
 
