@@ -8,7 +8,7 @@ use crate::query_boundaries::checkers::call::{
     resolve_new, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{
@@ -2012,6 +2012,11 @@ impl<'a> CheckerState<'a> {
         let mut exact_expected_counts = std::collections::BTreeSet::new();
         let mut min_expected = usize::MAX;
         let mut max_expected = 0usize;
+        let mut type_mismatch_count = 0usize;
+        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut all_mismatches_identical = true;
+        let mut has_non_count_non_type_failure = false;
+        let mut best_type_mismatch: Option<(OverloadResolution, FxHashMap<u32, TypeId>)> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -2199,9 +2204,30 @@ impl<'a> CheckerState<'a> {
 
                     all_arg_count_mismatches = false;
                     if let CallResult::ArgumentTypeMismatch {
-                        expected, actual, ..
+                        expected,
+                        actual,
+                        fallback_return,
+                        ..
                     } = result
                     {
+                        type_mismatch_count += 1;
+                        if type_mismatch_count == 1 {
+                            first_type_mismatch = Some((index, expected, actual));
+                            best_type_mismatch = Some((
+                                OverloadResolution {
+                                    arg_types: sig_arg_types.clone(),
+                                    result: CallResult::ArgumentTypeMismatch {
+                                        index,
+                                        expected,
+                                        actual,
+                                        fallback_return,
+                                    },
+                                },
+                                std::mem::take(&mut self.ctx.node_types),
+                            ));
+                        } else if first_type_mismatch != Some((index, expected, actual)) {
+                            all_mismatches_identical = false;
+                        }
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
                         ));
@@ -2262,6 +2288,7 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {
                     all_arg_count_mismatches = false;
+                    has_non_count_non_type_failure = true;
                 }
             }
 
@@ -2269,6 +2296,22 @@ impl<'a> CheckerState<'a> {
                 .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                     Self::should_preserve_speculative_call_diagnostic(diag)
                 });
+        }
+
+        if !has_non_count_non_type_failure
+            && type_mismatch_count > 0
+            && all_mismatches_identical
+            && let Some((best_type_mismatch, sig_node_types)) = best_type_mismatch
+        {
+            self.ctx
+                .rollback_diagnostics_filtered(&overload_snap.diag, |diag| {
+                    Self::should_preserve_speculative_call_diagnostic(diag)
+                });
+            self.ctx
+                .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+            self.ctx.node_types = std::mem::take(&mut original_node_types);
+            self.ctx.node_types.extend(sig_node_types);
+            return Some(best_type_mismatch);
         }
 
         // If we encountered a TypeParameterConstraintViolation while trying overloads
