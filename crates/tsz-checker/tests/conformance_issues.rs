@@ -7248,6 +7248,55 @@ class A {
     );
 }
 
+#[test]
+fn test_ts7022_emitted_for_destructured_parameter_capture_without_context() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo({
+    value1,
+    test1 = value1.test1,
+    test2 = value1.test2
+}) {}
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(
+            |(code, message)| {
+                *code == 7022 && message.contains("'value1' implicitly has type 'any'")
+            }
+        ),
+        "Expected TS7022 for destructured parameter binding captured by sibling defaults.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_not_emitted_for_destructured_parameter_with_concrete_default_source() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo({
+    x = 1,
+    y = x
+}) {}
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 7022),
+        "Did not expect TS7022 when a sibling default reads a binding with its own concrete initializer.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7022 should NOT fire when noImplicitAny is off (like all 7xxx diagnostics).
 #[test]
 fn test_ts7022_not_emitted_without_no_implicit_any() {

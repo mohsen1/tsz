@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn initializer_has_non_deferred_self_reference_by_name(
+    pub(crate) fn initializer_has_non_deferred_self_reference_by_name(
         &self,
         node_idx: NodeIndex,
         name: &str,

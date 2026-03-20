@@ -11,6 +11,91 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn parameter_pattern_has_concrete_type(
+        &self,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        if param.type_annotation.is_some() {
+            return true;
+        }
+
+        self.parameter_symbol_ids(param_idx, param.name)
+            .into_iter()
+            .flatten()
+            .filter_map(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .any(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
+    }
+
+    fn collect_parameter_pattern_leaf_bindings(
+        &self,
+        pattern_idx: NodeIndex,
+        out: &mut Vec<(NodeIndex, String, NodeIndex)>,
+    ) {
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(binding_elem.name) else {
+                continue;
+            };
+
+            if name_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                self.collect_parameter_pattern_leaf_bindings(binding_elem.name, out);
+                continue;
+            }
+
+            out.push((
+                binding_elem.name,
+                self.parameter_name_for_error(binding_elem.name),
+                binding_elem.initializer,
+            ));
+        }
+    }
+
+    fn emit_circular_implicit_any_for_parameter_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) {
+        let mut leaf_bindings = Vec::new();
+        self.collect_parameter_pattern_leaf_bindings(pattern_idx, &mut leaf_bindings);
+
+        for &(name_idx, ref name, initializer_idx) in &leaf_bindings {
+            let self_referential_default = initializer_idx.is_some()
+                && self.initializer_has_non_deferred_self_reference_by_name(initializer_idx, name);
+            let captured_by_sibling_default = initializer_idx.is_none()
+                && leaf_bindings.iter().any(|&(other_name_idx, _, other_initializer_idx)| {
+                    other_name_idx != name_idx
+                        && other_initializer_idx.is_some()
+                        && self.initializer_has_non_deferred_self_reference_by_name(
+                            other_initializer_idx,
+                            name,
+                        )
+                });
+
+            if self_referential_default || captured_by_sibling_default {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    name_idx,
+                    diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                    &[name],
+                );
+            }
+        }
+    }
+
     pub(crate) fn check_strict_mode_reserved_parameter_names(
         &mut self,
         params: &[NodeIndex],
@@ -615,6 +700,16 @@ impl<'a> CheckerState<'a> {
             // Check for TS7006 in nested function expressions within the default value
             if param.initializer.is_some() {
                 self.check_for_nested_function_ts7006(param.initializer);
+            }
+
+            if self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && !self.parameter_pattern_has_concrete_type(param_idx, param)
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && (name_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            {
+                self.emit_circular_implicit_any_for_parameter_pattern(param.name);
             }
 
             // Skip if there's no initializer
