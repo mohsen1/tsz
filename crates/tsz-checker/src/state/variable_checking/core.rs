@@ -1306,7 +1306,7 @@ impl<'a> CheckerState<'a> {
                 && !sym_already_cached
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
-                && final_type == TypeId::ANY
+                && raw_declared_type == TypeId::ANY
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern =
@@ -1327,9 +1327,10 @@ impl<'a> CheckerState<'a> {
                         );
                     } else {
                         // Non-ambient: defer decision between TS7034 and no-error.
-                        // TS7034 fires when the variable is captured by a nested function.
-                        // Detection happens in get_type_of_identifier when a reference
-                        // to this variable is found inside a nested function scope.
+                        // Bare declarations start as implicit-any even if later
+                        // assignments let flow analysis recover a concrete type.
+                        // TS7034 fires only when a nested capture observes the
+                        // variable before it becomes definitely assigned.
                         self.ctx.pending_implicit_any_vars.insert(
                             sym_id,
                             PendingImplicitAnyVar {
