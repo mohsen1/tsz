@@ -629,11 +629,6 @@ pub struct CheckerContext<'a> {
     /// - `text_child_indices`: node indices of `JsxText` children (for TS2747 location reporting)
     pub jsx_children_info: Option<(usize, bool, TypeId, Vec<NodeIndex>)>,
 
-    /// The callable type of the current call expression being checked.
-    /// Set before `collect_call_argument_types_with_context` so spread-handling
-    /// code can query rest parameter positions via `ContextualTypeContext`.
-    pub current_callable_type: Option<TypeId>,
-
     /// Whether we're in the statement checking phase (vs type environment building).
     /// During `build_type_environment`, closure parameter types may not have contextual types
     /// yet, so TS7006 should be deferred until the checking phase.

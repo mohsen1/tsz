@@ -972,17 +972,15 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 return false;
             };
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                if self
+            if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && self
                     .ctx
                     .binder
                     .get_node_symbol(parent)
                     .is_some_and(|sym| sym == target_class_sym)
-                {
-                    return true;
-                }
+            {
+                return true;
             }
             current = parent;
         }
