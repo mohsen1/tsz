@@ -1210,7 +1210,7 @@ impl<'a> CheckerState<'a> {
                                 default: None,
                                 is_const: false,
                             };
-                            let generic_this_type = factory.type_param(generic_this_param.clone());
+                            let generic_this_type = factory.type_param(generic_this_param);
                             let generic_bind_sig = tsz_solver::CallSignature {
                                 type_params: std::iter::once(generic_this_param)
                                     .chain(sig.type_params.clone().into_iter())

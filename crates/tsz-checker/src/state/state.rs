@@ -1493,13 +1493,11 @@ impl<'a> CheckerState<'a> {
             expr_checker.compute_type_uncached_with_context(idx, request.contextual_type)
         };
 
-        let result = if expr_result != TypeId::DELEGATE {
+        if expr_result != TypeId::DELEGATE {
             expr_result
         } else {
             self.compute_type_of_node_complex_with_request(idx, request)
-        };
-
-        result
+        }
     }
 
     /// Like `get_type_of_function` but under an explicit [`TypingRequest`].

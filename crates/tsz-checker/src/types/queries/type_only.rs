@@ -81,9 +81,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(all_binders) = self.ctx.all_binders.as_ref() else {
-            return None;
-        };
+        let all_binders = self.ctx.all_binders.as_ref()?;
 
         for binder in all_binders.iter() {
             for candidate in candidates {

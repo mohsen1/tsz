@@ -902,7 +902,7 @@ impl<'a> CheckerState<'a> {
                                         .map(|props| {
                                             request.read().normal_origin().contextual(props)
                                         })
-                                        .unwrap_or_else(|| attr_request.clone());
+                                        .unwrap_or(attr_request);
                                     self.compute_type_of_node_with_request(
                                         spread_data.expression,
                                         &spread_request,
@@ -943,10 +943,10 @@ impl<'a> CheckerState<'a> {
                                                 .normal_origin()
                                                 .contextual(tsz_solver::remove_undefined(self.ctx.types, type_id))
                                         }
-                                        _ => attr_request.clone(),
+                                        _ => attr_request,
                                     }
                                 } else {
-                                    attr_request.clone()
+                                    attr_request
                                 };
                                 self.compute_type_of_node_with_request(
                                     attr_value_idx,
@@ -1029,7 +1029,6 @@ impl<'a> CheckerState<'a> {
             && let Some(props) = self.get_jsx_intrinsic_props_for_tag(idx, &tag_name, true)
             && props == TypeId::ERROR
         {
-            return;
         }
     }
 

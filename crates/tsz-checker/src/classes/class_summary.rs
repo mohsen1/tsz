@@ -816,9 +816,7 @@ impl<'a> CheckerState<'a> {
                 lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
             )
         } else {
-            if self.js_statement_declared_type(stmt_idx).is_none() {
-                return None;
-            }
+            self.js_statement_declared_type(stmt_idx)?;
             if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
