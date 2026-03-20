@@ -7833,6 +7833,29 @@ for (let v of v) {
     );
 }
 
+#[test]
+fn test_ts7022_not_emitted_for_type_only_reference_inside_initializer() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+namespace Translation {
+    export type TranslationKeyEnum = 'translation1' | 'translation2';
+    export const TranslationKeyEnum = {
+        Translation1: 'translation1' as TranslationKeyEnum,
+        Translation2: 'translation2' as TranslationKeyEnum,
+    };
+}
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 when an initializer only mentions the symbol name in type position.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
 // From: typeSatisfaction_asConstArrays.ts
 
