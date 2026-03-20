@@ -1144,8 +1144,13 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.clone())
     }
 
-    pub(crate) fn format_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+    pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
+        let assignability_display = self.format_type_for_assignability_message(ty);
         if let Some(name) = self.synthesized_object_parent_display_name(ty) {
+            let generic_prefix = format!("{name}<");
+            if assignability_display.starts_with(&generic_prefix) {
+                return assignability_display;
+            }
             return name;
         }
         if self.ctx.definition_store.find_def_for_type(ty).is_none()
@@ -1157,7 +1162,7 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_diagnostic_structural(ty);
         }
-        self.format_type_diagnostic(ty)
+        assignability_display
     }
 
     fn jsdoc_annotated_expression_display(
