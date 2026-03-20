@@ -125,6 +125,16 @@ impl TypeInterner {
                     // BigInts in templates are stringified (e.g., 100n -> "100")
                     Some(self.resolve_atom_ref(atom).to_string())
                 }
+                // Enum members wrap a structural type that IS a literal.
+                // E.g., `enum AT { cat = "cat" }` → AT.cat is Enum(def_id, Literal("cat")).
+                // Unwrap the enum to get the underlying literal value.
+                Some(TypeData::Enum(_, structural_type)) => match self.lookup(structural_type) {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                        Some(self.resolve_atom_ref(atom).to_string())
+                    }
+                    Some(TypeData::Literal(LiteralValue::Number(n))) => Some(format!("{}", n.0)),
+                    _ => None,
+                },
                 _ => None,
             }
         };
