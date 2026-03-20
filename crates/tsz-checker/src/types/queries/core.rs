@@ -872,24 +872,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get class name from a class declaration node.
-    /// Returns "<anonymous>" for unnamed classes.
-    pub(crate) fn get_class_name_from_decl(&self, class_idx: NodeIndex) -> String {
-        let Some(node) = self.ctx.arena.get(class_idx) else {
-            return "<anonymous>".to_string();
-        };
-        let Some(class) = self.ctx.arena.get_class(node) else {
-            return "<anonymous>".to_string();
-        };
+    pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(node)?;
 
         if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            return ident.escaped_text.clone();
+            return Some(ident.escaped_text.clone());
         }
 
-        "<anonymous>".to_string()
+        let parent_idx = self.ctx.arena.get_extended(class_idx).map(|ext| ext.parent)?;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        let name_ident = self.ctx.arena.get_identifier_at(var_decl.name)?;
+        Some(name_ident.escaped_text.clone())
+    }
+
+    /// Get class name from a class declaration node.
+    /// Returns "<anonymous>" for unnamed classes.
+    pub(crate) fn get_class_name_from_decl(&self, class_idx: NodeIndex) -> String {
+        self.get_bound_class_name_from_decl(class_idx)
+            .unwrap_or_else(|| "<anonymous>".to_string())
     }
 
     pub(crate) fn get_class_decl_for_display_type(
@@ -980,7 +988,8 @@ impl<'a> CheckerState<'a> {
             return name;
         }
 
-        "<anonymous>".to_string()
+        self.get_bound_class_name_from_decl(class_idx)
+            .unwrap_or_else(|| "<anonymous>".to_string())
     }
 
     /// Get the name of a class member (property, method, or accessor).
