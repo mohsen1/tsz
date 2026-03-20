@@ -2253,6 +2253,58 @@ let p = <Foo x />;
     );
 }
 
+#[test]
+fn test_boolean_shorthand_reports_boolean_when_target_is_not_boolean_literal() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Foo(props: {{ x: string }}) {{
+    return <div />;
+}}
+let p = <Foo x />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_msgs: Vec<&str> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(!ts2322_msgs.is_empty(), "Expected TS2322, got: {diags:?}");
+    let has_boolean = ts2322_msgs.iter().any(|m| m.contains("'boolean'"));
+    assert!(
+        has_boolean,
+        "Expected message with 'boolean'. Got: {ts2322_msgs:?}"
+    );
+}
+
+#[test]
+fn test_explicit_attr_reports_boolean_target_for_string_value() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Foo(props: {{ x: string; n: boolean }}) {{
+    return <div />;
+}}
+let p = <Foo x="ok" n="bad" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_msgs: Vec<&str> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(!ts2322_msgs.is_empty(), "Expected TS2322, got: {diags:?}");
+    let has_explicit_target = ts2322_msgs
+        .iter()
+        .any(|m| m.contains("Type 'string' is not assignable to type 'boolean'"));
+    assert!(
+        has_explicit_target,
+        "Expected explicit attribute mismatch against boolean target. Got: {ts2322_msgs:?}"
+    );
+}
+
 // =============================================================================
 // TS2741 source type formatting: should show types, not just property names
 // =============================================================================
