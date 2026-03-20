@@ -886,6 +886,93 @@ foo({ x: "abc" });
 }
 
 #[test]
+fn jsdoc_constructor_template_scope_flows_to_prototype_methods() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @constructor
+ * @template {string} K
+ * @template V
+ */
+function Multimap() {
+    /** @type {Object<string, V>} */
+    this._map = {};
+}
+
+Multimap.prototype = {
+    /**
+     * @param {K} key
+     * @returns {V}
+     */
+    get(key) {
+        return this._map[key + ""];
+    }
+};
+
+/**
+ * @param {T} t
+ * @template T
+ */
+function Zet(t) {
+    /** @type {T} */
+    this.u;
+    this.t = t;
+}
+
+/**
+ * @param {T} v
+ * @param {object} o
+ * @param {T} o.nested
+ */
+Zet.prototype.add = function(v, o) {
+    this.u = v || o.nested;
+    return this.u;
+};
+
+/** @type {number} */
+let answer = new Zet(1).add(3, { nested: 4 });
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2304 | 2339 | 7006 | 7023))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected constructor @template scope to flow to prototype methods, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_property_unknown_template_name_emits_ts2304() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @param {T} t
+ * @template T
+ */
+function Zet(t) {
+    this.t = t;
+}
+
+/**
+ * @typedef {Object} A
+ * @property {T} value
+ */
+/** @type {A} */
+const options = { value: null };
+"#,
+    );
+    let ts2304: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        ts2304.len(),
+        1,
+        "Expected one TS2304 for out-of-scope typedef property template name, got: {diags:?}"
+    );
+}
+
+#[test]
 fn tagged_template_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"

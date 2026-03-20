@@ -11,6 +11,223 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
+    fn js_prototype_owner_expression_for_function(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = func_idx;
+        for _ in 0..6 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            if parent.is_none() {
+                break;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    current = parent;
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let binary = self.ctx.arena.get_binary_expr(parent_node)?;
+                    if binary.right != current || !self.is_assignment_operator(binary.operator_token)
+                    {
+                        return None;
+                    }
+                    return self.js_prototype_owner_expression_from_assignment_left(binary.left);
+                }
+                _ => break,
+            }
+        }
+        None
+    }
+
+    fn js_prototype_owner_expression_from_assignment_left(
+        &self,
+        left_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let left_node = self.ctx.arena.get(left_idx)?;
+        let left_access = self.ctx.arena.get_access_expr(left_node)?;
+
+        if self.access_name_matches(left_access.name_or_argument, "prototype") {
+            return Some(left_access.expression);
+        }
+
+        let proto_node = self.ctx.arena.get(left_access.expression)?;
+        let proto_access = self.ctx.arena.get_access_expr(proto_node)?;
+        if self.access_name_matches(proto_access.name_or_argument, "prototype") {
+            return Some(proto_access.expression);
+        }
+
+        None
+    }
+
+    fn js_prototype_owner_function_target(&self, owner_expr: NodeIndex) -> Option<NodeIndex> {
+        let owner_text = self.expression_text(owner_expr)?;
+
+        if !owner_text.contains('.')
+            && let Some(sym_id) = self.ctx.binder.file_locals.get(owner_text.as_str())
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let value_decl = symbol.value_declaration;
+            let value_node = self.ctx.arena.get(value_decl)?;
+            if value_node.is_function_like() {
+                return Some(value_decl);
+            }
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node) {
+                let init_node = self.ctx.arena.get(var_decl.initializer)?;
+                if init_node.is_function_like() {
+                    return Some(var_decl.initializer);
+                }
+            }
+        }
+
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                continue;
+            };
+            if self.expression_text(binary.left).as_deref() != Some(owner_text.as_str()) {
+                continue;
+            }
+            let Some(right_node) = self.ctx.arena.get(binary.right) else {
+                continue;
+            };
+            if right_node.is_function_like() {
+                return Some(binary.right);
+            }
+        }
+
+        None
+    }
+
+    fn access_name_matches(&self, name_idx: NodeIndex, expected: &str) -> bool {
+        self.ctx.arena.get(name_idx).is_some_and(|name_node| {
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == expected)
+                || (name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_literal(name_node)
+                        .is_some_and(|lit| lit.text == expected))
+        })
+    }
+
+    fn js_constructor_body_instance_type_for_function(
+        &mut self,
+        func_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use rustc_hash::FxHashMap;
+        use tsz_solver::{PropertyInfo, Visibility};
+
+        let body_idx = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+            .and_then(|func| if func.body.is_none() { None } else { Some(func.body) })?;
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+
+        let mut properties = FxHashMap::default();
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+
+            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
+                && binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                && let Some((prop_name, prop_type)) =
+                    self.js_constructor_body_this_assignment(binary.left, binary.right, stmt_idx)
+            {
+                let name_atom = self.ctx.types.intern_string(&prop_name);
+                let declaration_order = properties.len() as u32;
+                properties.entry(name_atom).or_insert(PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order,
+                });
+                continue;
+            }
+
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                && obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && let Some(prop_type) = self.js_statement_declared_type(stmt_idx)
+            {
+                let name_atom = self.ctx.types.intern_string(&ident.escaped_text);
+                let declaration_order = properties.len() as u32;
+                properties.entry(name_atom).or_insert(PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order,
+                });
+            }
+        }
+
+        if properties.is_empty() {
+            None
+        } else {
+            Some(self.ctx.types.factory().object(properties.into_values().collect()))
+        }
+    }
+
+    fn js_constructor_body_this_assignment(
+        &mut self,
+        lhs_idx: NodeIndex,
+        rhs_idx: NodeIndex,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, TypeId)> {
+        let lhs_node = self.ctx.arena.get(lhs_idx)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(lhs_node)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        if obj_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let prop_type = self
+            .js_statement_declared_type(stmt_idx)
+            .unwrap_or_else(|| self.get_type_of_node(rhs_idx));
+        Some((ident.escaped_text.clone(), prop_type))
+    }
+
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -255,6 +472,13 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+        let prototype_owner_expr = if self.is_js_file() && !is_arrow_function {
+            self.js_prototype_owner_expression_for_function(idx)
+        } else {
+            None
+        };
+        let prototype_owner_target =
+            prototype_owner_expr.and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr));
         let js_constructor_target = if self.is_js_file() && !is_arrow_function {
             if is_function_declaration {
                 Some(idx)
@@ -301,6 +525,25 @@ impl<'a> CheckerState<'a> {
         // This enables return assignability checks for expression-bodied arrows.
         let mut jsdoc_type_param_updates: Vec<(String, Option<TypeId>, bool)> = Vec::new();
         if self.is_js_file()
+            && let Some(owner_target) = prototype_owner_target
+            && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
+        {
+            let factory = self.ctx.types.factory();
+            for name in Self::jsdoc_template_type_params(&owner_jsdoc) {
+                let atom = self.ctx.types.intern_string(&name);
+                let info = TypeParamInfo {
+                    name: atom,
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                };
+                let ty = factory.type_param(info);
+                jsdoc_type_param_types.insert(name.clone(), ty);
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                jsdoc_type_param_updates.push((name, previous, false));
+            }
+        }
+        if self.is_js_file()
             && type_params.is_empty()
             && let Some(ref jsdoc) = func_jsdoc
         {
@@ -335,6 +578,8 @@ impl<'a> CheckerState<'a> {
         let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
             self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
         });
+        let js_prototype_owner_instance_type = prototype_owner_target
+            .and_then(|owner_target| self.js_constructor_body_instance_type_for_function(owner_target));
 
         // Check if this closure is inside a decorator expression.
         // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006
@@ -1040,6 +1285,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 ctx_helper.as_ref().and_then(|h| h.get_this_type())
                     .or(js_constructor_instance_type)
+                    .or(js_prototype_owner_instance_type)
                     .or_else(|| {
                         // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
                         let mut current = idx;
