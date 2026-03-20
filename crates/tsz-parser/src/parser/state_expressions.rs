@@ -1430,46 +1430,47 @@ impl ParserState {
                     return self.parse_identifier_name();
                 }
 
-                // Check if 'yield' is followed by an expression
+                // Check if 'yield' is followed by a token that disambiguates
+                // between yield-expression and yield-as-identifier.
                 let snapshot = self.scanner.save_state();
                 let current_token = self.current_token;
                 self.next_token(); // consume 'yield'
-                // Check for asterisk (yield*)
-                let has_asterisk = self.is_token(SyntaxKind::AsteriskToken);
-                if has_asterisk {
-                    self.next_token();
-                }
-                let next_token = self.token();
+
+                // For non-generator context: tsc only parses yield as a yield expression
+                // when the next token on the same line is an identifier, keyword, or literal.
+                // This matches tsc's `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`.
+                // e.g., `yield foo;` → yield expression (TS1163)
+                // e.g., `yield(foo);` → identifier + call (checker emits TS1212)
+                // e.g., `yield * x;` → identifier * x (checker emits TS1212)
+                let next_is_ident_keyword_or_literal_on_same_line =
+                    !self.scanner.has_preceding_line_break()
+                        && (crate::parser::parse_rules::is_identifier_or_keyword(self.token())
+                            || matches!(
+                                self.token(),
+                                SyntaxKind::NumericLiteral
+                                    | SyntaxKind::BigIntLiteral
+                                    | SyntaxKind::StringLiteral
+                            ));
+
                 self.scanner.restore_state(snapshot);
                 self.current_token = current_token;
 
-                let has_following_expression = !matches!(
-                    next_token,
-                    SyntaxKind::SemicolonToken
-                        | SyntaxKind::CloseBracketToken
-                        | SyntaxKind::CommaToken
-                        | SyntaxKind::ColonToken
-                        | SyntaxKind::CloseParenToken
-                        | SyntaxKind::CloseBraceToken
-                        | SyntaxKind::EndOfFileToken
-                );
-
-                // Outside a generator context with a following expression or asterisk,
-                // emit TS1163 and parse as yield expression for correct AST structure.
-                // This handles both static block contexts and top-level/function contexts
-                // where `yield foo;` should report "yield is only allowed in a generator body"
-                // rather than falling through to TS1434 "Unexpected keyword or identifier".
-                if !self.in_generator_context() && (has_following_expression || has_asterisk) {
+                // Outside a generator context: use tsc's disambiguation rule.
+                // Only parse as yield expression (for TS1163 error recovery) when the
+                // next token on the same line is an identifier, keyword, or literal.
+                // Otherwise parse as an identifier (the checker will emit TS1212 in
+                // strict mode for `yield` as a reserved word).
+                if !self.in_generator_context() && next_is_ident_keyword_or_literal_on_same_line {
                     self.parse_error_at_current_token(
                         "A 'yield' expression is only allowed in a generator body.",
                         diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY,
                     );
                     // Fall through to parse as yield expression
                 } else if !self.in_generator_context() {
-                    // Outside a generator context, 'yield' is a regular identifier,
-                    // not a yield expression. This mirrors how 'await' is handled
-                    // outside async contexts.
-                    // e.g., function f(yield = yield) {} -- 'yield' is an identifier here
+                    // Outside a generator context and next token is not identifier/keyword/
+                    // literal on same line — 'yield' is a regular identifier.
+                    // e.g., `yield(foo)` → call expression, `yield * x` → multiplication,
+                    //        `function f(yield = yield) {}` → identifier
                     let start_pos = self.token_pos();
                     let end_pos = self.token_end();
                     let atom = self.scanner.get_token_atom();
