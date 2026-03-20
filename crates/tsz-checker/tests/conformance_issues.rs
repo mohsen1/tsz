@@ -431,7 +431,6 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 }
 
 #[test]
-#[ignore = "regression: contextual typing lost after dispatch refactor"]
 fn test_cached_constructor_parameters_preserve_nested_method_contextual_types() {
     let source = r#"
 declare function createInstance<
@@ -12589,7 +12588,6 @@ function test(a: A2) {
 }
 
 #[test]
-#[ignore = "diagnostic count changed after merge"]
 fn test_static_private_accessor_not_visible_on_derived_constructor_type() {
     let diagnostics = compile_and_get_diagnostics_named(
         "privateNameStaticAccessorssDerivedClasses.ts",
