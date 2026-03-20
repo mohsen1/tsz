@@ -1622,8 +1622,11 @@ impl<'a> CheckerState<'a> {
         let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
         let is_class = symbol.flags & symbol_flags::CLASS != 0;
         let mut could_be_in_initializer = false;
+        let in_for_of_header_expression = !is_cross_file
+            && is_var
+            && self.is_in_for_of_header_expression_of_declaration(usage_idx, decl_idx);
         if !is_cross_file && usage_node.pos >= decl_node.pos {
-            if is_var && usage_node.pos <= decl_node.end {
+            if is_var && (usage_node.pos <= decl_node.end || in_for_of_header_expression) {
                 // It might be in the initializer. We will confirm via AST walk.
                 could_be_in_initializer = true;
             } else if is_class
@@ -1718,7 +1721,10 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
 
-        if could_be_in_initializer && !found_decl_in_path {
+        if could_be_in_initializer
+            && !found_decl_in_path
+            && !in_for_of_header_expression
+        {
             // It was >= pos, but wasn't actually inside the declaration's AST.
             // This means it's strictly AFTER the declaration.
             return false;
@@ -1952,10 +1958,13 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node resolves to the given symbol via the binder.
     fn node_resolves_to_symbol(&self, idx: NodeIndex, target_sym: SymbolId) -> bool {
+        if let Some(sym) = self.resolve_for_of_header_expression_symbol(idx) {
+            return sym == target_sym;
+        }
         if let Some(sym) = self.ctx.binder.get_node_symbol(idx) {
             return sym == target_sym;
         }
-        if let Some(sym) = self.ctx.binder.resolve_identifier(self.ctx.arena, idx) {
+        if let Some(sym) = self.resolve_identifier_symbol_without_tracking(idx) {
             return sym == target_sym;
         }
         false
