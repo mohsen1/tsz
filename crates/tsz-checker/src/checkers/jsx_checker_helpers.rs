@@ -90,6 +90,15 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    pub(super) fn normalize_jsx_required_props_target(&mut self, props_type: TypeId) -> TypeId {
+        let normalized = self.evaluate_application_type(props_type);
+        let normalized = self.evaluate_type_with_env(normalized);
+        let normalized = self.resolve_type_for_property_access(normalized);
+        let normalized = self.resolve_lazy_type(normalized);
+        let normalized = self.evaluate_application_type(normalized);
+        self.evaluate_type_with_env(normalized)
+    }
+
     /// Check that all required properties in the props type are provided. Emits TS2741.
     pub(super) fn check_missing_required_jsx_props(
         &mut self,
@@ -97,12 +106,7 @@ impl<'a> CheckerState<'a> {
         provided_attrs: &[(String, TypeId)],
         attributes_idx: NodeIndex,
     ) {
-        let resolved_props_type = self.evaluate_type_with_env(props_type);
-        let resolved_props_type = self.resolve_type_for_property_access(resolved_props_type);
-        let resolved_props_type = self.evaluate_type_with_env(resolved_props_type);
-        let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
-        else {
+        let Some(shape) = self.get_normalized_jsx_required_props_shape(props_type) else {
             return;
         };
 
@@ -156,6 +160,31 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(super) fn jsx_has_missing_required_props(
+        &mut self,
+        props_type: TypeId,
+        provided_attrs: &[(String, TypeId)],
+    ) -> bool {
+        let Some(shape) = self.get_normalized_jsx_required_props_shape(props_type) else {
+            return false;
+        };
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional
+                && !provided_attrs
+                    .iter()
+                    .any(|(name, _)| name == &self.ctx.types.resolve_atom(prop.name))
+        })
+    }
+
+    fn get_normalized_jsx_required_props_shape(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
+        let resolved_props_type = self.normalize_jsx_required_props_target(props_type);
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
+    }
+
     /// Check TS2745/TS2746 from one normalized children-shape path.
     pub(super) fn check_jsx_children_shape(
         &mut self,
@@ -174,6 +203,14 @@ impl<'a> CheckerState<'a> {
         match child_count {
             0 => {}
             1 => {
+                if self.single_jsx_child_satisfies_children_type(
+                    children_type,
+                    synthesized_children_type,
+                    has_text_child,
+                ) {
+                    return;
+                }
+
                 if !self.type_requires_multiple_children(children_type) {
                     self.check_jsx_single_child_assignable(
                         attributes_idx,
@@ -227,6 +264,23 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn single_jsx_child_satisfies_children_type(
+        &mut self,
+        children_type: TypeId,
+        actual_child_type: TypeId,
+        has_text_child: bool,
+    ) -> bool {
+        if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
+            return true;
+        }
+
+        if has_text_child && !self.children_type_accepts_text(children_type) {
+            return true;
+        }
+
+        self.is_assignable_to(actual_child_type, children_type)
     }
 
     pub(super) fn get_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {

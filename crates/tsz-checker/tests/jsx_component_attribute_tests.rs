@@ -740,6 +740,76 @@ let p = <Poisoned x />;
     );
 }
 
+#[test]
+fn test_class_component_missing_required_prop_emits_ts2322_not_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P, S> {{
+    props: P;
+    state: S;
+    constructor(props?: P, context?: any);
+    render(): JSX.Element;
+}}
+class NeedsProp extends Component<{{ reqd: string }}, {{}}> {{
+    render() {{
+        return <div>Hello</div>;
+    }}
+}}
+let p = <NeedsProp />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Missing required class-component props should emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Missing required class-component props should not fall back to TS2741, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_property_access_class_component_missing_required_prop_emits_ts2322_not_ts2741() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P, S> {{
+    props: P;
+    state: S;
+    constructor(props?: P, context?: any);
+    render(): JSX.Element;
+}}
+interface ComponentClass<P> {{
+    new (props?: P, context?: any): Component<P, any>;
+}}
+declare namespace TestMod {{
+    interface TestClass extends ComponentClass<{{ reqd: string }}> {{}}
+    var Test: TestClass;
+}}
+const T = TestMod.Test;
+let p1 = <T />;
+let p2 = <TestMod.Test />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Missing required property-access class-component props should emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Missing required property-access class-component props should not fall back to TS2741, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // Cross-file: import React = require('react') with ambient module
 // =============================================================================
@@ -2627,6 +2697,34 @@ let k = <Comp a={{10}}><div>hi</div></Comp>;
             diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
         ),
         "Tuple-only children should still emit TS2745 for a single child, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_single_array_expression_satisfies_array_children_type() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+type Tab = [string, JSX.Element];
+interface Prop {{
+    children: Tab[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let tabs: Tab[] = [["Users", <div></div>], ["Products", <div></div>]];
+let ok = <Comp>{{tabs}}</Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Single array-valued child expression should satisfy array children type without TS2745, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Single array-valued child expression should not fall through to TS2322, got: {diags:?}"
     );
 }
 
