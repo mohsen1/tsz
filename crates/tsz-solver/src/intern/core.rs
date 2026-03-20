@@ -1910,7 +1910,7 @@ impl TypeInterner {
         self.intern(TypeData::Object(shape_id))
     }
 
-    /// Get the TypeId for an already-interned ObjectWithIndex shape.
+    /// Get the TypeId for an already-interned `ObjectWithIndex` shape.
     pub fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
         self.intern(TypeData::ObjectWithIndex(shape_id))
     }

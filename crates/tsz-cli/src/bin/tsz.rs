@@ -1397,7 +1397,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             "Request cache misses:          {}",
             counters.request_cache_misses
         );
-        println!("Request cache hit rate:        {:.1}%", request_hit_rate);
+        println!("Request cache hit rate:        {request_hit_rate:.1}%");
         println!(
             "Contextual cache bypasses:     {}",
             counters.contextual_cache_bypasses

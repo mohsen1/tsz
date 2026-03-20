@@ -689,7 +689,7 @@ impl<'a> CheckerState<'a> {
         self.scope_owner_node(current)
     }
 
-    fn is_scope_owner_kind(&self, kind: u16) -> bool {
+    const fn is_scope_owner_kind(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || kind == syntax_kind_ext::ARROW_FUNCTION

@@ -477,10 +477,9 @@ impl TypeInterner {
         match (left, right) {
             (Null, Null) | (Undefined, Undefined) => false,
             (Null, _) | (_, Null) | (Undefined, _) | (_, Undefined) => true,
-            (String(a), String(b)) => a != b,
+            (String(a), String(b)) | (BigInt(a), BigInt(b)) => a != b,
             (Number(a), Number(b)) => a != b,
             (Boolean(a), Boolean(b)) => a != b,
-            (BigInt(a), BigInt(b)) => a != b,
             (Enum(def_a, key_a), Enum(def_b, key_b)) => {
                 if def_a != def_b {
                     true

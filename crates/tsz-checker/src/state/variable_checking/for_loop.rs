@@ -1381,14 +1381,6 @@ impl<'a> CheckerState<'a> {
                     self.collect_return_expressions_in_statement(labeled.statement, return_exprs);
                 }
             }
-            syntax_kind_ext::FUNCTION_DECLARATION
-            | syntax_kind_ext::FUNCTION_EXPRESSION
-            | syntax_kind_ext::ARROW_FUNCTION
-            | syntax_kind_ext::METHOD_DECLARATION
-            | syntax_kind_ext::GET_ACCESSOR
-            | syntax_kind_ext::SET_ACCESSOR
-            | syntax_kind_ext::CLASS_DECLARATION
-            | syntax_kind_ext::CLASS_EXPRESSION => {}
             _ => {}
         }
     }
