@@ -471,6 +471,69 @@ fn test_ts2564_named_class_expression_prefers_outer_namespace_member_resolution(
 }
 
 #[test]
+fn test_ts2564_class_expression_initializer_reports_required_field() {
+    let source = r"
+        interface A {}
+
+        let x = class B implements A {
+            prop: number;
+            onStart(): void {}
+            func = () => {};
+        };
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        1,
+        "TS2564 should be reported for required fields on class-expression initializers, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2454_class_expression_method_body_is_checked() {
+    let source = r"
+        var m = class C<X> {
+            f<T>() {
+                var t: T;
+                var x: X;
+                return { t, x };
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        2,
+        "Class-expression method bodies should still emit TS2454 on local unassigned variables, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2729_property_decorator_enum_member_forward_reference_only() {
     let source = r"
         function dec(...args: any[]): any {}
@@ -1646,6 +1709,43 @@ fn test_super_with_type_argument3_no_ts2564_without_strict_property_initializati
         ),
         0,
         "TS2564 should stay off when strict property initialization is disabled, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_super_with_type_argument3_reports_ts2564_under_strict_property_initialization() {
+    let source = r"
+        class C<T> {
+            foo: T;
+            bar<U>(x: U) { }
+        }
+
+        class D<T> extends C<T> {
+            constructor() {
+                super<T>();
+            }
+            bar() {
+                super.bar<T>(null);
+            }
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        1,
+        "The exact superWithTypeArgument3 shape should still emit TS2564 under strict property initialization, got: {diags:?}"
     );
 }
 

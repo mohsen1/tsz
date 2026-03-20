@@ -307,7 +307,7 @@ fn process_test_file(
     node_sem: &CountingSemaphore,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
-    use tsz_conformance::text_decode::{decode_source_text, DecodedSourceText};
+    use tsz_conformance::text_decode::{DecodedSourceText, decode_source_text};
 
     let bytes = fs::read(path)?;
     let decoded = decode_source_text(&bytes);
@@ -359,7 +359,7 @@ fn process_test_file(
 
     // Prepare test dir (Rust-side work — no semaphore needed)
     let prepared = if let Some(content) = &content {
-        tsz_wrapper::prepare_test_dir(content, &filenames, &options, original_extension, &[])?
+        tsz_wrapper::prepare_test_dir(content, &filenames, &options, original_extension, &[], None)?
     } else if let Some(bytes) = &binary_bytes {
         tsz_wrapper::prepare_binary_test_dir(bytes, original_extension.unwrap_or("ts"), &options)?
     } else {

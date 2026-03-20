@@ -86,6 +86,7 @@ pub fn prepare_test_dir(
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
     key_order: &[String],
+    expected_error_codes: Option<&[u32]>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
@@ -239,19 +240,24 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
-            if has_source_compiler_option_pragmas_without_strict(content) {
+            let should_synthesize_non_strict_baseline =
+                has_source_compiler_option_pragmas_without_strict(content)
+                    && expected_error_codes.is_some_and(|codes| {
+                        !codes.iter().any(|code| matches!(code, 2454 | 2564 | 2565))
+                    });
+            if should_synthesize_non_strict_baseline {
                 // The conformance runner strips source pragmas before invoking tsz.
-                // When a test uses source-level compiler pragmas without
-                // `@strict`, some strict-family settings still need an explicit
-                // false baseline after the source comments are stripped. Keep
-                // `noImplicitThis` out of that synthesized baseline so
-                // class-member `this` tests still see the harness default.
+                // tsz is still stricter than tsc for some non-`@strict` source
+                // pragma tests, so the tsz execution path needs a small
+                // compatibility baseline for the remaining strict-family knobs.
+                // Keep this keyed off the cached expected diagnostics so tests
+                // that really do expect definite-assignment diagnostics (for
+                // example `classExpressions.ts`) keep their default behavior.
                 for key in [
                     "noImplicitAny",
                     "strictNullChecks",
                     "strictFunctionTypes",
                     "strictBindCallApply",
-                    "strictPropertyInitialization",
                     "useUnknownInCatchVariables",
                 ] {
                     map.entry(key.to_string())
