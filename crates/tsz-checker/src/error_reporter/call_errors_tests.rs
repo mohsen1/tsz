@@ -239,12 +239,12 @@ fn(true);
         .find(|d| d.code == 2769)
         .expect("expected TS2769");
 
-    let callee_start = source.rfind("fn(true)").expect("expected call expression") as u32;
+    let arg_start = source.rfind("true").expect("expected argument") as u32;
     assert_eq!(
-        diag.start, callee_start,
-        "TS2769 should anchor at the callee"
+        diag.start, arg_start,
+        "TS2769 should anchor at the argument for plain overload calls"
     );
-    assert_eq!(diag.length, 2, "TS2769 should cover only the callee token");
+    assert_eq!(diag.length, 4, "TS2769 should cover only the argument token");
     assert!(
         diag.related_information.len() >= 2,
         "expected overload related info, got: {diag:?}"
@@ -261,6 +261,54 @@ fn(true);
             .contains("parameter of type 'number'"),
         "expected the second overload failure second, got: {diag:?}"
     );
+}
+
+#[test]
+fn ts2769_array_literal_overload_mismatch_anchors_nested_property() {
+    let source = r#"
+function foo(bar:{a:number;}[]):string;
+function foo(bar:{a:boolean;}[]):number;
+function foo(bar:{a:any;}[]):any{ return bar }
+var x = foo([{a:'bar'}]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let prop_start = source
+        .rfind("a:'bar'")
+        .expect("expected offending property") as u32;
+    assert_eq!(
+        diag.start, prop_start,
+        "TS2769 should anchor at the offending nested property, got: {diag:?}"
+    );
+    assert_eq!(diag.length, 1, "TS2769 should cover only the property token");
+}
+
+#[test]
+fn ts2769_array_literal_missing_property_anchors_object_literal() {
+    let source = r#"
+function foo(bar:{a:number;}[]):string;
+function foo(bar:{a:boolean;}[]):number;
+function foo(bar:{a:any;}[]):any{ return bar }
+var x = foo([{}]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let object_start = source.rfind("{}").expect("expected object literal") as u32;
+    assert_eq!(
+        diag.start, object_start,
+        "TS2769 should anchor at the object literal with the missing property, got: {diag:?}"
+    );
+    assert_eq!(diag.length, 2, "TS2769 should cover the empty object literal");
 }
 
 #[test]
