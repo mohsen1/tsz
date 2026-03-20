@@ -1340,11 +1340,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
-                        let class_name = resolved_class_access
-                            .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
-                            .unwrap_or_default();
-                        let static_member_name = format!("{class_name}.{property_name}");
-                        let object_type_str = self.format_type(display_object_type);
+                        let object_type_str =
+                            self.format_type_for_assignability_message(display_object_type);
+                        let static_member_name = format!("{object_type_str}.{property_name}");
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                             &[property_name, &object_type_str, &static_member_name],

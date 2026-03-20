@@ -5297,6 +5297,88 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_super_property_access_inside_super_call_reports_ts17011() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class A {
+    constructor(f: string) {}
+    public blah(): string { return ""; }
+}
+
+class B extends A {
+    constructor() {
+        super(super.blah())
+    }
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 17011),
+        "Expected TS17011 for super property access inside super() arguments. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_static_property_not_in_class_type_preserves_generic_receiver_display() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace Generic {
+    class C<T, U> {
+        fn() { return this; }
+        static get x() { return 1; }
+        static set x(v) { }
+        constructor(public a: T, private b: U) { }
+        static foo: T;
+    }
+
+    namespace C {
+        export var bar = '';
+    }
+
+    const c = new C(1, '');
+    const r4 = c.foo;
+    const r5 = c.bar;
+    const r6 = c.x;
+}
+        "#,
+    );
+
+    let ts2576_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2576)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    let ts2339_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2576_messages.iter().any(|message| {
+            message.contains("Property 'foo' does not exist on type 'C<number, string>'")
+                && message.contains("static member 'C<number, string>.foo'")
+        }),
+        "Expected generic TS2576 message for c.foo, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2576_messages.iter().any(|message| {
+            message.contains("Property 'x' does not exist on type 'C<number, string>'")
+                && message.contains("static member 'C<number, string>.x'")
+        }),
+        "Expected generic TS2576 message for c.x, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339_messages
+            .iter()
+            .any(|message| message
+                .contains("Property 'bar' does not exist on type 'C<number, string>'")),
+        "Expected generic TS2339 receiver display for c.bar, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_super_property_access_reports_ts2855() {
     let diagnostics = compile_and_get_diagnostics(
         r"

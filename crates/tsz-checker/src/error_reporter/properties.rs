@@ -157,7 +157,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn property_receiver_display_for_node(&self, type_id: TypeId, idx: NodeIndex) -> String {
+    fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
