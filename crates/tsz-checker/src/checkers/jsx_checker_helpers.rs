@@ -117,7 +117,8 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, spread_type)
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, spread_type)
         {
             let mut element_types = Vec::with_capacity(members.len());
             for &member in &members {

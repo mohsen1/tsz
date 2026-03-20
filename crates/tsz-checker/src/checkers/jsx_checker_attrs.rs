@@ -736,21 +736,24 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
         _display_target: &str,
-    ) {
+    ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
-        // Safety guard: skip when types involve unresolved generics or errors
-        if tsz_solver::contains_type_parameters(self.ctx.types, spread_type)
-            || tsz_solver::contains_error_type(self.ctx.types, spread_type)
-        {
-            return;
+        // Safety guard: skip when types already contain checker error states.
+        if tsz_solver::contains_error_type(self.ctx.types, spread_type) {
+            return false;
         }
 
-        // If the whole spread type is assignable to props, no error needed.
-        // This is the fast path and also prevents false positives from imprecise
-        // per-property extraction (e.g., mapped/conditional/utility types).
-        if self.is_assignable_to(spread_type, props_type) {
-            return;
+        let spread_has_type_params =
+            tsz_solver::contains_type_parameters(self.ctx.types, spread_type);
+
+        // For concrete spread types, whole-type assignability is the fast path and
+        // also prevents false positives from imprecise per-property extraction.
+        // For generic spreads, the relation can be too optimistic; keep them on the
+        // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
+        // the apparent/object shape first.
+        if !spread_has_type_params && self.is_assignable_to(spread_type, props_type) {
+            return false;
         }
 
         // tsc does NOT emit TS2559 (weak type / no common properties) for JSX spread
@@ -780,7 +783,7 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-            return;
+            return true;
         };
 
         // tsc suppresses TS2322 for per-property type mismatches in spreads when
@@ -807,8 +810,21 @@ impl<'a> CheckerState<'a> {
                 if !spread_prop_names.contains(&req_name)
                     && !overridden_names.contains(req_name.as_str())
                 {
+                    if spread_has_type_params {
+                        let spread_name = self.format_type(spread_type);
+                        let message = format!(
+                            "Type '{spread_name}' is not assignable to type '{props_display}'."
+                        );
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            tag_name_idx,
+                            &message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                        return true;
+                    }
                     // Missing required property → TS2741 will fire, suppress TS2322
-                    return;
+                    return false;
                 }
             }
         }
@@ -860,6 +876,8 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
+
+        false
     }
 
     /// TS2783: Check if a later spread attribute will overwrite the current attribute.
