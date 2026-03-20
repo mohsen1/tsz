@@ -1490,6 +1490,27 @@ impl<'a> CheckerState<'a> {
             } else if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
+                && is_direct_deferred_initializer
+            {
+                let has_wrapped_self_call = self
+                    .function_like_initializer_has_wrapped_self_call_in_return_expression(
+                        var_decl.initializer,
+                        sym_id,
+                    );
+                if has_wrapped_self_call {
+                    final_type = TypeId::ANY;
+                    if let Some(ref name) = var_name {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[name],
+                        );
+                    }
+                }
+            } else if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
                 && !is_skip_circularity
             {
                 final_type = TypeId::ANY;

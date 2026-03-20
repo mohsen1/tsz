@@ -100,10 +100,220 @@ impl<'a> CheckerState<'a> {
         };
 
         if body_node.kind == syntax_kind_ext::BLOCK {
-            return self.statement_has_wrapped_self_call_in_return(body_idx, sym_id);
+            return self.statement_has_wrapped_self_call_in_return(body_idx, sym_id, true);
         }
 
-        self.expression_has_wrapped_self_call_in_return(body_idx, sym_id)
+        self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, true)
+    }
+
+    pub(crate) fn function_like_initializer_has_wrapped_self_call_in_return_expression(
+        &self,
+        init_idx: NodeIndex,
+        function_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(init_node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(init_node) else {
+            return false;
+        };
+
+        if func.body.is_none() {
+            return false;
+        }
+
+        let body_idx = func.body;
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        let has_circular_return_in_all_paths = |sym_id: tsz_binder::SymbolId| -> bool {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                self.function_body_has_wrapped_self_call_in_every_return(body_idx, sym_id, false)
+            } else {
+                self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, false)
+            }
+        };
+
+        if let Some(init_sym) = self.ctx.binder.get_node_symbol(init_idx) {
+            if has_circular_return_in_all_paths(init_sym) {
+                return true;
+            }
+        }
+
+        has_circular_return_in_all_paths(function_sym)
+    }
+
+    fn function_body_has_wrapped_self_call_in_every_return(
+        &self,
+        body_idx: NodeIndex,
+        function_sym: tsz_binder::SymbolId,
+        require_wrapped_call: bool,
+    ) -> bool {
+        let mut return_exprs = Vec::new();
+        self.collect_initializer_return_expressions_in_function_body(body_idx, &mut return_exprs);
+
+        if return_exprs.is_empty() {
+            return false;
+        }
+
+        return_exprs.into_iter().all(|expr_idx| {
+            self.expression_has_wrapped_self_call_in_return(
+                expr_idx,
+                function_sym,
+                require_wrapped_call,
+            )
+        })
+    }
+
+    fn collect_initializer_return_expressions_in_function_body(
+        &self,
+        body_idx: NodeIndex,
+        return_exprs: &mut Vec<NodeIndex>,
+    ) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return_exprs.push(body_idx);
+            return;
+        }
+
+        if let Some(block) = self.ctx.arena.get_block(body_node) {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_initializer_return_expressions_in_function_body_statement(
+                    stmt_idx,
+                    return_exprs,
+                );
+            }
+        }
+    }
+
+    fn collect_initializer_return_expressions_in_function_body_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        return_exprs: &mut Vec<NodeIndex>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node)
+                    && ret.expression.is_some()
+                {
+                    return_exprs.push(ret.expression);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_initializer_return_expressions_in_function_body_statement(
+                            stmt,
+                            return_exprs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        if_data.then_statement,
+                        return_exprs,
+                    );
+                    if if_data.else_statement.is_some() {
+                        self.collect_initializer_return_expressions_in_function_body_statement(
+                            if_data.else_statement,
+                            return_exprs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_initializer_return_expressions_in_function_body_statement(
+                                    stmt,
+                                    return_exprs,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        try_data.try_block,
+                        return_exprs,
+                    );
+                    if try_data.catch_clause.is_some() {
+                        self.collect_initializer_return_expressions_in_function_body_statement(
+                            try_data.catch_clause,
+                            return_exprs,
+                        );
+                    }
+                    if try_data.finally_block.is_some() {
+                        self.collect_initializer_return_expressions_in_function_body_statement(
+                            try_data.finally_block,
+                            return_exprs,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        catch_data.block,
+                        return_exprs,
+                    );
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        loop_data.statement,
+                        return_exprs,
+                    );
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        loop_data.statement,
+                        return_exprs,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_initializer_return_expressions_in_function_body_statement(
+                        labeled.statement,
+                        return_exprs,
+                    );
+                }
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::METHOD_DECLARATION
+            | syntax_kind_ext::GET_ACCESSOR
+            | syntax_kind_ext::SET_ACCESSOR
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::CLASS_EXPRESSION => {}
+            _ => {}
+        }
     }
 
     fn collect_resolving_var_refs_in_return_statement(
@@ -244,6 +454,7 @@ impl<'a> CheckerState<'a> {
         &self,
         stmt_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
+        require_wrapped_call: bool,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return false;
@@ -259,15 +470,18 @@ impl<'a> CheckerState<'a> {
                         && self.expression_has_wrapped_self_call_in_return(
                             ret.expression,
                             function_sym,
+                            require_wrapped_call,
                         )
                 }),
-            syntax_kind_ext::BLOCK => {
-                self.ctx.arena.get_block(node).is_some_and(|block| {
-                    block.statements.nodes.iter().copied().any(|stmt| {
-                        self.statement_has_wrapped_self_call_in_return(stmt, function_sym)
-                    })
+            syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
+                block.statements.nodes.iter().copied().any(|stmt| {
+                    self.statement_has_wrapped_self_call_in_return(
+                        stmt,
+                        function_sym,
+                        require_wrapped_call,
+                    )
                 })
-            }
+            }),
             syntax_kind_ext::IF_STATEMENT => {
                 self.ctx
                     .arena
@@ -276,10 +490,12 @@ impl<'a> CheckerState<'a> {
                         self.statement_has_wrapped_self_call_in_return(
                             if_data.then_statement,
                             function_sym,
+                            require_wrapped_call,
                         ) || (if_data.else_statement.is_some()
                             && self.statement_has_wrapped_self_call_in_return(
                                 if_data.else_statement,
                                 function_sym,
+                                require_wrapped_call,
                             ))
                     })
             }
@@ -305,6 +521,7 @@ impl<'a> CheckerState<'a> {
                                         self.statement_has_wrapped_self_call_in_return(
                                             stmt,
                                             function_sym,
+                                            require_wrapped_call,
                                         )
                                     })
                                 })
@@ -312,16 +529,21 @@ impl<'a> CheckerState<'a> {
                 }),
             syntax_kind_ext::TRY_STATEMENT => {
                 self.ctx.arena.get_try(node).is_some_and(|try_data| {
-                    self.statement_has_wrapped_self_call_in_return(try_data.try_block, function_sym)
-                        || (try_data.catch_clause.is_some()
-                            && self.statement_has_wrapped_self_call_in_return(
-                                try_data.catch_clause,
-                                function_sym,
-                            ))
+                    self.statement_has_wrapped_self_call_in_return(
+                        try_data.try_block,
+                        function_sym,
+                        require_wrapped_call,
+                    ) || (try_data.catch_clause.is_some()
+                        && self.statement_has_wrapped_self_call_in_return(
+                            try_data.catch_clause,
+                            function_sym,
+                            require_wrapped_call,
+                        ))
                         || (try_data.finally_block.is_some()
                             && self.statement_has_wrapped_self_call_in_return(
                                 try_data.finally_block,
                                 function_sym,
+                                require_wrapped_call,
                             ))
                 })
             }
@@ -333,6 +555,7 @@ impl<'a> CheckerState<'a> {
                         self.statement_has_wrapped_self_call_in_return(
                             catch_data.block,
                             function_sym,
+                            require_wrapped_call,
                         )
                     })
             }
@@ -343,6 +566,7 @@ impl<'a> CheckerState<'a> {
                     self.statement_has_wrapped_self_call_in_return(
                         loop_data.statement,
                         function_sym,
+                        require_wrapped_call,
                     )
                 })
             }
@@ -351,6 +575,7 @@ impl<'a> CheckerState<'a> {
                     self.statement_has_wrapped_self_call_in_return(
                         loop_data.statement,
                         function_sym,
+                        require_wrapped_call,
                     )
                 })
             }
@@ -359,7 +584,11 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_labeled_statement(node)
                 .is_some_and(|labeled| {
-                    self.statement_has_wrapped_self_call_in_return(labeled.statement, function_sym)
+                    self.statement_has_wrapped_self_call_in_return(
+                        labeled.statement,
+                        function_sym,
+                        require_wrapped_call,
+                    )
                 }),
             _ => false,
         }
@@ -369,6 +598,7 @@ impl<'a> CheckerState<'a> {
         &self,
         expr_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
+        require_wrapped_call: bool,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -379,7 +609,7 @@ impl<'a> CheckerState<'a> {
             .flatten()
             && sym_id == function_sym
         {
-            return self.identifier_flows_through_wrapped_call(expr_idx);
+            return self.identifier_flows_through_wrapped_call(expr_idx, require_wrapped_call);
         }
 
         if matches!(
@@ -401,11 +631,19 @@ impl<'a> CheckerState<'a> {
             .get_children(expr_idx)
             .into_iter()
             .any(|child_idx| {
-                self.expression_has_wrapped_self_call_in_return(child_idx, function_sym)
+                self.expression_has_wrapped_self_call_in_return(
+                    child_idx,
+                    function_sym,
+                    require_wrapped_call,
+                )
             })
     }
 
-    fn identifier_flows_through_wrapped_call(&self, ident_idx: NodeIndex) -> bool {
+    fn identifier_flows_through_wrapped_call(
+        &self,
+        ident_idx: NodeIndex,
+        require_wrapped_call: bool,
+    ) -> bool {
         let mut current = ident_idx;
         let mut saw_wrapper = false;
 
@@ -434,21 +672,27 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .arena
                         .get_call_expr(parent_node)
-                        .is_some_and(|call| call.expression == current && saw_wrapper);
+                        .is_some_and(|call| {
+                            call.expression == current && (saw_wrapper || !require_wrapped_call)
+                        });
                 }
                 syntax_kind_ext::NEW_EXPRESSION => {
                     return self
                         .ctx
                         .arena
                         .get_call_expr(parent_node)
-                        .is_some_and(|call| call.expression == current && saw_wrapper);
+                        .is_some_and(|call| {
+                            call.expression == current && (saw_wrapper || !require_wrapped_call)
+                        });
                 }
                 syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                     return self
                         .ctx
                         .arena
                         .get_tagged_template(parent_node)
-                        .is_some_and(|tagged| tagged.tag == current && saw_wrapper);
+                        .is_some_and(|tagged| {
+                            tagged.tag == current && (saw_wrapper || !require_wrapped_call)
+                        });
                 }
                 syntax_kind_ext::RETURN_STATEMENT => return false,
                 _ => {
