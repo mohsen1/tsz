@@ -355,19 +355,16 @@ impl<'a> CheckerState<'a> {
                             if let Some(MemberAccessLevel::Private) =
                                 self.class_constructor_access_level(sym_to_check)
                             {
-                                // Check if we are inside the class that defines the private constructor
-                                // Nested classes can extend a class with private constructor
-                                let is_accessible = if let Some(ref enclosing) =
-                                    self.ctx.enclosing_class
-                                {
-                                    // Get the symbol of the enclosing class
-                                    self.ctx
-                                        .binder
-                                        .get_node_symbol(enclosing.class_idx)
-                                        .is_some_and(|enclosing_sym| enclosing_sym == sym_to_check)
-                                } else {
-                                    false
-                                };
+                                // Check if the extending class is lexically inside the
+                                // base class (e.g., defined inside one of the base class's
+                                // methods). Walk AST parents from the current node up to
+                                // the root, looking for a class declaration whose symbol
+                                // matches the base class. This is robust regardless of
+                                // whether enclosing_class state is set (heritage checking
+                                // can happen during type environment building before the
+                                // statement walker sets enclosing_class).
+                                let is_accessible =
+                                    self.is_lexically_inside_class(expr_idx, sym_to_check);
 
                                 if !is_accessible {
                                     if let Some(name) = self.heritage_name_text(expr_idx) {
@@ -944,6 +941,50 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Check whether `node_idx` is lexically enclosed within a class declaration
+    /// whose binder symbol equals `target_class_sym`.
+    ///
+    /// Walks AST parent pointers from `node_idx` upward. When it encounters a
+    /// `CLASS_DECLARATION` or `CLASS_EXPRESSION`, it checks whether that class's
+    /// binder symbol matches `target_class_sym`. If so, the node is inside the
+    /// target class and has access to its private/protected constructor.
+    ///
+    /// This is used for TS2675: a class with a private constructor can still be
+    /// extended by a class that is defined *within* the declaring class's body
+    /// (e.g., inside one of its methods).
+    fn is_lexically_inside_class(
+        &self,
+        node_idx: NodeIndex,
+        target_class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let mut current = node_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                if self
+                    .ctx
+                    .binder
+                    .get_node_symbol(parent)
+                    .is_some_and(|sym| sym == target_class_sym)
+                {
+                    return true;
+                }
+            }
+            current = parent;
         }
     }
 
