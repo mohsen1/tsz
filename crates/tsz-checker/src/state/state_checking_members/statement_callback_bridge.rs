@@ -460,14 +460,41 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 if !func.is_async && !has_jsdoc_return {
                     let func_name = self.get_function_name_from_node(func_idx);
                     let name_node = (func.name.is_some()).then_some(func.name);
-                    self.maybe_report_implicit_any_return(
-                        func_name,
-                        name_node,
-                        return_type,
-                        has_type_annotation,
-                        false,
-                        func_idx,
-                    );
+                    let has_wrapped_circular_return = !has_type_annotation
+                        && return_type == TypeId::ANY
+                        && self.function_has_wrapped_self_call_in_return_expression(
+                            func_idx, func.body,
+                        );
+                    if has_wrapped_circular_return
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+
+                        if let Some(name) = func_name {
+                            self.error_at_node_msg(
+                                name_node.unwrap_or(func_idx),
+                                diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                &[&name],
+                            );
+                        } else {
+                            self.error_at_node_msg(
+                                func_idx,
+                                diagnostic_codes::FUNCTION_IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_A,
+                                &[],
+                            );
+                        }
+                    } else {
+                        self.maybe_report_implicit_any_return(
+                            func_name,
+                            name_node,
+                            return_type,
+                            has_type_annotation,
+                            false,
+                            func_idx,
+                        );
+                    }
                 }
             }
 

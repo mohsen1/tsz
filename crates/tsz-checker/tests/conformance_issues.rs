@@ -7342,6 +7342,50 @@ const fn1 = () => {
 }
 
 #[test]
+fn test_ts7023_emitted_for_function_declaration_wrapped_self_call() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function fn5() {
+    return [fn5][0]();
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 when a function declaration calls itself through an immediate wrapper in a return expression.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7023_not_emitted_for_direct_function_declaration_self_call() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function fn2(n: number) {
+    return fn2(n);
+}
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7023),
+        "Should NOT emit TS7023 for a direct self-call in a function declaration.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7022_and_ts7024_emitted_for_nested_callback_circular_return() {
     let opts = CheckerOptions {
         no_implicit_any: true,
