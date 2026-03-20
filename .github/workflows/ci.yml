@@ -909,17 +909,17 @@ jobs:
           path: .ci-metrics/emit.json
           retention-days: 14
 
-  # ─── Fourslash: 10 parallel shards ──────────────────────────────────────
+  # ─── Fourslash: 15 parallel shards ──────────────────────────────────────
   fourslash:
-    name: "Fourslash (${{ matrix.shard }}/10)"
+    name: "Fourslash (${{ matrix.shard }}/15)"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     needs: [changes, test-build]
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
@@ -965,8 +965,8 @@ jobs:
           set -euo pipefail
           # Keep shards small enough that the heaviest language-service ranges do not
           # exhaust the runner before results are uploaded.
-          # 10 shards × 700 = 7000, covering all ~6320 fourslash tests.
-          CHUNK=700
+          # 15 shards × 450 = 6750, covering all ~6320 fourslash tests.
+          CHUNK=450
           OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
           TMPOUT=$(mktemp)
@@ -1043,7 +1043,7 @@ jobs:
             SHARD_COUNT=$((SHARD_COUNT + 1))
             echo "  $(basename "$f"): ${P}/${T}"
           done
-          echo "Received results from ${SHARD_COUNT}/10 shards"
+          echo "Received results from ${SHARD_COUNT}/15 shards"
 
           if [ "$TOTAL_TESTS" -eq 0 ]; then
             echo "::error::Fourslash produced no results"
