@@ -1512,7 +1512,12 @@ impl<'a> CheckerState<'a> {
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
                 && !is_skip_circularity
+                && sym_cached_as_error
             {
+                // TS7022: The initializer has a non-deferred self-reference AND the
+                // symbol was actually cached as ERROR during resolution (confirming
+                // semantic circularity, not just an AST name match to a different
+                // entity like an enum or namespace with the same name).
                 final_type = TypeId::ANY;
                 if let Some(ref name) = var_name {
                     use crate::diagnostics::diagnostic_codes;
