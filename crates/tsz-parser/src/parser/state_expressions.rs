@@ -456,11 +456,11 @@ impl ParserState {
             previous_top_level_can_end_parameter_name = depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
-                && (((self.is_identifier_or_keyword()
+                && ((self.is_identifier_or_keyword()
                     && token != SyntaxKind::QuestionToken
                     && !self.is_parameter_modifier())
                     || token == SyntaxKind::CloseBraceToken
-                    || token == SyntaxKind::CloseBracketToken));
+                    || token == SyntaxKind::CloseBracketToken);
             previous_top_level_was_optional_parameter = depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0

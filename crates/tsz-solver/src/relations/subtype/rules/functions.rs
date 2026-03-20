@@ -58,7 +58,11 @@ fn resolve_contextual_source_inference_candidate(
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
-    fn type_param_appears_in_mapped_context(&self, type_id: TypeId, param_name: tsz_common::interner::Atom) -> bool {
+    fn type_param_appears_in_mapped_context(
+        &self,
+        type_id: TypeId,
+        param_name: tsz_common::interner::Atom,
+    ) -> bool {
         crate::visitor::collect_all_types(self.interner, type_id)
             .into_iter()
             .any(|candidate| match self.interner.lookup(candidate) {
@@ -840,8 +844,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .find_type_param(renamed_tp.name)
                 .and_then(|var| infer_ctx.get_constraints(var))
                 .map(|constraints| {
-                    let has_any_bounds =
-                        !constraints.lower_bounds.is_empty() || !constraints.upper_bounds.is_empty();
+                    let has_any_bounds = !constraints.lower_bounds.is_empty()
+                        || !constraints.upper_bounds.is_empty();
                     (constraints.upper_bounds, has_any_bounds)
                 })
                 .unwrap_or_default();
@@ -883,24 +887,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
             let inferred_is_unconstrained_unknown =
                 inferred_ty == Some(TypeId::UNKNOWN) && !has_any_bounds && upper_bounds.is_empty();
-            let preserve_uninferred_type_param = (inferred_ty.is_none() || inferred_is_unconstrained_unknown)
+            let preserve_uninferred_type_param = (inferred_ty.is_none()
+                || inferred_is_unconstrained_unknown)
                 && fallback_ty.is_none()
                 && original_tp.constraint.is_none()
-                && (source
-                    .params
-                    .iter()
-                    .any(|param| {
-                        self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
-                    })
-                    || source
-                        .this_type
-                        .is_some_and(|this_type| {
-                            self.type_param_appears_in_mapped_context(this_type, original_tp.name)
-                        })
-                    || self.type_param_appears_in_mapped_context(
-                        source.return_type,
-                        original_tp.name,
-                    ));
+                && (source.params.iter().any(|param| {
+                    self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
+                }) || source.this_type.is_some_and(|this_type| {
+                    self.type_param_appears_in_mapped_context(this_type, original_tp.name)
+                }) || self
+                    .type_param_appears_in_mapped_context(source.return_type, original_tp.name));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
@@ -961,23 +957,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
 
-            let mapped_constraint_sensitive = source_instantiated.type_params.iter().any(|tp| {
-                source_instantiated.params.iter().any(|param| {
-                    self.type_param_appears_in_mapped_context(param.type_id, tp.name)
-                }) || source_instantiated.this_type.is_some_and(|this_type| {
-                    self.type_param_appears_in_mapped_context(this_type, tp.name)
-                }) || self.type_param_appears_in_mapped_context(
-                    source_instantiated.return_type,
-                    tp.name,
-                ) || target_instantiated.params.iter().any(|param| {
-                    self.type_param_appears_in_mapped_context(param.type_id, tp.name)
-                }) || target_instantiated.this_type.is_some_and(|this_type| {
-                    self.type_param_appears_in_mapped_context(this_type, tp.name)
-                }) || self.type_param_appears_in_mapped_context(
-                    target_instantiated.return_type,
-                    tp.name,
-                )
-            });
+            let mapped_constraint_sensitive =
+                source_instantiated.type_params.iter().any(|tp| {
+                    source_instantiated.params.iter().any(|param| {
+                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
+                    }) || source_instantiated.this_type.is_some_and(|this_type| {
+                        self.type_param_appears_in_mapped_context(this_type, tp.name)
+                    }) || self.type_param_appears_in_mapped_context(
+                        source_instantiated.return_type,
+                        tp.name,
+                    ) || target_instantiated.params.iter().any(|param| {
+                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
+                    }) || target_instantiated.this_type.is_some_and(|this_type| {
+                        self.type_param_appears_in_mapped_context(this_type, tp.name)
+                    }) || self.type_param_appears_in_mapped_context(
+                        target_instantiated.return_type,
+                        tp.name,
+                    )
+                });
 
             // Mapped/indexed generic signatures are constraint-sensitive: a stricter
             // target constraint like `U extends string[]` must stay visible rather
@@ -1559,10 +1556,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         self.type_param_appears_in_mapped_context(param.type_id, tp.name)
                     }) || source_before.this_type.is_some_and(|this_type| {
                         self.type_param_appears_in_mapped_context(this_type, tp.name)
-                    }) || self.type_param_appears_in_mapped_context(
-                        source_before.return_type,
-                        tp.name,
-                    )
+                    }) || self
+                        .type_param_appears_in_mapped_context(source_before.return_type, tp.name)
                 })
             });
         if !result.is_true()

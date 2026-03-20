@@ -584,24 +584,23 @@ impl<'a> CheckerState<'a> {
         &self,
         value_decl: NodeIndex,
     ) -> Option<(NodeIndex, NodeIndex)> {
-        let export_decl_idx = self
-            .ctx
-            .arena
-            .get(value_decl)
-            .filter(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
-            .map(|_| value_decl)
-            .or_else(|| {
-                self.ctx
-                    .arena
-                    .get_extended(value_decl)
-                    .map(|ext| ext.parent)
-                    .filter(|parent| {
-                        self.ctx
-                            .arena
-                            .get(*parent)
-                            .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
-                    })
-            })?;
+        let export_decl_idx =
+            self.ctx
+                .arena
+                .get(value_decl)
+                .filter(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
+                .map(|_| value_decl)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_extended(value_decl)
+                        .map(|ext| ext.parent)
+                        .filter(|parent| {
+                            self.ctx.arena.get(*parent).is_some_and(|node| {
+                                node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            })
+                        })
+                })?;
 
         let export_decl = self
             .ctx

@@ -1664,52 +1664,53 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let last_assign_pos = if let Some(&pos) = self.ctx.symbol_last_assignment_pos.borrow().get(&sym_id) {
-            pos
-        } else {
-            let analyzer = self.flow_analyzer();
-            analyzer
-                .reference_symbol_cache
-                .borrow_mut()
-                .insert(idx.0, Some(sym_id));
-            self.ctx
-                .flow_reference_match_cache
-                .borrow_mut()
-                .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+        let last_assign_pos =
+            if let Some(&pos) = self.ctx.symbol_last_assignment_pos.borrow().get(&sym_id) {
+                pos
+            } else {
+                let analyzer = self.flow_analyzer();
+                analyzer
+                    .reference_symbol_cache
+                    .borrow_mut()
+                    .insert(idx.0, Some(sym_id));
+                self.ctx
+                    .flow_reference_match_cache
+                    .borrow_mut()
+                    .retain(|&(a, b), _| a != idx.0 && b != idx.0);
 
-            let mut last_pos = 0;
-            for i in 0..self.ctx.binder.flow_nodes.len() {
-                let flow_id = FlowNodeId(i as u32);
-                let Some(flow) = self.ctx.binder.flow_nodes.get(flow_id) else {
-                    continue;
-                };
-                if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                    continue;
+                let mut last_pos = 0;
+                for i in 0..self.ctx.binder.flow_nodes.len() {
+                    let flow_id = FlowNodeId(i as u32);
+                    let Some(flow) = self.ctx.binder.flow_nodes.get(flow_id) else {
+                        continue;
+                    };
+                    if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                        continue;
+                    }
+
+                    let Some(node) = self.ctx.arena.get(flow.node) else {
+                        continue;
+                    };
+                    if matches!(
+                        node.kind,
+                        syntax_kind_ext::VARIABLE_DECLARATION
+                            | syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            | syntax_kind_ext::PARAMETER
+                    ) {
+                        continue;
+                    }
+
+                    if analyzer.assignment_targets_reference(flow.node, idx) {
+                        last_pos = last_pos.max(node.pos);
+                    }
                 }
 
-                let Some(node) = self.ctx.arena.get(flow.node) else {
-                    continue;
-                };
-                if matches!(
-                    node.kind,
-                    syntax_kind_ext::VARIABLE_DECLARATION
-                        | syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                        | syntax_kind_ext::PARAMETER
-                ) {
-                    continue;
-                }
-
-                if analyzer.assignment_targets_reference(flow.node, idx) {
-                    last_pos = last_pos.max(node.pos);
-                }
-            }
-
-            self.ctx
-                .symbol_last_assignment_pos
-                .borrow_mut()
-                .insert(sym_id, last_pos);
-            last_pos
-        };
+                self.ctx
+                    .symbol_last_assignment_pos
+                    .borrow_mut()
+                    .insert(sym_id, last_pos);
+                last_pos
+            };
 
         last_assign_pos > ref_pos
     }

@@ -825,7 +825,12 @@ impl<'a> FlowAnalyzer<'a> {
                 let mut applied_args = explicit_type_args.clone();
                 if applied_args.len() < sig.type_params.len() {
                     for param in sig.type_params.iter().skip(applied_args.len()) {
-                        applied_args.push(param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN));
+                        applied_args.push(
+                            param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN),
+                        );
                     }
                 }
                 if applied_args.len() > sig.type_params.len() {
