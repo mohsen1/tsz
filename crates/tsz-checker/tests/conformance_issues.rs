@@ -5425,6 +5425,32 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_super_auto_accessor_access_does_not_report_ts2855() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    accessor value = () => 1;
+}
+
+class Derived extends Base {
+    method() {
+        return super.value();
+    }
+}
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2855),
+        "Expected inherited auto-accessor super access to avoid TS2855. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected inherited auto-accessor super access to resolve member type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_this_in_nested_class_computed_name_keeps_ts2339_companion() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
