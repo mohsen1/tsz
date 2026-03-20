@@ -7852,6 +7852,106 @@ namespace Translation {
     );
 }
 
+/// TS7022 should NOT fire when a variable references a namespace/enum import-equals alias
+/// with the same name. The initializer name-match is not a real circularity because the
+/// symbol resolves to a different entity (the imported alias).
+/// From: declarationEmitEnumReferenceViaImportEquals.ts
+#[test]
+fn test_ts7022_not_emitted_for_namespace_enum_import_equals_same_name() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+namespace Translation {
+    export type TranslationKeyEnum = 'translation1' | 'translation2';
+    export const TranslationKeyEnum = {
+        Translation1: 'translation1' as TranslationKeyEnum,
+        Translation2: 'translation2' as TranslationKeyEnum,
+    };
+}
+import TranslationKeyEnum = Translation.TranslationKeyEnum;
+const x = TranslationKeyEnum;
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for import-equals alias with same name as variable.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire when a `var` redeclaration references the already-established
+/// type from a prior declaration with a type annotation. E.g.:
+///   var o: { x: number; y: number };
+///   var o = A.Utils.mirror(o);
+/// The second `var o` is NOT circular because `o` already has a concrete type.
+/// From: TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts
+#[test]
+fn test_ts7022_not_emitted_for_var_redeclaration_with_prior_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function mirror(p: { x: number; y: number }): { x: number; y: number } {
+    return { x: p.y, y: p.x };
+}
+var o: { x: number; y: number };
+var o = mirror(o);
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for var redeclaration when prior declaration has a type.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire when a `var` has a `typeof` type annotation and a subsequent
+/// redeclaration assigns from itself. The type is established by the first annotation.
+/// From: recursiveTypesWithTypeof.ts
+#[test]
+fn test_ts7022_not_emitted_for_typeof_annotated_var_reassignment() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var h: () => typeof h;
+var h = h();
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for typeof-annotated var with self-assignment.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire for generic function type assertions. The name `x` in
+/// `<T>(x: T) => { x }` is a parameter, not a reference to the outer variable.
+/// From: typeAssertionToGenericFunctionType.ts
+#[test]
+fn test_ts7022_not_emitted_for_generic_function_type_assertion() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var x = {
+    a: < <T>(x: T) => T > ((x: any) => 1),
+    b: <T>(x: T) => { x }
+};
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 when inner `x` is a parameter, not the outer variable.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
 // From: typeSatisfaction_asConstArrays.ts
 
