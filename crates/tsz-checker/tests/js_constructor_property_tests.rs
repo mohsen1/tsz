@@ -438,6 +438,62 @@ class DerivedYadda extends YaddaBase {
 }
 
 #[test]
+fn test_js_super_implicit_base_field_reports_ts2855_for_constructor_and_accessor_writes() {
+    let source = r#"
+class YaddaBase {
+    constructor() {
+        this.roots = "hi";
+        /** @type number */
+        this.justProp;
+        /** @type string */
+        this['literalElementAccess'];
+
+        this.b()
+    }
+    accessor b = () => {
+        this.foo = 10
+    }
+}
+
+class DerivedYadda extends YaddaBase {
+    get rootTests() {
+        return super.roots;
+    }
+    get fooTests() {
+        return super.foo;
+    }
+    get justPropTests() {
+        return super.justProp;
+    }
+    get literalElementAccessTests() {
+        return super.literalElementAccess;
+    }
+}
+"#;
+
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2855).count() >= 4,
+        "Expected JS super access to constructor and accessor-defined base fields to report TS2855, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != 2339 && *code != 7053),
+        "Expected JS super implicit-field checks to avoid TS2339/TS7053 fallback noise, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_static_super_field_reads_allow_declared_and_expando_base_fields() {
     let source = r#"
 class C {

@@ -104,6 +104,38 @@ fn static_field_assignment_via_class_ref() {
 }
 
 #[test]
+fn static_method_returning_polymorphic_this_keeps_static_members() {
+    let diags = check_source(
+        r#"
+        class C {
+            static fn() { return this; }
+            static get x() { return 1; }
+            static set x(v) { }
+            constructor(public a: number, private b: number) { }
+            static foo: string;
+        }
+
+        var r = C.fn();
+        var r2 = r.x;
+        var r3 = r.foo;
+
+        class D extends C {
+            bar: string;
+        }
+
+        var r = D.fn();
+        var r2 = r.x;
+        var r3 = r.foo;
+        "#,
+    );
+    let codes = error_codes(&diags);
+    assert!(
+        !codes.contains(&2339),
+        "Static method returning `this` should preserve constructor-side static members, got: {codes:?}"
+    );
+}
+
+#[test]
 fn static_private_field_destructured_binding() {
     // Destructured binding from static private field should work.
     let diags = check_source(
