@@ -5422,3 +5422,50 @@ fn test_explain_prefers_named_missing_property_over_late_bound_symbols() {
         other => panic!("Expected MissingProperty for 'length', got {other:?}"),
     }
 }
+
+/// tsc rejects `null` and `undefined` as arguments to type parameter `T` even
+/// without strictNullChecks.  The compat fast path must not short-circuit
+/// nullish sources when the target is a type parameter.
+#[test]
+fn test_null_not_assignable_to_unconstrained_type_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // With strictNullChecks (default for CompatChecker::new): null/undefined
+    // are not assignable to type parameters.
+    let mut strict_checker = CompatChecker::new(&interner);
+    assert!(
+        !strict_checker.is_assignable(TypeId::NULL, t_param),
+        "null should not be assignable to T with strictNullChecks"
+    );
+    assert!(
+        !strict_checker.is_assignable(TypeId::UNDEFINED, t_param),
+        "undefined should not be assignable to T with strictNullChecks"
+    );
+
+    // Without strictNullChecks: null/undefined must still NOT be assignable
+    // to a type parameter. In tsc, type parameters are opaque — `null` cannot
+    // be assigned to `T` because `T` could be instantiated as any type.
+    let mut non_strict_checker = CompatChecker::new(&interner);
+    non_strict_checker.set_strict_null_checks(false);
+    assert!(
+        !non_strict_checker.is_assignable(TypeId::NULL, t_param),
+        "null should not be assignable to T even without strictNullChecks"
+    );
+    assert!(
+        !non_strict_checker.is_assignable(TypeId::UNDEFINED, t_param),
+        "undefined should not be assignable to T even without strictNullChecks"
+    );
+
+    // Sanity: null IS still assignable to concrete types without strictNullChecks
+    assert!(
+        non_strict_checker.is_assignable(TypeId::NULL, TypeId::STRING),
+        "null should be assignable to string without strictNullChecks"
+    );
+}
