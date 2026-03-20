@@ -2533,6 +2533,7 @@ impl<'a> CheckerState<'a> {
         // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
             let mut explicit_attr_names_with_pos: Vec<(usize, String)> = Vec::new();
+            let mut suppress_missing_props_from_spread = false;
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
                 let Some(node) = self.ctx.arena.get(node_idx) else {
                     continue;
@@ -2553,13 +2554,17 @@ impl<'a> CheckerState<'a> {
                     .map(|(_, name)| name.as_str())
                     .collect();
 
-                self.check_spread_property_types(
+                suppress_missing_props_from_spread |= self.check_spread_property_types(
                     spread_type,
                     props_type,
                     tag_name_idx,
                     &overridden,
                     &display_target,
                 );
+            }
+
+            if suppress_missing_props_from_spread {
+                spread_covers_all = true;
             }
         }
 

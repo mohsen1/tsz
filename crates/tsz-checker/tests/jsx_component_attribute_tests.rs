@@ -2346,6 +2346,62 @@ const decorator = function <U extends {{x: string}}>(props: U) {{
 }
 
 #[test]
+fn test_intrinsic_generic_spread_type_mismatch_emits_ts2322_not_ts2741() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        test1: { x: string };
+    }
+}
+
+function make2<T extends { x: number }>(obj: T) {
+    return <test1 {...obj} />;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Generic intrinsic spread mismatch should emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Generic intrinsic spread mismatch should not fall back to TS2741, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_generic_spread_missing_required_emits_ts2322_not_ts2741() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        test1: { x: string };
+    }
+}
+
+function make3<T extends { y: string }>(obj: T) {
+    return <test1 {...obj} />;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Generic intrinsic spread missing required props should emit TS2322, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Generic intrinsic spread missing required props should not fall back to TS2741, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_non_generic_sfc_no_spurious_intrinsic_attrs_check() {
     // Non-generic SFC: <Greet name="world" /> should NOT get an IntrinsicAttributes error.
     let source = format!(

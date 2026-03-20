@@ -1864,10 +1864,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             && expr_data.dot_dot_dot_token
                         {
                             has_spread_child = true;
-                            let spread_type = self
-                                .checker
-                                .get_type_of_node_with_request(expr_data.expression, &children_request);
-                            self.checker.normalize_jsx_spread_child_type(child, spread_type)
+                            let spread_type = self.checker.get_type_of_node_with_request(
+                                expr_data.expression,
+                                &children_request,
+                            );
+                            self.checker
+                                .normalize_jsx_spread_child_type(child, spread_type)
                         } else {
                             self.checker
                                 .get_type_of_node_with_request(child, &children_request)
