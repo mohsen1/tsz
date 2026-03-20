@@ -313,6 +313,42 @@ b = a;
 }
 
 #[test]
+fn mapped_array_as_clause_missing_named_property_beats_symbol_members() {
+    let source = r#"
+declare const Symbol: {
+  readonly iterator: unique symbol;
+  readonly unscopables: unique symbol;
+};
+
+type Target = {
+  length: number;
+  [Symbol.iterator]: unknown;
+  [Symbol.unscopables]: unknown;
+};
+
+declare let src: {
+  [Symbol.iterator]: unknown;
+  [Symbol.unscopables]: unknown;
+};
+
+let tgt: Target = src;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|d| d.0 == 2741).collect();
+    assert_eq!(ts2741.len(), 1, "Expected one TS2741 diagnostic, got: {diags:?}");
+    assert!(
+        ts2741[0].1.contains("Property 'length' is missing"),
+        "Expected missing-property diagnostic for 'length', got: {}",
+        ts2741[0].1
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2739),
+        "Late-bound symbol members should not inflate this to TS2739, got: {diags:?}"
+    );
+}
+
+#[test]
 fn object_literal_union_normalization_avoids_ts2339_and_ts2353() {
     let source = r#"
 let a1 = [{ a: 0 }, { a: 1, b: "x" }, { a: 2, b: "y", c: true }][0];
@@ -339,6 +375,58 @@ d1.pos.b;
     assert!(
         diags.iter().any(|d| d.0 == 2322),
         "Expected the bad assignment to remain a TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn property_access_reads_preserve_union_presence_before_write_widening() {
+    let source = r#"
+function foo(options?: { a: string, b: number }) {
+  let x1 = (options || {}).a;
+  let x2 = (options || {})["a"];
+  (options || {}).a = 1;
+  (options || {})["a"] = 1;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Read access should still report TS2339 before widening, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 7053),
+        "Element read access should still report TS7053 before widening, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Write access through || should not emit TS2322 after write-target widening, got: {diags:?}"
+    );
+}
+
+#[test]
+fn nullish_coalescing_write_target_widens_without_changing_read_presence() {
+    let source = r#"
+function foo(options?: { a: string, b: number } | null) {
+  let x1 = (options ?? {}).a;
+  let x2 = (options ?? {})["a"];
+  (options ?? {}).a = 1;
+  (options ?? {})["a"] = 1;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Read access through ?? should still report TS2339 before widening, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 7053),
+        "Element read access through ?? should still report TS7053 before widening, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Write access through ?? should not emit TS2322 after write-target widening, got: {diags:?}"
     );
 }
 

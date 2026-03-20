@@ -204,11 +204,8 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
-        let object_type = if skip_flow_narrowing {
-            let object_type_no_flow = self.get_type_of_node_with_request(
-                access.expression,
-                &TypingRequest::for_write_context(),
-            );
+        let (object_type, write_presence_only) = if skip_flow_narrowing {
+            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
             let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
             let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
             let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
@@ -223,14 +220,34 @@ impl<'a> CheckerState<'a> {
                 false
             };
             let chosen = if can_use_no_flow {
-                object_type_no_flow
+                let read_object_type =
+                    self.get_type_of_node_with_request(access.expression, &read_request);
+                let read_has_property = if let Some(name) = literal_string.as_deref() {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    !matches!(
+                        self.resolve_property_access_with_env(resolved_read, name),
+                        PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                    )
+                } else if literal_index.is_some() {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    self.get_element_access_type(resolved_read, TypeId::NUMBER, literal_index)
+                        != TypeId::ERROR
+                } else {
+                    false
+                };
+                (object_type_no_flow, !read_has_property)
             } else {
-                self.get_type_of_node_with_request(access.expression, &read_request)
+                (
+                    self.get_type_of_node_with_request(access.expression, &read_request),
+                    false,
+                )
             };
-            self.evaluate_application_type(chosen)
+            (self.evaluate_application_type(chosen.0), chosen.1)
         } else {
             let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
-            self.evaluate_application_type(object_type)
+            (self.evaluate_application_type(object_type), false)
         };
 
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
@@ -243,6 +260,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 object_type
             };
+
+        let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
+            if skip_flow_narrowing {
+                if write_presence_only {
+                    TypeId::ANY
+                } else {
+                    write_type.unwrap_or(type_id)
+                }
+            } else {
+                type_id
+            }
+        };
 
         // Save the pre-resolution object type. When the object is a type parameter,
         // resolve_type_for_property_access replaces it with its constraint. But for
@@ -642,12 +671,7 @@ impl<'a> CheckerState<'a> {
                 } => {
                     use_index_signature_check = false;
                     // In write context (assignment target), prefer the setter type.
-                    let effective = if skip_flow_narrowing {
-                        write_type.unwrap_or(type_id)
-                    } else {
-                        type_id
-                    };
-                    Some(effective)
+                    Some(effective_write_result(type_id, write_type))
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     use_index_signature_check = false;
@@ -759,12 +783,7 @@ impl<'a> CheckerState<'a> {
                 } => {
                     use_index_signature_check = false;
                     // In write context (assignment target), prefer the setter type.
-                    let effective = if skip_flow_narrowing {
-                        write_type.unwrap_or(type_id)
-                    } else {
-                        type_id
-                    };
-                    Some(effective)
+                    Some(effective_write_result(type_id, write_type))
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     use_index_signature_check = false;
@@ -805,12 +824,7 @@ impl<'a> CheckerState<'a> {
             } = result
             {
                 use_index_signature_check = false;
-                let effective = if skip_flow_narrowing {
-                    write_type.unwrap_or(type_id)
-                } else {
-                    type_id
-                };
-                result_type = Some(effective);
+                result_type = Some(effective_write_result(type_id, write_type));
             }
         }
 
@@ -833,12 +847,7 @@ impl<'a> CheckerState<'a> {
             } = result
             {
                 use_index_signature_check = false;
-                let effective = if skip_flow_narrowing {
-                    write_type.unwrap_or(type_id)
-                } else {
-                    type_id
-                };
-                result_type = Some(effective);
+                result_type = Some(effective_write_result(type_id, write_type));
             }
         }
 

@@ -242,6 +242,9 @@ impl TypeInterner {
         if self.intersection_has_disjoint_primitives(&flat) {
             return TypeId::NEVER;
         }
+        if self.intersection_has_conflicting_private_brands(&flat) {
+            return TypeId::NEVER;
+        }
         if self.intersection_has_disjoint_object_literals(&flat) {
             return TypeId::NEVER;
         }

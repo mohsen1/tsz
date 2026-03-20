@@ -2046,6 +2046,32 @@ fn intersect_types_raw_with_unknown() {
     assert_eq!(raw, TypeId::STRING, "Raw intersection removes unknown");
 }
 
+#[test]
+fn intersection_with_distinct_private_brand_sets_reduces_to_never() {
+    let i = TypeInterner::new();
+    let brand_a = i.intern_string("__private_brand_A");
+    let brand_b = i.intern_string("__private_brand_B");
+
+    let a = i.object(vec![PropertyInfo::new(brand_a, TypeId::NEVER)]);
+    let b = i.object(vec![PropertyInfo::new(brand_b, TypeId::NEVER)]);
+    assert_eq!(i.intersection(vec![a, b]), TypeId::NEVER);
+}
+
+#[test]
+fn intersection_with_nested_private_brand_set_keeps_derived_shape() {
+    let i = TypeInterner::new();
+    let brand_base = i.intern_string("__private_brand_Base");
+    let brand_derived = i.intern_string("__private_brand_Derived");
+
+    let base = i.object(vec![PropertyInfo::new(brand_base, TypeId::NEVER)]);
+    let derived = i.object(vec![
+        PropertyInfo::new(brand_base, TypeId::NEVER),
+        PropertyInfo::new(brand_derived, TypeId::NEVER),
+    ]);
+
+    assert_eq!(i.intersection(vec![base, derived]), derived);
+}
+
 // =========================================================================
 // 41. BOXED TYPES
 // =========================================================================

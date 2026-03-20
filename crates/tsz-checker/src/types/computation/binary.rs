@@ -24,6 +24,54 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn get_type_of_write_target_base_expression(&mut self, idx: NodeIndex) -> TypeId {
+        let logical_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if let Some(node) = self.ctx.arena.get(logical_idx)
+            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && matches!(
+                binary.operator_token,
+                k if k == SyntaxKind::BarBarToken as u16
+                    || k == SyntaxKind::QuestionQuestionToken as u16
+            )
+        {
+            let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
+            let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
+            let ctx = tsz_solver::NarrowingContext::new(self.ctx.types);
+            let members = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                let truthy_left = ctx.narrow_by_truthiness(left_type);
+                let falsy_left = ctx.narrow_to_falsy(left_type);
+                if truthy_left == TypeId::NEVER || falsy_left == TypeId::NEVER {
+                    return self.get_type_of_node_with_request(
+                        logical_idx,
+                        &TypingRequest::for_write_context(),
+                    );
+                }
+                vec![truthy_left, right_type]
+            } else {
+                let non_nullish_left =
+                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::ExcludeNullish);
+                let nullish_left =
+                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::KeepNullish);
+                if non_nullish_left == TypeId::NEVER || nullish_left == TypeId::NEVER {
+                    return self.get_type_of_node_with_request(
+                        logical_idx,
+                        &TypingRequest::for_write_context(),
+                    );
+                }
+                vec![non_nullish_left, right_type]
+            };
+
+            if let Some(normalized) =
+                tsz_solver::normalize_object_union_members_for_write_target(self.ctx.types, &members)
+            {
+                return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
+            }
+        }
+
+        self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context())
+    }
+
     /// Mirrors tsc's `getSyntacticNullishnessSemantics`. This is a purely syntactic check
     /// that determines whether an expression can ever be nullish, WITHOUT consulting the
     /// type system. For example, a variable `foo: string` returns `Sometimes` (it could

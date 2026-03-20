@@ -549,6 +549,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return Some(PropertyAccessResult::IsUnknown);
         }
 
+        let fresh_object_union = non_unknown_members
+            .iter()
+            .all(|&member| crate::relations::freshness::is_fresh_object_type(self.interner(), member));
+
         if let Some(normalized) =
             normalize_fresh_object_literal_union_members(self.interner(), &non_unknown_members)
         {
@@ -643,10 +647,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
                 // PropertyNotFound: if a non-empty-object member is missing the property,
                 // the property does not exist on the union. Empty object types ({}) are
-                // treated as partial — they don't block access to properties that exist
-                // on other union members (matching tsc behavior).
+                // only treated as partial in the fresh object-literal normalization lane.
+                // For ordinary unions like `T | {}`, read access must still report that
+                // the property does not exist until the expression is widened by a write
+                // or other widening position.
                 PropertyAccessResult::PropertyNotFound { .. } => {
-                    if crate::is_empty_object_type(self.interner(), member) {
+                    if fresh_object_union && crate::is_empty_object_type(self.interner(), member) {
                         // Empty object: treat as partial, property yields undefined
                         valid_results.push(TypeId::UNDEFINED);
                         valid_write_results.push(TypeId::UNDEFINED);
