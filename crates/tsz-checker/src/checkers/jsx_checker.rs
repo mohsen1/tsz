@@ -1028,8 +1028,7 @@ impl<'a> CheckerState<'a> {
             && let Some(tag_name) = self.get_jsx_intrinsic_tag_name(tag_name_idx)
             && let Some(props) = self.get_jsx_intrinsic_props_for_tag(idx, &tag_name, true)
             && props == TypeId::ERROR
-        {
-        }
+        {}
     }
 
     /// Get the global JSX namespace type (resolves factory-scoped then global `JSX`).
