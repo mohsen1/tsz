@@ -253,6 +253,50 @@ fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
 }
 
 #[test]
+fn test_parenthesized_divide_expression_before_block_is_not_treated_as_missing_arrow() {
+    let source = "(a/8\n ){}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let block_pos = source.find('{').expect("block position") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.message == "',' expected.")),
+        "Parenthesized divide expressions should not trigger arrow-parameter comma recovery: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.message == "'=>' expected.")),
+        "Parenthesized divide expressions should not trigger missing-arrow recovery: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == block_pos
+                && diag.message == "';' expected."
+        }),
+        "Expected the downstream ';' recovery at the block start, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parameter_modifier_arrow_head_still_parses_as_arrow() {
+    let source = "var v = (public x: string) => { };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parameter-modifier arrow heads should stay in arrow parsing: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_top_level_modifier_recovery_keeps_try_block_error() {
     let source = "cla <ss {\n  _ static try\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

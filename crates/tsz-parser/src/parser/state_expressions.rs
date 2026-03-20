@@ -325,6 +325,8 @@ impl ParserState {
         let mut bracket_depth: u32 = 0;
         let mut angle_bracket_depth: u32 = 0;
         let mut saw_parameter_syntax = false;
+        let mut slot_in_type_context = false;
+        let mut slot_in_initializer_context = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         let mut previous_top_level_can_end_parameter_name = false;
         let mut previous_top_level_was_optional_parameter = false;
@@ -355,6 +357,26 @@ impl ParserState {
                 && self.look_ahead_question_is_optional_parameter_marker(
                     previous_top_level_can_end_parameter_name,
                 );
+            let can_continue_top_level_parameter = at_top_level
+                && (previous_top_level_can_end_parameter_name
+                    || previous_top_level_was_optional_parameter);
+            let token_can_follow_top_level_parameter = matches!(
+                token,
+                SyntaxKind::CloseParenToken
+                    | SyntaxKind::CommaToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken
+            ) || saw_optional_parameter_marker;
+
+            if can_continue_top_level_parameter
+                && !slot_in_type_context
+                && !slot_in_initializer_context
+                && !token_can_follow_top_level_parameter
+            {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
 
             if at_top_level && token == SyntaxKind::QuestionToken && !saw_optional_parameter_marker
             {
@@ -369,6 +391,17 @@ impl ParserState {
                             || previous_top_level_was_optional_parameter)))
             {
                 saw_parameter_syntax = true;
+                slot_in_type_context = token == SyntaxKind::ColonToken;
+                if saw_optional_parameter_marker {
+                    slot_in_type_context = false;
+                }
+            } else if at_top_level
+                && token == SyntaxKind::EqualsToken
+                && (previous_top_level_can_end_parameter_name
+                    || previous_top_level_was_optional_parameter)
+            {
+                slot_in_type_context = false;
+                slot_in_initializer_context = true;
             }
 
             if token == SyntaxKind::OpenParenToken {
@@ -411,6 +444,8 @@ impl ParserState {
             {
                 // A comma at the top level separates parameters; the next token
                 // starts a new parameter slot.
+                slot_in_type_context = false;
+                slot_in_initializer_context = false;
                 at_param_start = true;
             } else {
                 // Any other token (identifier, keyword, `[`, `{`, `...`, `=`, etc.)
@@ -421,9 +456,11 @@ impl ParserState {
             previous_top_level_can_end_parameter_name = depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
-                && ((self.is_identifier_or_keyword() && token != SyntaxKind::QuestionToken)
+                && (((self.is_identifier_or_keyword()
+                    && token != SyntaxKind::QuestionToken
+                    && !self.is_parameter_modifier())
                     || token == SyntaxKind::CloseBraceToken
-                    || token == SyntaxKind::CloseBracketToken);
+                    || token == SyntaxKind::CloseBracketToken));
             previous_top_level_was_optional_parameter = depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
