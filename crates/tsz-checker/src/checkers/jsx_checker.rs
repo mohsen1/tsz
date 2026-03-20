@@ -2225,6 +2225,7 @@ impl<'a> CheckerState<'a> {
         let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
+        let mut needs_special_attr_object_assignability = false;
 
         // TS2783: track explicit attr names for spread overwrite detection.
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
@@ -2305,6 +2306,7 @@ impl<'a> CheckerState<'a> {
                 use crate::query_boundaries::common::PropertyAccessResult;
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
+                let is_special_named_attr = attr_name.contains('-') || attr_name.contains(':');
                 let expected_type = match self
                     .resolve_property_access_with_env(props_type, &attr_name)
                 {
@@ -2430,6 +2432,15 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = actual_type;
+                    }
+                    if is_special_named_attr {
+                        if actual_type != TypeId::ANY
+                            && actual_type != TypeId::ERROR
+                            && !self.is_assignable_to(actual_type, expected_type)
+                        {
+                            needs_special_attr_object_assignability = true;
+                        }
+                        continue;
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
                     if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
@@ -2652,6 +2663,7 @@ impl<'a> CheckerState<'a> {
         let reported_custom_children_assignability = if !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks
+            && !needs_special_attr_object_assignability
             && self.should_report_custom_jsx_children_via_assignability(props_type, &provided_attrs)
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
@@ -2665,7 +2677,29 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_special_attr_assignability = if !reported_custom_children_assignability
+            && !has_excess_property_error
+            && !spread_covers_all
+            && !skip_prop_checks
+            && needs_special_attr_object_assignability
+        {
+            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+            if !self.is_assignable_to(attrs_type, props_type) {
+                self.report_jsx_synthesized_props_assignability_error(
+                    attrs_type,
+                    &display_target,
+                    tag_name_idx,
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
+            && !reported_special_attr_assignability
             && !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks
@@ -2689,6 +2723,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
+            && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
             && !has_excess_property_error
             && !spread_covers_all
