@@ -5390,3 +5390,35 @@ fn test_explain_normalized_mapped_application_missing_property() {
         other => panic!("Expected MissingProperty for mapped application 'a', got {other:?}"),
     }
 }
+
+#[test]
+fn test_explain_prefers_named_missing_property_over_late_bound_symbols() {
+    let interner = TypeInterner::new();
+
+    let length = interner.intern_string("length");
+    let iterator = interner.intern_string("[Symbol.iterator]");
+    let unscopables = interner.intern_string("[Symbol.unscopables]");
+
+    let source = interner.object(vec![]);
+    let target = interner.object(vec![
+        PropertyInfo::new(length, TypeId::NUMBER),
+        PropertyInfo::new(iterator, TypeId::ANY),
+        PropertyInfo::new(unscopables, TypeId::ANY),
+    ]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let reason = checker.explain_failure(source, target);
+
+    match reason {
+        Some(SubtypeFailureReason::MissingProperty {
+            property_name,
+            source_type,
+            target_type,
+        }) => {
+            assert_eq!(property_name, length);
+            assert_eq!(source_type, source);
+            assert_eq!(target_type, target);
+        }
+        other => panic!("Expected MissingProperty for 'length', got {other:?}"),
+    }
+}

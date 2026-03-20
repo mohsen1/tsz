@@ -20,6 +20,11 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn is_late_bound_symbol_property_name(&self, name: tsz_common::interner::Atom) -> bool {
+        let name = self.interner.resolve_atom_ref(name);
+        name.starts_with("[Symbol.") || name.starts_with("__@")
+    }
+
     /// Explain why `source` is not assignable to `target`.
     ///
     /// This is the "slow path" - called only when `is_assignable_to` returns false
@@ -590,6 +595,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .cmp(&self.interner.resolve_atom_ref(*right_name)),
             }
         });
+        let non_symbol_missing: Vec<_> = missing_with_order
+            .iter()
+            .copied()
+            .filter(|(name, _)| !self.is_late_bound_symbol_property_name(*name))
+            .collect();
+        if !non_symbol_missing.is_empty() {
+            missing_with_order = non_symbol_missing;
+        }
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
             .into_iter()
             .map(|(name, _)| name)
