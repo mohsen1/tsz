@@ -2702,3 +2702,46 @@ fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fin
         }
     }
 }
+
+/// Ensures that `current_callable_type` is not reintroduced as ambient mutable state.
+///
+/// The callable type is now threaded explicitly via `CallableContext` through the call
+/// argument collection pipeline. No file in the call-context lane should read or write
+/// `ctx.current_callable_type`. The field has been removed from `CheckerContext`.
+#[test]
+fn no_ambient_current_callable_type() {
+    let migrated_files = [
+        "src/checkers/call_checker.rs",
+        "src/types/computation/call.rs",
+        "src/types/computation/call_inference.rs",
+        "src/types/computation/call_display.rs",
+        "src/state/type_analysis/computed_helpers.rs",
+        "src/context/mod.rs",
+        "src/context/constructors.rs",
+    ];
+
+    let checker_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    for file in migrated_files {
+        let path = checker_root.join(file);
+        let content =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {file}: {e}"));
+
+        // Allow the doc comment in CallableContext's definition but forbid actual usage.
+        // Filter out lines that are comments (starting with /// or //).
+        let non_comment_lines: String = content
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.starts_with("///") && !trimmed.starts_with("//")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            !non_comment_lines.contains("current_callable_type"),
+            "File {file} must not reference `current_callable_type` — \
+             use explicit `CallableContext` threading instead"
+        );
+    }
+}

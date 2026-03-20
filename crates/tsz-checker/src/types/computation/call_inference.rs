@@ -1,5 +1,6 @@
 //! Generic-call inference and round-2 contextual typing helpers.
 
+use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
@@ -1381,6 +1382,7 @@ impl<'a> CheckerState<'a> {
         effective_index: usize,
         arg_count: usize,
         suppress_diagnostics: bool,
+        callable_ctx: CallableContext,
     ) -> TypeId {
         use tsz_scanner::SyntaxKind;
 
@@ -1426,13 +1428,13 @@ impl<'a> CheckerState<'a> {
         let apply_contextual = !expected_is_unresolved
             && (syntax_needs_contextual || needs_contextual_signature_instantiation);
         let expected_context_type =
-            self.contextual_type_option_for_call_argument(expected_type, arg_idx);
+            self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
             tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
                 || should_preserve_contextual_application_shape(self.ctx.types, ty)
         });
         let callable_context_requires_generic_epc_skip =
-            self.ctx.current_callable_type.is_some_and(|callable_type| {
+            callable_ctx.callable_type.is_some_and(|callable_type| {
                 let ctx =
                     tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                 ctx.get_parameter_type_for_call(effective_index, arg_count)
