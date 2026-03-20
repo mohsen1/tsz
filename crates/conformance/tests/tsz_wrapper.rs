@@ -358,6 +358,43 @@ fn test_convert_options_expands_explicit_strict_false() {
 }
 
 #[test]
+fn test_prepare_test_dir_uses_non_strict_baseline_for_source_pragmas_without_strict() {
+    let content = r#"
+// @target: es2015
+class C<T> {
+    foo: T;
+}
+"#;
+
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
+    let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
+        .expect("tsconfig should be written");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&tsconfig).expect("tsconfig should be valid json");
+    let compiler_options = parsed["compilerOptions"]
+        .as_object()
+        .expect("compilerOptions should be an object");
+
+    for key in [
+        "strict",
+        "noImplicitAny",
+        "noImplicitThis",
+        "strictNullChecks",
+        "strictFunctionTypes",
+        "strictBindCallApply",
+        "strictPropertyInitialization",
+        "useUnknownInCatchVariables",
+        "alwaysStrict",
+    ] {
+        assert_eq!(
+            compiler_options.get(key),
+            Some(&serde_json::Value::Bool(false)),
+            "Expected {key} to be forced false for stripped source pragmas"
+        );
+    }
+}
+
+#[test]
 fn test_rewrite_bare_specifiers() {
     let filenames = vec![
         ("server.ts".to_string(), "export class c {}".to_string()),
