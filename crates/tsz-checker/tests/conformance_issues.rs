@@ -7208,6 +7208,46 @@ export default {
     );
 }
 
+#[test]
+fn test_ts7022_emitted_for_circular_class_field_initializers() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r##"
+class A {
+    #foo = this.#bar;
+    #bar = this.#foo;
+    ["#baz"] = this["#baz"];
+}
+        "##,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(
+            |(code, message)| *code == 7022 && message.contains("'#foo' implicitly has type 'any'")
+        ),
+        "Expected TS7022 for circular private field '#foo'.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(
+            |(code, message)| *code == 7022 && message.contains("'#bar' implicitly has type 'any'")
+        ),
+        "Expected TS7022 for circular private field '#bar'.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(
+            |(code, message)| {
+                *code == 7022 && message.contains("'[\"#baz\"]' implicitly has type 'any'")
+            }
+        ),
+        "Expected TS7022 for computed class field '[\"#baz\"]'.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7022 should NOT fire when noImplicitAny is off (like all 7xxx diagnostics).
 #[test]
 fn test_ts7022_not_emitted_without_no_implicit_any() {

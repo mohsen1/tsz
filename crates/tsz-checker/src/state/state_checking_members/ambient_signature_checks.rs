@@ -286,6 +286,7 @@ impl<'a> CheckerState<'a> {
         let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
         let contextual_member_type =
             self.contextual_class_member_type_from_request(request, prop.name);
+        let mut inferred_initializer_type = None;
 
         // If property has a semantic declared type and initializer, check type compatibility.
         if prop.initializer.is_some()
@@ -343,7 +344,27 @@ impl<'a> CheckerState<'a> {
             } else {
                 request.read().contextual_opt(None)
             };
-            self.get_type_of_node_with_request(prop.initializer, &request);
+            let initializer_snap = self.ctx.snapshot_diagnostics();
+            let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
+            inferred_initializer_type = Some(init_type);
+
+            if self.ctx.no_implicit_any()
+                && contextual_member_type.is_none()
+                && prop.type_annotation.is_none()
+                && self.class_property_initializer_has_non_deferred_circularity(member_idx)
+                && let Some(member_name) = self.get_member_name_display_text(prop.name)
+            {
+                self.suppress_circular_initializer_relation_diagnostics(
+                    &initializer_snap,
+                    prop.initializer,
+                );
+                self.error_at_node_msg(
+                    prop.name,
+                    diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                    &[&member_name],
+                );
+                inferred_initializer_type = Some(TypeId::ANY);
+            }
         }
 
         // Error 2729: Property is used before its initialization
@@ -397,6 +418,8 @@ impl<'a> CheckerState<'a> {
             declared_type
         } else if let Some(member_type) = contextual_member_type {
             member_type
+        } else if let Some(init_type) = inferred_initializer_type {
+            init_type
         } else if prop.initializer.is_some() {
             let request = request.read().contextual_opt(None);
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
