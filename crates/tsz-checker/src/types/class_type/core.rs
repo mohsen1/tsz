@@ -276,8 +276,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
-                        let visibility =
-                            self.get_member_visibility(&method.modifiers, method.name);
+                        let visibility = self.get_member_visibility(&method.modifiers, method.name);
                         prescan_props.push(PropertyInfo {
                             name: name_atom,
                             type_id: TypeId::ANY,
@@ -318,8 +317,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 TypeId::ANY
                             };
-                            let visibility =
-                                self.get_visibility_from_modifiers(&param.modifiers);
+                            let visibility = self.get_visibility_from_modifiers(&param.modifiers);
                             prescan_props.push(PropertyInfo {
                                 name: name_atom,
                                 type_id: declared_type,
