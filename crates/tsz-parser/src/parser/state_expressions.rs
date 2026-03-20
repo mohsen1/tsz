@@ -1190,13 +1190,14 @@ impl ParserState {
                             self.error_expression_expected();
                             return self.parse_unary_expression();
                         }
-                        // TSC anchors repeated prefix updates like `++ ++x` at
-                        // the outer operator, then keeps the inner update
-                        // expression as the recovered operand statement.
+                        // TSC reports the repeated-update syntax error at the
+                        // inner operator (`++++x` -> second `++`,
+                        // `++\n++x` -> line 2 `++`) while still recovering to
+                        // the inner update expression.
                         SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken => {
                             self.parse_error_at(
-                                start_pos,
-                                self.token_end().saturating_sub(start_pos),
+                                self.token_pos(),
+                                self.token_end().saturating_sub(self.token_pos()),
                                 "Expression expected.",
                                 diagnostic_codes::EXPRESSION_EXPECTED,
                             );
