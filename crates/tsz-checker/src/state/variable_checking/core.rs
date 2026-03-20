@@ -119,6 +119,24 @@ impl<'a> CheckerState<'a> {
         TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
     }
 
+    fn maybe_clear_checked_initializer_type_cache(&mut self, initializer_idx: NodeIndex) {
+        // Some initializer forms are first visited during build_type_environment, where we only
+        // want a stable type shape. The later checked pass must revisit them so body/member
+        // diagnostics (for example TS2454 inside class-expression methods or TS2564 on class
+        // fields) are emitted from the canonical checked path.
+        if let Some(init_node) = self.ctx.arena.get(initializer_idx)
+            && matches!(
+                init_node.kind,
+                syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::NEW_EXPRESSION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+            )
+        {
+            self.clear_type_cache_recursive(initializer_idx);
+        }
+    }
+
     pub(crate) fn find_circular_reference_in_type_node(
         &self,
         type_idx: NodeIndex,
@@ -768,6 +786,7 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.rebuild_emitted_diagnostics_from_current();
                     }
                     let init_snap = checker.ctx.snapshot_diagnostics();
+                    checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                     let init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
                     let init_type_for_relation = checker.resolve_lazy_type(init_type);
@@ -961,21 +980,7 @@ impl<'a> CheckerState<'a> {
                     }
                     return init_type;
                 }
-                // Clear cache for initializer forms whose checked-pass type can differ
-                // from build_type_environment:
-                // - closures may pick up contextual typing and deferred TS7006
-                // - `new` expressions can pick up finalized generic constructor
-                //   specializations after class/constructor symbols stabilize
-                if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
-                    && matches!(
-                        init_node.kind,
-                        syntax_kind_ext::FUNCTION_EXPRESSION
-                            | syntax_kind_ext::ARROW_FUNCTION
-                            | syntax_kind_ext::NEW_EXPRESSION
-                    )
-                {
-                    checker.clear_type_cache_recursive(var_decl.initializer);
-                }
+                checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                 // When the binding pattern contains array sub-patterns and the
                 // initializer has matching array literals, provide a contextual type
                 // so array literals produce positional (tuple) types instead of widened
