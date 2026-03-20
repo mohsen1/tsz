@@ -128,3 +128,65 @@ if ((numOrStr === undefined) as numOrStr is string) {
         "expected TS1434 after invalid `as` assertion recovery, got {diags:?}"
     );
 }
+
+/// Test: get/set accessor with missing `(` in object literal should not cascade errors.
+/// When `get e,` appears in an object literal, tsc emits TS1005 '(' expected
+/// and continues parsing subsequent properties correctly. The `,` after `e`
+/// belongs to the object literal list, not the accessor's parameter list.
+#[test]
+fn object_literal_accessor_missing_paren_no_cascade() {
+    let source = r#"var y = {
+    get e,
+    set f,
+    this,
+    class
+};"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    // Should emit TS1005 for '(' expected on get/set and ':' expected on this/class
+    assert!(
+        codes.iter().all(|&c| c == diagnostic_codes::EXPECTED),
+        "expected only TS1005 errors, got codes: {codes:?}, diags: {diags:?}"
+    );
+    // Must NOT emit TS1109 (Expression expected) - that was the spurious cascading error
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "should not emit TS1109, got: {diags:?}"
+    );
+}
+
+/// Test: shorthand properties with non-identifier names emit TS1005 only, not TS1109.
+#[test]
+fn object_literal_shorthand_non_identifier_no_ts1109() {
+    let source = r#"var y = {
+    "stringLiteral",
+    42,
+    typeof
+};"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    // Should only have TS1005 (':' expected) for each non-identifier shorthand
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "should not emit TS1109, got: {diags:?}"
+    );
+}
+
+/// Test: `a.b,` in object literal emits comma-expected without TS1109.
+#[test]
+fn object_literal_dotted_property_recovery() {
+    let source = r#"var x = {
+    a.b,
+    a["ss"],
+    a[1],
+};"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "should not emit TS1109, got: {diags:?}"
+    );
+}
