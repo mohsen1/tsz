@@ -310,6 +310,13 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for mapped type evaluation with resolution.
     pub mapped_eval_set: FxHashSet<TypeId>,
 
+    /// Recursion guard for `evaluate_type_with_resolution`.
+    /// Prevents infinite mutual recursion through
+    /// `evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
+    /// → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution`
+    /// on recursive type aliases.
+    pub type_resolution_visiting: FxHashSet<TypeId>,
+
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.

@@ -248,6 +248,20 @@ impl<'a> CheckerState<'a> {
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
+        // Cycle guard: evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
+        // → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution
+        // can form an infinite mutual recursion on recursive type aliases like
+        // `type Box2 = Box<Box2 | number>`. Track types currently being resolved and
+        // bail out if we re-enter with the same type.
+        if !self.ctx.type_resolution_visiting.insert(type_id) {
+            return type_id;
+        }
+        let result = self.evaluate_type_with_resolution_inner(type_id);
+        self.ctx.type_resolution_visiting.remove(&type_id);
+        result
+    }
+
+    fn evaluate_type_with_resolution_inner(&mut self, type_id: TypeId) -> TypeId {
         let resolved = match query::classify_for_type_resolution(self.ctx.types, type_id) {
             query::TypeResolutionKind::Lazy(def_id) => {
                 // When a bare Lazy(DefId) represents a generic interface/class with
