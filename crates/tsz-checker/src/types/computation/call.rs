@@ -5,6 +5,7 @@
 //! Identifier resolution is in `identifier.rs` and tagged
 //! template expression handling is in `tagged_template.rs`.
 
+use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
@@ -319,6 +320,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| Some(TypeId::ANY),
                 check_excess_properties,
                 None, // No skipping needed
+                CallableContext::none(),
             );
             return TypeId::ANY;
         }
@@ -340,6 +342,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| Some(TypeId::ANY),
                 check_excess_properties,
                 None, // No skipping needed
+                CallableContext::none(),
             );
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
@@ -356,6 +359,7 @@ impl<'a> CheckerState<'a> {
                     |_i, _arg_count| None,
                     check_excess_properties,
                     None,
+                    CallableContext::none(),
                 );
                 return TypeId::ERROR;
             }
@@ -366,6 +370,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| None,
                 check_excess_properties,
                 None,
+                CallableContext::none(),
             );
             return TypeId::ANY;
         }
@@ -433,6 +438,7 @@ impl<'a> CheckerState<'a> {
                     |_i, _arg_count| Some(TypeId::ANY),
                     check_excess_properties,
                     None,
+                    CallableContext::none(),
                 );
                 return TypeId::VOID;
             }
@@ -453,6 +459,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| Some(TypeId::ANY),
                 check_excess_properties,
                 None,
+                CallableContext::none(),
             );
             // Try to recover a return type for downstream type checking
             if let Some(return_type) =
@@ -631,9 +638,8 @@ impl<'a> CheckerState<'a> {
         // enabling correct type parameter inference (e.g., K = "foo" | "bar").
         // tsc preserves literals during inference and only widens at assignment sites.
         let prev_preserve_literals = self.ctx.preserve_literal_types;
-        let prev_callable_type = self.ctx.current_callable_type;
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
-        self.ctx.current_callable_type = Some(callee_type_for_context);
+        let callable_ctx = CallableContext::new(callee_type_for_context);
         if is_generic_call {
             self.ctx.preserve_literal_types = true;
         }
@@ -797,6 +803,7 @@ impl<'a> CheckerState<'a> {
                         },
                         check_excess_properties,
                         Some(&sensitive_args), // Skip sensitive args in Round 1
+                        callable_ctx,
                     );
 
                     // Seed inference from non-sensitive object-literal properties.
@@ -1397,6 +1404,7 @@ impl<'a> CheckerState<'a> {
                                     i,
                                     args.len(),
                                     true,
+                                    callable_ctx,
                                 )
                             } else {
                                 self.compute_single_call_argument_type(
@@ -1406,6 +1414,7 @@ impl<'a> CheckerState<'a> {
                                     i,
                                     args.len(),
                                     true,
+                                    callable_ctx,
                                 )
                             };
                             let arg_type_for_refinement = expected_type
@@ -1611,6 +1620,7 @@ impl<'a> CheckerState<'a> {
                             },
                             check_excess_properties,
                             None,
+                            callable_ctx,
                         )
                     }
                 } else {
@@ -1691,6 +1701,7 @@ impl<'a> CheckerState<'a> {
                         },
                         check_excess_properties,
                         None, // No skipping needed for single-pass
+                        callable_ctx,
                     );
 
                     let needs_refresh = contextual_type.is_some()
@@ -1772,6 +1783,7 @@ impl<'a> CheckerState<'a> {
                                 },
                                 check_excess_properties,
                                 None,
+                                callable_ctx,
                             )
                         } else if let Some(instantiated_params) = self
                             .resolve_call_with_checker_adapter(
@@ -1839,6 +1851,7 @@ impl<'a> CheckerState<'a> {
                                     },
                                     check_excess_properties,
                                     None,
+                                    callable_ctx,
                                 );
                             self.refine_generic_function_args_against_instantiated_params(
                                 refreshed_arg_types,
@@ -1868,6 +1881,7 @@ impl<'a> CheckerState<'a> {
                     },
                     check_excess_properties,
                     None, // No skipping needed for single-pass
+                    callable_ctx,
                 )
             }
         } else {
@@ -1891,10 +1905,10 @@ impl<'a> CheckerState<'a> {
                 },
                 check_excess_properties,
                 None, // No skipping needed for single-pass
+                callable_ctx,
             )
         };
         self.ctx.preserve_literal_types = prev_preserve_literals;
-        self.ctx.current_callable_type = prev_callable_type;
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         if pushed_this_type_from_shape {
             self.ctx.this_type_stack.pop();
@@ -1915,6 +1929,7 @@ impl<'a> CheckerState<'a> {
                 |_i, _arg_count| None,
                 check_excess_properties,
                 None, // No skipping needed
+                CallableContext::none(),
             );
             return if nullish_cause.is_some() {
                 self.ctx
@@ -2081,6 +2096,7 @@ impl<'a> CheckerState<'a> {
                 },
                 check_excess_properties,
                 None,
+                callable_ctx,
             );
             if retry_pushed_this {
                 self.ctx.this_type_stack.pop();

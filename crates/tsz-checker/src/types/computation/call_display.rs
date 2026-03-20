@@ -8,6 +8,7 @@
 //! - `propagate_generic_constructor_display_defs` — DefId propagation after generic inference
 //! - `object_literal_has_computed_property_names` — computed property name detection
 
+use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
@@ -305,8 +306,11 @@ impl<'a> CheckerState<'a> {
                 // Object literals are excluded here: request-first typing no longer
                 // stores contextual object-literal results in the ambient node cache,
                 // so re-entering them late is prone to dropping nested member context.
-                let ctx_type =
-                    self.contextual_type_option_for_call_argument(expected_type, arg_idx);
+                let ctx_type = self.contextual_type_option_for_call_argument(
+                    expected_type,
+                    arg_idx,
+                    CallableContext::none(),
+                );
                 let Some(ctx_type) = ctx_type.filter(|ty| {
                     if k == syntax_kind_ext::FUNCTION_EXPRESSION
                         || k == syntax_kind_ext::ARROW_FUNCTION

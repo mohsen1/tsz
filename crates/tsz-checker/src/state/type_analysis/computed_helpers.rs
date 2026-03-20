@@ -1,5 +1,6 @@
 //! Contextual literal types, circular reference detection, and private property access.
 
+use crate::call_checker::CallableContext;
 use crate::class_inheritance::ClassInheritanceChecker;
 use crate::query_boundaries::common::{
     TypeTraversalKind, classify_for_traversal, object_shape_for_type,
@@ -116,8 +117,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: Option<TypeId>,
         arg_idx: NodeIndex,
+        callable_ctx: CallableContext,
     ) -> Option<TypeId> {
-        self.contextual_type_option_for_call_argument_at(type_id, arg_idx, None, None)
+        self.contextual_type_option_for_call_argument_at(type_id, arg_idx, None, None, callable_ctx)
     }
 
     pub(crate) fn contextual_type_option_for_call_argument_at(
@@ -126,6 +128,7 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         arg_index: Option<usize>,
         arg_count: Option<usize>,
+        callable_ctx: CallableContext,
     ) -> Option<TypeId> {
         let type_id = type_id?;
         let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
@@ -163,7 +166,7 @@ impl<'a> CheckerState<'a> {
                 arg_index.is_some_and(|index| index < skip.len() && skip[index])
             })
             && let Some(arg_index) = arg_index
-            && let Some(callable_type) = self.ctx.current_callable_type
+            && let Some(callable_type) = callable_ctx.callable_type
             && let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
                 self.ctx.types,
                 callable_type,
