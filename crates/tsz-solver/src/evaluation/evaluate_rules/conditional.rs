@@ -272,9 +272,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // try to infer from the constraint. This handles cases like:
                 // R extends Reducer<infer S, any> ? S : never
                 // where R is constrained to Reducer<any, any>
-                if extends_has_infer
-                    && let Some(constraint) = param.constraint
-                {
+                if extends_has_infer && let Some(constraint) = param.constraint {
                     let mut checker =
                         SubtypeChecker::with_resolver(self.interner(), self.resolver());
                     checker.allow_bivariant_rest = true;
@@ -349,9 +347,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // Only defer when extends_type has no infer patterns (those need pattern
             // matching first — Step 3 handles them with its own deferral logic).
-            if !extends_has_infer
-                && self.type_is_compound_generic(cond.check_type)
-            {
+            if !extends_has_infer && self.type_is_compound_generic(cond.check_type) {
                 return self.interner().conditional(*cond);
             }
 
@@ -404,8 +400,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if extends_has_infer {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
-                let mut checker =
-                    SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
                 checker.allow_bivariant_rest = true;
                 if self.match_infer_pattern(
                     check_type,
