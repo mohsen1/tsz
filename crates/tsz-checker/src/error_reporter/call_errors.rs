@@ -1368,9 +1368,10 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|first| {
                 let rendered_first = formatter.render(first);
-                argument_failures.iter().skip(1).all(|failure| {
-                    formatter.render(failure).message == rendered_first.message
-                })
+                argument_failures
+                    .iter()
+                    .skip(1)
+                    .all(|failure| formatter.render(failure).message == rendered_first.message)
             })
             .unwrap_or(false);
         let remaining_failures: Vec<_> = failures
@@ -1652,7 +1653,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if let Some(anchor) = self.literal_argument_mismatch_anchor(elem_idx, target_element_type)
+            if let Some(anchor) =
+                self.literal_argument_mismatch_anchor(elem_idx, target_element_type)
             {
                 return Some(anchor);
             }

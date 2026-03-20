@@ -464,11 +464,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref _expected) = tuple_context {
                         // For tuple context, add each element with spread flag
                         for elem in &elems {
-                            let optional =
-                                match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                                    Some(el) => el.optional,
-                                    None => false,
-                                };
+                            let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index))
+                            {
+                                Some(el) => el.optional,
+                                None => false,
+                            };
                             tuple_elements.push(TupleElement {
                                 type_id: elem.type_id,
                                 name: None,

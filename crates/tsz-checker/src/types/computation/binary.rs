@@ -797,8 +797,7 @@ impl<'a> CheckerState<'a> {
                 // from unions before we validate TS2358.
                 if left_type != TypeId::ERROR {
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    let lhs_type =
-                        self.declared_instanceof_left_operand_type(left_idx, left_type);
+                    let lhs_type = self.declared_instanceof_left_operand_type(left_idx, left_type);
                     if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
                         self.error_at_node_msg(
                             left_idx,
