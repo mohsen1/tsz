@@ -157,7 +157,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect only member info (names, types, visibility, kinds) for a class.
-    /// Skips all initialization tracking (property_requires_initialization,
+    /// Skips all initialization tracking (`property_requires_initialization`,
     /// constructor assignment analysis, field key sets) since chain summaries
     /// only need member info for override/property access checks.
     fn collect_class_members_for_chain(
