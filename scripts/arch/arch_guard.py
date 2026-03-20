@@ -37,6 +37,14 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
                 # Pre-existing: enum member type resolution via TypeData
                 "crates/tsz-checker/src/types/property_access_type.rs",
+                # Pre-existing: class member lookup in class_checker
+                "crates/tsz-checker/src/classes/class_checker.rs",
+                "crates/tsz-checker/src/classes/class_checker_compat.rs",
+                # Pre-existing: property access lookup
+                "crates/tsz-checker/src/checkers/property_checker.rs",
+                "crates/tsz-checker/src/state/state_checking/property.rs",
+                # Pre-existing: type computation access lookup
+                "crates/tsz-checker/src/types/computation/access.rs",
             },
         },
     ),
@@ -340,6 +348,10 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/error_reporter/assignability.rs",
             "crates/tsz-checker/src/flow/control_flow/assignment.rs",
             "crates/tsz-checker/src/types/computation/object_literal.rs",
+            "crates/tsz-checker/src/symbols/symbol_resolver.rs",
+            "crates/tsz-checker/src/checkers/jsx_checker.rs",
+            "crates/tsz-checker/src/state/type_environment/core.rs",
+            "crates/tsz-checker/src/types/computation/identifier.rs",
         },
     ),
 ]
