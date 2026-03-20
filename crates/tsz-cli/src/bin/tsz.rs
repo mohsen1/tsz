@@ -1643,6 +1643,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         out_dir: out_dir.clone(),
         follow_links: false,
         allow_js,
+        resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
     };
 
     let discovered_files = discover_ts_files(&discovery).unwrap_or_default();
@@ -2738,6 +2739,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         out_dir: resolved.out_dir.clone(),
         follow_links: false,
         allow_js: resolved.allow_js,
+        resolve_json_module: resolved.resolve_json_module,
     };
 
     // Print lib files first (matching tsc --listFilesOnly order)

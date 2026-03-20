@@ -537,8 +537,11 @@ pub(crate) fn collect_module_specifiers(
         }
     }
 
-    // Also collect dynamic imports from expression statements
+    // Also collect dynamic imports and plain CommonJS require() calls from
+    // expression/call sites so dependency discovery follows the same module
+    // graph that checker-side call typing uses.
     collect_dynamic_imports(arena, source_file, &strip_quotes, &mut specifiers);
+    collect_commonjs_requires(arena, &mut specifiers);
 
     specifiers
 }
@@ -585,6 +588,18 @@ fn collect_dynamic_imports(
                 arg_idx,
                 tsz::module_resolver::ImportKind::DynamicImport,
             ));
+        }
+    }
+}
+
+fn collect_commonjs_requires(
+    arena: &NodeArena,
+    specifiers: &mut Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)>,
+) {
+    for i in 0..arena.nodes.len() {
+        let idx = NodeIndex(i as u32);
+        if let Some(specifier) = extract_require_specifier(arena, idx) {
+            specifiers.push((specifier, idx, tsz::module_resolver::ImportKind::CjsRequire));
         }
     }
 }

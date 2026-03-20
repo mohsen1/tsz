@@ -62,6 +62,7 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
         out_dir: project.out_dir.clone(),
         follow_links: false,
         allow_js: false,
+        resolve_json_module: false,
     };
 
     let current_files = match discover_ts_files(&discovery_options) {

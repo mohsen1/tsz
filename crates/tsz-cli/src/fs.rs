@@ -22,6 +22,7 @@ pub struct FileDiscoveryOptions {
     pub out_dir: Option<PathBuf>,
     pub follow_links: bool,
     pub allow_js: bool,
+    pub resolve_json_module: bool,
 }
 
 impl FileDiscoveryOptions {
@@ -46,6 +47,7 @@ impl FileDiscoveryOptions {
             out_dir: out_dir.map(Path::to_path_buf),
             follow_links: false,
             allow_js: false,
+            resolve_json_module: false,
         }
     }
 }
@@ -60,7 +62,10 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
         // are always compiled, including .js/.jsx/.mjs/.cjs files, regardless of
         // the allowJs setting. This matches tsc behavior where allowJs only controls
         // pattern-matched file discovery (include/exclude), not explicit file lists.
-        if is_ts_file(&path) || is_js_file(&path) {
+        if is_ts_file(&path)
+            || is_js_file(&path)
+            || (options.resolve_json_module && is_json_file(&path))
+        {
             files.insert(path);
         }
     }
@@ -88,7 +93,10 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             }
 
             let path = entry.path();
-            if !(is_ts_file(path) || (options.allow_js && is_js_file(path))) {
+            if !(is_ts_file(path)
+                || (options.allow_js && is_js_file(path))
+                || (options.resolve_json_module && is_json_file(path)))
+            {
                 continue;
             }
 
@@ -376,6 +384,7 @@ mod tests {
             out_dir: None,
             follow_links: false,
             allow_js: false,
+            resolve_json_module: false,
         };
         assert_eq!(build_include_patterns(&implicit_options), vec!["**/*"]);
 
@@ -432,6 +441,7 @@ mod tests {
             out_dir: Some(base_dir.join("dist")),
             follow_links: false,
             allow_js: false,
+            resolve_json_module: false,
         };
 
         let patterns = build_exclude_patterns(&options);
@@ -522,6 +532,7 @@ mod tests {
             out_dir: None,
             follow_links: false,
             allow_js: false, // NOT set, but .js should still be included
+            resolve_json_module: false,
         };
 
         let result = discover_ts_files(&options).unwrap();
@@ -557,6 +568,7 @@ mod tests {
             out_dir: None,
             follow_links: false,
             allow_js: false,
+            resolve_json_module: false,
         };
 
         let result = discover_ts_files(&options).unwrap();
@@ -579,12 +591,52 @@ mod tests {
             out_dir: None,
             follow_links: false,
             allow_js: true,
+            resolve_json_module: false,
         };
 
         let result_with_js = discover_ts_files(&options_with_js).unwrap();
         assert!(
             result_with_js.iter().any(|p| p.ends_with("lib.js")),
             ".js file should be included from pattern with allowJs"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_pattern_matched_json_file_requires_resolve_json_module() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_pattern_json");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/app.ts"), "const x = 1;").unwrap();
+        fs::write(dir.join("src/data.json"), "{ \"a\": 1 }").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec!["src".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            !result.iter().any(|p| p.ends_with("data.json")),
+            ".json file should NOT be included from pattern without resolveJsonModule"
+        );
+
+        let options_with_json = FileDiscoveryOptions {
+            resolve_json_module: true,
+            ..options
+        };
+        let result_with_json = discover_ts_files(&options_with_json).unwrap();
+        assert!(
+            result_with_json.iter().any(|p| p.ends_with("data.json")),
+            ".json file should be included from pattern with resolveJsonModule"
         );
 
         let _ = fs::remove_dir_all(&dir);
