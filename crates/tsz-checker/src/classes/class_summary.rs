@@ -59,6 +59,10 @@ struct ClassOwnMemberSummary {
     visible_static_members: Vec<ClassMemberInfo>,
     all_instance_members: Vec<ClassMemberInfo>,
     all_static_members: Vec<ClassMemberInfo>,
+    visible_instance_member_display_names: FxHashMap<String, String>,
+    visible_static_member_display_names: FxHashMap<String, String>,
+    all_instance_member_display_names: FxHashMap<String, String>,
+    all_static_member_display_names: FxHashMap<String, String>,
     visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
     visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
     all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
@@ -77,6 +81,10 @@ pub(crate) struct ClassChainSummary {
     visible_static_lookup: FxHashMap<String, ClassMemberInfo>,
     all_instance_lookup: FxHashMap<String, ClassMemberInfo>,
     all_static_lookup: FxHashMap<String, ClassMemberInfo>,
+    visible_instance_member_display_names: FxHashMap<String, String>,
+    visible_static_member_display_names: FxHashMap<String, String>,
+    all_instance_member_display_names: FxHashMap<String, String>,
+    all_static_member_display_names: FxHashMap<String, String>,
     visible_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
     visible_static_member_kinds: FxHashMap<String, ClassMemberKind>,
     all_instance_member_kinds: FxHashMap<String, ClassMemberKind>,
@@ -115,6 +123,27 @@ impl ClassChainSummary {
         };
         map.get(target_name).copied()
     }
+
+    pub(crate) fn member_display_name(
+        &self,
+        target_name: &str,
+        target_is_static: bool,
+        skip_private: bool,
+    ) -> Option<&str> {
+        let map = match (target_is_static, skip_private) {
+            (false, true) => &self.visible_instance_member_display_names,
+            (true, true) => &self.visible_static_member_display_names,
+            (false, false) => &self.all_instance_member_display_names,
+            (true, false) => &self.all_static_member_display_names,
+        };
+        map.get(target_name).map(String::as_str)
+    }
+}
+
+#[derive(Clone)]
+struct JsImplicitMemberName {
+    lookup_name: String,
+    display_name: String,
 }
 
 impl<'a> CheckerState<'a> {
@@ -159,8 +188,11 @@ impl<'a> CheckerState<'a> {
                     info,
                     &mut summary.visible_instance_members,
                     &mut summary.visible_static_members,
+                    &mut summary.visible_instance_member_display_names,
+                    &mut summary.visible_static_member_display_names,
                     &mut summary.visible_instance_member_kinds,
                     &mut summary.visible_static_member_kinds,
+                    self,
                 );
             }
 
@@ -169,8 +201,11 @@ impl<'a> CheckerState<'a> {
                     info,
                     &mut summary.all_instance_members,
                     &mut summary.all_static_members,
+                    &mut summary.all_instance_member_display_names,
+                    &mut summary.all_static_member_display_names,
                     &mut summary.all_instance_member_kinds,
                     &mut summary.all_static_member_kinds,
+                    self,
                 );
             }
 
@@ -204,8 +239,11 @@ impl<'a> CheckerState<'a> {
                             info,
                             &mut summary.visible_instance_members,
                             &mut summary.visible_static_members,
+                            &mut summary.visible_instance_member_display_names,
+                            &mut summary.visible_static_member_display_names,
                             &mut summary.visible_instance_member_kinds,
                             &mut summary.visible_static_member_kinds,
+                            self,
                         );
                     }
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
@@ -214,8 +252,11 @@ impl<'a> CheckerState<'a> {
                             info,
                             &mut summary.all_instance_members,
                             &mut summary.all_static_members,
+                            &mut summary.all_instance_member_display_names,
+                            &mut summary.all_static_member_display_names,
                             &mut summary.all_instance_member_kinds,
                             &mut summary.all_static_member_kinds,
+                            self,
                         );
                     }
                 }
@@ -391,6 +432,30 @@ impl<'a> CheckerState<'a> {
                 let name = info.name.clone();
                 summary.all_static_lookup.entry(name).or_insert(info);
             }
+            for (name, display_name) in own_summary.visible_instance_member_display_names {
+                summary
+                    .visible_instance_member_display_names
+                    .entry(name)
+                    .or_insert(display_name);
+            }
+            for (name, display_name) in own_summary.visible_static_member_display_names {
+                summary
+                    .visible_static_member_display_names
+                    .entry(name)
+                    .or_insert(display_name);
+            }
+            for (name, display_name) in own_summary.all_instance_member_display_names {
+                summary
+                    .all_instance_member_display_names
+                    .entry(name)
+                    .or_insert(display_name);
+            }
+            for (name, display_name) in own_summary.all_static_member_display_names {
+                summary
+                    .all_static_member_display_names
+                    .entry(name)
+                    .or_insert(display_name);
+            }
             for (name, kind) in own_summary.visible_instance_member_kinds {
                 summary
                     .visible_instance_member_kinds
@@ -471,15 +536,27 @@ impl<'a> CheckerState<'a> {
         info: ClassMemberInfo,
         instance_members: &mut Vec<ClassMemberInfo>,
         static_members: &mut Vec<ClassMemberInfo>,
+        instance_member_display_names: &mut FxHashMap<String, String>,
+        static_member_display_names: &mut FxHashMap<String, String>,
         instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
         static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
+        state: &Self,
     ) {
         let kind = Self::member_kind_from_info(&info);
         let name = info.name.clone();
+        let display_name = state
+            .get_member_name_display_text(info.name_idx)
+            .unwrap_or_else(|| name.clone());
         if info.is_static {
+            static_member_display_names
+                .entry(name.clone())
+                .or_insert(display_name);
             static_member_kinds.entry(name).or_insert(kind);
             static_members.push(info);
         } else {
+            instance_member_display_names
+                .entry(name.clone())
+                .or_insert(display_name);
             instance_member_kinds.entry(name).or_insert(kind);
             instance_members.push(info);
         }
@@ -574,15 +651,21 @@ impl<'a> CheckerState<'a> {
         for name in self.collect_expando_properties_for_root(ident.escaped_text.as_str()) {
             Self::record_member_kind(
                 name.clone(),
+                name.clone(),
                 true,
                 ClassMemberKind::FieldLike,
+                &mut summary.visible_instance_member_display_names,
+                &mut summary.visible_static_member_display_names,
                 &mut summary.visible_instance_member_kinds,
                 &mut summary.visible_static_member_kinds,
             );
             Self::record_member_kind(
+                name.clone(),
                 name,
                 true,
                 ClassMemberKind::FieldLike,
+                &mut summary.all_instance_member_display_names,
+                &mut summary.all_static_member_display_names,
                 &mut summary.all_instance_member_kinds,
                 &mut summary.all_static_member_kinds,
             );
@@ -610,16 +693,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             Self::record_member_kind(
-                name.clone(),
+                name.lookup_name.clone(),
+                name.display_name.clone(),
                 is_static,
                 ClassMemberKind::FieldLike,
+                &mut summary.visible_instance_member_display_names,
+                &mut summary.visible_static_member_display_names,
                 &mut summary.visible_instance_member_kinds,
                 &mut summary.visible_static_member_kinds,
             );
             Self::record_member_kind(
-                name,
+                name.lookup_name,
+                name.display_name,
                 is_static,
                 ClassMemberKind::FieldLike,
+                &mut summary.all_instance_member_display_names,
+                &mut summary.all_static_member_display_names,
                 &mut summary.all_instance_member_kinds,
                 &mut summary.all_static_member_kinds,
             );
@@ -628,14 +717,23 @@ impl<'a> CheckerState<'a> {
 
     fn record_member_kind(
         name: String,
+        display_name: String,
         is_static: bool,
         kind: ClassMemberKind,
+        instance_member_display_names: &mut FxHashMap<String, String>,
+        static_member_display_names: &mut FxHashMap<String, String>,
         instance_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
         static_member_kinds: &mut FxHashMap<String, ClassMemberKind>,
     ) {
         if is_static {
+            static_member_display_names
+                .entry(name.clone())
+                .or_insert(display_name);
             static_member_kinds.entry(name).or_insert(kind);
         } else {
+            instance_member_display_names
+                .entry(name.clone())
+                .or_insert(display_name);
             instance_member_kinds.entry(name).or_insert(kind);
         }
     }
@@ -691,7 +789,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         stmt_idx: NodeIndex,
         this_aliases: &FxHashSet<String>,
-    ) -> Option<String> {
+    ) -> Option<JsImplicitMemberName> {
         let stmt_node = self.ctx.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
@@ -753,19 +851,45 @@ impl<'a> CheckerState<'a> {
             let key_type = self.get_type_of_node(access.name_or_argument);
             self.ctx.preserve_literal_types = prev_preserve;
 
-            crate::query_boundaries::type_computation::access::literal_property_name(
-                self.ctx.types,
-                key_type,
-            )
-            .map(|atom| self.ctx.types.resolve_atom(atom))
+            let lookup_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            let display_name = self
+                .js_implicit_element_member_display_name(access.name_or_argument)
+                .unwrap_or_else(|| lookup_name.clone());
+            Some(JsImplicitMemberName {
+                lookup_name,
+                display_name,
+            })
         } else {
             let name_node = self.ctx.arena.get(access.name_or_argument)?;
             if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
                 return None;
             }
             let ident = self.ctx.arena.get_identifier(name_node)?;
-            Some(ident.escaped_text.clone())
+            Some(JsImplicitMemberName {
+                lookup_name: ident.escaped_text.clone(),
+                display_name: ident.escaped_text.clone(),
+            })
         }
+    }
+
+    fn js_implicit_element_member_display_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+            return match name_node.kind {
+                k if k == SyntaxKind::StringLiteral as u16 => Some(format!("'{}'", lit.text)),
+                k if k == SyntaxKind::NumericLiteral as u16 => Some(lit.text.clone()),
+                _ => None,
+            };
+        }
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(format!("[{}]", ident.escaped_text));
+        }
+        None
     }
 
     fn function_like_body(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
