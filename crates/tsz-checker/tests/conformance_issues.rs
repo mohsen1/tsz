@@ -7952,6 +7952,61 @@ var x = {
     );
 }
 
+/// TS7022 should NOT fire when `var` merges with a constructor parameter.
+/// The parameter already provides the type, so the self-reference in the
+/// initializer is not circular.
+/// From: optionalParamterAndVariableDeclaration.ts
+///
+/// NOTE: Currently deferred — requires binder-level parameter/var symbol
+/// merging to detect that the self-reference resolves to a parameter.
+#[test]
+#[ignore = "requires binder parameter/var symbol merging"]
+fn test_ts7022_not_emitted_for_var_merged_with_constructor_parameter() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+class C {
+    constructor(options?: number) {
+        var options = (options || 0);
+    }
+}
+        ",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 when var merges with constructor parameter.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7023 should NOT fire for named function expressions that reference
+/// themselves via their own name. The function expression's name is its
+/// own complete binding, not a circular reference to the outer variable.
+/// From: jsDeclarationsGlobalFileConstFunctionNamed.ts
+#[test]
+fn test_ts7023_not_emitted_for_named_function_expression_self_reference() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+const SelfReference = function Named() {
+    if (!(this instanceof Named)) return new Named();
+    this.x = 1;
+}
+        ",
+        CheckerOptions {
+            strict: true,
+            check_js: true,
+            allow_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7023),
+        "Should NOT emit TS7023 when named function expression references its own name.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
 // From: typeSatisfaction_asConstArrays.ts
 
