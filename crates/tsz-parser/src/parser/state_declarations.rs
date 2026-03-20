@@ -580,9 +580,14 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if has_open_paren {
+            let parameters = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            parameters
+        } else {
+            self.make_node_list(vec![])
+        };
 
         // TS1005: call signatures cannot be optional — emit "';' expected." at '?'
         // Do NOT skip '?' — let the member parsing loop handle recovery so it emits TS1131
@@ -625,9 +630,14 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if has_open_paren {
+            let parameters = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            parameters
+        } else {
+            self.make_node_list(vec![])
+        };
 
         // TS1005: construct signatures cannot be optional — emit "';' expected." at '?'
         // Do NOT skip '?' — let the member parsing loop handle recovery so it emits TS1131

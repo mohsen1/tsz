@@ -253,6 +253,40 @@ fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
 }
 
 #[test]
+fn test_type_literal_stray_generic_member_reports_missing_open_paren_once() {
+    let source = r"
+var v: {
+   A: B
+   <T>;
+};
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED)
+        .collect();
+
+    assert_eq!(
+        ts1005.len(),
+        1,
+        "Expected only the missing '(' recovery diagnostic for a stray generic member, got {diagnostics:?}"
+    );
+    assert!(
+        ts1005[0].message.contains("'(' expected."),
+        "Expected the stray generic member to report a missing '(', got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == diagnostic_codes::EXPECTED && d.message.contains("')' expected."))),
+        "Stray generic members should not cascade into a missing ')' diagnostic: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_divide_expression_before_block_is_not_treated_as_missing_arrow() {
     let source = "(a/8\n ){}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
