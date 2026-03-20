@@ -8138,6 +8138,61 @@ function f() {
 }
 
 #[test]
+fn test_ts7034_emitted_for_let_captured_before_last_assignment() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function action(f: any) {}
+function f() {
+    let x;
+    x = 'abc';
+    action(() => { x; });
+    x = 42;
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 when a captured `let` is read before its last assignment.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7005),
+        "Should emit TS7005 at the captured reference before the last assignment.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7034_not_emitted_for_contextually_typed_for_of_capture() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f() {
+    for (let x of [1, 2, 3]) {
+        const g = () => x;
+    }
+}
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 for contextually typed `for...of` loop variables.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7005),
+        "Should NOT emit TS7005 for contextually typed `for...of` loop variables.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_equals_in_namespace_emits_ts1147_only() {
     let opts = CheckerOptions {
         no_implicit_any: true,
