@@ -274,10 +274,6 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
-            self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
-        });
-
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
@@ -335,6 +331,10 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .and_then(|j| Self::jsdoc_returns_type_name(j))
             .and_then(|name| jsdoc_type_param_types.get(&name).copied());
+
+        let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
+            self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
+        });
 
         // Check if this closure is inside a decorator expression.
         // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006

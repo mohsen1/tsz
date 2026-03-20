@@ -1911,7 +1911,7 @@ impl<'a> CheckerState<'a> {
             {
                 let prop_name = ident.escaped_text.clone();
                 // Check for @type annotation on the expression statement
-                if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                     if jsdoc_type == TypeId::UNDEFINED {
                         continue;
                     }
@@ -1962,7 +1962,7 @@ impl<'a> CheckerState<'a> {
         let prop_name = ident.escaped_text.clone();
 
         // Determine type: @type annotation > param type > get_type_of_node
-        let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+        let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
             jsdoc_type
         } else {
             // Check if RHS is a parameter identifier

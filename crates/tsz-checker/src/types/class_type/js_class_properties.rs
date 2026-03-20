@@ -214,6 +214,14 @@ impl CheckerState<'_> {
                 .is_some_and(|lit| lit.text == "0")
     }
 
+    pub(crate) fn js_statement_declared_type(&mut self, stmt_idx: NodeIndex) -> Option<TypeId> {
+        self.jsdoc_type_annotation_for_node(stmt_idx).or_else(|| {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+            self.jsdoc_type_annotation_for_node_direct(expr_stmt.expression)
+        })
+    }
+
     /// Scan a body (constructor or method) for `this.prop = value` assignments
     /// and add them as instance properties. This implements the JS/checkJs
     /// pattern where assignments serve as implicit property declarations.
@@ -244,8 +252,14 @@ impl CheckerState<'_> {
         let this_aliases = self.collect_this_aliases(&stmts);
 
         for &stmt_idx in &stmts {
-            let Some((prop_name, rhs_idx, is_private, report_idx)) =
-                self.extract_this_property_assignment(stmt_idx, &this_aliases)
+            let Some((prop_name, rhs_idx, is_private, report_idx)) = self
+                .extract_this_property_assignment(stmt_idx, &this_aliases)
+                .or_else(|| {
+                    self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
+                        .map(|(prop_name, is_private, report_idx)| {
+                            (prop_name, NodeIndex::NONE, is_private, report_idx)
+                        })
+                })
             else {
                 continue;
             };
@@ -285,7 +299,7 @@ impl CheckerState<'_> {
             // (JSDoc @type, or a parameter with @param {any}) vs a truly implicit one
             // (no RHS, or RHS is null/undefined without annotation).
             let mut any_is_explicit = false;
-            let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+            let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                 any_is_explicit = true;
                 jsdoc_type
             } else if !rhs_idx.is_none() {
@@ -573,6 +587,63 @@ impl CheckerState<'_> {
                 access.name_or_argument,
             ))
         }
+    }
+
+    fn extract_jsdoc_this_property_declaration(
+        &mut self,
+        stmt_idx: NodeIndex,
+        this_aliases: &[String],
+    ) -> Option<(String, bool, NodeIndex)> {
+        if self.js_statement_declared_type(stmt_idx).is_none() {
+            return None;
+        }
+
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+        let is_element_access = expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && !is_element_access {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(expr_node)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(obj_node)
+                .is_some_and(|ident| this_aliases.iter().any(|alias| alias == &ident.escaped_text))
+        } else {
+            false
+        };
+        if !is_this_or_alias {
+            return None;
+        }
+
+        if is_element_access {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let key_type = self.get_type_of_node(access.name_or_argument);
+            self.ctx.preserve_literal_types = prev_preserve;
+            let prop_name = crate::query_boundaries::type_computation::access::literal_property_name(
+                self.ctx.types,
+                key_type,
+            )
+            .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            return Some((prop_name, false, access.name_or_argument));
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            return Some((String::new(), true, access.name_or_argument));
+        }
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        Some((ident.escaped_text.clone(), false, access.name_or_argument))
     }
 
     /// Build a quick partial type from a class's declared members without
