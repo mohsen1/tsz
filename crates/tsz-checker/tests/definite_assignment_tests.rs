@@ -1,9 +1,9 @@
 use crate::CheckerState;
 use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
-use tsz_common::diagnostics::Diagnostic;
 use tsz_binder::BinderState;
 use tsz_common::common::ScriptTarget;
+use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
