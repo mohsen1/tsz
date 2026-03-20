@@ -250,3 +250,33 @@ class C {
 "#;
     assert!(has_error(src, 2683));
 }
+
+#[test]
+fn static_field_function_expression_emits_ts2683() {
+    let src = r#"
+class C {
+    static value = 1;
+    static fnExpr = function () {
+        return this.value + 1;
+    };
+}
+"#;
+
+    assert!(has_error(src, 2683));
+}
+
+#[test]
+fn nested_function_inside_static_field_iife_emits_ts2683() {
+    let src = r#"
+class C {
+    static value = (() => {
+        function inner() {
+            return this.value + 1;
+        }
+        return inner();
+    })();
+}
+"#;
+
+    assert!(has_error(src, 2683));
+}
