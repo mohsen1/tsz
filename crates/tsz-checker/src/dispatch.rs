@@ -773,6 +773,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        // Hard stack guard: bail when remaining stack is critically low.
+        // Catches deep recursion through any code path (checker/solver/lowering).
+        if stacker::remaining_stack().is_some_and(|r| r < 256 * 1024) {
+            return TypeId::ERROR;
+        }
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
