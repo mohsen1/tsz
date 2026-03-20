@@ -5,8 +5,8 @@
 //! readonly properties, primitive property access, array property access, and more.
 
 use crate::intern::TypeInterner;
-use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::operations::expression_ops::normalize_object_union_members_for_write_target;
+use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::*;
 
 // =============================================================================
@@ -294,10 +294,7 @@ fn test_write_target_normalization_optionalizes_fresh_empty_object_member() {
     let result = evaluator.resolve_property_access(union, "x");
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
     match result {
-        PropertyAccessResult::Success {
-            type_id,
-            ..
-        } => {
+        PropertyAccessResult::Success { type_id, .. } => {
             assert_eq!(type_id, expected);
         }
         _ => panic!("expected Success, got {result:?}"),

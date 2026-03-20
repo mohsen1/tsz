@@ -374,7 +374,8 @@ impl<'a> CheckerState<'a> {
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
 
         let (original_object_type, write_presence_only) = if skip_flow_narrowing {
-            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
+            let object_type_no_flow =
+                self.get_type_of_write_target_base_expression(access.expression);
 
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
@@ -390,17 +391,18 @@ impl<'a> CheckerState<'a> {
             if can_use_no_flow {
                 let read_object_type =
                     self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
-                let read_has_property = if let Some(property_name) = property_name_for_probe.as_deref()
-                {
-                    let evaluated_read = self.evaluate_application_type(read_object_type);
-                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    !matches!(
-                        self.resolve_property_access_with_env(resolved_read, property_name),
-                        PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
-                    )
-                } else {
-                    false
-                };
+                let read_has_property =
+                    if let Some(property_name) = property_name_for_probe.as_deref() {
+                        let evaluated_read = self.evaluate_application_type(read_object_type);
+                        let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                        !matches!(
+                            self.resolve_property_access_with_env(resolved_read, property_name),
+                            PropertyAccessResult::PropertyNotFound { .. }
+                                | PropertyAccessResult::IsUnknown
+                        )
+                    } else {
+                        false
+                    };
                 (object_type_no_flow, !read_has_property)
             } else {
                 (
@@ -414,7 +416,8 @@ impl<'a> CheckerState<'a> {
                 false,
             )
         } else if skip_result_flow {
-            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
+            let object_type_no_flow =
+                self.get_type_of_write_target_base_expression(access.expression);
 
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);

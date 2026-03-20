@@ -336,7 +336,11 @@ let tgt: Target = src;
 
     let diags = get_diagnostics(source);
     let ts2741: Vec<_> = diags.iter().filter(|d| d.0 == 2741).collect();
-    assert_eq!(ts2741.len(), 1, "Expected one TS2741 diagnostic, got: {diags:?}");
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected one TS2741 diagnostic, got: {diags:?}"
+    );
     assert!(
         ts2741[0].1.contains("Property 'length' is missing"),
         "Expected missing-property diagnostic for 'length', got: {}",

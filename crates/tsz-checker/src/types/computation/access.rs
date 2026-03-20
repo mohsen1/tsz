@@ -205,7 +205,8 @@ impl<'a> CheckerState<'a> {
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
         let (object_type, write_presence_only) = if skip_flow_narrowing {
-            let object_type_no_flow = self.get_type_of_write_target_base_expression(access.expression);
+            let object_type_no_flow =
+                self.get_type_of_write_target_base_expression(access.expression);
             let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
             let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
             let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
@@ -227,7 +228,8 @@ impl<'a> CheckerState<'a> {
                     let resolved_read = self.resolve_type_for_property_access(evaluated_read);
                     !matches!(
                         self.resolve_property_access_with_env(resolved_read, name),
-                        PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                        PropertyAccessResult::PropertyNotFound { .. }
+                            | PropertyAccessResult::IsUnknown
                     )
                 } else if literal_index.is_some() {
                     let evaluated_read = self.evaluate_application_type(read_object_type);

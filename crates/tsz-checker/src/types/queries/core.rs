@@ -883,7 +883,11 @@ impl<'a> CheckerState<'a> {
             return Some(ident.escaped_text.clone());
         }
 
-        let parent_idx = self.ctx.arena.get_extended(class_idx).map(|ext| ext.parent)?;
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(class_idx)
+            .map(|ext| ext.parent)?;
         let parent_node = self.ctx.arena.get(parent_idx)?;
         if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;

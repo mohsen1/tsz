@@ -549,9 +549,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return Some(PropertyAccessResult::IsUnknown);
         }
 
-        let fresh_object_union = non_unknown_members
-            .iter()
-            .all(|&member| crate::relations::freshness::is_fresh_object_type(self.interner(), member));
+        let fresh_object_union = non_unknown_members.iter().all(|&member| {
+            crate::relations::freshness::is_fresh_object_type(self.interner(), member)
+        });
 
         if let Some(normalized) =
             normalize_fresh_object_literal_union_members(self.interner(), &non_unknown_members)

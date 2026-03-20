@@ -922,17 +922,22 @@ ab = {};
     );
 
     assert!(
-        diags.iter().any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 for impossible private-brand intersection assignment, got: {diags:?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Expected TS2339 on property access through never, got: {diags:?}"
     );
     assert!(
         !diags
             .iter()
-            .any(|(code, _)| *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+            .any(|(code, _)| *code
+                == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
         "Intersection should reduce before TS2741 missing-property classification, got: {diags:?}"
     );
 }

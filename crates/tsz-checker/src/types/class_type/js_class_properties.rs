@@ -617,7 +617,11 @@ impl CheckerState<'_> {
             self.ctx
                 .arena
                 .get_identifier(obj_node)
-                .is_some_and(|ident| this_aliases.iter().any(|alias| alias == &ident.escaped_text))
+                .is_some_and(|ident| {
+                    this_aliases
+                        .iter()
+                        .any(|alias| alias == &ident.escaped_text)
+                })
         } else {
             false
         };
@@ -630,11 +634,12 @@ impl CheckerState<'_> {
             self.ctx.preserve_literal_types = true;
             let key_type = self.get_type_of_node(access.name_or_argument);
             self.ctx.preserve_literal_types = prev_preserve;
-            let prop_name = crate::query_boundaries::type_computation::access::literal_property_name(
-                self.ctx.types,
-                key_type,
-            )
-            .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            let prop_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))?;
             return Some((prop_name, false, access.name_or_argument));
         }
 
