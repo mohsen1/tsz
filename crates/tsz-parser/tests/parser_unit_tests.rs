@@ -2283,8 +2283,9 @@ fn expr_prefix_update_repeated_operator_recovers_to_inner_update() {
         .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .expect("expected TS1109 for repeated prefix update");
     assert_eq!(
-        ts1109.start, 0,
-        "TS1109 should anchor at the outer `++`: {diagnostics:?}"
+        ts1109.start,
+        source.find("\n++").expect("inner update") as u32 + 1,
+        "TS1109 should anchor at the inner `++`: {diagnostics:?}"
     );
 
     let arena = parser.get_arena();
@@ -2305,6 +2306,37 @@ fn expr_prefix_update_repeated_operator_recovers_to_inner_update() {
         operand.kind,
         SyntaxKind::Identifier as u16,
         "inner update should still target the identifier"
+    );
+}
+
+#[test]
+fn expr_prefix_update_repeated_operator_same_line_anchors_inner_update() {
+    let source = "++++y;";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for repeated prefix update");
+    assert_eq!(
+        ts1109.start, 2,
+        "TS1109 should anchor at the second `++`: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn expr_prefix_update_repeated_operator_after_line_break_matches_sputnik_anchor() {
+    let source = "var x=0, y=0;\nvar z=\nx\n++\n++\ny\n";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for repeated prefix update after line break");
+    assert_eq!(
+        ts1109.start,
+        source.rfind("\n++\n").expect("second update line") as u32 + 1,
+        "TS1109 should anchor at the second `++`: {diagnostics:?}"
     );
 }
 
