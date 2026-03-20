@@ -658,7 +658,10 @@ impl ObjectTypeChecker {
                 | TypeData::ObjectWithIndex(_)
                 | TypeData::Array(_)
                 | TypeData::Tuple(_)
-                | TypeData::Mapped(_),
+                | TypeData::Mapped(_)
+                // Lazy types represent unresolved type references (interfaces, classes,
+                // type aliases). Treat as object-like for typeof "object" narrowing.
+                | TypeData::Lazy(_),
             ) => true,
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
@@ -670,12 +673,6 @@ impl ObjectTypeChecker {
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
                 .is_some_and(|constraint| Self::check(types, constraint)),
-            // Lazy types represent unresolved type references (interfaces, classes,
-            // type aliases). These are always declared types — at runtime, instances
-            // of interfaces/classes are objects. For typeof "object" narrowing, treat
-            // Lazy references as object-like so they aren't incorrectly filtered out
-            // of unions like `Foo | Bar | string`.
-            Some(TypeData::Lazy(_)) => true,
             _ => false,
         }
     }
