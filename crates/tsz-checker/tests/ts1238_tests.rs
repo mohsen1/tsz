@@ -96,6 +96,76 @@ class C { }
 }
 
 #[test]
+fn ts1238_not_emitted_for_any_decorator_on_class_with_static_this_members() {
+    let codes = check_with_experimental_decorators(
+        r#"
+declare const foo: any;
+
+@foo
+class C {
+    static a = 1;
+    static b = this.a + 1;
+}
+
+@foo
+class D extends C {
+    static c = 2;
+    static d = this.c + 1;
+    static e = super.a + this.c + 1;
+    static f = () => this.c + 1;
+    static ff = function () { this.c + 1 }
+    static foo () {
+        return this.c + 1;
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1238),
+        "Should not emit TS1238 for any-typed decorators around static-this members, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts1238_not_emitted_for_any_decorator_on_class_with_static_method_name_collision() {
+    let codes = check_with_experimental_decorators(
+        r#"
+declare const foo: any;
+
+@foo
+class D {
+    static foo () {
+        return 1;
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1238),
+        "Should not emit TS1238 when a decorated class has a same-named static method, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts1238_not_emitted_for_any_decorator_on_class_with_static_this_only() {
+    let codes = check_with_experimental_decorators(
+        r#"
+declare const foo: any;
+
+@foo
+class C {
+    static a = 1;
+    static b = this.a + 1;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1238),
+        "Should not emit TS1238 for any-typed decorators around static-this members, got: {codes:?}"
+    );
+}
+
+#[test]
 fn ts1238_not_emitted_without_experimental_decorators() {
     // Without experimentalDecorators, TS1238 should not be emitted.
     let options = CheckerOptions::default(); // experimental_decorators: false
