@@ -888,7 +888,7 @@ impl<'a> CheckerState<'a> {
             check_constructor_property_use_before_assignment(
                 self,
                 body_idx,
-                &summary.all_instance_field_keys,
+                &summary.required_instance_field_keys,
                 summary.requires_super,
             );
         }

@@ -1,12 +1,13 @@
 use crate::CheckerState;
 use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
+use tsz_common::diagnostics::Diagnostic;
 use tsz_binder::BinderState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+fn full_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -22,9 +23,11 @@ fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, 
         options,
     );
     checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
+    checker.ctx.diagnostics.clone()
+}
+
+fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    full_diagnostics_with_options(source, options)
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
@@ -198,6 +201,65 @@ fn test_ts2729_parameter_property_before_define_field_initialization() {
         ),
         1,
         "TS2729 should fire when a field initializer reads a parameter property before constructor execution, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2565_constructor_reads_keep_private_field_name() {
+    let source = r"
+        class C10 {
+            a: number;
+            b: number;
+            c?: number;
+            #d: number;
+            constructor() {
+                let x = this.a;
+                this.a = this.b;
+                this.b = this.#d;
+                this.b = x;
+                this.#d = x;
+                let y = this.c;
+            }
+        }
+    ";
+
+    let diags = full_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2565_messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert!(
+        ts2565_messages
+            .iter()
+            .any(|message| message.contains("Property 'a' is used before being assigned.")),
+        "Expected TS2565 for property 'a', got: {ts2565_messages:?}"
+    );
+    assert!(
+        ts2565_messages
+            .iter()
+            .any(|message| message.contains("Property 'b' is used before being assigned.")),
+        "Expected TS2565 for property 'b', got: {ts2565_messages:?}"
+    );
+    assert!(
+        ts2565_messages
+            .iter()
+            .any(|message| message.contains("Property '#d' is used before being assigned.")),
+        "Expected TS2565 for private property '#d', got: {ts2565_messages:?}"
+    );
+    assert!(
+        ts2565_messages
+            .iter()
+            .all(|message| !message.contains("Property 'c' is used before being assigned.")),
+        "Optional property 'c' should not appear in TS2565 messages, got: {ts2565_messages:?}"
     );
 }
 
