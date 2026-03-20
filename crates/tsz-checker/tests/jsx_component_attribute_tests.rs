@@ -2608,6 +2608,91 @@ let k = <Comp a={{10}}><div>hi</div><div>bye</div></Comp>;
 }
 
 #[test]
+fn jsx_spread_child_non_array_emits_ts2609() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+declare var React: any;
+
+function Todo(prop: { key: number, todo: string }) {
+    return <div>{prop.key.toString() + prop.todo}</div>;
+}
+
+function TodoList() {
+    return <div>
+        {...<Todo key={1} todo="x" />}
+    </div>;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Non-array JSX spread child should emit TS2609, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_spread_child_any_has_no_ts2609() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}
+declare var React: any;
+declare let items: any;
+
+let ok = <div>{...items}</div>;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Any-typed JSX spread child should not emit TS2609, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_spread_child_array_normalizes_to_multiple_children() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Prop {{
+    children: JSX.Element[];
+}}
+function Comp(p: Prop) {{ return <div></div>; }}
+let items: JSX.Element[] = [<div></div>];
+let ok = <Comp>{{...items}}</Comp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_SPREAD_CHILD_MUST_BE_AN_ARRAY_TYPE
+        ),
+        "Array-typed JSX spread child should not emit TS2609, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+        ),
+        "Array-typed JSX spread child should normalize through the multiple-children path, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_union_with_array_allows_multiple() {
     // `children: JSX.Element | JSX.Element[]` should accept multiple children
     let source = format!(

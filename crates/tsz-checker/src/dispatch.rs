@@ -1831,6 +1831,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     let mut child_types: Vec<TypeId> = Vec::new();
                     let mut has_text_child = false;
                     let mut text_child_indices: Vec<NodeIndex> = Vec::new();
+                    let mut has_spread_child = false;
                     for &child in &jsx.children.nodes {
                         if let Some(child_node) = self.checker.ctx.arena.get(child) {
                             // Skip trivial whitespace JsxText — tsc ignores whitespace-only
@@ -1856,9 +1857,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 continue;
                             }
                         }
-                        let child_type = self
-                            .checker
-                            .get_type_of_node_with_request(child, &children_request);
+                        let child_type = if let Some(child_node) = self.checker.ctx.arena.get(child)
+                            && child_node.kind == syntax_kind_ext::JSX_EXPRESSION
+                            && let Some(expr_data) =
+                                self.checker.ctx.arena.get_jsx_expression(child_node)
+                            && expr_data.dot_dot_dot_token
+                        {
+                            has_spread_child = true;
+                            let spread_type = self
+                                .checker
+                                .get_type_of_node_with_request(expr_data.expression, &children_request);
+                            self.checker.normalize_jsx_spread_child_type(child, spread_type)
+                        } else {
+                            self.checker
+                                .get_type_of_node_with_request(child, &children_request)
+                        };
                         if let Some(child_node) = self.checker.ctx.arena.get(child)
                             && child_node.kind == tsz_scanner::SyntaxKind::JsxText as u16
                         {
@@ -1874,7 +1887,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // - 2+ children → array of union of child types
                     let prev_children_info = self.checker.ctx.jsx_children_info.take();
                     if !child_types.is_empty() {
-                        let synthesized_type = if child_types.len() == 1 {
+                        let synthesized_type = if child_types.len() == 1 && !has_spread_child {
                             child_types[0]
                         } else {
                             // Multiple children: synthesize as an array type.
@@ -1883,8 +1896,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker.ctx.types.factory().union(child_types.clone());
                             self.checker.ctx.types.factory().array(element_type)
                         };
+                        let normalized_child_count = if has_spread_child {
+                            child_types.len().max(2)
+                        } else {
+                            child_types.len()
+                        };
                         self.checker.ctx.jsx_children_info = Some((
-                            child_types.len(),
+                            normalized_child_count,
                             has_text_child,
                             synthesized_type,
                             text_child_indices,
