@@ -859,6 +859,7 @@ impl<'a> CheckerState<'a> {
         sites
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_for_of_protocol_sites_from_expression(
         &mut self,
         expr_idx: NodeIndex,
@@ -1188,6 +1189,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn inspect_function_like_protocol_initializer(
         &mut self,
         initializer_idx: NodeIndex,
@@ -1222,6 +1224,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn inspect_function_like_protocol_returns(
         &mut self,
         body_idx: NodeIndex,

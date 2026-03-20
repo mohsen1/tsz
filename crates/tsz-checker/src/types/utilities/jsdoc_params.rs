@@ -686,13 +686,12 @@ impl<'a> CheckerState<'a> {
 
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            if let Some(rest) = effective.strip_prefix("@param") {
-                if let Some(param) = Self::parse_jsdoc_param_tag(rest)
-                    && param.name == param_name
-                    && !param.optional
-                {
-                    return true;
-                }
+            if let Some(rest) = effective.strip_prefix("@param")
+                && let Some(param) = Self::parse_jsdoc_param_tag(rest)
+                && param.name == param_name
+                && !param.optional
+            {
+                return true;
             }
         }
         false

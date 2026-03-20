@@ -195,6 +195,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_object_literal_type(
         &mut self,
         properties: FxHashMap<Atom, PropertyInfo>,

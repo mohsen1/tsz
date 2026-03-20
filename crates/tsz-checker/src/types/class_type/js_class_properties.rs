@@ -594,9 +594,7 @@ impl CheckerState<'_> {
         stmt_idx: NodeIndex,
         this_aliases: &[String],
     ) -> Option<(String, bool, NodeIndex)> {
-        if self.js_statement_declared_type(stmt_idx).is_none() {
-            return None;
-        }
+        self.js_statement_declared_type(stmt_idx)?;
 
         let stmt_node = self.ctx.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
