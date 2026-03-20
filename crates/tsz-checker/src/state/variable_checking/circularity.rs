@@ -9,6 +9,10 @@ use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
     fn identifier_is_non_value_name_position(&self, node_idx: NodeIndex) -> bool {
+        if self.is_identifier_in_type_position(node_idx) {
+            return true;
+        }
+
         let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
             return false;
         };
