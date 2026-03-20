@@ -652,7 +652,7 @@ impl<'a> CheckerState<'a> {
 
         let (raw_name, prop_type) = if rest.starts_with('{') {
             let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
-            let raw_name = after_expr.trim().split_whitespace().next()?;
+            let raw_name = after_expr.split_whitespace().next()?;
             (raw_name, expr.trim().to_string())
         } else {
             let raw_name = rest.split_whitespace().next()?;
