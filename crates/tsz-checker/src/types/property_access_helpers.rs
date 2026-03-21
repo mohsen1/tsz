@@ -256,8 +256,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // 2. Check all other binders (cross-file global scope access)
-        if let Some(all_binders) = &self.ctx.all_binders {
+        // 2. Check global expando index (O(1) instead of O(N) binder scan)
+        if let Some(expando_idx) = &self.ctx.global_expando_index {
+            if expando_idx
+                .get(&obj_key)
+                .is_some_and(|props| props.contains(property_name))
+            {
+                return true;
+            }
+        } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if binder
                     .expando_properties
@@ -274,7 +281,14 @@ impl<'a> CheckerState<'a> {
         //    symbol name), not "a.C1". Extract the last segment and check all binders.
         if let Some(last_dot) = obj_key.rfind('.') {
             let last_segment = &obj_key[last_dot + 1..];
-            if let Some(all_binders) = &self.ctx.all_binders {
+            if let Some(expando_idx) = &self.ctx.global_expando_index {
+                if expando_idx
+                    .get(last_segment)
+                    .is_some_and(|props| props.contains(property_name))
+                {
+                    return true;
+                }
+            } else if let Some(all_binders) = &self.ctx.all_binders {
                 for binder in all_binders.iter() {
                     if binder
                         .expando_properties
@@ -1439,7 +1453,12 @@ impl<'a> CheckerState<'a> {
         if has_unique(&self.ctx.binder.expando_properties) {
             return true;
         }
-        if let Some(all_binders) = &self.ctx.all_binders {
+        // Use global expando index for O(1) lookup instead of O(N) binder scan
+        if let Some(expando_idx) = &self.ctx.global_expando_index {
+            if has_unique(expando_idx) {
+                return true;
+            }
+        } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if has_unique(&binder.expando_properties) {
                     return true;
