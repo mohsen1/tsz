@@ -380,6 +380,16 @@ impl<'a> CheckerState<'a> {
         let prev_type = self.resolve_namespace_lazy_for_redeclaration(prev_type);
         let current_type = self.resolve_namespace_lazy_for_redeclaration(current_type);
 
+        // Widen literal return types in function signatures before comparison.
+        // tsc's getReturnTypeOfSignature always widens inferred return types
+        // (e.g., `(s: string) => 3` becomes `(s: string) => number`), so by the
+        // time TS2403 comparison happens, both sides already have widened return
+        // types. Without this, `var fn = (s: string) => 3` would have return type
+        // `3` instead of `number`, causing a false TS2403 against the previously
+        // established `(s: string) => number`.
+        let prev_type = self.widen_function_return_type_for_redeclaration(prev_type);
+        let current_type = self.widen_function_return_type_for_redeclaration(current_type);
+
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking
         {
@@ -398,5 +408,56 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Widen literal return types within function signatures for TS2403 comparison.
+    ///
+    /// tsc always widens inferred return types via `getReturnTypeOfSignature`, so
+    /// a function like `(s: string) => 3` gets return type `number` (not `3`).
+    /// Our checker may preserve the literal return type, so we widen it here
+    /// before the identity comparison to avoid false TS2403 positives.
+    fn widen_function_return_type_for_redeclaration(&self, type_id: TypeId) -> TypeId {
+        use tsz_solver::type_queries;
+
+        // For Function types: widen the return type directly
+        if let Some(shape) = type_queries::get_function_shape(self.ctx.types, type_id) {
+            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
+            if widened_return != shape.return_type {
+                return type_queries::replace_function_return_type(
+                    self.ctx.types,
+                    type_id,
+                    widened_return,
+                );
+            }
+        }
+
+        // For Callable types (e.g., `{ (s: string): number }`): widen each
+        // call signature's return type.
+        if let Some(tsz_solver::TypeData::Callable(callable_id)) = self.ctx.types.lookup(type_id) {
+            let callable = self.ctx.types.callable_shape(callable_id);
+            let mut any_changed = false;
+            let new_call_sigs: Vec<_> = callable
+                .call_signatures
+                .iter()
+                .map(|sig| {
+                    let widened = tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
+                    if widened != sig.return_type {
+                        any_changed = true;
+                        let mut new_sig = sig.clone();
+                        new_sig.return_type = widened;
+                        new_sig
+                    } else {
+                        sig.clone()
+                    }
+                })
+                .collect();
+            if any_changed {
+                let mut new_shape = (*callable).clone();
+                new_shape.call_signatures = new_call_sigs;
+                return self.ctx.types.callable(new_shape);
+            }
+        }
+
+        type_id
     }
 }
