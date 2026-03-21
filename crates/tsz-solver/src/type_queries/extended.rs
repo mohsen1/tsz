@@ -359,7 +359,7 @@ pub fn get_string_literal_value(
 /// This mirrors how TypeScript stringifies values in template literal evaluation:
 /// - String literals → their value
 /// - Number literals → their string form (e.g., `0` → `"0"`, `1.5` → `"1.5"`)
-/// - BigInt literals → their string form (e.g., `100n` → `"100"`)
+/// - `BigInt` literals → their string form (e.g., `100n` → `"100"`)
 /// - Boolean literals → `"true"` or `"false"`
 /// - `null` → `"null"`, `undefined`/`void` → `"undefined"`
 ///
@@ -380,14 +380,12 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 
     match db.lookup(type_id) {
-        Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(crate::types::LiteralValue::String(atom)))
+        | Some(TypeData::Literal(crate::types::LiteralValue::BigInt(atom))) => {
             Some(db.resolve_atom_ref(atom).to_string())
         }
         Some(TypeData::Literal(crate::types::LiteralValue::Boolean(b))) => Some(b.to_string()),
         Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => Some(format!("{}", n.0)),
-        Some(TypeData::Literal(crate::types::LiteralValue::BigInt(atom))) => {
-            Some(db.resolve_atom_ref(atom).to_string())
-        }
         Some(TypeData::Enum(_, structural_type)) => match db.lookup(structural_type) {
             Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
                 Some(db.resolve_atom_ref(atom).to_string())
