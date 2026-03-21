@@ -491,26 +491,35 @@ impl Server {
                 }));
             }
 
-            if response_actions.is_empty()
-                && error_codes.len() == 1
-                && error_codes[0] == AWAIT_IN_SYNC_FUNCTION_ERROR_CODE
+            // addMissingAsync: for error 1308 (await in sync function) and also 2322/2345 (assignability)
+            // where adding async modifier is the correct fix
+            if error_codes
+                .iter()
+                .any(|c| *c == AWAIT_IN_SYNC_FUNCTION_ERROR_CODE || *c == 2322 || *c == 2345)
                 && let Some(updated_content) = missing_async_content.as_ref()
+                && !response_actions.iter().any(|a| {
+                    a.get("fixId").and_then(serde_json::Value::as_str)
+                        == Some(ADD_MISSING_ASYNC_FIX_ID)
+                })
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
-                response_actions.push(serde_json::json!({
-                    "fixName": ADD_MISSING_ASYNC_FIX_ID,
-                    "description": "Add async modifier to containing function",
-                    "changes": [{
-                        "fileName": file_path,
-                        "textChanges": [{
-                            "start": { "line": 1, "offset": 1 },
-                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
-                            "newText": updated_content
-                        }]
-                    }],
-                    "fixId": ADD_MISSING_ASYNC_FIX_ID,
-                    "fixAllDescription": "Add all missing async modifiers",
-                }));
+                response_actions.insert(
+                    0,
+                    serde_json::json!({
+                        "fixName": ADD_MISSING_ASYNC_FIX_ID,
+                        "description": "Add async modifier to containing function",
+                        "changes": [{
+                            "fileName": file_path,
+                            "textChanges": [{
+                                "start": { "line": 1, "offset": 1 },
+                                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                                "newText": updated_content
+                            }]
+                        }],
+                        "fixId": ADD_MISSING_ASYNC_FIX_ID,
+                        "fixAllDescription": "Add all missing async modifiers",
+                    }),
+                );
             }
 
             if response_actions.is_empty()
