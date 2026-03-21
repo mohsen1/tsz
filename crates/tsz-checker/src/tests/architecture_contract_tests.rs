@@ -2914,3 +2914,127 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
          for the canonical call-argument relation path"
     );
 }
+
+// =============================================================================
+// Phase 2: Object/property/call compatibility through canonical boundary
+// =============================================================================
+
+/// `RelationOutcome` must include `property_classification` for structured
+/// property-level analysis, avoiding checker-local re-derivation.
+#[test]
+fn test_relation_outcome_has_property_classification() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+
+    assert!(
+        source.contains("property_classification:"),
+        "RelationOutcome must include property_classification field \
+         for structured property-level analysis"
+    );
+
+    assert!(
+        source.contains("classify_object_properties("),
+        "execute_relation must populate property_classification via \
+         classify_object_properties boundary function"
+    );
+}
+
+/// `PropertyClassification` must exist in `relation_types.rs` as the canonical
+/// property-level boundary output type.
+#[test]
+fn test_property_classification_exists() {
+    let source = fs::read_to_string("src/query_boundaries/relation_types.rs")
+        .expect("failed to read relation_types.rs");
+
+    assert!(
+        source.contains("pub(crate) struct PropertyClassification"),
+        "relation_types.rs must define PropertyClassification as the canonical \
+         boundary output for property-level analysis"
+    );
+
+    for field in [
+        "excess_properties",
+        "missing_properties",
+        "target_has_index_signature",
+        "target_is_type_parameter",
+        "target_is_empty_object",
+        "target_is_global_object_or_function",
+    ] {
+        assert!(
+            source.contains(field),
+            "PropertyClassification must include the `{field}` field"
+        );
+    }
+}
+
+/// `source_has_excess_properties` in `property.rs` must delegate to the
+/// canonical boundary function instead of re-implementing shape analysis.
+#[test]
+fn test_source_has_excess_properties_uses_boundary() {
+    let source = fs::read_to_string("src/state/state_checking/property.rs")
+        .expect("failed to read property.rs");
+
+    assert!(
+        source.contains("classify_object_properties("),
+        "source_has_excess_properties must delegate to classify_object_properties \
+         boundary function instead of re-implementing property enumeration"
+    );
+}
+
+/// The simple object target path in `check_object_literal_excess_properties`
+/// must use the boundary classification for the excess-property decision.
+#[test]
+fn test_simple_object_epc_uses_boundary_classification() {
+    let source = fs::read_to_string("src/state/state_checking/property.rs")
+        .expect("failed to read property.rs");
+
+    // The simple object target path should use classify_object_properties
+    assert!(
+        source.contains("classify_object_properties("),
+        "check_object_literal_excess_properties simple-object path must use \
+         classify_object_properties boundary for property existence decisions"
+    );
+
+    // The is_global_object_or_function_shape should delegate to boundary
+    assert!(
+        source.contains("is_global_object_or_function_shape_boundary("),
+        "is_global_object_or_function_shape must delegate to the boundary function"
+    );
+}
+
+/// The boundary must own the canonical `is_global_object_or_function_shape` logic.
+#[test]
+fn test_boundary_owns_global_object_function_shape_check() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+
+    assert!(
+        source.contains("fn is_global_object_or_function_shape("),
+        "assignability.rs boundary must own is_global_object_or_function_shape"
+    );
+    assert!(
+        source.contains("OBJECT_PROTO"),
+        "boundary must contain the canonical Object.prototype property list"
+    );
+    assert!(
+        source.contains("FUNCTION_PROTO"),
+        "boundary must contain the canonical Function.prototype property list"
+    );
+}
+
+/// `property.rs` must NOT contain its own OBJECT_PROTO/FUNCTION_PROTO lists.
+/// These must be defined only in the boundary.
+#[test]
+fn test_property_rs_no_duplicate_proto_lists() {
+    let source = fs::read_to_string("src/state/state_checking/property.rs")
+        .expect("failed to read property.rs");
+
+    assert!(
+        !source.contains("OBJECT_PROTO"),
+        "property.rs must NOT define OBJECT_PROTO — it must use the boundary"
+    );
+    assert!(
+        !source.contains("FUNCTION_PROTO"),
+        "property.rs must NOT define FUNCTION_PROTO — it must use the boundary"
+    );
+}
