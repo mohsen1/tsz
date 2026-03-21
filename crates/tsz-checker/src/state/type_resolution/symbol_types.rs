@@ -533,13 +533,8 @@ impl<'a> CheckerState<'a> {
 
         let type_param_bindings = self.get_type_param_bindings();
         let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-            self.resolve_type_symbol_for_lowering(node_idx)
-                .map(|sym_id_raw| {
-                    self.ctx
-                        .get_or_create_def_id(tsz_binder::SymbolId(sym_id_raw))
-                })
-        };
+        // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
+        let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
             computed_names.get(&expr_idx).copied()
@@ -670,6 +665,21 @@ impl<'a> CheckerState<'a> {
             }
         }
         map
+    }
+
+    /// Resolve a symbol to its structural type and return a `Lazy(DefId)` reference.
+    ///
+    /// This is the canonical stable-identity helper that consolidates the common
+    /// two-step pattern:
+    ///   1. `type_reference_symbol_type(sym_id)` — ensures the symbol's body is
+    ///      materialized in type_env
+    ///   2. `ctx.create_lazy_type_ref(sym_id)` — creates `TypeData::Lazy(DefId)`
+    ///
+    /// Use this in type literal and type reference resolution paths instead of
+    /// manually calling both steps.
+    pub(crate) fn resolve_symbol_as_lazy_type(&mut self, sym_id: SymbolId) -> TypeId {
+        let _ = self.type_reference_symbol_type(sym_id);
+        self.ctx.create_lazy_type_ref(sym_id)
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.
@@ -872,16 +882,13 @@ impl<'a> CheckerState<'a> {
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
 
-                // Add def_id_resolver for DefId-based resolution
+                // Stable-identity helper for DefId-based resolution
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
                     if needs_text_based_resolution {
                         multi_arena_resolve(node_idx)
                             .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
                     } else {
-                        self.resolve_type_symbol_for_lowering(node_idx)
-                            .map(|sym_id| {
-                                self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id))
-                            })
+                        self.resolve_def_id_for_lowering(node_idx)
                     }
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {

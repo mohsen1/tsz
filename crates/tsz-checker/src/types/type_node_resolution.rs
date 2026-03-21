@@ -592,6 +592,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             })
     }
 
+    /// Get or create a `DefId` for a symbol and ensure its type alias body
+    /// is registered in the type environment.
+    ///
+    /// This is the canonical stable-identity helper that consolidates the
+    /// repetitive two-step pattern:
+    ///   1. `ctx.get_or_create_def_id(sym_id)` — mint/retrieve DefId
+    ///   2. `ensure_type_alias_resolved(sym_id, def_id)` — register body+params
+    ///
+    /// Used in qualified name resolution paths where every member lookup
+    /// needs stable identity with alias body registration.
+    pub(crate) fn ensure_def_id_with_alias(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> tsz_solver::def::DefId {
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        self.ensure_type_alias_resolved(sym_id, def_id);
+        def_id
+    }
+
     /// Ensure a type alias symbol has its type params and body registered
     /// so the solver can expand Application(Lazy(DefId), Args) later.
     ///
@@ -835,16 +854,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(name) = self.entity_name_text(node_idx)
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ensure_type_alias_resolved(sym_id, def_id);
-            return Some(def_id);
+            return Some(self.ensure_def_id_with_alias(sym_id));
         }
 
         if let Some(sym_id) = self.resolve_type_symbol(node_idx) {
             let sym_id = tsz_binder::SymbolId(sym_id);
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ensure_type_alias_resolved(sym_id, def_id);
-            return Some(def_id);
+            return Some(self.ensure_def_id_with_alias(sym_id));
         }
 
         let node = self.ctx.arena.get(node_idx)?;
@@ -886,9 +901,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(exports) = resolved_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(right_name)
             {
-                let def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                self.ensure_type_alias_resolved(member_sym_id, def_id);
-                return Some(def_id);
+                return Some(self.ensure_def_id_with_alias(member_sym_id));
             }
 
             // TYPE_ALIAS+ALIAS merge: resolve member through ALIAS partner
@@ -900,9 +913,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(exports) = alias_sym.exports.as_ref()
                     && let Some(member_sym_id) = exports.get(right_name)
                 {
-                    let def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                    self.ensure_type_alias_resolved(member_sym_id, def_id);
-                    return Some(def_id);
+                    return Some(self.ensure_def_id_with_alias(member_sym_id));
                 }
                 // Follow the ALIAS's import_module, resolving from the
                 // ALIAS's source file perspective (cross-file), then
@@ -918,9 +929,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 .map(|(sym_id, _)| sym_id)
                         });
                     if let Some(member_sym_id) = member {
-                        let def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                        self.ensure_type_alias_resolved(member_sym_id, def_id);
-                        return Some(def_id);
+                        return Some(self.ensure_def_id_with_alias(member_sym_id));
                     }
                 }
             }
