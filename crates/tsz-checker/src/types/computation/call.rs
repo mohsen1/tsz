@@ -789,6 +789,14 @@ impl<'a> CheckerState<'a> {
                     let round1_diag_snap = contextual_type
                         .is_some()
                         .then(|| self.ctx.snapshot_diagnostics());
+                    // Also snapshot TS2454 dedup state so that rolling back Round 1
+                    // diagnostics allows TS2454 to be re-emitted during Round 2.
+                    // Without this, TS2454 emitted during Round 1 gets removed from
+                    // the diagnostics vector but remains in the dedup set, silencing
+                    // the error in Round 2.
+                    let round1_ts2454_snap = round1_diag_snap
+                        .as_ref()
+                        .map(|_| self.ctx.emitted_ts2454_errors.clone());
                     let mut round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, _arg_count| {
@@ -1284,6 +1292,9 @@ impl<'a> CheckerState<'a> {
                             Self::should_preserve_speculative_call_diagnostic(diag)
                         });
                     }
+                    if let Some(ts2454_snap) = &round1_ts2454_snap {
+                        self.ctx.restore_ts2454_state(ts2454_snap);
+                    }
 
                     // === Pre-evaluate instantiated parameter types ===
                     // After instantiation with Round 1 substitution, parameter types may
@@ -1686,6 +1697,9 @@ impl<'a> CheckerState<'a> {
                     let initial_arg_snap = contextual_type
                         .is_some()
                         .then(|| self.ctx.snapshot_diagnostics());
+                    let initial_ts2454_snap = initial_arg_snap
+                        .as_ref()
+                        .map(|_| self.ctx.emitted_ts2454_errors.clone());
                     let preserved_object_literal_implicit_any_spans: Vec<_> = args
                         .iter()
                         .copied()
@@ -1745,6 +1759,9 @@ impl<'a> CheckerState<'a> {
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
                                         )
                                 });
+                            }
+                            if let Some(ts2454_snap) = &initial_ts2454_snap {
+                                self.ctx.restore_ts2454_state(ts2454_snap);
                             }
                             self.clear_contextual_resolution_cache();
                             for (i, &arg_idx) in args.iter().enumerate() {
@@ -1820,6 +1837,9 @@ impl<'a> CheckerState<'a> {
                                                 | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
                                         )
                                 });
+                            }
+                            if let Some(ts2454_snap) = &initial_ts2454_snap {
+                                self.ctx.restore_ts2454_state(ts2454_snap);
                             }
                             self.clear_contextual_resolution_cache();
                             for (i, &arg_idx) in args.iter().enumerate() {
