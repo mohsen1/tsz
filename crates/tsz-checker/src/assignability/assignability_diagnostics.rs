@@ -68,6 +68,20 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        self.should_skip_weak_union_error_with_hint(source, target, source_idx, None)
+    }
+
+    /// Like `should_skip_weak_union_error`, but accepts a pre-computed
+    /// weak-union-violation hint from a prior `RelationOutcome`. When the
+    /// hint is `Some(true)` the expensive `is_weak_union_violation` solver
+    /// call is elided.
+    fn should_skip_weak_union_error_with_hint(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        weak_union_hint: Option<bool>,
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(source_idx) else {
             return false;
         };
@@ -75,8 +89,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check for weak union violation first (using scoped borrow)
-        if self.is_weak_union_violation(source, target) {
+        // Check for weak union violation — use the pre-computed hint when available
+        // to avoid an extra solver round-trip.
+        let is_weak_union =
+            weak_union_hint.unwrap_or_else(|| self.is_weak_union_violation(source, target));
+        if is_weak_union {
             return true;
         }
 
@@ -329,6 +346,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// `source_idx` is used for weak-union/excess-property prioritization.
     /// `diag_idx` is where the assignability diagnostic is anchored.
+    ///
+    /// Uses the canonical `RelationRequest` / `RelationOutcome` boundary path
+    /// so that the assignability check and failure analysis happen in a single
+    /// solver round-trip rather than separate calls.
     pub(crate) fn check_assignable_or_report_at(
         &mut self,
         source: TypeId,
@@ -374,8 +395,35 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self.is_assignable_to(source, target)
-            || self.should_skip_weak_union_error(source, target, source_idx)
+        // Canonical relation path: execute a RelationRequest to get both the
+        // assignability result and structured failure info in one boundary call.
+        // The `is_assignable_to` call shares solver preparation (evaluate, env
+        // resolution, variance fast-path) and the outcome's `weak_union_violation`
+        // flag feeds into `should_skip_weak_union_error_with_hint` to avoid a
+        // second solver round-trip for failure analysis.
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+
+        // Build a RelationRequest for the Assign kind so the weak-union hint
+        // can be collected alongside the failure reason.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            RelationRequest::assign(prepared_source, prepared_target)
+        };
+        let outcome = self.execute_relation_request(&request);
+
+        // Use the pre-computed weak_union_violation flag as a hint to avoid
+        // re-calling `analyze_assignability_failure` inside the skip logic.
+        if outcome.weak_union_violation
+            || self.should_skip_weak_union_error_with_hint(
+                source,
+                target,
+                source_idx,
+                Some(outcome.weak_union_violation),
+            )
         {
             return true;
         }
@@ -499,6 +547,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true when no diagnostic was emitted (assignable or intentionally skipped),
     /// false when an argument-assignability diagnostic was emitted.
+    ///
+    /// Uses the canonical `RelationRequest` path for combined assignability +
+    /// weak-union detection.
     pub(crate) fn check_argument_assignable_or_report(
         &mut self,
         source: TypeId,
@@ -515,7 +566,23 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(source, target) {
             return true;
         }
-        if self.should_skip_weak_union_error(source, target, arg_idx) {
+
+        // Build a CallArg relation request to collect the weak-union hint
+        // without a separate solver call.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            RelationRequest::call_arg(prepared_source, prepared_target)
+        };
+        let outcome = self.execute_relation_request(&request);
+
+        if self.should_skip_weak_union_error_with_hint(
+            source,
+            target,
+            arg_idx,
+            Some(outcome.weak_union_violation),
+        ) {
             return true;
         }
         // Conditional/generic callback contexts can narrow argument callback parameter

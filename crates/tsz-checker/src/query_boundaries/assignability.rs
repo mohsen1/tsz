@@ -396,6 +396,107 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
     AssignabilityGateResult { related, analysis }
 }
 
+// ---------------------------------------------------------------------------
+// RelationOutcome: structured result from executing a RelationRequest
+// ---------------------------------------------------------------------------
+
+/// Structured outcome from executing a `RelationRequest` through the
+/// canonical boundary.
+///
+/// Combines the relation result, structured failure classification, and
+/// weak-union violation detection into a single response so that callers
+/// do not need to issue multiple solver round-trips for the same logical
+/// question.
+#[derive(Debug)]
+pub(crate) struct RelationOutcome {
+    /// Whether the relation holds (source is assignable to target).
+    pub related: bool,
+    /// Structured failure classification when `related` is false.
+    /// Converted from the solver's `SubtypeFailureReason`.
+    pub failure: Option<super::relation_types::RelationFailure>,
+    /// Whether the failure is a weak-union violation (TS2559).
+    /// When true, the checker should emit excess-property diagnostics
+    /// instead of the standard assignability error.
+    pub weak_union_violation: bool,
+}
+
+impl RelationOutcome {
+    /// Quick check: the relation holds or should be treated as acceptable
+    /// (weak-union violations are suppressed in favor of excess-property errors).
+    pub fn is_ok_or_weak_union(&self) -> bool {
+        self.related || self.weak_union_violation
+    }
+}
+
+/// Execute a `RelationRequest` through the canonical boundary.
+///
+/// This is the single authoritative entry point for relation queries that
+/// need structured failure information. It:
+///
+/// 1. Runs the assignability check via the solver.
+/// 2. When not related, collects a structured failure reason.
+/// 3. Detects weak-union violations.
+///
+/// All policy dimensions (freshness, excess-property mode, missing-property
+/// mode) are encoded in the `request`; the boundary translates them to
+/// solver-level knobs.
+pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
+    request: &RelationRequest,
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    flags: u16,
+    inheritance_graph: &tsz_solver::InheritanceGraph,
+    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    ctx: Option<&crate::context::CheckerContext<'_>>,
+    sound_mode: bool,
+) -> RelationOutcome {
+    let inputs = AssignabilityQueryInputs {
+        db,
+        resolver,
+        source: request.source,
+        target: request.target,
+        flags,
+        inheritance_graph,
+        sound_mode,
+    };
+
+    let related = is_assignable_with_overrides(&inputs, overrides);
+
+    if related {
+        return RelationOutcome {
+            related: true,
+            failure: None,
+            weak_union_violation: false,
+        };
+    }
+
+    // Relation failed — collect structured failure analysis.
+    let analysis = ctx.map(|ctx| {
+        analyze_assignability_failure_with_context(
+            db.as_type_database(),
+            ctx,
+            resolver,
+            request.source,
+            request.target,
+        )
+    });
+
+    let (weak_union_violation, failure) = match analysis {
+        Some(a) => (
+            a.weak_union_violation,
+            a.failure_reason
+                .map(super::relation_types::RelationFailure::from_solver_reason),
+        ),
+        None => (false, None),
+    };
+
+    RelationOutcome {
+        related: false,
+        failure,
+        weak_union_violation,
+    }
+}
+
 pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeResolver>(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
