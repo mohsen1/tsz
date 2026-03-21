@@ -1203,12 +1203,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Emit an appropriate error when a known global is not found.
+    ///
+    /// Routes through the environment capability boundary (`diagnose_missing_name`)
+    /// to determine the appropriate diagnostic.
     fn emit_global_not_found_error(&mut self, idx: NodeIndex, name: &str) -> TypeId {
-        use crate::query_boundaries::capabilities::MissingGlobalKind;
+        use crate::query_boundaries::environment::CapabilityDiagnostic;
 
         if !self.ctx.capabilities.has_lib {
-            if let Some(MissingGlobalKind::Es2015PlusType) =
-                self.ctx.capabilities.classify_missing_global(name)
+            if let Some(CapabilityDiagnostic::MissingEs2015Type { .. }) =
+                self.ctx.capabilities.diagnose_missing_name(name)
             {
                 self.error_cannot_find_name_change_lib(name, idx);
             } else {
@@ -1217,12 +1220,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        match self.ctx.capabilities.classify_missing_global(name) {
-            Some(MissingGlobalKind::DomGlobal) => {
+        match self.ctx.capabilities.diagnose_missing_name(name) {
+            Some(CapabilityDiagnostic::MissingDomGlobal { .. }) => {
                 self.error_cannot_find_name_at(name, idx);
                 return TypeId::ERROR;
             }
-            Some(MissingGlobalKind::Es2015PlusType) => {
+            Some(CapabilityDiagnostic::MissingEs2015Type { .. }) => {
                 self.error_cannot_find_global_type(name, idx);
                 return TypeId::ERROR;
             }

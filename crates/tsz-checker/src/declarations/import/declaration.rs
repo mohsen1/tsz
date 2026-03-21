@@ -252,21 +252,30 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2823: Check that import attributes are only used with supported module options.
+    ///
+    /// Routes through the environment capability boundary (`check_feature_gate`)
+    /// to determine whether a diagnostic should be emitted.
     pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
         if attributes_idx.is_none() {
             return;
         }
 
-        if !self.ctx.capabilities.import_attributes_supported
-            && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
+        use crate::query_boundaries::capabilities::FeatureGate;
+        if self
+            .ctx
+            .capabilities
+            .check_feature_gate(FeatureGate::ImportAttributes)
+            .is_some()
         {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_position(
-                attr_node.pos,
-                attr_node.end.saturating_sub(attr_node.pos),
-                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
-                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
-            );
+            if let Some(attr_node) = self.ctx.arena.get(attributes_idx) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_position(
+                    attr_node.pos,
+                    attr_node.end.saturating_sub(attr_node.pos),
+                    diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                    diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                );
+            }
         }
     }
 

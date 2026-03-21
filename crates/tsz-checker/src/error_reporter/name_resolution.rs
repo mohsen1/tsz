@@ -674,24 +674,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Route through the centralized capability classifier for known globals.
-        // This replaces scattered per-global checks with one decision point.
-        use crate::query_boundaries::capabilities::MissingGlobalKind;
-        if let Some(kind) = self.ctx.capabilities.classify_missing_global(name) {
-            match kind {
-                MissingGlobalKind::Es2015PlusType => {
+        // Route through the environment capability boundary for known globals.
+        // `diagnose_missing_name` returns a structured CapabilityDiagnostic that
+        // tells us which error to emit, keeping the decision centralized.
+        use crate::query_boundaries::environment::CapabilityDiagnostic;
+        if let Some(cap_diag) = self.ctx.capabilities.diagnose_missing_name(name) {
+            match cap_diag {
+                CapabilityDiagnostic::MissingEs2015Type { .. } => {
                     self.error_cannot_find_name_change_lib(name, idx);
                     return;
                 }
-                MissingGlobalKind::DomGlobal => {
+                CapabilityDiagnostic::MissingDomGlobal { .. } => {
                     self.error_cannot_find_name_change_target_lib(name, idx);
                     return;
                 }
-                MissingGlobalKind::JQueryGlobal => {
+                CapabilityDiagnostic::MissingJQueryGlobal { .. } => {
                     self.error_cannot_find_name_install_jquery_types(name, idx);
                     return;
                 }
-                MissingGlobalKind::NodeGlobal => {
+                CapabilityDiagnostic::MissingNodeGlobal { .. } => {
                     // Special cases: private-name access and "module" with parse errors
                     // fall through to TS2304 instead of TS2591.
                     if self.is_private_name_access_base(idx) {
@@ -703,16 +704,16 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
-                MissingGlobalKind::TestRunnerGlobal => {
+                CapabilityDiagnostic::MissingTestRunnerGlobal { .. } => {
                     self.error_cannot_find_name_install_test_types(name, idx);
                     return;
                 }
-                MissingGlobalKind::BunGlobal => {
+                CapabilityDiagnostic::MissingBunGlobal { .. } => {
                     self.error_cannot_find_name_install_bun_types(name, idx);
                     return;
                 }
-                // CoreGlobalType and FeatureGlobalType are handled by check_missing_global_types,
-                // not the name resolution path.
+                // MissingGlobalType and FeatureRequiresGlobalType are handled by
+                // check_missing_global_types, not the name resolution path.
                 _ => {}
             }
         }
