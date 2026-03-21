@@ -174,3 +174,129 @@ fn object_literal_inference_no_diagnostic_leak() {
         "Expected no errors for valid generic object literal, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Overload probing and successful-candidate rollback tests
+// ---------------------------------------------------------------------------
+// These tests validate that the speculation infrastructure correctly manages
+// diagnostic state across overload resolution phases. They cover:
+// - Multi-candidate probing with rollback between candidates
+// - Successful candidate committing only its own diagnostics
+// - Callback body diagnostics from failed candidates not leaking
+
+/// When the first overload fails on argument type but the second matches,
+/// speculative diagnostics from the first candidate must not leak.
+#[test]
+fn overload_probe_first_fails_second_succeeds_no_leak() {
+    let diags = check(
+        r#"
+        declare function overloaded(x: string, y: string): string;
+        declare function overloaded(x: number, y: number): number;
+        let r = overloaded(1, 2);
+    "#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected no errors when second overload matches, got: {diags:?}"
+    );
+}
+
+/// Overload resolution with callback arguments: speculative callback body
+/// diagnostics from a failed candidate should not survive into the successful path.
+#[test]
+fn overload_probe_callback_body_diagnostics_rollback() {
+    let diags = check(
+        r#"
+        declare function process(cb: (x: string) => string): string;
+        declare function process(cb: (x: number) => number): number;
+        let r = process((x) => x + 1);
+    "#,
+    );
+    // The second overload (number → number) should match.
+    // No TS2365 or TS2322 from the first candidate's speculative callback body check.
+    let leaked_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2365 || d.code == 2322)
+        .collect();
+    assert!(
+        leaked_errors.is_empty(),
+        "Speculative callback body errors leaked from failed overload candidate: {leaked_errors:?}"
+    );
+}
+
+/// When all overloads fail, the fallback diagnostic (TS2769) should be clean
+/// and not contain duplicated speculative diagnostics from multiple candidates.
+#[test]
+fn overload_all_fail_no_duplicate_speculative_diagnostics() {
+    let diags = check(
+        r#"
+        declare function multi(x: string): void;
+        declare function multi(x: number): void;
+        declare function multi(x: boolean): void;
+        multi({} as never);
+    "#,
+    );
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert!(
+        ts2769_count <= 1,
+        "Expected at most one TS2769 for total overload failure, got {ts2769_count}: {diags:?}"
+    );
+}
+
+/// Overload resolution with generic candidate and contextual refresh:
+/// The successful candidate's argument re-typing should produce clean diagnostics.
+#[test]
+fn overload_generic_candidate_contextual_refresh_clean() {
+    let diags = check(
+        r#"
+        declare function convert<T>(x: T, cb: (v: T) => string): string;
+        declare function convert(x: string, cb: (v: string) => number): number;
+        let r = convert(42, (v) => v.toFixed());
+    "#,
+    );
+    // First overload should match: T=number, cb gets (v: number) => string
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for generic overload with contextual refresh, got: {diags:?}"
+    );
+}
+
+/// Ensure that TypeParameterConstraintViolation during overload resolution
+/// correctly rolls back and tries the next candidate.
+#[test]
+fn overload_constraint_violation_tries_next_candidate() {
+    let diags = check(
+        r#"
+        declare function constrained<T extends string>(x: T): T;
+        declare function constrained(x: number): number;
+        let r = constrained(42);
+    "#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected no errors when constraint-violated overload falls through to next, got: {diags:?}"
+    );
+}
+
+/// Speculative diagnostics from argument type collection with unresolved
+/// contextual types should be properly rolled back, not left as duplicates.
+#[test]
+fn unresolved_contextual_arg_implicit_any_rollback() {
+    let diags = check_with(
+        r#"
+        declare function withCb<T>(produce: () => T, consume: (x: T) => void): void;
+        withCb(() => 42, (x) => x.toFixed());
+    "#,
+        "test.ts",
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    // TS7006 should not be emitted for `x` since it gets contextual type number
+    let ts7006_in_consume: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        ts7006_in_consume.is_empty(),
+        "TS7006 should not appear when contextual type resolves via generic inference: {ts7006_in_consume:?}"
+    );
+}

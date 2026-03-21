@@ -220,17 +220,50 @@ impl CheckerContext<'_> {
     #[allow(dead_code)]
     pub(crate) fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         // Diagnostics already in the vector; just rebuild dedup for new entries.
-        for diag in self.diagnostics[snap.diagnostics_len..].iter() {
+        let start = snap.diagnostics_len.min(self.diagnostics.len());
+        for diag in self.diagnostics[start..].iter() {
             let key = self.diagnostic_dedup_key(diag);
             self.emitted_diagnostics.insert(key);
         }
     }
 
     /// Extract speculative diagnostics without modifying the context.
-    /// Returns diagnostics added since the snapshot.
-    #[allow(dead_code)]
+    /// Returns diagnostics added since the snapshot. Clamps to current length
+    /// to handle nested speculation that may have already truncated the vector.
     pub(crate) fn speculative_diagnostics_since(&self, snap: &DiagnosticSnapshot) -> &[Diagnostic] {
-        &self.diagnostics[snap.diagnostics_len..]
+        let start = snap.diagnostics_len.min(self.diagnostics.len());
+        &self.diagnostics[start..]
+    }
+
+    /// Returns `true` if any diagnostics were added since the snapshot.
+    pub(crate) fn has_speculative_diagnostics(&self, snap: &DiagnosticSnapshot) -> bool {
+        self.diagnostics.len() > snap.diagnostics_len
+    }
+
+    /// Extract diagnostics in a range between two checkpoints (both expressed
+    /// as snapshot diagnostic lengths). Useful for collecting diagnostics from
+    /// a specific speculative phase without touching the current diagnostic
+    /// vector.
+    pub(crate) fn diagnostics_between(
+        &self,
+        from: &DiagnosticSnapshot,
+        to: &DiagnosticSnapshot,
+    ) -> &[Diagnostic] {
+        let start = from.diagnostics_len.min(self.diagnostics.len());
+        let end = to.diagnostics_len.min(self.diagnostics.len());
+        &self.diagnostics[start..end]
+    }
+
+    /// Collect and remove speculative diagnostics since a snapshot, returning
+    /// them as a `Vec`. The diagnostic vector is truncated back to the
+    /// snapshot point. Dedup state is NOT restored (caller is responsible
+    /// for managing the dedup set if needed).
+    pub(crate) fn take_speculative_diagnostics(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+    ) -> Vec<Diagnostic> {
+        let split_at = snap.diagnostics_len.min(self.diagnostics.len());
+        self.diagnostics.split_off(split_at)
     }
 
     /// Discard speculative diagnostics and replace with a curated set.
