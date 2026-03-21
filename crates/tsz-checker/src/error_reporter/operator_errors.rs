@@ -1,5 +1,6 @@
 //! Binary operator error reporting (TS2362, TS2363, TS2365, TS2469).
 
+use super::fingerprint_policy::DiagnosticRenderRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -17,10 +18,12 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
-        self.error_at_node_msg(
+        self.emit_render_request(
             idx,
-            diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
-            &[&type_str],
+            DiagnosticRenderRequest::simple_msg(
+                diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
+                &[&type_str],
+            ),
         );
     }
 
@@ -148,10 +151,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 "null | undefined"
             };
-            self.error_at_node_msg(
+            self.emit_render_request(
                 idx,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &[value_name],
+                DiagnosticRenderRequest::simple_msg(
+                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                ),
             );
         } else {
             if let Some(node) = self.ctx.arena.get(idx) {
@@ -164,7 +169,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
                         };
-                        self.error_at_node_msg(idx, code, &[&name]);
+                        self.emit_render_request(
+                            idx,
+                            DiagnosticRenderRequest::simple_msg(code, &[&name]),
+                        );
                         return;
                     }
                 } else if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
@@ -184,7 +192,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
                 };
-                self.error_at_node_msg(idx, code, &[name]);
+                self.emit_render_request(idx, DiagnosticRenderRequest::simple_msg(code, &[name]));
             } else {
                 // Non-identifier expression with nullish type — fall back to TS18050
                 let value_name = if cause == TypeId::NULL {
@@ -194,10 +202,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     "null | undefined"
                 };
-                self.error_at_node_msg(
+                self.emit_render_request(
                     idx,
-                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                    &[value_name],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                        &[value_name],
+                    ),
                 );
             }
         }
@@ -285,10 +295,12 @@ impl<'a> CheckerState<'a> {
                 // For relational operators: emit TS2469 on the first (leftmost) symbol
                 // operand and return — tsc does not also emit TS2365.
                 let target_idx = if left_is_symbol { left_idx } else { right_idx };
-                self.error_at_node_msg(
+                self.emit_render_request(
                     target_idx,
-                    diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                    &[op],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        &[op],
+                    ),
                 );
                 return;
             }
@@ -307,17 +319,21 @@ impl<'a> CheckerState<'a> {
                 if should_emit_2469 {
                     // Emit TS2469 on each symbol operand
                     if left_is_symbol {
-                        self.error_at_node_msg(
+                        self.emit_render_request(
                             left_idx,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                            &[op],
+                            DiagnosticRenderRequest::simple_msg(
+                                diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                                &[op],
+                            ),
                         );
                     }
                     if right_is_symbol {
-                        self.error_at_node_msg(
+                        self.emit_render_request(
                             right_idx,
-                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
-                            &[op],
+                            DiagnosticRenderRequest::simple_msg(
+                                diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                                &[op],
+                            ),
                         );
                     }
                     return;
@@ -406,10 +422,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     "!=="
                 };
-                self.error_at_node_msg(
+                self.emit_render_request(
                     node_idx,
-                    diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
-                    &[op, suggestion],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+                        &[op, suggestion],
+                    ),
                 );
                 return;
             }
@@ -469,10 +487,12 @@ impl<'a> CheckerState<'a> {
         // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
         if op == "+" {
             if !emitted_nullish_error {
-                self.error_at_node_msg(
+                self.emit_render_request(
                     node_idx,
-                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    &[op, &left_str, &right_str],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                        &[op, &left_str, &right_str],
+                    ),
                 );
             }
             return;
@@ -489,10 +509,12 @@ impl<'a> CheckerState<'a> {
                     && should_emit_nullish_error)
                 || (emitted_nullish_error && left_is_nullish))
             {
-                self.error_at_node_msg(
+                self.emit_render_request(
                     left_idx,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                    &[],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        &[],
+                    ),
                 );
                 emitted_specific_error = true;
             }
@@ -502,20 +524,24 @@ impl<'a> CheckerState<'a> {
                     && should_emit_nullish_error)
                 || (emitted_nullish_error && right_is_nullish))
             {
-                self.error_at_node_msg(
+                self.emit_render_request(
                     right_idx,
-                    diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                    &[],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        &[],
+                    ),
                 );
                 emitted_specific_error = true;
             }
             // If both operands are valid arithmetic types but the operation still failed
             // (e.g., mixing number and bigint), emit TS2365
             if !emitted_specific_error {
-                self.error_at_node_msg(
+                self.emit_render_request(
                     node_idx,
-                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    &[op, &left_str, &right_str],
+                    DiagnosticRenderRequest::simple_msg(
+                        diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                        &[op, &left_str, &right_str],
+                    ),
                 );
             }
             return;
@@ -525,10 +551,12 @@ impl<'a> CheckerState<'a> {
         // These require both operands to be comparable. When types have no relationship,
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
         if is_relational && !emitted_nullish_error {
-            self.error_at_node_msg(
+            self.emit_render_request(
                 node_idx,
-                diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                &[op, &left_str, &right_str],
+                DiagnosticRenderRequest::simple_msg(
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                    &[op, &left_str, &right_str],
+                ),
             );
         }
     }

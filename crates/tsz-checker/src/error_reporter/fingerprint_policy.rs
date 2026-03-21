@@ -123,6 +123,18 @@ impl DiagnosticRenderRequest {
         }
     }
 
+    /// Create a simple render request from a diagnostic code and message arguments.
+    ///
+    /// Looks up the message template for `code`, formats it with `args`, and
+    /// uses `DiagnosticAnchorKind::Exact` anchoring with no related information.
+    /// This is the render-request equivalent of `error_at_node_msg`.
+    pub(crate) fn simple_msg(code: u32, args: &[&str]) -> Self {
+        use tsz_common::diagnostics::get_message_template;
+        let template = get_message_template(code).unwrap_or("Unexpected checker diagnostic code.");
+        let message = format_message(template, args);
+        Self::simple(DiagnosticAnchorKind::Exact, code, message)
+    }
+
     /// Create a render request that generates related info from a failure reason.
     pub(crate) const fn with_failure_reason(
         anchor_kind: DiagnosticAnchorKind,
