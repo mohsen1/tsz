@@ -3,6 +3,7 @@
 //! validation, union props checking, and missing required props (TS2741).
 
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1851,7 +1852,7 @@ impl<'a> CheckerState<'a> {
         // Speculative attribute collection: save diagnostic checkpoint so side-effect
         // diagnostics (e.g. TS7006 from callback params without contextual typing) are
         // rolled back. Only the final TS2769 (if no overload matches) is kept.
-        let snap = self.ctx.snapshot_diagnostics();
+        let guard = DiagnosticSpeculationGuard::new(&self.ctx);
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
@@ -1875,7 +1876,7 @@ impl<'a> CheckerState<'a> {
         if attrs_info.has_any_spread {
             let has_non_zero_param = non_generic.iter().any(|s| !s.params.is_empty());
             if has_non_zero_param {
-                self.ctx.rollback_diagnostics(&snap);
+                guard.rollback(&mut self.ctx);
                 return;
             }
         }
@@ -1886,7 +1887,7 @@ impl<'a> CheckerState<'a> {
             // overloads fail on arg count when any attributes exist.
             if sig.params.is_empty() {
                 if !has_any_attrs {
-                    self.ctx.rollback_diagnostics(&snap);
+                    guard.rollback(&mut self.ctx);
                     return;
                 }
                 continue;
@@ -1899,14 +1900,14 @@ impl<'a> CheckerState<'a> {
             if self.jsx_attrs_match_overload(&attrs_info, props_resolved) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
-                self.ctx.rollback_diagnostics(&snap);
+                guard.rollback(&mut self.ctx);
                 return;
             }
         }
 
         // No overload matched — roll back speculative diagnostics and emit TS2769.
         // tsc anchors JSX TS2769 at the tag name.
-        self.ctx.rollback_diagnostics(&snap);
+        guard.rollback(&mut self.ctx);
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         self.error_at_node(
             tag_name_idx,
