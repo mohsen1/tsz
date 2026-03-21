@@ -53,16 +53,24 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Remove stale implicit-any diagnostics (TS7006/TS7019/TS7031/TS7051) from
+    /// parameter spans when a contextual typing refresh resolved them.
+    ///
+    /// Uses a `DiagnosticSnapshot` (from `snapshot_diagnostics()`) to identify
+    /// which diagnostics were emitted during the refresh pass, avoiding raw
+    /// index arithmetic.
     pub(super) fn clear_stale_function_like_implicit_any_diagnostics(
         &mut self,
         spans: &[(u32, u32)],
-        refresh_diag_start: usize,
+        pre_refresh: &crate::context::speculation::DiagnosticSnapshot,
     ) {
         if spans.is_empty() {
             return;
         }
 
-        let refreshed_still_has_implicit_any = self.ctx.diagnostics[refresh_diag_start..]
+        // Check if the refresh pass re-emitted any implicit-any diagnostics.
+        // If so, contextual typing didn't help — keep everything.
+        let refreshed_still_has_implicit_any = self.ctx.diagnostics[pre_refresh.diagnostics_len..]
             .iter()
             .any(|diag| {
                 Self::implicit_any_like_diagnostic_code(diag.code)
@@ -75,6 +83,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Contextual typing resolved all implicit-any in these spans.
+        // Remove the old (pre-refresh) implicit-any diagnostics.
         self.ctx.diagnostics.retain(|diag| {
             !Self::implicit_any_like_diagnostic_code(diag.code)
                 || !spans
