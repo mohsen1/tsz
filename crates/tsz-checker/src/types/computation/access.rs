@@ -558,10 +558,18 @@ impl<'a> CheckerState<'a> {
                     // Emit TS2708 for namespace member access (e.g., ns.Interface())
                     // This is "Cannot use namespace as a value"
                     if let Some(ns_name) = self.entity_name_text(access.expression) {
-                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                        self.report_wrong_meaning_diagnostic(
+                            &ns_name,
+                            access.expression,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        );
                     }
                     // Also emit TS2693 for the type-only member itself
-                    self.error_type_only_value_at(name, access.name_or_argument);
+                    self.report_wrong_meaning_diagnostic(
+                        name,
+                        access.name_or_argument,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
                 }
                 return TypeId::ERROR;
             }

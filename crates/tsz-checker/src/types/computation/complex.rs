@@ -1307,7 +1307,11 @@ impl<'a> CheckerState<'a> {
                 _ => None,
             };
             if let Some(keyword_name) = keyword_name {
-                self.error_type_only_value_at(keyword_name, expr_idx);
+                self.report_wrong_meaning_diagnostic(
+                    keyword_name,
+                    expr_idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return Some(TypeId::ERROR);
             }
         }
@@ -1332,7 +1336,11 @@ impl<'a> CheckerState<'a> {
         })?;
 
         if self.alias_resolves_to_type_only(sym_id) {
-            self.error_type_only_value_at(class_name, expr_idx);
+            self.report_wrong_meaning_diagnostic(
+                class_name,
+                expr_idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
             return Some(TypeId::ERROR);
         }
 
@@ -1363,7 +1371,11 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
             }
-            self.error_type_only_value_at(class_name, expr_idx);
+            self.report_wrong_meaning_diagnostic(
+                class_name,
+                expr_idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
             return Some(TypeId::ERROR);
         }
         let symbol_decl_idx = if symbol.value_declaration.is_some() {

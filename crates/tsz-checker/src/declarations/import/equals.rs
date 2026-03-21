@@ -76,7 +76,11 @@ impl<'a> CheckerState<'a> {
                         .expect("sym_id resolved from resolve_identifier_symbol");
                     tracing::trace!("Symbol flags: {:?}", symbol.flags);
                     if self.symbol_is_value_only(sym_id, Some(&alias_name)) {
-                        self.error_value_only_type_at(&alias_name, import_decl.import_clause);
+                        self.report_wrong_meaning_diagnostic(
+                            &alias_name,
+                            import_decl.import_clause,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                     } else {
                         self.error_at_node(
                             import_decl.import_clause,
