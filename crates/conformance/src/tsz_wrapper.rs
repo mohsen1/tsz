@@ -230,30 +230,9 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
-            let should_synthesize_non_strict_baseline =
-                has_source_strictness_pragmas_without_strict(content)
-                    && expected_error_codes.is_some_and(|codes| {
-                        !codes.iter().any(|code| matches!(code, 2454 | 2564 | 2565))
-                    });
-            if should_synthesize_non_strict_baseline {
-                // The conformance runner strips source pragmas before invoking tsz.
-                // tsz is still stricter than tsc for some non-`@strict` source
-                // pragma tests, so the tsz execution path needs a small
-                // compatibility baseline for the remaining strict-family knobs.
-                // Keep this keyed off the cached expected diagnostics so tests
-                // that really do expect definite-assignment diagnostics (for
-                // example `classExpressions.ts`) keep their default behavior.
-                for key in [
-                    "noImplicitAny",
-                    "strictNullChecks",
-                    "strictFunctionTypes",
-                    "strictBindCallApply",
-                    "useUnknownInCatchVariables",
-                ] {
-                    map.entry(key.to_string())
-                        .or_insert(serde_json::Value::Bool(false));
-                }
-            }
+            // TypeScript 6.0+ defaults all strict-family flags to true.
+            // No synthetic non-strict baseline is needed; the compiler
+            // handles these defaults correctly via resolve_bool.
             // Remap virtual absolute typeRoots paths to real tmpdir paths.
             // Tests use `/types` as a virtual FS root; files are written at
             // `<tmpdir>/types/...`, so typeRoots must point there.
