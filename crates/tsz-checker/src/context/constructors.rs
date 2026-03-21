@@ -257,7 +257,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        Self::base(arena, binder, types, file_name, compiler_options, capabilities)
+        Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        )
     }
 
     /// Create a new `CheckerContext` with a shared `DefinitionStore`.
@@ -283,7 +290,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        let mut ctx = Self::base(arena, binder, types, file_name, compiler_options, capabilities);
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        );
         ctx.definition_store = definition_store;
         ctx
     }
@@ -302,7 +316,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        Self::base(arena, binder, types, file_name, compiler_options, capabilities)
+        Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        )
     }
 
     /// Apply `TypeCache` fields to a context, overriding the defaults.
@@ -348,7 +369,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        let mut ctx = Self::base(arena, binder, types, file_name, compiler_options, capabilities);
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        );
         ctx.apply_cache(cache);
         ctx
     }
@@ -368,7 +396,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        let mut ctx = Self::base(arena, binder, types, file_name, compiler_options, capabilities);
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        );
         ctx.apply_cache(cache);
         ctx
     }
@@ -392,7 +427,14 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 parent.capabilities.has_lib,
             );
-        let mut ctx = Self::base(arena, binder, types, file_name, compiler_options, capabilities);
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        );
 
         // Propagate parent state that is safe across arenas.
         ctx.no_implicit_override = parent.no_implicit_override;
@@ -422,10 +464,11 @@ impl<'a> CheckerContext<'a> {
         ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
-        ctx.recursion_depth = RefCell::new(tsz_solver::recursion::DepthCounter::with_initial_depth(
-            tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
-            parent.recursion_depth.borrow().depth(),
-        ));
+        ctx.recursion_depth =
+            RefCell::new(tsz_solver::recursion::DepthCounter::with_initial_depth(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
+                parent.recursion_depth.borrow().depth(),
+            ));
         ctx.heritage_merge_depth = Cell::new(parent.heritage_merge_depth.get());
 
         // Share DefinitionStore with parent so DefIds are globally unique
