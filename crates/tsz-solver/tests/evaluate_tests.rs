@@ -10204,7 +10204,6 @@ fn test_index_access_tuple_string_index() {
 }
 
 #[test]
-#[ignore = "behavior changed after solver merge"]
 fn test_index_access_tuple_string_index_with_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 

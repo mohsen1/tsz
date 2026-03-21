@@ -1096,22 +1096,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             target.params.len()
         };
-        let target_rest_min_required = if target_has_rest {
-            target
-                .params
-                .last()
-                .map(|param| self.rest_param_min_required_arg_count(param.type_id))
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let too_many_params = !self.allow_bivariant_param_count
+        // When the target has a rest parameter (e.g., ...args: number[]),
+        // it can absorb unlimited arguments — skip the too-many check entirely
+        // so we fall through to per-parameter type checking.
+        if !self.allow_bivariant_param_count
             && !rest_is_top
-            && source_required > target_fixed_count + target_rest_min_required;
-        if too_many_params {
+            && !target_has_rest
+            && source_required > target_fixed_count
+        {
             return Some(SubtypeFailureReason::TooManyParameters {
                 source_count: source_required,
-                target_count: target_fixed_count + target_rest_min_required,
+                target_count: target_fixed_count,
             });
         }
 
