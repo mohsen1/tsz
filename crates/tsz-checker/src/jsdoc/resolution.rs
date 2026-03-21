@@ -10,8 +10,6 @@
 //! - Metadata queries (`jsdoc_has_readonly_tag`, `jsdoc_access_level`)
 
 use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
