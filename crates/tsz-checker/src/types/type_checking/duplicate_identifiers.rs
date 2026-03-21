@@ -1209,12 +1209,20 @@ impl<'a> CheckerState<'a> {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
+                let has_function_conflict =
+                    declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                        conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
+                    });
                 let use_ts2451 = if has_remote_declaration && has_block_scoped_conflict {
                     // Cross-file mixed conflicts always use TS2451.
                     true
+                } else if has_block_scoped_conflict && has_function_conflict {
+                    // When a function declaration conflicts with a block-scoped
+                    // variable (let/const) at the same scope, tsc uses TS2300.
+                    false
                 } else if has_block_scoped_conflict {
-                    // Same-file mixed case: check if the first (earliest) local
-                    // declaration is block-scoped. If so, TS2451; otherwise TS2300.
+                    // Same-file mixed case (var + let/const, no function):
+                    // TS2451 if first declaration is block-scoped, TS2300 otherwise.
                     declarations
                         .iter()
                         .filter(|(decl_idx, _, is_local, _, _)| {
