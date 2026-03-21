@@ -411,7 +411,7 @@ impl<'a> CheckerState<'a> {
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             if std::env::var_os("TSZ_DAA_DEBUG").is_some() {
-                eprintln!(
+                tracing::warn!(
                     "[DAA] should_check_definite_assignment: no symbol for {:?}",
                     sym_id
                 );
