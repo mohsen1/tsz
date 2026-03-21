@@ -1374,20 +1374,39 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.consume_keyword(); // TS1260 check for await keyword with escapes
 
-                // In parameter-default context, `await =>` should report missing operand.
-                // tsc emits TS1109 "Expression expected" at `=>` (the await expression's
-                // missing operand), not TS1005. Consume `=>` and the following token to
-                // prevent cascading errors (e.g., TS1359 for `await` as arrow body).
+                // In parameter-default context, `await =>` reports a missing operand.
+                //
+                // In arrow function parameters (`CONTEXT_FLAG_ARROW_PARAMETERS`):
+                //   Emit TS1109 at the `await` keyword and do NOT consume `=>`.
+                //   The parameter-list recovery will then emit TS1005 "',' expected"
+                //   at `=>`, giving the code set {TS1005, TS1109} matching tsc.
+                //   Example: `async (a = await => await) => {}` → TS1109 + TS1005.
+                //
+                // In regular function parameters (no arrow context):
+                //   Emit TS1109 at `=>` and consume `=>` + following token for recovery.
+                //   Example: `async function foo(a = await => await) {}` → only TS1109.
                 if self.in_parameter_default_context()
                     && self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 {
-                    self.error_expression_expected();
-                    self.next_token(); // consume `=>`
-                    // Skip the arrow body token (e.g., second `await`) for recovery
-                    if !self.is_token(SyntaxKind::CloseParenToken)
-                        && !self.is_token(SyntaxKind::EndOfFileToken)
-                    {
-                        self.next_token();
+                    let in_arrow_params = (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) != 0;
+                    if in_arrow_params {
+                        // Emit TS1109 at await position (different from =>) to avoid
+                        // position-based dedup with the TS1005 from parameter list.
+                        self.parse_error_at(
+                            start_pos,
+                            5, // length of "await"
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                    } else {
+                        // Regular function: emit at => and consume for recovery
+                        self.error_expression_expected();
+                        self.next_token(); // consume `=>`
+                        if !self.is_token(SyntaxKind::CloseParenToken)
+                            && !self.is_token(SyntaxKind::EndOfFileToken)
+                        {
+                            self.next_token(); // skip arrow body token
+                        }
                     }
                     let end_pos = self.token_end();
                     return self.arena.add_unary_expr_ex(
