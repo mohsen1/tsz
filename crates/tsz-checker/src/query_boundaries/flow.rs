@@ -141,6 +141,20 @@ pub(crate) fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     }
 }
 
+/// Resolve the base type for typeof narrowing of a catch variable.
+///
+/// Catch variables declared as `unknown` (via `useUnknownInCatchVariables`)
+/// should use `unknown` as the typeof narrowing base so that typeof guards
+/// produce the expected narrow types (e.g. `typeof e === "string"` → `string`).
+/// For non-catch variables the incoming type is returned unchanged.
+pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
+    if is_catch_var && type_id.0 == TypeId::UNKNOWN.0 {
+        TypeId::UNKNOWN
+    } else {
+        type_id
+    }
+}
+
 /// Strip undefined from a destructured element type when a default is present.
 /// Centralizes the narrowing policy for destructuring defaults.
 pub(crate) fn narrow_destructuring_default(
