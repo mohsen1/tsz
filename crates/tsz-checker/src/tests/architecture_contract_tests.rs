@@ -1165,10 +1165,7 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
         if file_name == "lib.rs" {
             continue;
         }
-        // TODO: refactor generic_checker.rs to use solver query helpers
-        if file_name == "generic_checker.rs" {
-            continue;
-        }
+        // generic_checker.rs fully migrated to query boundaries (2026-03)
 
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
@@ -1451,15 +1448,14 @@ fn checker_files_stay_under_loc_limit() {
     // Grandfathered files: (relative path from src/, ceiling LOC)
     // These ceilings represent the current state — they can shrink but not grow.
     let grandfathered: &[(&str, usize)] = &[
-        ("types/computation/call.rs", 2200),
-        ("types/computation/complex.rs", 1900),
-        ("types/function_type.rs", 1960),
-        ("types/utilities/jsdoc.rs", 2400),
-        ("state/variable_checking/core.rs", 1660),
-        ("state/type_resolution/symbol_types.rs", 1050),
-        ("error_reporter/core.rs", 2050),
-        ("checkers/call_checker.rs", 2100),
-        ("checkers/jsx/props.rs", 2600),
+        ("types/computation/call.rs", 1975),
+        ("types/computation/complex.rs", 1750),
+        ("types/function_type.rs", 1950),
+        ("state/variable_checking/core.rs", 1650),
+        ("state/type_resolution/symbol_types.rs", 950),
+        ("error_reporter/core.rs", 1650),
+        ("checkers/call_checker.rs", 2075),
+        ("checkers/jsx/props.rs", 2100),
     ];
 
     let mut violations = Vec::new();
