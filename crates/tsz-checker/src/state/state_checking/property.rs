@@ -185,6 +185,7 @@ impl<'a> CheckerState<'a> {
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
+            let mut any_member_has_number_index = false;
 
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
@@ -203,11 +204,22 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                if shape.properties.is_empty()
-                    || shape.string_index.is_some()
-                    || shape.number_index.is_some()
-                {
+                // String index signatures accept ANY string-keyed property,
+                // so all excess property checking can be skipped.
+                if shape.string_index.is_some() {
                     return;
+                }
+
+                // Empty types (like `{}`) accept any non-primitive,
+                // so skip excess property checking entirely.
+                if shape.properties.is_empty() && shape.number_index.is_none() {
+                    return;
+                }
+
+                // Track number index signatures: they accept numeric properties
+                // but NOT arbitrary string properties like 'jj'.
+                if shape.number_index.is_some() {
+                    any_member_has_number_index = true;
                 }
 
                 // The global `Object` interface has properties (toString, valueOf,
@@ -281,6 +293,13 @@ impl<'a> CheckerState<'a> {
                     .collect();
 
                 if target_prop_types.is_empty() {
+                    // A number index signature covers numeric property names
+                    if any_member_has_number_index {
+                        let name_str = self.ctx.types.resolve_atom(source_prop.name);
+                        if name_str.parse::<f64>().is_ok() {
+                            continue;
+                        }
+                    }
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
@@ -845,13 +864,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !target_prop_types
-                .iter()
-                .all(|&target_ty| query::is_unit_type(self.ctx.types, target_ty))
-            {
-                continue;
-            }
-
+            // tsc's discriminant narrowing doesn't require ALL member property types
+            // to be unit types. It checks which members the source unit value is
+            // assignable to. E.g., for { a: null } | { a: string }, source `a: null`
+            // narrows to the first member because null is assignable to null but not
+            // to string (in strict mode).
             let matching_indices: Vec<usize> = target_prop_types
                 .iter()
                 .enumerate()
