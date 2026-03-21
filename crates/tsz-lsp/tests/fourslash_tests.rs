@@ -3324,7 +3324,6 @@ fn completions_function_parameters() {
 }
 
 #[test]
-#[ignore = "requires this-member completion in class context"]
 fn completions_class_this_members() {
     let mut t = FourslashTest::new(
         "
