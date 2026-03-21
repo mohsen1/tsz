@@ -263,6 +263,45 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     .is_related()
 }
 
+/// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
+///
+/// This matches tsc's `isTypeAssignableTo` behavior, which does NOT
+/// include the weak type check. Used by the flow narrowing guard.
+pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
+    inputs: &AssignabilityQueryInputs<'_, R>,
+    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+) -> bool {
+    let AssignabilityQueryInputs {
+        db,
+        resolver,
+        source,
+        target,
+        flags,
+        inheritance_graph,
+        sound_mode,
+    } = *inputs;
+    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+        .with_strict_subtype_checking(sound_mode)
+        .with_strict_any_propagation(sound_mode)
+        .with_skip_weak_type_checks(true);
+    let context = tsz_solver::RelationContext {
+        query_db: Some(db),
+        inheritance_graph: Some(inheritance_graph),
+        class_check: None,
+    };
+    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
+        interner: db.as_type_database(),
+        resolver,
+        source,
+        target,
+        kind: tsz_solver::RelationKind::Assignable,
+        policy,
+        context,
+        overrides,
+    })
+    .is_related()
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
     pub db: &'a dyn QueryDatabase,

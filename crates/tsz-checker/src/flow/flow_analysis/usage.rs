@@ -86,11 +86,19 @@ impl<'a> CheckerState<'a> {
         // incompatible type).  tsc keeps the declared type in this situation.
         // Mark the node as flow-narrowed so the second narrowing pass in
         // `get_type_of_node` doesn't re-apply the invalid narrowing.
+        //
+        // IMPORTANT: Use `is_assignable_to_no_weak_checks` here to match
+        // tsc's `isTypeAssignableTo` behavior. tsc does NOT include the weak
+        // type check (TS2559) in this guard — the weak type check is only
+        // applied at specific diagnostic sites (variable declarations,
+        // argument passing, return statements). Without this, instanceof
+        // narrowing from an interface to a class with no common properties
+        // would be incorrectly rejected.
         if narrowed_type != declared_type
             && narrowed_type != TypeId::ERROR
             && declared_type != TypeId::ANY
             && declared_type != TypeId::UNKNOWN
-            && !self.is_assignable_to(narrowed_type, declared_type)
+            && !self.is_assignable_to_no_weak_checks(narrowed_type, declared_type)
         {
             trace!("Flow narrowed to incompatible type, keeping declared type");
             self.ctx.flow_narrowed_nodes.insert(idx.0);

@@ -42,6 +42,14 @@ pub struct RelationPolicy {
     pub any_propagation_mode: AnyPropagationMode,
     /// Whether recursive relation cycles should be treated as assumed-related.
     pub assume_related_on_cycle: bool,
+    /// Skip weak type checks (TS2559) during assignability.
+    ///
+    /// In tsc, `isTypeAssignableTo` does NOT include the weak type check.
+    /// The weak type check is only applied at specific diagnostic sites
+    /// (variable declarations, argument passing, return statements).
+    /// Flow narrowing guards need pure assignability without weak type
+    /// rejection, matching tsc's `isTypeAssignableTo` behavior.
+    pub skip_weak_type_checks: bool,
 }
 
 impl Default for RelationPolicy {
@@ -52,6 +60,7 @@ impl Default for RelationPolicy {
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
         }
     }
 }
@@ -70,6 +79,7 @@ impl RelationPolicy {
                 AnyPropagationMode::All
             },
             assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
         }
     }
 
@@ -90,6 +100,11 @@ impl RelationPolicy {
 
     pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
         self.assume_related_on_cycle = assume;
+        self
+    }
+
+    pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
+        self.skip_weak_type_checks = skip;
         self
     }
 }
@@ -261,6 +276,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker.set_strict_subtype_checking(policy.strict_subtype_checking);
     checker.set_strict_any_propagation(policy.strict_any_propagation);
     checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
+    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
