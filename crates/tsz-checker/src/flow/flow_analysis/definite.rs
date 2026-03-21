@@ -204,7 +204,11 @@ impl<'a> CheckerState<'a> {
             && param.initializer.is_some()
             && !self.is_in_default_parameter(idx)
         {
-            tsz_solver::remove_undefined(self.ctx.types, declared_type)
+            crate::query_boundaries::flow::narrow_destructuring_default(
+                self.ctx.types,
+                declared_type,
+                true,
+            )
         } else {
             declared_type
         };

@@ -1998,7 +1998,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .get_type_of_node_with_request(unary.expression, request);
                     let evaluated_operand = self.checker.evaluate_type_with_env(operand_type);
                     let db = self.checker.ctx.types.as_type_database();
-                    let result = tsz_solver::remove_nullish(db, evaluated_operand);
+                    let result = crate::query_boundaries::flow::narrow_non_null_assertion(
+                        db,
+                        evaluated_operand,
+                    );
                     // When the flow-narrowed type is purely nullish (e.g. after `x = undefined`),
                     // remove_nullish produces `never`. In tsc, `x!` in this scenario uses
                     // the declared type of the variable minus nullish instead of the
@@ -2012,7 +2015,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker.resolve_identifier_symbol(unary.expression)
                     {
                         let declared_type = self.checker.get_type_of_symbol(sym_id);
-                        let declared_result = tsz_solver::remove_nullish(db, declared_type);
+                        let declared_result =
+                            crate::query_boundaries::flow::narrow_non_null_assertion(
+                                db,
+                                declared_type,
+                            );
                         if declared_result != TypeId::NEVER {
                             return declared_result;
                         }

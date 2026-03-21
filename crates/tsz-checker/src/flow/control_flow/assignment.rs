@@ -1525,7 +1525,11 @@ impl<'a> FlowAnalyzer<'a> {
             return source;
         };
 
-        let non_undefined = tsz_solver::remove_undefined(self.interner, source.ty);
+        let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
+            self.interner.as_type_database(),
+            source.ty,
+            true,
+        );
         let ty = if non_undefined == TypeId::NEVER {
             default_ty
         } else {
@@ -1556,7 +1560,8 @@ impl<'a> FlowAnalyzer<'a> {
         use crate::query_boundaries::flow_analysis as query;
 
         let db = self.interner.as_type_database();
-        let non_nullable = tsz_solver::remove_nullish(db, expr_type);
+        let non_nullable =
+            crate::query_boundaries::flow::remove_nullish_for_iteration(db, expr_type);
 
         // For concrete (non-generic) types, always return `string`.
         // Computing `keyof ConcreteType` creates a KeyOf node that may not

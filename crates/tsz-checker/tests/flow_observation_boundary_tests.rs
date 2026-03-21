@@ -673,3 +673,211 @@ function f(x: { y: number } | null) {
         errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+// =============================================================================
+// Phase 2: Non-null assertion boundary routing
+// =============================================================================
+
+/// Non-null assertion (`!`) should strip null/undefined through the boundary.
+#[test]
+fn non_null_assertion_strips_nullish() {
+    let diags = check_ts(
+        r#"
+function f(x: string | null | undefined) {
+    const y: string = x!;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Non-null assertion should strip nullish via boundary, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Non-null assertion on a narrowed-to-null variable should fall back to declared type.
+#[test]
+fn non_null_assertion_fallback_to_declared() {
+    let diags = check_ts(
+        r#"
+function f(x: string | null) {
+    x = null;
+    const y: string = x!;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Non-null assertion on null-assigned var should use declared type, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Nullish coalescing reachability boundary routing
+// =============================================================================
+
+/// Nullish coalescing (`??`) strips nullish from left operand through boundary.
+#[test]
+fn nullish_coalescing_strips_nullish() {
+    let diags = check_ts(
+        r#"
+function f(x: string | null) {
+    const y: string = x ?? "default";
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Nullish coalescing should produce non-nullish result, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: For-in with nullish expression boundary routing
+// =============================================================================
+
+/// For-in variable type with potentially nullish expression uses boundary.
+#[test]
+fn for_in_nullish_expression_strips_nullish() {
+    let diags = check_ts(
+        r#"
+function f(obj: Record<string, number> | null) {
+    if (obj) {
+        for (const key in obj) {
+            const s: string = key;
+        }
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "For-in variable should be string even with nullish expression, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Parameter default removes undefined through boundary
+// =============================================================================
+
+/// Parameter with default value should strip undefined from its type.
+#[test]
+fn parameter_default_strips_undefined() {
+    let diags = check_ts(
+        r#"
+function f(x: string | undefined = "hello") {
+    const s: string = x;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Parameter with default should strip undefined via boundary, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Computed binding helper destructuring default boundary routing
+// =============================================================================
+
+/// Destructuring default in computed binding context uses boundary.
+#[test]
+fn computed_binding_destructuring_default() {
+    let diags = check_ts(
+        r#"
+interface Opts { timeout?: number; retries?: number }
+function f(opts: Opts) {
+    const { timeout = 1000, retries = 3 } = opts;
+    const t: number = timeout;
+    const r: number = retries;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Computed binding destructuring default should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Destructuring default in flow analysis context
+// =============================================================================
+
+/// Assignment destructuring default should strip undefined through boundary.
+#[test]
+fn assignment_destructuring_default_strips_undefined() {
+    let diags = check_ts(
+        r#"
+function f(opts: { x?: string }) {
+    let y: string;
+    ({ x: y = "fallback" } = opts);
+    const s: string = y;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Assignment destructuring default should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Nested destructuring with defaults in type-checking validation
+// =============================================================================
+
+/// Nested destructuring with defaults should strip undefined in type checking.
+#[test]
+fn nested_destructuring_default_in_type_checking() {
+    let diags = check_ts(
+        r#"
+interface Deep { a?: { b?: { c: number } } }
+function f(d: Deep) {
+    const { a: { b: { c } = { c: 0 } } = {} } = d;
+    const n: number = c;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Nested destructuring defaults should strip undefined in type checking, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: For-of with destructuring and defaults combined
+// =============================================================================
+
+/// For-of with array destructuring and element defaults.
+#[test]
+fn for_of_array_destructuring_with_defaults() {
+    let diags = check_ts(
+        r#"
+const data: [string | undefined, number | undefined][] = [];
+for (const [name = "default", val = 0] of data) {
+    const s: string = name;
+    const n: number = val;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "For-of array destructuring with defaults should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
