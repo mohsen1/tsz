@@ -9,14 +9,32 @@
 //! - TS2693 (type used as value)
 //! - TS2724 (namespace export spelling suggestion)
 //! - TS2749 (value used as type)
-//!
-//! Note: In single-file test mode (`report_unresolved_imports = false`),
-//! TS2304 is intentionally suppressed for unknown identifiers (they might
-//! come from unresolved imports). Tests that verify TS2304 use primitive
-//! type keywords which always emit, or test via TS2693/TS2708 which also
-//! fire in single-file mode.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
+
+fn check(source: &str) -> Vec<Diagnostic> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let options = CheckerOptions::default();
+
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
 
 // =========================================================================
 // TS2693: Type used as value (routes through boundary)
@@ -24,7 +42,7 @@ use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
 fn ts2693_type_alias_used_as_value() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 type Foo = string;
 let x = Foo;
@@ -38,7 +56,7 @@ let x = Foo;
 
 #[test]
 fn ts2693_interface_used_as_value() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 interface Bar { x: number; }
 let y = Bar;
@@ -52,8 +70,7 @@ let y = Bar;
 
 #[test]
 fn ts2693_not_for_class() {
-    // Classes have both type and value, so no TS2693
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 class Baz {}
 let z = Baz;
@@ -67,8 +84,7 @@ let z = Baz;
 
 #[test]
 fn ts2693_not_for_merged_type_and_value() {
-    // When a type alias merges with a const of the same name, value wins
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 type FAILURE = "FAILURE";
 const FAILURE = "FAILURE";
@@ -87,7 +103,7 @@ let x = FAILURE;
 
 #[test]
 fn ts2708_uninstantiated_namespace_as_value() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace MyNs {
     export type Foo = string;
@@ -103,7 +119,7 @@ let x = MyNs;
 
 #[test]
 fn ts2708_not_for_instantiated_namespace() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace MyNs {
     export const value = 42;
@@ -123,7 +139,7 @@ let x = MyNs;
 
 #[test]
 fn ts2749_value_used_as_type() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 const myVal = 42;
 let x: myVal;
@@ -141,7 +157,7 @@ let x: myVal;
 
 #[test]
 fn ts2694_namespace_missing_export() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace MyNs {
     export type Foo = string;
@@ -157,7 +173,7 @@ let x: MyNs.Bar;
 
 #[test]
 fn ts2694_not_for_existing_export() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace MyNs {
     export type Foo = string;
@@ -177,7 +193,7 @@ let x: MyNs.Foo;
 
 #[test]
 fn ts2724_namespace_export_spelling_suggestion() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace MyNs {
     export type MyType = string;
@@ -186,7 +202,6 @@ namespace MyNs {
 let x: MyNs.MyTyp;
 "#,
     );
-    // Should get either TS2694 or TS2724 (with suggestion)
     let has_ns_error = diags.iter().any(|d| d.code == 2694 || d.code == 2724);
     assert!(
         has_ns_error,
@@ -200,8 +215,7 @@ let x: MyNs.MyTyp;
 
 #[test]
 fn type_value_merged_class_no_errors() {
-    // A class is both a type and a value — no TS2693
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 class Pair { constructor(public a: number, public b: number) {} }
 let p = new Pair(1, 2);
@@ -220,7 +234,7 @@ let t: Pair;
 
 #[test]
 fn enum_is_both_type_and_value() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 enum Direction { Up, Down, Left, Right }
 let d = Direction.Up;
@@ -238,13 +252,146 @@ let t: Direction;
 }
 
 // =========================================================================
-// Boundary types: unit tests (compile-time verification)
+// Phase 2: report_wrong_meaning routing tests
+// =========================================================================
+
+#[test]
+fn phase2_type_alias_in_value_routes_through_report_wrong_meaning() {
+    let diags = check(
+        r#"
+type StringAlias = string;
+let v = StringAlias;
+"#,
+    );
+    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    assert!(
+        ts2693_count == 1,
+        "Expected exactly 1 TS2693, got {ts2693_count}: {diags:?}"
+    );
+}
+
+#[test]
+fn phase2_namespace_as_value_routes_through_report_wrong_meaning() {
+    let diags = check(
+        r#"
+namespace PureTypeNs {
+    export interface I {}
+}
+let v = PureTypeNs;
+"#,
+    );
+    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    assert!(
+        ts2708_count == 1,
+        "Expected exactly 1 TS2708, got {ts2708_count}: {diags:?}"
+    );
+}
+
+#[test]
+fn phase2_value_only_in_type_routes_through_boundary_in_type_literal() {
+    let diags = check(
+        r#"
+function myFunc() { return 1; }
+type T = { x: myFunc };
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2749),
+        "Expected TS2749 for function used as type in type literal, got: {diags:?}"
+    );
+}
+
+#[test]
+fn phase2_value_only_in_qualified_type_routes_through_boundary() {
+    let diags = check(
+        r#"
+namespace NS {
+    export const val = 42;
+}
+let x: NS.val;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2749 || d.code == 2694),
+        "Expected TS2749 or TS2694 for value-only qualified name, got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Phase 2: Type-position suggestion collection through boundary
+// =========================================================================
+
+#[test]
+fn phase2_type_position_not_found_goes_through_boundary() {
+    let diags = check(
+        r#"
+let x: UnknownTypeName;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2304 || d.code == 2552),
+        "Expected TS2304/TS2552 for unknown type name, got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Phase 2: No duplicate diagnostics after migration
+// =========================================================================
+
+#[test]
+fn phase2_no_double_diagnostic_for_interface_as_value() {
+    let diags = check(
+        r#"
+interface IFoo { x: number; }
+let v = IFoo;
+"#,
+    );
+    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    assert!(
+        ts2693_count <= 1,
+        "Should emit at most 1 TS2693, got {ts2693_count}: {diags:?}"
+    );
+}
+
+#[test]
+fn phase2_no_double_diagnostic_for_namespace_as_value() {
+    let diags = check(
+        r#"
+namespace NS {
+    export type T = string;
+}
+let v = NS;
+"#,
+    );
+    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    assert!(
+        ts2708_count <= 1,
+        "Should emit at most 1 TS2708, got {ts2708_count}: {diags:?}"
+    );
+}
+
+#[test]
+fn phase2_no_double_diagnostic_for_value_as_type() {
+    let diags = check(
+        r#"
+const myVal = 42;
+let x: myVal;
+"#,
+    );
+    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    assert!(
+        ts2749_count <= 1,
+        "Should emit at most 1 TS2749, got {ts2749_count}: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Phase 2: boundary_known_value_no_diagnostic
 // =========================================================================
 
 #[test]
 fn boundary_known_value_no_diagnostic() {
-    // When a name resolves successfully, no diagnostics should appear
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 const knownValue = 42;
 function test() {
@@ -252,16 +399,19 @@ function test() {
 }
 "#,
     );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 || d.code == 2693 || d.code == 2749)
+        .collect();
     assert!(
-        diags.is_empty(),
-        "Expected no diagnostics for resolved value, got: {diags:?}"
+        relevant.is_empty(),
+        "Expected no name resolution errors for known value, got: {relevant:?}"
     );
 }
 
 #[test]
 fn boundary_namespace_member_access_works() {
-    // Accessing a valid namespace member should not produce errors
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace NS {
     export const val = 42;
@@ -281,7 +431,7 @@ let x = NS.val;
 
 #[test]
 fn boundary_nested_namespace_export_missing() {
-    let diags = check_source_diagnostics(
+    let diags = check(
         r#"
 namespace Outer {
     export namespace Inner {

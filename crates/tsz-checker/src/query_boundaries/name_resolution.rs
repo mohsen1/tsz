@@ -236,6 +236,82 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Classify whether an already-resolved symbol has the right meaning for
+    /// the requested lookup kind.
+    ///
+    /// Use this when the checker already resolved a symbol (via binder lookup
+    /// or `resolve_identifier_symbol_in_type_position`) and needs a structured
+    /// meaning-mismatch result without re-resolving through binder scope chains.
+    ///
+    /// Returns `Ok(ResolvedName)` if the symbol matches, or `Err(ResolutionFailure)`
+    /// with `WrongMeaning` if it doesn't.
+    pub(crate) fn classify_symbol_meaning(
+        &self,
+        sym_id: SymbolId,
+        flags: u32,
+        is_type_only: bool,
+        desired: NameLookupKind,
+    ) -> NameResolutionResult {
+        match desired {
+            NameLookupKind::Value => {
+                let has_value = (flags & symbol_flags::VALUE) != 0;
+                let is_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+                let has_other_value = (flags & value_flags_except_module) != 0;
+
+                if is_type_alias && !has_value {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Type,
+                    ));
+                }
+                if has_type && !has_value && (flags & symbol_flags::ALIAS) == 0 {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Type,
+                    ));
+                }
+                if is_namespace && !has_other_value {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Namespace,
+                    ));
+                }
+            }
+            NameLookupKind::Type => {
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                let has_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
+                if !has_type && !has_type_alias {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Value,
+                    ));
+                }
+            }
+            NameLookupKind::Namespace => {
+                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                if !is_namespace && !has_type {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Value,
+                    ));
+                }
+            }
+            NameLookupKind::ExportedMember => {
+                // ExportedMember classification is handled by resolve_exported_member
+            }
+        }
+
+        Ok(ResolvedName {
+            symbol_id: sym_id,
+            flags,
+            is_type_only,
+        })
+    }
+
     /// Resolve a name through binder scope chains (value/type/namespace).
     fn resolve_scoped_name(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
         let sym_id = self.resolve_identifier_symbol(request.idx);
@@ -270,65 +346,8 @@ impl<'a> CheckerState<'a> {
         let flags = symbol.flags;
         let is_type_only = symbol.is_type_only;
 
-        // Check meaning compatibility
-        match request.kind {
-            NameLookupKind::Value => {
-                let has_value = (flags & symbol_flags::VALUE) != 0;
-                let is_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
-                let has_type = (flags & symbol_flags::TYPE) != 0;
-                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
-                let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-                let has_other_value = (flags & value_flags_except_module) != 0;
-
-                if is_type_alias && !has_value {
-                    return Err(ResolutionFailure::wrong_meaning(
-                        sym_id,
-                        NameLookupKind::Type,
-                    ));
-                }
-                if has_type && !has_value && (flags & symbol_flags::ALIAS) == 0 {
-                    return Err(ResolutionFailure::wrong_meaning(
-                        sym_id,
-                        NameLookupKind::Type,
-                    ));
-                }
-                if is_namespace && !has_other_value {
-                    // Might be an uninstantiated namespace — caller needs to check
-                    // instantiation separately
-                    return Err(ResolutionFailure::wrong_meaning(
-                        sym_id,
-                        NameLookupKind::Namespace,
-                    ));
-                }
-            }
-            NameLookupKind::Type => {
-                let has_type = (flags & symbol_flags::TYPE) != 0;
-                let has_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
-                if !has_type && !has_type_alias {
-                    return Err(ResolutionFailure::wrong_meaning(
-                        sym_id,
-                        NameLookupKind::Value,
-                    ));
-                }
-            }
-            NameLookupKind::Namespace => {
-                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
-                let has_type = (flags & symbol_flags::TYPE) != 0;
-                if !is_namespace && !has_type {
-                    return Err(ResolutionFailure::wrong_meaning(
-                        sym_id,
-                        NameLookupKind::Value,
-                    ));
-                }
-            }
-            NameLookupKind::ExportedMember => unreachable!(),
-        }
-
-        Ok(ResolvedName {
-            symbol_id: sym_id,
-            flags,
-            is_type_only,
-        })
+        // Delegate meaning classification to the shared helper
+        self.classify_symbol_meaning(sym_id, flags, is_type_only, request.kind)
     }
 
     /// Resolve an exported member from a known namespace/module symbol.
@@ -387,6 +406,52 @@ impl<'a> CheckerState<'a> {
             flags,
             is_type_only,
         })
+    }
+
+    /// Report a wrong-meaning diagnostic for a symbol that was found but has
+    /// the wrong meaning for the desired lookup kind.
+    ///
+    /// This is a convenience wrapper that constructs a `NameResolutionRequest`
+    /// and `ResolutionFailure` from an already-classified symbol and emits the
+    /// appropriate diagnostic (TS2693/TS2708/TS2749).
+    pub(crate) fn report_wrong_meaning(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        sym_id: SymbolId,
+        actual_meaning: NameLookupKind,
+        desired: NameLookupKind,
+    ) {
+        let req = match desired {
+            NameLookupKind::Value => NameResolutionRequest::value(name, idx),
+            NameLookupKind::Type => NameResolutionRequest::type_ref(name, idx),
+            NameLookupKind::Namespace => NameResolutionRequest::namespace(name, idx),
+            NameLookupKind::ExportedMember => return, // not applicable
+        };
+        let failure = ResolutionFailure::wrong_meaning(sym_id, actual_meaning);
+        self.report_name_resolution_failure(&req, &failure);
+    }
+
+    /// Resolve a type-position name through the boundary and report any failure.
+    ///
+    /// Returns `Ok(())` if the name resolves with type meaning, or emits the
+    /// appropriate diagnostic (TS2304/TS2552/TS2749) and returns `Err(())`.
+    ///
+    /// Use this for type-position lookups that currently call
+    /// `error_cannot_find_name_at` or `error_value_only_type_at` directly.
+    pub(crate) fn resolve_type_name_or_report(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Result<ResolvedName, ()> {
+        let req = NameResolutionRequest::type_ref(name, idx);
+        match self.resolve_name_structured(&req) {
+            Ok(resolved) => Ok(resolved),
+            Err(failure) => {
+                self.report_name_resolution_failure(&req, &failure);
+                Err(())
+            }
+        }
     }
 
     /// Emit the appropriate diagnostic for a name resolution failure.
