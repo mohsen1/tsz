@@ -312,7 +312,6 @@ fn non_distributive_conditional_with_any_evaluates_to_true_branch() {
 }
 
 #[test]
-#[ignore = "regression: union keyed index write type intersection after dispatch refactor"]
 fn union_keyed_index_write_type_is_intersection() {
     // When writing to obj[k] where k is a union key, the write type is the
     // intersection of all property types. For `{ a: string, b: number }` with
