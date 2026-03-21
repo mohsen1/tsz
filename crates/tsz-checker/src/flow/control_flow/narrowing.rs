@@ -10,15 +10,13 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
-    type_queries::{
-        PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
-        stringify_literal_type,
-    },
-};
+use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
+use crate::query_boundaries::flow_analysis::{
+    PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
+    stringify_literal_type,
+};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn assignment_affects_reference(&self, left: NodeIndex, target: NodeIndex) -> bool {
