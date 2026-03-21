@@ -1184,8 +1184,6 @@ FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS411
 FAIL TypeScript/tests/cases/conformance/override/override_js4.ts | expected:[TS4123] actual:[TS4122]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1212,TS1213,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts | expected:[TS1005] actual:[TS1005,TS1103,TS1431,TS1432]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decmialNegative.ts | expected:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189] actual:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189]
@@ -1206,26 +1204,7 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGeneri
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInTypeContexts1.ts | expected:[TS2304,TS2315,TS2503] actual:[TS2304,TS2315,TS2503]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInTypeContexts2.ts | expected:[TS2304,TS2315,TS2503] actual:[TS2304,TS2315,TS2503]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInVariableDeclaration1.ts | expected:[TS2304] actual:[TS2304]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature10.ts | expected:[TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature2.ts | expected:[TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature5.ts | expected:[TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature6.ts | expected:[TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature9.ts | expected:[TS5107] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected1.ts | expected:[TS1044] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected2.ts | expected:[TS1044] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected4.ts | expected:[TS1028] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected6.ts | expected:[TS1029] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected7.ts | expected:[TS1028] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserindenter.ts | expected:[TS2304,TS2322,TS2345,TS2503,TS2662,TS6053,TS7006] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509618.ts | expected:[TS1036] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509630.ts | expected:[TS1137] actual:[TS5107]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509667.ts | expected:[TS1003] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509668.ts | expected:[TS1317] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509669.ts | expected:[TS1005] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509693.ts | expected:[TS2591] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512084.ts | expected:[TS1005] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512097.ts | expected:[TS1005] actual:[]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512325.ts | expected:[TS1005] actual:[]
+FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserindenter.ts | expected:[TS2304,TS2322,TS2345,TS2503,TS2662,TS6053,TS7006] actual:[TS2304,TS2322,TS2345,TS2503,TS2662,TS6053]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser579071.ts | expected:[TS1005] actual:[TS1005]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity3.ts | expected:[TS1499,TS2339] actual:[TS1499,TS2339]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement3.ts | expected:[TS2304] actual:[TS2304]
@@ -1329,32 +1308,22 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnion
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts | expected:[TS2322,TS2454] actual:[TS2454,TS2741]
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts | expected:[TS2313,TS2502,TS2536,TS2564,TS2589] actual:[TS2564]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts | expected:[TS2322] actual:[TS2322,TS2556]
-FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[]
+FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[TS2322,TS2339,TS2739,TS2862]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts | expected:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564] actual:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
 FAIL TypeScript/tests/cases/conformance/types/literal/literalTypeWidening.ts | expected:[] actual:[TS2322,TS2345,TS2367]
 FAIL TypeScript/tests/cases/conformance/types/literal/numericLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts | expected:[TS2352,TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts | expected:[TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks02.ts | expected:[TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks03.ts | expected:[TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks04.ts | expected:[TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements01.ts | expected:[TS2678] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements02.ts | expected:[TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts | expected:[TS2678,TS2695,TS2872] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements04.ts | expected:[TS2678,TS2695,TS2872] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithTypeAssertions01.ts | expected:[TS2454] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringMappingOverPatternLiterals.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes1.ts | expected:[TS1338,TS2322,TS2590] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes2.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes3.ts | expected:[TS2322,TS2345,TS2367] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes5.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes7.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatterns.ts | expected:[TS2322,TS2345] actual:[]
-FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatternsPrefixSuffixAssignability.ts | expected:[TS2322] actual:[]
+FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts | expected:[TS2352,TS2367] actual:[TS2352,TS2367]
+FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts | expected:[TS2322] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts | expected:[TS2678,TS2695,TS2872] actual:[TS2322,TS2678,TS2695,TS2872]
+FAIL TypeScript/tests/cases/conformance/types/literal/stringMappingOverPatternLiterals.ts | expected:[TS2322] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes1.ts | expected:[TS1338,TS2322,TS2590] actual:[TS1338,TS2322,TS2345]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes2.ts | expected:[TS2322] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes3.ts | expected:[TS2322,TS2345,TS2367] actual:[TS2322,TS2345,TS2367]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes4.ts | expected:[TS2345] actual:[TS2345]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes7.ts | expected:[TS2322] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatterns.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/types/mapped/isomorphicMappedTypeInference.ts | expected:[] actual:[TS7053]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts | expected:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536] actual:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536]
@@ -1499,13 +1468,11 @@ FAIL TypeScript/tests/cases/projects/ReferenceResolution/src/ts/foo/foo.ts | exp
 FAIL TypeScript/tests/cases/projects/VisibilityOfCrosssModuleTypeUsage/commands.ts | expected:[TS1202,TS2307,TS2591] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/projects/declarations_MultipleTimesImport/useModule.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/projects/privacyCheck-SimpleReference/test.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
-FAIL TypeScript/tests/cases/transpile/declarationBasicSyntax.ts | expected:[TS2318,TS2564,TS2854,TS5024] actual:[TS2318,TS2564,TS5024]
 FAIL TypeScript/tests/cases/transpile/declarationComputedPropertyNames.ts | expected:[TS1166,TS1169,TS1170,TS2304] actual:[TS1166,TS1169,TS1170,TS2304,TS2339,TS2551]
 FAIL TypeScript/tests/cases/transpile/declarationSingleFileHasErrors.ts | expected:[TS1005] actual:[TS1005]
 FAIL TypeScript/tests/cases/transpile/declarationSingleFileHasErrorsReported.ts | expected:[TS1005] actual:[TS1005]
 FAIL TypeScript/tests/cases/transpile/declarationTypeParameterConstraint.ts | expected:[TS2307] actual:[TS2307,TS2322]
 FAIL TypeScript/tests/cases/transpile/declarationUnresolvedTypeReference.ts | expected:[TS2307] actual:[TS2307]
-FAIL TypeScript/tests/cases/transpile/jsWithInlineSourceMapBasic.ts | expected:[TS2318,TS2564,TS2854,TS5024] actual:[TS2318,TS2564,TS5024]
 FAIL TypeScript/tests/cases/transpile/jsWithSourceMapBasic.ts | expected:[TS2318,TS2564,TS2854,TS5024] actual:[TS2318,TS2564,TS5024]
 FAIL TypeScript/tests/cases/unittests/matchFiles.ts | expected:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006] actual:[TS2304,TS2339,TS2593,TS2694,TS6053]
 PASS TypeScript/tests/cases/compiler/2dArrays.ts
@@ -10988,13 +10955,25 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertyAssignments/p
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertyAssignments/parserFunctionPropertyAssignment2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertyAssignments/parserFunctionPropertyAssignment3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertyAssignments/parserFunctionPropertyAssignment4.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature10.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature11.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature12.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature4.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature5.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature6.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature8.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/PropertySignatures/parserPropertySignature9.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected3.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected5.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected6.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected8.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Protected/Protected9.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts
@@ -11002,8 +10981,17 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parse
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509546.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509546_1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509546_2.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509618.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509630.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509667.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509668.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509669.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509677.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509693.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509698.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512084.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512097.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser512325.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser519458.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser521128.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser536727.ts
@@ -11775,10 +11763,20 @@ PASS TypeScript/tests/cases/conformance/types/literal/numericStringLiteralTypes.
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons01.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks02.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks03.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks04.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements01.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements02.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements04.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithTypeAssertions01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringMappingDeferralInConditionalTypes.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringMappingReduction.ts
+PASS TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes5.ts
 PASS TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
 PASS TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes8.ts
+PASS TypeScript/tests/cases/conformance/types/literal/templateLiteralTypesPatternsPrefixSuffixAssignability.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/localTypes/localTypes3.ts
@@ -12527,6 +12525,7 @@ PASS TypeScript/tests/cases/projects/relative-nested/main/consume.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/FolderC/fileC.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/fileB.ts
 PASS TypeScript/tests/cases/transpile/declarationAsyncAndGeneratorFunctions.ts
+PASS TypeScript/tests/cases/transpile/declarationBasicSyntax.ts
 PASS TypeScript/tests/cases/transpile/declarationCrossFileInferences.ts
 PASS TypeScript/tests/cases/transpile/declarationEmitPartialNodeReuse.ts
 PASS TypeScript/tests/cases/transpile/declarationFunctionDeclarations.ts
@@ -12540,3 +12539,4 @@ PASS TypeScript/tests/cases/transpile/declarationTypeWithComputedName.ts
 PASS TypeScript/tests/cases/transpile/declarationUnresolvedGlobalReferencesNoErrors.ts
 PASS TypeScript/tests/cases/transpile/declarationUnresolvedTypeReference2.ts
 PASS TypeScript/tests/cases/transpile/declarationsSimple.ts
+PASS TypeScript/tests/cases/transpile/jsWithInlineSourceMapBasic.ts
