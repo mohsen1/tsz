@@ -61,64 +61,35 @@ pub(crate) struct RelationRequest {
 }
 
 impl RelationRequest {
-    /// Create an assignment relation request (default: no EPC, report missing).
+    fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self {
+        Self {
+            source,
+            target,
+            kind,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
     pub(crate) fn assign(source: TypeId, target: TypeId) -> Self {
-        Self {
-            source,
-            target,
-            kind: RelationKind::Assign,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-        }
+        Self::new(source, target, RelationKind::Assign)
     }
 
-    /// Create a call-argument relation request.
     pub(crate) fn call_arg(source: TypeId, target: TypeId) -> Self {
-        Self {
-            source,
-            target,
-            kind: RelationKind::CallArg,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-        }
+        Self::new(source, target, RelationKind::CallArg)
     }
 
-    /// Create a return-statement relation request.
     pub(crate) fn return_stmt(source: TypeId, target: TypeId) -> Self {
-        Self {
-            source,
-            target,
-            kind: RelationKind::Return,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-        }
+        Self::new(source, target, RelationKind::Return)
     }
 
-    /// Create a satisfies expression relation request.
     pub(crate) fn satisfies(source: TypeId, target: TypeId) -> Self {
-        Self {
-            source,
-            target,
-            kind: RelationKind::Satisfies,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-        }
+        Self::new(source, target, RelationKind::Satisfies)
     }
 
-    /// Create a destructuring relation request.
     pub(crate) fn destructuring(source: TypeId, target: TypeId) -> Self {
-        Self {
-            source,
-            target,
-            kind: RelationKind::Destructuring,
-            excess_property_mode: ExcessPropertyMode::Skip,
-            missing_property_mode: MissingPropertyMode::Report,
-            source_is_fresh: false,
-        }
+        Self::new(source, target, RelationKind::Destructuring)
     }
 
     /// Mark the source as a fresh object literal, enabling EPC.
