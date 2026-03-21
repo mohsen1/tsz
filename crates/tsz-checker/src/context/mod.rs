@@ -84,7 +84,7 @@ impl GlobalDeclaredModules {
     /// `SkeletonIndex::build_declared_module_sets()`. The patterns must already
     /// be sorted and deduplicated (the skeleton builder guarantees this).
     #[must_use]
-    pub fn from_skeleton(exact: FxHashSet<String>, patterns: Vec<String>) -> Self {
+    pub const fn from_skeleton(exact: FxHashSet<String>, patterns: Vec<String>) -> Self {
         Self { exact, patterns }
     }
 }

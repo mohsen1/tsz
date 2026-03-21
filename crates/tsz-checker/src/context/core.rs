@@ -170,8 +170,8 @@ impl<'a> CheckerContext<'a> {
     /// Pre-populate `global_declared_modules` from skeleton-derived data.
     ///
     /// When called before `set_all_binders`, this avoids the O(N) binder scan
-    /// for declared modules — the skeleton already captured all module_exports
-    /// keys, declared_modules, and shorthand_ambient_modules during the parallel
+    /// for declared modules — the skeleton already captured all `module_exports`
+    /// keys, `declared_modules`, and `shorthand_ambient_modules` during the parallel
     /// parse/bind phase.
     ///
     /// If `global_declared_modules` is already `Some` when `set_all_binders` runs,
@@ -317,8 +317,8 @@ impl<'a> CheckerContext<'a> {
         skeleton_exact: &FxHashSet<String>,
         skeleton_patterns: &[String],
     ) {
-        if cfg!(debug_assertions) {
-            if let Some(ref binder_built) = self.global_declared_modules {
+        if cfg!(debug_assertions)
+            && let Some(ref binder_built) = self.global_declared_modules {
                 // Exact names must match.
                 assert_eq!(
                     &binder_built.exact, skeleton_exact,
@@ -330,7 +330,6 @@ impl<'a> CheckerContext<'a> {
                     "skeleton declared_modules patterns differ from binder-built"
                 );
             }
-        }
     }
 
     /// Set resolved module paths map for cross-file import resolution.
