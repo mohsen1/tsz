@@ -8,7 +8,6 @@ on:
       - 'docs/**/*.md'
       - 'docs/architecture.html'
       - 'AGENTS.md'
-      - 'README.md'
       - '.github/workflows/gh-pages.yml'
   workflow_run:
     workflows: ["CI"]
@@ -84,6 +83,7 @@ jobs:
 
       - name: Run benchmarks
         run: ./scripts/bench/bench-vs-tsgo.sh --json
+        timeout-minutes: 30
 
       - name: Upload benchmark data
         uses: actions/upload-artifact@v4
