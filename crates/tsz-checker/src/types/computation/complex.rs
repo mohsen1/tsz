@@ -814,7 +814,7 @@ impl<'a> CheckerState<'a> {
 
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if i < sensitive_args.len() && sensitive_args[i] {
-                            self.clear_type_cache_recursive(arg_idx);
+                            self.invalidate_expression_for_contextual_retry(arg_idx);
                         }
                     }
 
