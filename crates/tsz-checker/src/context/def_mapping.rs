@@ -38,8 +38,20 @@ impl<'a> CheckerContext<'a> {
             return def_id;
         }
 
-        // ---- Step 2: look up the symbol to get its file_idx ----
+        // ---- Step 2: authoritative symbol-only index (O(1)) ----
+        // Check the DefinitionStore's symbol_only_index before doing any binder
+        // lookups. This avoids O(N) lib_contexts/all_binders scans for symbols
+        // that already have DefIds from pre-population or previous contexts.
+        if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
+            // Populate local caches for future fast-path hits.
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return def_id;
+        }
+
+        // ---- Step 3: look up the symbol to get its file_idx ----
         // We need the symbol to determine which binder it came from.
+        // This O(N) scan only runs for truly new DefIds (not yet in DefinitionStore).
         let symbol = self
             .binder
             .symbols
@@ -62,7 +74,7 @@ impl<'a> CheckerContext<'a> {
 
         let file_idx = symbol.decl_file_idx;
 
-        // ---- Step 3: authoritative index lookup ----
+        // ---- Step 3b: composite key lookup ----
         // The composite key (symbol_id, file_idx) uniquely identifies a symbol
         // across all binders, so no name-validation is needed.
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx) {
