@@ -1689,12 +1689,33 @@ impl<'a> FlowAnalyzer<'a> {
         // legitimate narrowing to never (e.g., exhaustive type checks).
         // This matches tsc's getTypeAtFlowCall which returns unreachableNeverType
         // when getReturnTypeOfSignature(signature).flags & TypeFlags.Never.
-        if let Some(&call_return_type) = node_types.get(&flow.node.0)
-            && call_return_type == TypeId::NEVER
-        {
-            return Self::UNREACHABLE_NEVER;
+        if let Some(&call_return_type) = node_types.get(&flow.node.0) {
+            if call_return_type == TypeId::NEVER {
+                return Self::UNREACHABLE_NEVER;
+            }
+            // When the cached call return type is `any`, it may be stale from early
+            // type environment building (where `this` wasn't fully resolved yet).
+            // Fall back to checking the callee's signature for a `never` return type,
+            // first via node_types, then via binder declaration lookup.
+            if call_return_type == TypeId::ANY {
+                if let Some(&callee_type) = node_types.get(&call.expression.0) {
+                    if callee_type != TypeId::ANY
+                        && callee_type != TypeId::ERROR
+                        && tsz_solver::type_queries::get_return_type(self.interner, callee_type)
+                            == Some(TypeId::NEVER)
+                    {
+                        return Self::UNREACHABLE_NEVER;
+                    }
+                }
+                // When both the call and callee types are stale `any` (common for
+                // `this.method()` during early type env building), resolve the callee
+                // through the binder's symbol table and check its declaration's return
+                // type annotation directly. This avoids relying on the stale cache.
+                if self.callee_declaration_returns_never(call.expression) {
+                    return Self::UNREACHABLE_NEVER;
+                }
+            }
         }
-
         let Some(&callee_type) = node_types.get(&call.expression.0) else {
             return pre_type;
         };
@@ -1788,5 +1809,152 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             pre_type
         }
+    }
+
+    /// Check if a callee expression's declaration has an explicit `never` return
+    /// type annotation, using only binder symbol tables (no type computation).
+    ///
+    /// This is used as a fallback when the `node_types` cache contains a stale
+    /// `any` for the call expression (common for `this.method()` during early
+    /// type environment building when `this` isn't fully resolved yet).
+    fn callee_declaration_returns_never(&self, callee_idx: NodeIndex) -> bool {
+        let Some(callee_node) = self.arena.get(callee_idx) else {
+            return false;
+        };
+
+        match callee_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Direct call: `bail()`
+                if let Some(&sym_id) = self.binder.node_symbols.get(&callee_idx.0) {
+                    return self.symbol_declaration_returns_never(sym_id);
+                }
+                if let Some(sym_id) = self.binder.resolve_identifier(self.arena, callee_idx) {
+                    return self.symbol_declaration_returns_never(sym_id);
+                }
+                false
+            }
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                // Property access: `this.bail()` or `obj.bail()`
+                let Some(access) = self.arena.get_access_expr(callee_node) else {
+                    return false;
+                };
+
+                // Try binder node_symbols for the property name
+                if let Some(&sym_id) = self.binder.node_symbols.get(&access.name_or_argument.0) {
+                    if self.symbol_declaration_returns_never(sym_id) {
+                        return true;
+                    }
+                }
+
+                // For `this.method()`, look up via enclosing class member table
+                let Some(expr_node) = self.arena.get(access.expression) else {
+                    return false;
+                };
+                if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    let Some(name_node) = self.arena.get(access.name_or_argument) else {
+                        return false;
+                    };
+                    let Some(ident) = self.arena.get_identifier(name_node) else {
+                        return false;
+                    };
+                    let property_name = &ident.escaped_text;
+
+                    // Walk up to find the enclosing class declaration
+                    if let Some(class_sym) = self.find_enclosing_class_symbol(callee_idx) {
+                        if let Some(class_symbol) = self.binder.get_symbol(class_sym) {
+                            if let Some(ref members) = class_symbol.members {
+                                if let Some(member_sym_id) = members.get(property_name) {
+                                    return self.symbol_declaration_returns_never(member_sym_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a symbol's value declaration has an explicit `never` return type.
+    fn symbol_declaration_returns_never(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first) = symbol.declarations.first() {
+            first
+        } else {
+            return false;
+        };
+        self.declaration_has_never_return_type(decl_idx)
+    }
+
+    /// Check if a function/method declaration has an explicit `: never` return type annotation.
+    /// Handles both direct `NeverKeyword` and `TypeReference` wrapping it.
+    fn declaration_has_never_return_type(&self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Get the type_annotation from either a function or method declaration
+        let type_annotation = if let Some(func) = self.arena.get_function(decl_node) {
+            func.type_annotation
+        } else if let Some(method) = self.arena.get_method_decl(decl_node) {
+            method.type_annotation
+        } else {
+            return false;
+        };
+
+        self.type_node_is_never(type_annotation)
+    }
+
+    /// Check if a type node represents the `never` type.
+    /// Handles both direct `NeverKeyword` and `TypeReference` wrapping a `never` identifier.
+    fn type_node_is_never(&self, type_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+
+        if type_node.kind == SyntaxKind::NeverKeyword as u16 {
+            return true;
+        }
+
+        // `never` may be parsed as a TypeReference with type_name being a NeverKeyword
+        // or an Identifier with text "never"
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.arena.get_type_ref(type_node) {
+                if let Some(name_node) = self.arena.get(type_ref.type_name) {
+                    if name_node.kind == SyntaxKind::NeverKeyword as u16 {
+                        return true;
+                    }
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        return ident.escaped_text == "never";
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Find the enclosing class symbol for a node by walking up the AST parents.
+    fn find_enclosing_class_symbol(&self, start: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let mut current = start;
+        for _ in 0..50 {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return self.binder.node_symbols.get(&current.0).copied();
+            }
+        }
+        None
     }
 }
