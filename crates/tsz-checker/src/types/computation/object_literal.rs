@@ -461,21 +461,24 @@ impl<'a> CheckerState<'a> {
                     // This happens when:
                     // - The value is `null` or `undefined` with strictNullChecks off (widens to any)
                     // - The value has type `any` without a contextual/declared type
-                    // Suppress TS7018 when the object literal is a parameter default value.
-                    // In `function f({b1} = { b1: null })`, the `{ b1: null }` literal
-                    // gets its contextual type from the parameter binding, so tsc never
-                    // emits TS7018 for it even though `null` widens to `any`.
+                    // tsc suppresses TS7018 when the object literal has ANY contextual
+                    // type (e.g. from a type assertion, parameter type, variable
+                    // declaration), even if the specific property doesn't exist in that
+                    // contextual type. The contextual type signals developer intent.
+                    // tsc also suppresses TS7018 for object literals used as parameter
+                    // default values (e.g. `function f({b} = { b: null })`), because
+                    // the implicit-any is reported via TS7006/TS7031 on the binding
+                    // elements instead.
                     let is_parameter_default = self.ctx.arena.node_info(idx).is_some_and(|info| {
                         self.ctx.arena.get(info.parent).is_some_and(|parent_node| {
                             parent_node.kind == syntax_kind_ext::PARAMETER
                         })
                     });
-
                     if self.ctx.no_implicit_any()
                         && !self.ctx.in_destructuring_target
                         && !is_parameter_default
                         && jsdoc_declared_type.is_none()
-                        && property_context_type.is_none()
+                        && contextual_type.is_none()
                         && prop.initializer != prop.name
                     {
                         // TS7018 only fires for IMPLICIT any — when null/undefined
