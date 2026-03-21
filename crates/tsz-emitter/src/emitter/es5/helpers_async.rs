@@ -140,18 +140,32 @@ impl<'a> Printer<'a> {
             .iter()
             .copied()
             .any(|p| self.param_initializer_has_top_level_await(p));
-        // For ES2015+, tsc moves ALL parameters with default initializers
-        // into the generator function and forwards `arguments`. This ensures
-        // default parameter evaluation happens inside the generator context.
-        let any_param_has_default = use_native_generators
+        // For ES2015+, tsc moves parameters into the generator function when
+        // ANY parameter has a default initializer or destructuring pattern.
+        // The outer function forwards `arguments` to __awaiter. This ensures
+        // parameter evaluation happens inside the generator context.
+        let any_param_needs_forwarding = use_native_generators
             && params.iter().copied().any(|p| {
-                self.arena
-                    .get(p)
-                    .and_then(|n| self.arena.get_parameter(n))
-                    .is_some_and(|param| param.initializer.is_some())
+                let Some(node) = self.arena.get(p) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(node) else {
+                    return false;
+                };
+                // Default initializer
+                if param.initializer.is_some() {
+                    return true;
+                }
+                // Destructuring pattern (name is not a simple identifier)
+                if let Some(name_node) = self.arena.get(param.name) {
+                    if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                        return true;
+                    }
+                }
+                false
             });
         let move_params_to_generator =
-            use_native_generators && (params_have_top_level_await || any_param_has_default);
+            use_native_generators && (params_have_top_level_await || any_param_needs_forwarding);
         let es5_await_param_recovery = !use_native_generators
             && params_have_top_level_await
             && emit_utils::block_is_empty(self.arena, body)
