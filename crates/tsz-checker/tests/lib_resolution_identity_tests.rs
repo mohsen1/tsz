@@ -126,6 +126,87 @@ fn compile_with_lib_and_options(source: &str, options: CheckerOptions) -> Vec<(u
         .collect()
 }
 
+// ---- Lib binder pre-population tests ----
+
+#[test]
+fn test_lib_binders_have_semantic_defs() {
+    // Verify that lib binders actually populate semantic_defs during binding.
+    // This is a prerequisite for pre_populate_def_ids_from_lib_binders to work.
+    let lib_files = load_lib_files_for_test();
+    if lib_files.is_empty() {
+        return;
+    }
+
+    let mut total_semantic_defs = 0;
+    for lib_file in &lib_files {
+        let count = lib_file.binder.semantic_defs.len();
+        total_semantic_defs += count;
+    }
+
+    // lib.es5.d.ts alone has hundreds of top-level declarations (Array, String,
+    // Number, Boolean, Error, Promise, Map, etc.). If semantic_defs is empty,
+    // it means the binder isn't recording them for lib files.
+    assert!(
+        total_semantic_defs > 50,
+        "Lib binders should have significant semantic_defs, found {total_semantic_defs}"
+    );
+}
+
+#[test]
+fn test_lib_pre_population_creates_def_ids_for_lib_symbols() {
+    // Verify that calling pre_populate_def_ids_from_lib_binders creates DefIds
+    // in the DefinitionStore for lib symbols, eliminating O(N) scans on first access.
+    if !lib_files_available() {
+        return;
+    }
+
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), "const x: number = 1;".to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts: Vec<CheckerLibContext> = lib_files
+        .iter()
+        .map(|lib| {
+            let binder_ctx = BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            };
+            binder.merge_lib_contexts_into_binder(&[binder_ctx]);
+            CheckerLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            }
+        })
+        .collect();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+    // Pre-populate from primary binder
+    let primary_count = checker.ctx.pre_populate_def_ids_from_binder();
+
+    // Pre-populate from lib binders
+    let lib_count = checker.ctx.pre_populate_def_ids_from_lib_binders();
+
+    // The lib binders should contribute DefIds (Array, String, Number, etc.)
+    assert!(
+        lib_count > 0,
+        "pre_populate_def_ids_from_lib_binders should create DefIds. \
+         Primary: {primary_count}, Lib: {lib_count}"
+    );
+}
+
 // ---- Promise / generic lib reference tests ----
 
 #[test]

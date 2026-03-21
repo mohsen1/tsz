@@ -426,17 +426,55 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Returns the number of DefIds pre-populated.
     pub fn pre_populate_def_ids_from_binder(&self) -> usize {
+        self.populate_def_ids_from_semantic_defs(&self.binder.semantic_defs)
+    }
+
+    /// Pre-populate `symbol_to_def` and `def_to_symbol` from all lib binders'
+    /// `semantic_defs` indices.
+    ///
+    /// Lib binders contain definitions for standard library types (Array, Promise,
+    /// Error, Map, etc.). Without this, every `get_or_create_def_id` call for a
+    /// lib symbol falls through to the Step 3 O(N) `lib_contexts.iter()` scan to
+    /// find the symbol and create its DefId on demand. By pre-populating here, these
+    /// symbols hit the O(1) `find_def_by_symbol` path in Step 2 instead.
+    ///
+    /// Returns the total number of DefIds pre-populated across all lib binders.
+    pub fn pre_populate_def_ids_from_lib_binders(&self) -> usize {
+        let mut total = 0;
+        for lib_ctx in &self.lib_contexts {
+            total += self.populate_def_ids_from_semantic_defs(&lib_ctx.binder.semantic_defs);
+        }
+        total
+    }
+
+    /// Core helper: populate DefId mappings from a `semantic_defs` map.
+    ///
+    /// Used by both `pre_populate_def_ids_from_binder` (primary binder) and
+    /// `pre_populate_def_ids_from_lib_binders` (lib binders). The logic is
+    /// identical: convert `SemanticDefEntry` to `DefinitionInfo`, register in
+    /// the `DefinitionStore`, and populate local caches.
+    fn populate_def_ids_from_semantic_defs(
+        &self,
+        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+    ) -> usize {
         use tsz_solver::def::{DefKind, DefinitionInfo};
 
-        let semantic_defs = &self.binder.semantic_defs;
         if semantic_defs.is_empty() {
             return 0;
         }
 
         let mut count = 0;
         for (&sym_id, entry) in semantic_defs {
-            // Skip if already mapped (e.g., from a previous lib merge pass)
+            // Skip if already mapped (e.g., from a previous lib merge pass
+            // or the primary binder's pre-population).
             if self.symbol_to_def.borrow().contains_key(&sym_id) {
+                continue;
+            }
+
+            // Also skip if the DefinitionStore already has a mapping for this
+            // symbol (e.g., from another lib binder that declared the same
+            // global interface via declaration merging).
+            if self.definition_store.find_def_by_symbol(sym_id.0).is_some() {
                 continue;
             }
 
@@ -477,7 +515,7 @@ impl<'a> CheckerContext<'a> {
                 symbol_id = %sym_id.0,
                 def_id = %def_id.0,
                 kind = ?kind,
-                "Pre-populated DefId from binder semantic_defs"
+                "Pre-populated DefId from semantic_defs"
             );
 
             // Register in the authoritative index so other checker contexts

@@ -66,6 +66,11 @@ impl<'a> CheckerState<'a> {
             // binding; we convert them to solver DefIds here once, deterministically.
             self.ctx.pre_populate_def_ids_from_binder();
 
+            // Phase 1b: also pre-populate DefIds from lib binders (Array, Promise,
+            // Error, Map, etc.). Without this, lib symbols fall through to the O(N)
+            // lib_contexts scan in get_or_create_def_id Step 3 on first access.
+            self.ctx.pre_populate_def_ids_from_lib_binders();
+
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
