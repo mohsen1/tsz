@@ -389,7 +389,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If check_type == extends_type, the conditional trivially takes the true branch,
             // regardless of what the types contain (type params, keyof, etc.).
             // e.g., `keyof Params extends keyof Params ? X : Y` → X
-            if check_type == extends_type {
+            //
+            // However, we must NOT take this shortcut when the *raw* (unevaluated)
+            // extends_type contains `infer` patterns. In that case, the true branch
+            // references infer type variables that must be bound via pattern matching
+            // (Step 3). Taking the shortcut would return unbound infer types.
+            // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
+            //   Both sides evaluate to the same empty object, but V must be bound to number.
+            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
                 return self.evaluate(cond.true_type);
             }
 
