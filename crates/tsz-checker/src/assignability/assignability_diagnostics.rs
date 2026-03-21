@@ -701,137 +701,15 @@ impl<'a> CheckerState<'a> {
 
     /// Check if source object literal has properties that don't exist in target.
     ///
-    /// Uses TypeId-based freshness tracking (fresh object literals only).
+    /// Delegates to the canonical excess-property algorithm in
+    /// `state/state_checking/property.rs` to avoid duplicated logic.
     pub(crate) fn object_literal_has_excess_properties(
         &mut self,
         source: TypeId,
         target: TypeId,
         _source_idx: NodeIndex,
     ) -> bool {
-        use tsz_solver::relations::freshness;
-        // Only fresh object literals trigger excess property checking.
-        if !freshness::is_fresh_object_type(self.ctx.types, source) {
-            return false;
-        }
-
-        let Some(source_shape) = object_shape_for_type(self.ctx.types, source) else {
-            return false;
-        };
-
-        let source_props = source_shape.properties.as_slice();
-        if source_props.is_empty() {
-            return false;
-        }
-
-        let resolved_target = self.normalized_target_for_excess_properties(target);
-
-        match classify_for_excess_properties(self.ctx.types, resolved_target) {
-            ExcessPropertiesKind::Object(shape_id) => {
-                let target_shape = self.ctx.types.object_shape(shape_id);
-                let target_props = target_shape.properties.as_slice();
-
-                if target_props.is_empty() {
-                    return false;
-                }
-
-                if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
-                    return false;
-                }
-
-                source_props
-                    .iter()
-                    .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name))
-            }
-            ExcessPropertiesKind::ObjectWithIndex(_shape_id) => false,
-            ExcessPropertiesKind::Union(members) => {
-                let mut target_shapes = Vec::new();
-                let mut matched_shapes = Vec::new();
-
-                for member in members {
-                    let resolved_member = self.resolve_type_for_property_access(member);
-                    let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
-                        // If a union member has no object shape and is a type parameter
-                        // or the `object` intrinsic, it accepts any properties, so EPC
-                        // should not apply.
-                        if is_type_parameter_like(self.ctx.types, resolved_member)
-                            || resolved_member == TypeId::OBJECT
-                        {
-                            return false;
-                        }
-                        continue;
-                    };
-
-                    if shape.properties.is_empty()
-                        || shape.string_index.is_some()
-                        || shape.number_index.is_some()
-                    {
-                        return false;
-                    }
-
-                    target_shapes.push(shape.clone());
-
-                    if self.is_subtype_of(source, resolved_member) {
-                        matched_shapes.push(shape);
-                    }
-                }
-
-                if target_shapes.is_empty() {
-                    return false;
-                }
-
-                let effective_shapes = if matched_shapes.is_empty() {
-                    target_shapes
-                } else {
-                    matched_shapes
-                };
-
-                source_props.iter().any(|source_prop| {
-                    !effective_shapes.iter().any(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .any(|prop| prop.name == source_prop.name)
-                    })
-                })
-            }
-            ExcessPropertiesKind::Intersection(members) => {
-                let mut target_shapes = Vec::new();
-
-                for member in members {
-                    let resolved_member = self.resolve_type_for_property_access(member);
-                    let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
-                        // If an intersection member is a type parameter, it could accept
-                        // any properties, so EPC should not apply (same logic as union case).
-                        if is_type_parameter_like(self.ctx.types, resolved_member)
-                            || resolved_member == TypeId::OBJECT
-                        {
-                            return false;
-                        }
-                        continue;
-                    };
-
-                    if shape.string_index.is_some() || shape.number_index.is_some() {
-                        return false;
-                    }
-
-                    target_shapes.push(shape);
-                }
-
-                if target_shapes.is_empty() {
-                    return false;
-                }
-
-                source_props.iter().any(|source_prop| {
-                    !target_shapes.iter().any(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .any(|prop| prop.name == source_prop.name)
-                    })
-                })
-            }
-            ExcessPropertiesKind::NotObject => false,
-        }
+        self.source_has_excess_properties(source, target)
     }
 
     pub(crate) fn analyze_assignability_failure(
