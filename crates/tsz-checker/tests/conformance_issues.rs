@@ -1539,7 +1539,6 @@ new cls3();
 }
 
 #[test]
-#[ignore = "enum display qualifier regression after merge — namespace-qualified Foo.A shown as Z.Foo.A"]
 fn test_enum_union_display_collapses_members_to_enum_name() {
     let source = r#"
 namespace X {
