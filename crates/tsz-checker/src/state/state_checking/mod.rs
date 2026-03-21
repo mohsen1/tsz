@@ -9,6 +9,7 @@ mod isolated_declarations;
 mod js_grammar;
 mod module_none;
 pub(crate) mod property;
+pub(crate) mod property_access;
 pub(crate) mod readonly;
 mod source_file;
 mod strict_names;
