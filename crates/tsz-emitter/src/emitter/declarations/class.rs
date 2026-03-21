@@ -1327,6 +1327,17 @@ impl<'a> Printer<'a> {
                 .as_ref()
                 .map(|(_, binding_name)| binding_name.clone())
                 .or_else(|| self.anonymous_default_export_name.clone())
+                .or_else(|| {
+                    // For anonymous class expressions used as variable initializers
+                    // (e.g. `const C = class { #field... }`), resolve the binding name
+                    // from the parent VariableDeclaration node. This is needed for
+                    // private field WeakMap naming (e.g., `_C_field`).
+                    if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+                        self.resolve_class_expr_binding_name(_idx)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default()
         } else {
             self.get_identifier_text_idx(class.name)
@@ -1587,7 +1598,7 @@ impl<'a> Printer<'a> {
             || !private_accessors.is_empty();
 
         if has_any_private_lowering {
-            // Collect all variable names needed for `var` declaration
+            // Collect all variable names needed for declaration
             let mut var_names: Vec<String> = Vec::new();
 
             // Class alias for static members
@@ -1637,6 +1648,10 @@ impl<'a> Printer<'a> {
                 // Hoist private field vars to the top of the scope (after "use strict"
                 // and CJS preamble), matching tsc behavior. tsc emits all private field
                 // WeakMap/method vars before the first class in the scope.
+                // NOTE: For class expressions in loop bodies, tsc uses block-scoped `let`
+                // instead of `var` hoisting. This is a known limitation - we always use
+                // `var` for now, which is semantically equivalent since the comma expression
+                // reassigns new WeakMaps each iteration.
                 self.hoisted_assignment_temps.extend(var_names);
             }
 
@@ -1796,13 +1811,19 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // For class expressions with private field lowering, we need to wrap the class
+        // in a comma expression: `(_a = class C { ... }, _WeakMap = new WeakMap(), ..., _a)`
+        // tsc uses this pattern so the WeakMap/WeakSet initialization happens inline.
+        let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
+        let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
+
         // For class expressions with static field initializers, we need to wrap
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`
         // Pre-detect this case before emitting the class keyword.
         let target_needs_field_lowering = (self.ctx.options.target as u32)
             < (tsz_common::ScriptTarget::ES2022 as u32)
             || !self.ctx.options.use_define_for_class_fields;
-        let needs_static_comma_expr = node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        let needs_static_comma_expr = is_class_expression
             && target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena.get(member_idx).is_some_and(|m| {
@@ -1816,15 +1837,37 @@ impl<'a> Printer<'a> {
                                 && !self
                                     .arena
                                     .has_modifier(&p.modifiers, SyntaxKind::DeclareKeyword)
+                                // Exclude private static fields when private field lowering
+                                // is active — they're handled via the private comma expr path.
+                                && !(needs_private_field_lowering
+                                    && is_private_identifier(self.arena, p.name))
                         })
                 })
             });
-        let class_expr_static_temp = if needs_static_comma_expr {
-            let temp = self.make_unique_name_hoisted();
+
+        // Determine if we need a comma expression wrapper for this class expression.
+        // Either static fields or private field lowering (or both) triggers it.
+        let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
+        let class_expr_temp = if needs_any_comma_expr {
+            // When the class expression already has a private_class_alias (for static
+            // private fields), reuse it as the temp var. tsc uses the same `_a` for both.
+            let temp = if let Some(ref alias) = private_class_alias {
+                // The alias is already in hoisted_assignment_temps from the private
+                // lowering setup. Just reuse it.
+                alias.clone()
+            } else {
+                self.make_unique_name_hoisted()
+            };
             self.write("(");
             self.write(&temp);
             self.write(" = ");
             Some(temp)
+        } else {
+            None
+        };
+        // Alias for static field comma expr path (preserves existing variable name)
+        let class_expr_static_temp = if needs_static_comma_expr {
+            class_expr_temp.clone()
         } else {
             None
         };
@@ -1936,6 +1979,11 @@ impl<'a> Printer<'a> {
         }
         self.write_line();
         self.increase_indent();
+        // When inside a comma expression wrapper (class expression with private fields
+        // or static fields), add one extra indent level for the class body to match tsc.
+        if class_expr_temp.is_some() {
+            self.increase_indent();
+        }
 
         // Store auto-accessor inits for constructor emission.
         let prev_auto_accessor_inits = std::mem::take(&mut self.pending_auto_accessor_inits);
@@ -2797,8 +2845,12 @@ impl<'a> Printer<'a> {
         self.pending_class_field_inits = prev_field_inits;
         self.pending_auto_accessor_inits = prev_auto_accessor_inits;
 
+        // Undo the extra indent level added for comma expression wrapper
+        if class_expr_temp.is_some() {
+            self.decrease_indent();
+        }
         self.decrease_indent();
-        if class_expr_static_temp.is_some() {
+        if class_expr_temp.is_some() {
             // Indent the closing brace inside the comma-expression context
             self.increase_indent();
             self.write("}");
@@ -2806,7 +2858,7 @@ impl<'a> Printer<'a> {
         } else {
             self.write("}");
         }
-        if assignment_prefix.is_some() && class_expr_static_temp.is_none() {
+        if assignment_prefix.is_some() && class_expr_temp.is_none() {
             self.write(";");
         }
 
@@ -3055,7 +3107,114 @@ impl<'a> Printer<'a> {
             || instances_ws.is_some()
             || !method_defs.is_empty()
             || !accessor_defs.is_empty();
-        if has_post_class_inits {
+
+        // For class expressions with private field lowering, emit the WeakMap/WeakSet/method
+        // initializations as comma-separated items inside the wrapping expression:
+        //   (_a = class C { ... },
+        //       _C_field = new WeakMap(),
+        //       _C_instances = new WeakSet(),
+        //       _C_method = function _C_method() { },
+        //       _a)
+        // For class declarations, emit as separate statements after the class body.
+        if needs_private_comma_expr && has_post_class_inits {
+            // Emit comma-separated inits inline in the expression.
+            // The `(_a = ` prefix was already emitted before the `class` keyword.
+
+            // WeakMap inits: _X_field = new WeakMap()
+            let weakmap_inits = self.pending_weakmap_inits.clone();
+            for init in &weakmap_inits {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(init);
+                self.decrease_indent();
+            }
+
+            // WeakSet: _X_instances = new WeakSet()
+            if let Some(ref ws_name) = instances_ws {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(ws_name);
+                self.write(" = new WeakSet()");
+                self.decrease_indent();
+            }
+
+            // Private method function definitions
+            for (var_name, body_idx, params) in &method_defs {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(var_name);
+                self.write(" = function ");
+                self.write(var_name);
+                self.write("(");
+                for (i, &param_idx) in params.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    if let Some(param_node) = self.arena.get(param_idx) {
+                        if let Some(param_data) = self.arena.get_parameter(param_node) {
+                            self.emit(param_data.name);
+                        }
+                    }
+                }
+                self.write(") ");
+                self.emit_single_line_block(*body_idx);
+                self.decrease_indent();
+            }
+
+            // Private accessor function definitions
+            for def in &accessor_defs {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(&def.var_name);
+                self.write(" = function ");
+                self.write(&def.var_name);
+                self.write("(");
+                if let Some(param_idx) = def.param {
+                    if let Some(param_node) = self.arena.get(param_idx) {
+                        if let Some(param_data) = self.arena.get_parameter(param_node) {
+                            self.emit(param_data.name);
+                        }
+                    }
+                }
+                self.write(") ");
+                self.emit_single_line_block(def.body);
+                self.decrease_indent();
+            }
+
+            // Emit static private field value initializations as comma items
+            // (e.g., `_D_field = { value: __classPrivateFieldGet(...) }`)
+            for (var_name, init_idx) in &static_private_inits {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(var_name);
+                self.write(" = { value: ");
+                if init_idx.is_some() {
+                    self.emit_expression(*init_idx);
+                } else {
+                    self.write("void 0");
+                }
+                self.write(" }");
+                self.decrease_indent();
+            }
+
+            // Close the comma expression with the temp var, unless the static field
+            // comma expr path will handle the closing.
+            if !needs_static_comma_expr {
+                if let Some(ref temp) = class_expr_temp {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write(temp);
+                    self.write(")");
+                    self.decrease_indent();
+                }
+            }
+        } else if has_post_class_inits {
             self.write_line();
             let mut first = true;
 
@@ -3142,16 +3301,22 @@ impl<'a> Printer<'a> {
 
         // Emit static private field value initializations after class body:
         // `_A_field = { value: 10 };`
-        for (var_name, init_idx) in &static_private_inits {
-            self.write_line();
-            self.write(var_name);
-            self.write(" = { value: ");
-            if init_idx.is_some() {
-                self.emit_expression(*init_idx);
-            } else {
-                self.write("void 0");
+        // For class expressions with private lowering, these are already emitted
+        // as comma items above in the private comma expr block.
+        if needs_private_comma_expr {
+            // Already emitted above in the comma expression block.
+        } else {
+            for (var_name, init_idx) in &static_private_inits {
+                self.write_line();
+                self.write(var_name);
+                self.write(" = { value: ");
+                if init_idx.is_some() {
+                    self.emit_expression(*init_idx);
+                } else {
+                    self.write("void 0");
+                }
+                self.write(" };");
             }
-            self.write(" };");
         }
 
         // Emit deferred static blocks as IIFEs after the class body.
@@ -3184,6 +3349,29 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    /// Resolve the binding name for an anonymous class expression from its parent chain.
+    /// For `const C = class { ... }`, this returns `Some("C")`.
+    /// Walks up: ClassExpression -> VariableDeclaration -> name identifier.
+    fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<String> {
+        let ext = self.arena.get_extended(class_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.arena.get_variable_declaration(parent_node)?;
+            let name_node = self.arena.get(decl.name)?;
+            if name_node.kind == SyntaxKind::Identifier as u16 {
+                let name = self.get_identifier_text_idx(decl.name);
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        None
     }
 
     /// Emit deferred static block IIFEs as `(() => { ... })();`.
