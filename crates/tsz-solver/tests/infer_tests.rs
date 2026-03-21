@@ -279,11 +279,12 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // tsc unions multiple lower bounds: "hello" widens to string, 42 widens to number,
-    // result is string | number.
+    // tsc's getSingleCommonSupertype uses first-wins for incompatible types when
+    // all candidates are fresh literals. "hello" widens to string, 42 widens to number,
+    // and since string is not a subtype of number (and vice versa), the first candidate
+    // wins: T = string. tsc then reports TS2345 on the second argument.
     let result = ctx.resolve_with_constraints(var).unwrap();
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -11017,9 +11018,9 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // tsc unions the widened lower bounds: string | number
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected);
+    // tsc's first-wins for fresh literals: "hello" widens to string, 42 widens to number.
+    // Since string is not a subtype of number, the first candidate wins: T = string.
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]

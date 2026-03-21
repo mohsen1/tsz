@@ -128,7 +128,11 @@ impl<'a> InferenceContext<'a> {
     /// 3. Otherwise → find single common supertype via tournament reduction
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
     /// 4. Add stripped nullable types back to the result
-    pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
+    pub fn get_common_supertype_for_inference(
+        &self,
+        types: &[TypeId],
+        first_wins_for_incompatible: bool,
+    ) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -273,11 +277,17 @@ impl<'a> InferenceContext<'a> {
             return self.add_nullable_to_result(common_class, has_undefined, has_null);
         }
 
-        // Step 5: tsc's reduceLeft fallback.
-        // tsc: `reduceLeft(types, (s, t) => isSubtypeOf(t, s) ? s : isSubtypeOf(s, t) ? t : getUnionType([s, t]))`
-        // When neither type is a subtype of the other, tsc creates a UNION.
-        // This is critical for inference: `equal(v as B, v as undefined | D)` should
-        // infer T = B | undefined | D, not just B.
+        // Step 5: tsc's getSingleCommonSupertype fallback.
+        // tsc: `reduceLeft(types, (s, t) => isTypeSubtypeOf(s, t) ? t : s)`
+        // When neither type is a subtype of the other, tsc keeps the FIRST type
+        // (leftmost wins). It does NOT create a union.
+        //
+        // However, our BCT `is_subtype` is simplified and may miss subtype
+        // relationships that tsc's full `isTypeSubtypeOf` catches (e.g., bivariant
+        // function params, class hierarchy through complex generics). We only use
+        // first-wins when `first_wins_for_incompatible` is true (all candidates
+        // were fresh literals that got widened). For non-fresh candidates, we fall
+        // back to union creation as a safe fallback.
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {
@@ -285,10 +295,12 @@ impl<'a> InferenceContext<'a> {
             } else if self.is_subtype(result, candidate) {
                 // result is a subtype of candidate → candidate is broader
                 result = candidate;
-            } else {
-                // Neither is a subtype → create union (matches tsc)
+            } else if !first_wins_for_incompatible {
+                // For non-fresh candidates, create a union as a safe fallback
+                // since our simplified is_subtype may miss valid relationships.
                 result = self.interner.union(vec![result, candidate]);
             }
+            // When first_wins_for_incompatible: keep result (first/leftmost wins)
         }
 
         // If nullable types were stripped, add them back. This matches tsc's

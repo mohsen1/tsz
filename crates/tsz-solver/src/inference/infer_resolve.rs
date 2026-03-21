@@ -495,7 +495,15 @@ impl<'a> InferenceContext<'a> {
             } else {
                 candidate_types.clone()
             };
-            self.get_common_supertype_for_inference(&widened_candidates)
+            self.get_common_supertype_for_inference(
+                &widened_candidates,
+                // When all candidates are fresh literals that were widened, use
+                // first-wins (leftmost) semantics matching tsc's getSingleCommonSupertype.
+                // This is critical for cases like `new Map([["", true], ["", 0]])`
+                // where V gets fresh candidates `true` and `0`, widened to `boolean`
+                // and `number`. tsc resolves V=boolean (first wins), not boolean|number.
+                !preserve_literals && !is_const && !has_non_fresh,
+            )
         };
         // When candidates come from index signature inference (e.g., inferring T from
         // source properties against target `{ [x: string]: T }`), tsc creates a union
