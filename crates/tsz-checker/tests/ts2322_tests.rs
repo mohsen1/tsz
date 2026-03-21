@@ -689,7 +689,8 @@ fn test_ts2322_conditional_doesnt_leak_uninstantiated_type_parameter() {
     "#;
 
     let errors = get_all_diagnostics(source);
-    eprintln!("All diagnostics: {:?}", errors);
+    // Debug: All diagnostics: {errors:?}
+    let _ = &errors;
 
     // y = 3 should NOT error (number is assignable to number)
     // z = '3' SHOULD error (string is not assignable to number)
