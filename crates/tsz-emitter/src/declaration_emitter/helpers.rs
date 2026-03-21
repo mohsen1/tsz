@@ -3069,10 +3069,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             // `declare global { ... }` — the parser represents `global` as
             // an Identifier node with escaped_text "global".
-            if let Some(ident) = self.arena.get_identifier(name_node) {
-                if ident.escaped_text == "global" {
-                    return true;
-                }
+            if let Some(ident) = self.arena.get_identifier(name_node)
+                && ident.escaped_text == "global"
+            {
+                return true;
             }
         }
 
