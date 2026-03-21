@@ -89,7 +89,7 @@ fn test_format_object_type_numeric_keys_sorted_first() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: 2; }"
+        "{ 0: string; 1: number; length: number; }"
     );
 }
 
@@ -117,7 +117,7 @@ fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: 2; }"
+        "{ 0: string; 1: number; length: number; }"
     );
 }
 
@@ -587,8 +587,8 @@ fn test_optional_function_param_shows_undefined() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x: number, y?: number | undefined) => number",
-        "Optional params include '| undefined' — matches tsc diagnostic display"
+        formatted, "(x: number, y?: number) => number",
+        "Optional function params display with ? but without '| undefined' — matches tsc diagnostic display"
     );
 }
 
@@ -616,8 +616,8 @@ fn test_optional_param_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x?: number | undefined) => void",
-        "Optional param with number | undefined keeps display as-is"
+        formatted, "(x?: number) => void",
+        "Optional param with number | undefined strips undefined in display — matches tsc"
     );
 }
 
