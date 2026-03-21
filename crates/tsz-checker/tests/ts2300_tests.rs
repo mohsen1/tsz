@@ -738,15 +738,15 @@ fn let_function_conflict_emits_ts2300() {
     let diagnostics = verify_errors(
         source,
         &[
-            (1, 5, "Cannot redeclare block-scoped variable 'f'."),
-            (2, 10, "Cannot redeclare block-scoped variable 'f'."),
+            (1, 5, "Duplicate identifier 'f'."),
+            (2, 10, "Duplicate identifier 'f'."),
         ],
     );
 
-    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
     assert!(
-        ts2451 >= 2,
-        "Expected TS2451 for let+function conflict, got ts2451={ts2451}"
+        ts2300 >= 2,
+        "Expected TS2300 for let+function same-scope conflict, got ts2300={ts2300}"
     );
 }
 
@@ -785,13 +785,13 @@ fn let_var_function_same_scope_ts2300() {
     let diagnostics = verify_errors(
         "let e0\nvar e0;\nfunction e0() { }",
         &[
-            (1, 5, "Cannot redeclare block-scoped variable 'e0'."),
-            (2, 5, "Cannot redeclare block-scoped variable 'e0'."),
-            (3, 10, "Cannot redeclare block-scoped variable 'e0'."),
+            (1, 5, "Duplicate identifier 'e0'."),
+            (2, 5, "Duplicate identifier 'e0'."),
+            (3, 10, "Duplicate identifier 'e0'."),
         ],
     );
-    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
-    assert_eq!(ts2451, 3, "All three should be TS2451");
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 3, "All three should be TS2300 at same scope");
 }
 
 /// Test that var-before-let at the same scope level gets TS2300.
