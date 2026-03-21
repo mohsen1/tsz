@@ -1131,7 +1131,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .map(|arg_idx| self.object_literal_function_like_param_spans(arg_idx))
                 .unwrap_or_default();
-            let refresh_diag_len = self.ctx.diagnostics.len();
+            let refresh_snap = self.ctx.snapshot_diagnostics();
             let actual = args
                 .get(index)
                 .copied()
@@ -1143,10 +1143,9 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .unwrap_or(cached_actual);
-            let refreshed_diag_start = refresh_diag_len.min(self.ctx.diagnostics.len());
             let refreshed_object_literal_param_has_implicit_any = !object_literal_function_param_spans
                 .is_empty()
-                && self.ctx.diagnostics[refreshed_diag_start..].iter().any(|diag| {
+                && self.ctx.speculative_diagnostics_since(&refresh_snap).iter().any(|diag| {
                     matches!(
                         diag.code,
                         crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE

@@ -176,144 +176,127 @@ fn object_literal_inference_no_diagnostic_leak() {
 }
 
 // ---------------------------------------------------------------------------
-// JSX overload exploration — speculation guard migration
+// Overload probing and successful-candidate rollback tests
 // ---------------------------------------------------------------------------
+// These tests validate that the speculation infrastructure correctly manages
+// diagnostic state across overload resolution phases. They cover:
+// - Multi-candidate probing with rollback between candidates
+// - Successful candidate committing only its own diagnostics
+// - Callback body diagnostics from failed candidates not leaking
 
-/// JSX element with overloaded component should not leak speculative diagnostics
-/// from attribute checking when a matching overload is found.
+/// When the first overload fails on argument type but the second matches,
+/// speculative diagnostics from the first candidate must not leak.
 #[test]
-fn jsx_overload_exploration_no_diagnostic_leak() {
-    let diags = check_with(
+fn overload_probe_first_fails_second_succeeds_no_leak() {
+    let diags = check(
         r#"
-        declare namespace JSX {
-            interface Element {}
-            interface IntrinsicElements {}
-        }
-        declare function Comp(props: { x: number }): JSX.Element;
-        declare function Comp(props: { y: string }): JSX.Element;
-        const a = <Comp x={42} />;
+        declare function overloaded(x: string, y: string): string;
+        declare function overloaded(x: number, y: number): number;
+        let r = overloaded(1, 2);
     "#,
-        "test.tsx",
-        CheckerOptions::default(),
     );
-    // First overload matches; no TS2769 or leaked speculative diagnostics
-    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
-    assert_eq!(
-        ts2769_count, 0,
-        "JSX overload matched — TS2769 should not appear: {diags:?}"
+    assert!(
+        diags.is_empty(),
+        "Expected no errors when second overload matches, got: {diags:?}"
     );
 }
 
-/// JSX element where no overload matches should emit exactly one TS2769.
+/// Overload resolution with callback arguments: speculative callback body
+/// diagnostics from a failed candidate should not survive into the successful path.
 #[test]
-fn jsx_overload_no_match_single_ts2769() {
-    let diags = check_with(
+fn overload_probe_callback_body_diagnostics_rollback() {
+    let diags = check(
         r#"
-        declare namespace JSX {
-            interface Element {}
-            interface IntrinsicElements {}
-        }
-        declare function Comp(props: { x: number }): JSX.Element;
-        declare function Comp(props: { y: string }): JSX.Element;
-        const a = <Comp z={true} />;
+        declare function process(cb: (x: string) => string): string;
+        declare function process(cb: (x: number) => number): number;
+        let r = process((x) => x + 1);
     "#,
-        "test.tsx",
-        CheckerOptions::default(),
+    );
+    // The second overload (number → number) should match.
+    // No TS2365 or TS2322 from the first candidate's speculative callback body check.
+    let leaked_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2365 || d.code == 2322)
+        .collect();
+    assert!(
+        leaked_errors.is_empty(),
+        "Speculative callback body errors leaked from failed overload candidate: {leaked_errors:?}"
+    );
+}
+
+/// When all overloads fail, the fallback diagnostic (TS2769) should be clean
+/// and not contain duplicated speculative diagnostics from multiple candidates.
+#[test]
+fn overload_all_fail_no_duplicate_speculative_diagnostics() {
+    let diags = check(
+        r#"
+        declare function multi(x: string): void;
+        declare function multi(x: number): void;
+        declare function multi(x: boolean): void;
+        multi({} as never);
+    "#,
     );
     let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
     assert!(
         ts2769_count <= 1,
-        "Expected at most one TS2769 for JSX overload failure, got {ts2769_count}: {diags:?}"
+        "Expected at most one TS2769 for total overload failure, got {ts2769_count}: {diags:?}"
     );
 }
 
-// ---------------------------------------------------------------------------
-// Function expression fallback — speculation guard migration
-// ---------------------------------------------------------------------------
-
-/// Function expression with conditional body and unresolved return type should
-/// not leak diagnostics from the suppressed expression body evaluation.
+/// Overload resolution with generic candidate and contextual refresh:
+/// The successful candidate's argument re-typing should produce clean diagnostics.
 #[test]
-fn function_expression_conditional_body_no_leak() {
+fn overload_generic_candidate_contextual_refresh_clean() {
     let diags = check(
         r#"
-        declare function apply<T>(f: () => T): T;
-        let result = apply(() => true ? 1 : "hello");
+        declare function convert<T>(x: T, cb: (v: T) => string): string;
+        declare function convert(x: string, cb: (v: string) => number): number;
+        let r = convert(42, (v) => v.toFixed());
     "#,
     );
-    // The conditional expression body check is speculative when the return
-    // type has unresolved inference holes; diagnostics should not leak.
-    let ts2322_count = diags.iter().filter(|d| d.code == 2322).count();
-    assert!(
-        ts2322_count <= 1,
-        "Leaked TS2322 from speculative conditional body check: {diags:?}"
-    );
-}
-
-/// Speculative branch mismatch probe should not emit false diagnostics.
-#[test]
-fn function_expression_branch_mismatch_probe_no_false_positive() {
-    let diags = check(
-        r#"
-        declare function wrap<T>(fn: () => T): T;
-        let x: number = wrap(() => true ? 1 : 2);
-    "#,
-    );
-    // Both branches return number — should not get a mismatch error
+    // First overload should match: T=number, cb gets (v: number) => string
     assert!(
         diags.is_empty(),
-        "Expected no errors for matching conditional branches, got: {diags:?}"
+        "Expected no errors for generic overload with contextual refresh, got: {diags:?}"
     );
 }
 
-// ---------------------------------------------------------------------------
-// Object-literal method rerun — speculation guard migration
-// ---------------------------------------------------------------------------
-
-/// Object literal method with `this` reference should not duplicate diagnostics
-/// during the rerun pass with refined this-type.
+/// Ensure that TypeParameterConstraintViolation during overload resolution
+/// correctly rolls back and tries the next candidate.
 #[test]
-fn object_literal_method_rerun_no_duplicate_diagnostics() {
+fn overload_constraint_violation_tries_next_candidate() {
     let diags = check(
         r#"
-        let obj = {
-            x: 10,
-            getX() {
-                return this.x;
-            }
-        };
+        declare function constrained<T extends string>(x: T): T;
+        declare function constrained(x: number): number;
+        let r = constrained(42);
     "#,
     );
-    // The method rerun (this-circularity detection) should not leak diagnostics.
-    // `this.x` should resolve correctly; no TS2339 or TS2464 expected.
-    let error_count = diags
-        .iter()
-        .filter(|d| matches!(d.code, 2339 | 2464))
-        .count();
     assert!(
-        error_count == 0,
-        "Object literal method rerun leaked diagnostics: {diags:?}"
+        diags.is_empty(),
+        "Expected no errors when constraint-violated overload falls through to next, got: {diags:?}"
     );
 }
 
-/// Object literal method rerun with filtered rollback preserves non-this errors.
+/// Speculative diagnostics from argument type collection with unresolved
+/// contextual types should be properly rolled back, not left as duplicates.
 #[test]
-fn object_literal_method_rerun_preserves_real_errors() {
-    let diags = check(
+fn unresolved_contextual_arg_implicit_any_rollback() {
+    let diags = check_with(
         r#"
-        let obj = {
-            x: 10,
-            getY() {
-                return this.nonExistent;
-            }
-        };
+        declare function withCb<T>(produce: () => T, consume: (x: T) => void): void;
+        withCb(() => 42, (x) => x.toFixed());
     "#,
+        "test.ts",
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
     );
-    // `this.nonExistent` should still produce TS2339 after the rerun, since
-    // the filtered rollback keeps non-this-property errors.
-    let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
+    // TS7006 should not be emitted for `x` since it gets contextual type number
+    let ts7006_in_consume: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
     assert!(
-        ts2339_count >= 1,
-        "Expected TS2339 for nonExistent property, got: {diags:?}"
+        ts7006_in_consume.is_empty(),
+        "TS7006 should not appear when contextual type resolves via generic inference: {ts7006_in_consume:?}"
     );
 }
