@@ -332,10 +332,7 @@ impl<'a> CheckerState<'a> {
             // otherwise entries added to the dedup set would prevent the same
             // diagnostic from being emitted later by the regular checker pass
             // (e.g. TS8010 grammar errors in JS files).
-            let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
-            self.ctx.rollback_diagnostics(&snap);
-            ty
+            self.speculative_type_of_node(cond.when_true, &true_request)
         } else {
             let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
@@ -348,10 +345,7 @@ impl<'a> CheckerState<'a> {
         let false_request = request.contextual_opt(false_ctx);
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
-            let snap = self.ctx.snapshot_diagnostics();
-            let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
-            self.ctx.rollback_diagnostics(&snap);
-            ty
+            self.speculative_type_of_node(cond.when_false, &false_request)
         } else {
             let snap = self.ctx.snapshot_diagnostics();
             let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
@@ -1383,6 +1377,42 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ANY
+    }
+
+    // =========================================================================
+    // Speculative type computation helpers
+    // =========================================================================
+
+    /// Compute the type of a node speculatively: snapshots diagnostics,
+    /// evaluates the node with the given request, then rolls back all
+    /// diagnostics. Only the resulting `TypeId` survives.
+    ///
+    /// Use this for inference-contributing probes (e.g. Round 1 generic
+    /// inference, dead conditional branches) where the type is needed but
+    /// side-effect diagnostics must not leak.
+    pub(crate) fn speculative_type_of_node(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let snap = self.ctx.snapshot_diagnostics();
+        let ty = self.get_type_of_node_with_request(idx, request);
+        self.ctx.rollback_diagnostics(&snap);
+        ty
+    }
+
+    /// Like [`speculative_type_of_node`](Self::speculative_type_of_node) but
+    /// for function-shaped nodes (methods, function expressions, arrow
+    /// functions). Delegates to `get_type_of_function_with_request`.
+    pub(crate) fn speculative_type_of_function(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        let snap = self.ctx.snapshot_diagnostics();
+        let ty = self.get_type_of_function_with_request(idx, request);
+        self.ctx.rollback_diagnostics(&snap);
+        ty
     }
 }
 
