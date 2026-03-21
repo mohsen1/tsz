@@ -462,7 +462,6 @@ createInstance(MenuWorkbenchToolBar, {
 }
 
 #[test]
-#[ignore = "TS2741 for indexed target assignment changed after index signature updates"]
 fn test_assignment_compat_with_indexed_targets_matches_tsc() {
     let source = r#"
 var x = { one: 1 };
@@ -489,11 +488,11 @@ z = false;
 
     assert_eq!(relevant.len(), 4, "unexpected diagnostics: {relevant:?}");
     assert!(
-        messages.contains(&"Property 'one' is missing in type '{ [index: string]: any; }' but required in type '{ one: 1; }'."),
+        messages.contains(&"Property 'one' is missing in type '{ [index: string]: any; }' but required in type '{ one: number; }'."),
         "missing TS2741 for x = y: {relevant:?}"
     );
     assert!(
-        messages.contains(&"Property 'one' is missing in type '{ [index: number]: any; }' but required in type '{ one: 1; }'."),
+        messages.contains(&"Property 'one' is missing in type '{ [index: number]: any; }' but required in type '{ one: number; }'."),
         "missing TS2741 for x = z: {relevant:?}"
     );
     assert!(
