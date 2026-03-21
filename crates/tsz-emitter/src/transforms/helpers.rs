@@ -384,6 +384,10 @@ pub struct HelpersNeeded {
     pub make_template_object: bool,
     pub class_private_field_get: bool,
     pub class_private_field_set: bool,
+    /// Whether Set was registered before Get (controls helper emit order).
+    /// tsc emits helpers in first-use order; when the first private field
+    /// operation is a plain assignment, Set appears before Get.
+    pub class_private_field_set_before_get: bool,
     pub class_private_field_in: bool,
     pub create_binding: bool,
     pub add_disposable_resource: bool,
@@ -646,13 +650,25 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(IMPORT_DEFAULT_HELPER);
         output.push('\n');
     }
-    if helpers.class_private_field_get {
-        output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
-        output.push('\n');
-    }
-    if helpers.class_private_field_set {
-        output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
-        output.push('\n');
+    // Emit Get/Set helpers in first-use order (tsc tracks insertion order)
+    if helpers.class_private_field_set_before_get {
+        if helpers.class_private_field_set {
+            output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
+            output.push('\n');
+        }
+        if helpers.class_private_field_get {
+            output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
+            output.push('\n');
+        }
+    } else {
+        if helpers.class_private_field_get {
+            output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
+            output.push('\n');
+        }
+        if helpers.class_private_field_set {
+            output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
+            output.push('\n');
+        }
     }
     if helpers.class_private_field_in {
         output.push_str(CLASS_PRIVATE_FIELD_IN_HELPER);

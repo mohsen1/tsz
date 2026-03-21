@@ -3,10 +3,263 @@ use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+/// Result of extracting a private field access from a (possibly parenthesized) node.
+struct PrivateFieldAccess {
+    /// The receiver expression node index (e.g., `this` or `A.getInstance()`)
+    expression: NodeIndex,
+    /// The cleaned field name (without `#`)
+    clean_name: String,
+    /// The weakmap variable name
+    weakmap_name: String,
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Expressions
     // =========================================================================
+
+    /// Try to extract a private field access from a node, unwrapping parentheses
+    /// and type assertions. Returns None if this isn't a private field access.
+    fn try_extract_private_field_access(&self, idx: NodeIndex) -> Option<PrivateFieldAccess> {
+        if self.private_field_weakmaps.is_empty() {
+            return None;
+        }
+        let node = self.arena.get(idx)?;
+        // Unwrap parenthesized expressions and type assertions
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(node) {
+                return self.try_extract_private_field_access(paren.expression);
+            }
+        }
+        // Also unwrap type assertion expressions since these are erased in JS emit
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            if let Some(ta) = self.arena.get_type_assertion(node) {
+                return self.try_extract_private_field_access(ta.expression);
+            }
+        }
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        let name_node = self.arena.get(access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+        let field_name = get_private_field_name(self.arena, access.name_or_argument)?;
+        let clean_name = field_name
+            .strip_prefix('#')
+            .unwrap_or(&field_name)
+            .to_string();
+        let weakmap_name = self.private_field_weakmaps.get(&clean_name)?.clone();
+        Some(PrivateFieldAccess {
+            expression: access.expression,
+            clean_name,
+            weakmap_name,
+        })
+    }
+
+    /// Check if a receiver expression is simple (this keyword or an identifier)
+    /// and doesn't need to be cached in a temp variable to avoid double-evaluation.
+    fn receiver_is_simple(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return true;
+        };
+        node.kind == SyntaxKind::ThisKeyword as u16
+            || node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::SuperKeyword as u16
+    }
+
+    fn emit_private_field_set_close(&mut self, clean_name: &str) {
+        let info = self.private_member_info.get(clean_name).cloned();
+        let kind = info.as_ref().map_or("f", |i| i.kind);
+        self.write(", \"");
+        self.write(kind);
+        self.write("\"");
+        if let Some(ref i) = info {
+            if let Some(ref setter) = i.setter_ref {
+                self.write(", ");
+                self.write(setter);
+            } else if kind == "a" {
+                // Accessor with no setter - omit
+            } else if let Some(ref fn_ref) = i.fn_ref {
+                self.write(", ");
+                self.write(fn_ref);
+            }
+        }
+        self.write(")");
+    }
+
+    /// Emit a private field unary mutation (++ or --).
+    /// `is_prefix` indicates if it's prefix (++x) or postfix (x++).
+    /// `is_statement` indicates if the result value is discarded (statement context).
+    /// `operator` is PlusPlusToken or MinusMinusToken.
+    fn emit_private_field_unary_mutation(
+        &mut self,
+        pfa: PrivateFieldAccess,
+        operator: u16,
+        is_prefix: bool,
+        is_statement: bool,
+    ) {
+        let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+        let op_text = get_operator_text(operator);
+        let expression = pfa.expression;
+        let weakmap_name = pfa.weakmap_name.clone();
+        let clean_name = pfa.clean_name.clone();
+
+        // For complex receivers, create a temp var so we only evaluate once
+        let receiver_temp = if needs_receiver_temp {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
+        // For postfix-as-value, allocate old_val temp FIRST (matches tsc temp ordering)
+        let old_val_temp = if !is_prefix && !is_statement {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
+        // Allocate temp for the value
+        let val_temp = self.make_unique_name_hoisted();
+
+        if is_prefix {
+            // `++this.#x` → `__classPrivateFieldSet(this, _C_x, (_a = __classPrivateFieldGet(this, _C_x, "f"), ++_a), "f")`
+            self.write_helper("__classPrivateFieldSet");
+            self.write("(");
+            self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+            self.write(", ");
+            self.emit_private_state_var(&weakmap_name, &clean_name);
+            self.write(", (");
+            self.write(&val_temp);
+            self.write(" = ");
+            self.emit_private_field_get_inline(
+                receiver_temp.as_deref(),
+                expression,
+                &weakmap_name,
+                &clean_name,
+            );
+            self.write(", ");
+            self.write(op_text);
+            self.write(&val_temp);
+            self.write(")");
+            self.emit_private_field_set_close(&clean_name);
+        } else if is_statement {
+            // `this.#x++` (statement) → `__classPrivateFieldSet(this, _C_x, (_a = get(...), _a++, _a), "f")`
+            self.write_helper("__classPrivateFieldSet");
+            self.write("(");
+            self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+            self.write(", ");
+            self.emit_private_state_var(&weakmap_name, &clean_name);
+            self.write(", (");
+            self.write(&val_temp);
+            self.write(" = ");
+            self.emit_private_field_get_inline(
+                receiver_temp.as_deref(),
+                expression,
+                &weakmap_name,
+                &clean_name,
+            );
+            self.write(", ");
+            self.write(&val_temp);
+            self.write(op_text);
+            self.write(", ");
+            self.write(&val_temp);
+            self.write(")");
+            self.emit_private_field_set_close(&clean_name);
+        } else {
+            // `const a = this.#x++` → `(set(this, _C_x, (_b = get(...), _a = _b++, _b), "f"), _a)`
+            let old_val = old_val_temp.as_ref().unwrap();
+            self.write("(");
+            self.write_helper("__classPrivateFieldSet");
+            self.write("(");
+            self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+            self.write(", ");
+            self.emit_private_state_var(&weakmap_name, &clean_name);
+            self.write(", (");
+            self.write(&val_temp);
+            self.write(" = ");
+            self.emit_private_field_get_inline(
+                receiver_temp.as_deref(),
+                expression,
+                &weakmap_name,
+                &clean_name,
+            );
+            self.write(", ");
+            self.write(old_val);
+            self.write(" = ");
+            self.write(&val_temp);
+            self.write(op_text);
+            self.write(", ");
+            self.write(&val_temp);
+            self.write(")");
+            self.emit_private_field_set_close(&clean_name);
+            self.write(", ");
+            self.write(old_val);
+            self.write(")");
+        }
+    }
+
+    /// Emit the state variable (WeakMap/WeakSet) for a private field.
+    fn emit_private_state_var(&mut self, weakmap_name: &str, clean_name: &str) {
+        let info = self.private_member_info.get(clean_name).cloned();
+        if let Some(ref sv) = info.as_ref().and_then(|i| i.state_var.clone()) {
+            self.write(sv);
+        } else {
+            self.write(weakmap_name);
+        }
+    }
+
+    /// Emit either `expr` directly or `_a = expr` for temp assignment.
+    fn emit_receiver_or_temp_assign(&mut self, expression: NodeIndex, receiver_temp: Option<&str>) {
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+            self.write(" = ");
+            self.emit(expression);
+        } else {
+            self.emit(expression);
+        }
+    }
+
+    /// Emit a `__classPrivateFieldGet(receiver, state, kind, fn_ref)` call
+    /// using either the temp name or emitting the expression directly.
+    fn emit_private_field_get_inline(
+        &mut self,
+        receiver_temp: Option<&str>,
+        expression: NodeIndex,
+        weakmap_name: &str,
+        clean_name: &str,
+    ) {
+        let info = self.private_member_info.get(clean_name).cloned();
+        self.write_helper("__classPrivateFieldGet");
+        self.write("(");
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+        } else {
+            self.emit(expression);
+        }
+        self.write(", ");
+        let state_var = info.as_ref().and_then(|i| i.state_var.clone());
+        if let Some(ref sv) = state_var {
+            self.write(sv);
+        } else {
+            self.write(weakmap_name);
+        }
+        let kind = info.as_ref().map_or("f", |i| i.kind);
+        self.write(", \"");
+        self.write(kind);
+        self.write("\"");
+        if let Some(ref i) = info {
+            if let Some(ref fn_ref) = i.fn_ref {
+                self.write(", ");
+                self.write(fn_ref);
+            }
+        }
+        self.write(")");
+    }
 
     pub(in crate::emitter) fn emit_binary_expression(&mut self, node: &Node) {
         let Some(binary) = self.arena.get_binary_expr(node) else {
@@ -41,27 +294,19 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            // Handle `this.#field = value` → `__classPrivateFieldSet(this, _C_field, value, "f")`
-            if binary.operator_token == SyntaxKind::EqualsToken as u16
-                && let Some(left_node) = self.arena.get(binary.left)
-                && left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.arena.get_access_expr(left_node)
-                && let Some(name_node) = self.arena.get(access.name_or_argument)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-                && let Some(field_name) =
-                    get_private_field_name(self.arena, access.name_or_argument)
-            {
-                let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
+            // Handle `this.#field = value` and `(this.#field) = value` (with parens/type assertions)
+            // → `__classPrivateFieldSet(this, _C_field, value, "f")`
+            if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                if let Some(pfa) = self.try_extract_private_field_access(binary.left) {
                     self.write_helper("__classPrivateFieldSet");
                     self.write("(");
-                    self.emit(access.expression);
+                    self.emit(pfa.expression);
                     self.write(", ");
-                    if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                    if let Some(info) = self.private_member_info.get(&pfa.clean_name).cloned() {
                         if let Some(ref state_var) = info.state_var {
                             self.write(state_var);
                         } else {
-                            self.write(&weakmap_name);
+                            self.write(&pfa.weakmap_name);
                         }
                         self.write(", ");
                         self.emit(binary.right);
@@ -72,13 +317,13 @@ impl<'a> Printer<'a> {
                             self.write(", ");
                             self.write(setter);
                         } else if info.kind == "a" {
-                            // Accessor with no setter - omit the fn ref (tsc emits no 5th arg)
+                            // Accessor with no setter - omit the fn ref
                         } else if let Some(ref fn_ref) = info.fn_ref {
                             self.write(", ");
                             self.write(fn_ref);
                         }
                     } else {
-                        self.write(&weakmap_name);
+                        self.write(&pfa.weakmap_name);
                         self.write(", ");
                         self.emit(binary.right);
                         self.write(", \"f\"");
@@ -90,66 +335,62 @@ impl<'a> Printer<'a> {
 
             // Handle compound assignment: `this.#field += value` →
             // `__classPrivateFieldSet(this, _C_field, __classPrivateFieldGet(this, _C_field, "f") + value, "f")`
-            if self.is_compound_assignment(binary.operator_token)
-                && let Some(left_node) = self.arena.get(binary.left)
-                && left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.arena.get_access_expr(left_node)
-                && let Some(name_node) = self.arena.get(access.name_or_argument)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-                && let Some(field_name) =
-                    get_private_field_name(self.arena, access.name_or_argument)
-            {
-                let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
-                    let base_op = self.get_compound_base_operator(binary.operator_token);
-                    let info = self.private_member_info.get(clean_name).cloned();
+            // For complex receivers: `A.getInstance().#field += value` →
+            // `__classPrivateFieldSet(_a = A.getInstance(), _C_field, __classPrivateFieldGet(_a, _C_field, "f") + value, "f")`
+            // For `**=` with ES2016 lowering: uses Math.pow() instead of **
+            if self.is_compound_assignment(binary.operator_token) {
+                if let Some(pfa) = self.try_extract_private_field_access(binary.left) {
+                    let is_exp_assign =
+                        binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16;
+                    let use_math_pow = is_exp_assign && self.ctx.needs_es2016_lowering;
+                    let base_op = if use_math_pow {
+                        String::new()
+                    } else {
+                        self.get_compound_base_operator(binary.operator_token)
+                    };
+
+                    let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+                    let receiver_temp = if needs_receiver_temp {
+                        Some(self.make_unique_name_hoisted())
+                    } else {
+                        None
+                    };
+                    let expression = pfa.expression;
+                    let weakmap_name = pfa.weakmap_name.clone();
+                    let clean_name = pfa.clean_name.clone();
+
                     self.write_helper("__classPrivateFieldSet");
                     self.write("(");
-                    self.emit(access.expression);
+                    self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
                     self.write(", ");
-                    let state_var = info.as_ref().and_then(|i| i.state_var.clone());
-                    if let Some(ref sv) = state_var {
-                        self.write(sv);
-                    } else {
-                        self.write(&weakmap_name);
-                    }
+                    self.emit_private_state_var(&weakmap_name, &clean_name);
                     self.write(", ");
-                    self.write_helper("__classPrivateFieldGet");
-                    self.write("(");
-                    self.emit(access.expression);
-                    self.write(", ");
-                    if let Some(ref sv) = state_var {
-                        self.write(sv);
-                    } else {
-                        self.write(&weakmap_name);
-                    }
-                    let kind = info.as_ref().map_or("f", |i| i.kind);
-                    self.write(", \"");
-                    self.write(kind);
-                    self.write("\"");
-                    if let Some(ref i) = info
-                        && let Some(ref fn_ref) = i.fn_ref
-                    {
+
+                    if use_math_pow {
+                        self.write("Math.pow(");
+                        self.emit_private_field_get_inline(
+                            receiver_temp.as_deref(),
+                            expression,
+                            &weakmap_name,
+                            &clean_name,
+                        );
                         self.write(", ");
-                        self.write(fn_ref);
+                        self.emit(binary.right);
+                        self.write(")");
+                    } else {
+                        self.emit_private_field_get_inline(
+                            receiver_temp.as_deref(),
+                            expression,
+                            &weakmap_name,
+                            &clean_name,
+                        );
+                        self.write(" ");
+                        self.write(&base_op);
+                        self.write(" ");
+                        self.emit(binary.right);
                     }
-                    self.write(") ");
-                    self.write(&base_op);
-                    self.write(" ");
-                    self.emit(binary.right);
-                    self.write(", \"");
-                    self.write(kind);
-                    self.write("\"");
-                    if let Some(ref i) = info {
-                        if let Some(ref setter) = i.setter_ref {
-                            self.write(", ");
-                            self.write(setter);
-                        } else if let Some(ref fn_ref) = i.fn_ref {
-                            self.write(", ");
-                            self.write(fn_ref);
-                        }
-                    }
-                    self.write(")");
+
+                    self.emit_private_field_set_close(&clean_name);
                     return;
                 }
             }
@@ -394,6 +635,17 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Private field prefix mutation: `++this.#x` or `++(this.#x)`
+        // → `__classPrivateFieldSet(this, _C_x, (_a = __classPrivateFieldGet(this, _C_x, "f"), ++_a), "f")`
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && let Some(pfa) = self.try_extract_private_field_access(unary.operand)
+        {
+            // For prefix, result is always the new value (same form for statement/value)
+            self.emit_private_field_unary_mutation(pfa, unary.operator, true, false);
+            return;
+        }
+
         self.write(get_operator_text(unary.operator));
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
@@ -437,6 +689,18 @@ impl<'a> Printer<'a> {
         let Some(unary) = self.arena.get_unary_expr(node) else {
             return;
         };
+
+        // Private field postfix mutation: `this.#x++` or `(this.#x)++`
+        // Statement form: `__classPrivateFieldSet(this, _C_x, (_a = __classPrivateFieldGet(this, _C_x, "f"), _a++, _a), "f")`
+        // Value form: `(__classPrivateFieldSet(this, _C_x, (_b = __classPrivateFieldGet(this, _C_x, "f"), _a = _b++, _b), "f"), _a)`
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && let Some(pfa) = self.try_extract_private_field_access(unary.operand)
+        {
+            let is_statement = self.ctx.flags.in_statement_expression;
+            self.emit_private_field_unary_mutation(pfa, unary.operator, false, is_statement);
+            return;
+        }
 
         // When lowering optional chains or nullish coalescing (e.g., `o?.a++`, `(a ?? b)++`),
         // the ternary must be wrapped in parens to preserve precedence.

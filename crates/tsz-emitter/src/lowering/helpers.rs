@@ -221,7 +221,20 @@ impl<'a> LoweringPass<'a> {
             let needs_get = has_auto_accessors || self.class_has_private_field_reads(class_data);
             let needs_set = has_auto_accessors || self.class_has_private_field_writes(class_data);
             let needs_in = self.class_has_private_in_expression(class_data);
+            // tsc emits helpers in first-use order. If the first private field
+            // operation is a write-only assignment, Set comes before Get.
+            let set_first = needs_set
+                && !has_auto_accessors
+                && self.first_private_field_op_is_write_only(class_data);
             let helpers = self.transforms.helpers_mut();
+            // Check ordering before setting flags: if Set was never registered
+            // and this class has Set-first ordering, mark it
+            if set_first
+                && !helpers.class_private_field_set
+                && !helpers.class_private_field_set_before_get
+            {
+                helpers.class_private_field_set_before_get = true;
+            }
             if needs_get {
                 helpers.class_private_field_get = true;
             }
@@ -338,6 +351,32 @@ impl<'a> LoweringPass<'a> {
                 return idx;
             };
             idx = paren.expression;
+        }
+    }
+
+    /// Unwrap parenthesized expressions AND type assertions (as/satisfies/type assertion)
+    /// to get the inner runtime expression.
+    fn unwrap_parens_and_types(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(n) = self.arena.get(idx) else {
+                return idx;
+            };
+            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.arena.get_parenthesized(n) {
+                    idx = paren.expression;
+                    continue;
+                }
+            }
+            if n.kind == syntax_kind_ext::TYPE_ASSERTION
+                || n.kind == syntax_kind_ext::AS_EXPRESSION
+                || n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                if let Some(ta) = self.arena.get_type_assertion(n) {
+                    idx = ta.expression;
+                    continue;
+                }
+            }
+            return idx;
         }
     }
 
@@ -490,7 +529,7 @@ impl<'a> LoweringPass<'a> {
                     if !Self::is_assignment_operator(bin.operator_token) {
                         continue;
                     }
-                    let left = self.unwrap_parens(bin.left);
+                    let left = self.unwrap_parens_and_types(bin.left);
                     if self.is_private_field_access(left) {
                         return true;
                     }
@@ -504,7 +543,7 @@ impl<'a> LoweringPass<'a> {
                     if unary.operator == SyntaxKind::PlusPlusToken as u16
                         || unary.operator == SyntaxKind::MinusMinusToken as u16
                     {
-                        let operand = self.unwrap_parens(unary.operand);
+                        let operand = self.unwrap_parens_and_types(unary.operand);
                         if self.is_private_field_access(operand) {
                             return true;
                         }
@@ -550,7 +589,8 @@ impl<'a> LoweringPass<'a> {
                         continue;
                     };
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        let left = self.unwrap_parens(bin.left);
+                        // Unwrap parens AND type assertions to find the actual LHS
+                        let left = self.unwrap_parens_and_types(bin.left);
                         if left == nidx {
                             is_write_only = true;
                             break;
@@ -563,6 +603,104 @@ impl<'a> LoweringPass<'a> {
             }
         }
         false
+    }
+
+    /// Check if the first private field operation in a class is a write-only
+    /// assignment (e.g., `this.#field = 1`). Used to determine helper emit order:
+    /// tsc emits helpers in first-use order, so if the first op is a write-only
+    /// assignment, `__classPrivateFieldSet` should be emitted before `Get`.
+    pub(super) fn first_private_field_op_is_write_only(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        // Find the first private field operation by source position
+        let mut earliest_pos: Option<u32> = None;
+        let mut earliest_is_write_only = false;
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let body = if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                Some(member_idx)
+            } else {
+                self.get_member_body(member_node)
+            };
+            let Some(body_idx) = body else {
+                continue;
+            };
+            let Some(body_node) = self.arena.get(body_idx) else {
+                continue;
+            };
+            let start = body_node.pos;
+            let end = body_node.end;
+
+            for i in 0..self.arena.len() {
+                let nidx = NodeIndex(i as u32);
+                let Some(n) = self.arena.get(nidx) else {
+                    continue;
+                };
+                if n.pos < start || n.end > end {
+                    continue;
+                }
+                // Check for binary expressions with private field on LHS
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                    if let Some(bin) = self.arena.get_binary_expr(n)
+                        && Self::is_assignment_operator(bin.operator_token)
+                    {
+                        let left = self.unwrap_parens(bin.left);
+                        if self.is_private_field_access(left) {
+                            let is_plain_assign =
+                                bin.operator_token == SyntaxKind::EqualsToken as u16;
+                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
+                                earliest_pos = Some(n.pos);
+                                earliest_is_write_only = is_plain_assign;
+                            }
+                        }
+                    }
+                }
+                // Check for unary mutation (++/--)
+                if n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                {
+                    if let Some(unary) = self.arena.get_unary_expr(n)
+                        && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    {
+                        let operand = self.unwrap_parens(unary.operand);
+                        if self.is_private_field_access(operand) {
+                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
+                                earliest_pos = Some(n.pos);
+                                earliest_is_write_only = false; // ++/-- needs both get and set
+                            }
+                        }
+                    }
+                }
+                // Check for non-assignment binary expressions that read private
+                // fields (e.g., `this.#field + 1`). For assignment operators, the
+                // LHS private field access has the same pos as the binary node
+                // and would incorrectly shadow a write-only detection above, so
+                // skip those — they're already handled.
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                    if let Some(bin) = self.arena.get_binary_expr(n)
+                        && !Self::is_assignment_operator(bin.operator_token)
+                    {
+                        // Check if either side has a private field access
+                        let left = self.unwrap_parens(bin.left);
+                        let right = self.unwrap_parens(bin.right);
+                        if self.is_private_field_access(left) || self.is_private_field_access(right)
+                        {
+                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
+                                earliest_pos = Some(n.pos);
+                                earliest_is_write_only = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        earliest_is_write_only
     }
 
     pub(super) fn class_has_auto_accessor_members(
