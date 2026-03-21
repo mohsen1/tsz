@@ -478,7 +478,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Handle object targets using type_queries
+        // Handle simple object targets via the canonical boundary classification.
+        //
+        // The boundary's `classify_object_properties` determines which source
+        // properties are excess (WHAT), while this checker code handles WHERE to
+        // anchor diagnostics and recursive nested-literal checking.
         if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
             let target_props = target_shape.properties.as_slice();
 
@@ -520,23 +524,25 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // Empty object {} accepts any properties - no excess property check needed.
-            // This is a key TypeScript behavior: {} means "any non-nullish value".
-            // See https://github.com/microsoft/TypeScript/issues/60582
-            if target_props.is_empty() {
-                return;
+            // Use the boundary classification to determine early-exit conditions and
+            // which properties are excess, instead of re-implementing shape analysis.
+            use crate::query_boundaries::assignability::classify_object_properties;
+            let classification =
+                classify_object_properties(self.ctx.types, source, resolved_target);
+
+            if let Some(ref cls) = classification {
+                // Boundary-driven early exits: empty object, index signatures,
+                // global Object/Function, type parameters.
+                if cls.target_is_empty_object
+                    || cls.target_has_index_signature
+                    || cls.target_is_global_object_or_function
+                    || cls.target_is_type_parameter
+                {
+                    return;
+                }
             }
 
-            if target_shape.number_index.is_some() {
-                return;
-            }
-
-            // The global `Object` and `Function` interfaces from lib.d.ts accept
-            // any object — skip excess property checking when they are the target.
-            if self.is_global_object_or_function_shape(&target_shape) {
-                return;
-            }
-            // This is the "freshness" or "strict object literal" check
+            // Report excess properties identified by the boundary, then check nested.
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -546,8 +552,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
-                if target_prop.is_none() {
+                // Use boundary classification for the excess-property decision.
+                let is_excess = classification
+                    .as_ref()
+                    .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
+
+                if is_excess {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
@@ -557,21 +567,21 @@ impl<'a> CheckerState<'a> {
                     );
                     self.error_excess_property_at(&prop_name, target, report_idx);
                     self.check_excess_property_initializer_implicit_any(report_idx, target);
-                } else if let Some(target_prop) = target_prop {
-                    // =============================================================
-                    // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
-                    // =============================================================
-                    // For nested object literals, recursively check for excess properties
-                    let nested_target = self.nested_property_target_type(
-                        effective_target,
-                        source_prop.name,
-                        target_prop.type_id,
-                    );
-                    self.check_nested_object_literal_excess_properties(
-                        source_prop.name,
-                        Some(nested_target),
-                        idx,
-                    );
+                } else {
+                    // Property exists in target — check nested object literals.
+                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
+                    if let Some(target_prop) = target_prop {
+                        let nested_target = self.nested_property_target_type(
+                            effective_target,
+                            source_prop.name,
+                            target_prop.type_id,
+                        );
+                        self.check_nested_object_literal_excess_properties(
+                            source_prop.name,
+                            Some(nested_target),
+                            idx,
+                        );
+                    }
                 }
             }
         }
@@ -579,131 +589,30 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Boolean query: does a fresh source have any excess properties relative to
-    /// the target?  Uses the canonical excess-property algorithm (union=any-member,
-    /// intersection=any-member-or-index) but does NOT emit diagnostics.
+    /// the target?
+    ///
+    /// Delegates to the canonical `classify_object_properties` boundary function
+    /// for the property existence check, then applies checker-local target
+    /// normalization (resolved target, pruned union members) before querying.
     ///
     /// Used by `should_skip_weak_union_error` to decide whether a weak-union
     /// mismatch should be suppressed.
     pub(crate) fn source_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::query_boundaries::assignability::classify_object_properties;
         use tsz_solver::relations::freshness;
 
         if !freshness::is_fresh_object_type(self.ctx.types, source) {
             return false;
         }
 
-        let Some(source_shape) = query::object_shape(self.ctx.types, source) else {
-            return false;
-        };
-
-        let source_props = source_shape.properties.as_slice();
-        if source_props.is_empty() {
-            return false;
-        }
-
+        // Apply checker-local target normalization before querying the boundary.
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
 
-        // Union targets: excess if not in ANY member
-        if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
-            let mut target_shapes = Vec::new();
-
-            for &member in &members {
-                let resolved_member = self.resolve_type_for_property_access(member);
-                let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
-                    if resolved_member == TypeId::OBJECT {
-                        return false;
-                    }
-                    if query::is_type_parameter_like(self.ctx.types, resolved_member) {
-                        continue;
-                    }
-                    continue;
-                };
-
-                if shape.properties.is_empty()
-                    || shape.string_index.is_some()
-                    || shape.number_index.is_some()
-                {
-                    return false;
-                }
-
-                if self.is_global_object_or_function_shape(&shape) {
-                    return false;
-                }
-
-                target_shapes.push(shape.clone());
-            }
-
-            if target_shapes.is_empty() {
-                return false;
-            }
-
-            return source_props.iter().any(|source_prop| {
-                !target_shapes.iter().any(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .any(|prop| prop.name == source_prop.name)
-                })
-            });
+        match classify_object_properties(self.ctx.types, source, resolved_target) {
+            Some(classification) => !classification.excess_properties.is_empty(),
+            None => false,
         }
-
-        // Intersection targets: excess if not in ANY member and no index sig
-        if let Some(members) = query::intersection_members(self.ctx.types, resolved_target) {
-            let mut target_shapes = Vec::new();
-            let mut has_index_signature = false;
-
-            for &member in members.iter() {
-                let resolved_member = self.resolve_type_for_property_access(member);
-                if query::is_type_parameter_like(self.ctx.types, resolved_member) {
-                    return false;
-                }
-                if tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
-                    return false;
-                }
-                if let Some(shape) = query::object_shape(self.ctx.types, resolved_member) {
-                    if shape.string_index.is_some() || shape.number_index.is_some() {
-                        has_index_signature = true;
-                    }
-                    target_shapes.push(shape.clone());
-                } else if resolved_member == TypeId::OBJECT {
-                    continue;
-                }
-            }
-
-            if target_shapes.is_empty() || has_index_signature {
-                return false;
-            }
-
-            return source_props.iter().any(|source_prop| {
-                !target_shapes.iter().any(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .any(|prop| prop.name == source_prop.name)
-                })
-            });
-        }
-
-        // Simple object target
-        if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
-            if target_shape.string_index.is_some()
-                || target_shape.number_index.is_some()
-                || target_shape.properties.is_empty()
-            {
-                return false;
-            }
-
-            if self.is_global_object_or_function_shape(&target_shape) {
-                return false;
-            }
-
-            let target_props = target_shape.properties.as_slice();
-            return source_props
-                .iter()
-                .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name));
-        }
-
-        false
     }
 
     /// For fresh object literals assigned to discriminated union targets, detect
@@ -973,47 +882,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Detect whether an object shape represents the global `Object` or `Function`
-    /// interface (or similar built-in prototypes).  These types have only inherited
-    /// method properties (toString, valueOf, constructor, bind, call, apply, …)
-    /// and should suppress excess property checking when they appear as union members.
+    /// interface (or similar built-in prototypes).
+    ///
+    /// Delegates to the canonical boundary function
+    /// `query_boundaries::assignability::is_global_object_or_function_shape`.
     fn is_global_object_or_function_shape(&self, shape: &tsz_solver::ObjectShape) -> bool {
-        // Object.prototype methods:
-        static OBJECT_PROTO: &[&str] = &[
-            "constructor",
-            "toString",
-            "toLocaleString",
-            "valueOf",
-            "hasOwnProperty",
-            "isPrototypeOf",
-            "propertyIsEnumerable",
-        ];
-        // Function.prototype methods (superset of Object):
-        static FUNCTION_PROTO: &[&str] = &[
-            "apply",
-            "call",
-            "bind",
-            "toString",
-            "length",
-            "arguments",
-            "caller",
-            "prototype",
-            "constructor",
-            "toLocaleString",
-            "valueOf",
-            "hasOwnProperty",
-            "isPrototypeOf",
-            "propertyIsEnumerable",
-            // Symbol-keyed members are ignored by name check
-        ];
-
-        if shape.properties.is_empty() {
-            return false;
-        }
-
-        shape.properties.iter().all(|prop| {
-            let name = self.ctx.types.resolve_atom_ref(prop.name);
-            OBJECT_PROTO.contains(&name.as_ref()) || FUNCTION_PROTO.contains(&name.as_ref())
-        })
+        crate::query_boundaries::assignability::is_global_object_or_function_shape_boundary(
+            self.ctx.types,
+            shape,
+        )
     }
 
     fn explicit_object_literal_property_names_for_spread(

@@ -9,6 +9,50 @@
 use tsz_common::interner::Atom;
 use tsz_solver::{SubtypeFailureReason, TypeId};
 
+// ---------------------------------------------------------------------------
+// PropertyClassification: structured property-level analysis for EPC/missing
+// ---------------------------------------------------------------------------
+
+/// Classification of a single property in an object compatibility check.
+#[derive(Debug, Clone)]
+pub(crate) enum PropertyStatus {
+    /// Property exists in both source and target with compatible types.
+    Compatible { name: Atom, target_type: TypeId },
+    /// Property exists in source but not in any target member (excess).
+    Excess { name: Atom },
+    /// Property exists in target but not in source (missing required).
+    Missing { name: Atom, target_type: TypeId },
+    /// Property exists in both but types are incompatible.
+    Incompatible {
+        name: Atom,
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+}
+
+/// Structured property-level classification of an object compatibility check.
+///
+/// This is the canonical boundary output for property-level analysis. The checker
+/// uses this to decide WHICH diagnostic to emit and WHERE, without re-implementing
+/// property existence/compatibility logic.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PropertyClassification {
+    /// Properties that exist in source but not in target (excess).
+    pub excess_properties: Vec<Atom>,
+    /// Properties that exist in target but not in source (missing required).
+    pub missing_properties: Vec<(Atom, TypeId)>,
+    /// Properties that exist in both but have incompatible types.
+    pub incompatible_properties: Vec<(Atom, TypeId, TypeId)>,
+    /// Whether the target has an index signature that accepts arbitrary keys.
+    pub target_has_index_signature: bool,
+    /// Whether the target is a type parameter (EPC should be skipped).
+    pub target_is_type_parameter: bool,
+    /// Whether the target is the global Object/Function interface (EPC skipped).
+    pub target_is_global_object_or_function: bool,
+    /// Whether the target is an empty object type `{}` (accepts anything).
+    pub target_is_empty_object: bool,
+}
+
 /// Checker-facing classification of a relation failure.
 ///
 /// Groups solver-level details into the categories the checker's diagnostic
