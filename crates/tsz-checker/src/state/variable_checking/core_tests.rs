@@ -658,6 +658,63 @@ console.log("test");
 }
 
 #[cfg(test)]
+mod fundule_ts2403_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn fundule_redecl_emits_ts2403() {
+        // When a function+namespace merge (fundule) is assigned to a var
+        // that was previously declared with just the function signature type,
+        // TS2403 should fire because `typeof Point` includes namespace exports
+        // that `() => { x: number; y: number }` does not have.
+        let source = r#"
+namespace B {
+    export function Point() {
+        return { x: 0, y: 0 };
+    }
+    export namespace Point {
+        export var Origin = { x: 0, y: 0 };
+    }
+}
+var fn2: () => { x: number; y: number };
+var fn2 = B.Point;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for fundule redecl (typeof Point != () => {{ ... }}): {ts2403:?}\nAll diags: {all_diags:?}"
+        );
+    }
+
+    #[test]
+    fn fundule_compatible_redecl_no_ts2403() {
+        // When the function type matches (no namespace exports), no TS2403.
+        let source = r#"
+function Point() {
+    return { x: 0, y: 0 };
+}
+var fn2: () => { x: number; y: number };
+var fn2 = Point;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for compatible function redecl: {ts2403:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod mapped_type_validation_tests {
     use crate::test_utils::check_source_diagnostics;
 

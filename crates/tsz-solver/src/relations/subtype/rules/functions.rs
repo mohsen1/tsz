@@ -1625,6 +1625,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // Check properties: a plain function has no user-defined properties,
+        // so if the target callable has non-optional properties (e.g., from a
+        // namespace merge), the function is NOT a subtype. This matches tsc's
+        // behavior where `typeof Point` (function + namespace exports) is not
+        // assignable to a bare function type.
+        let should_skip_prop = |name: crate::intern::Atom| {
+            let resolved = self.interner.resolve_atom(name);
+            resolved.starts_with('#')
+        };
+        let target_props: Vec<_> = t_callable
+            .properties
+            .iter()
+            .filter(|p| !should_skip_prop(p.name))
+            .cloned()
+            .collect();
+        if !target_props.is_empty() {
+            // The function type has no properties to match against the target's
+            // required properties. Delegate to check_object_subtype with an
+            // empty source shape to properly handle optional vs required props.
+            let source_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+            };
+            let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: target_props,
+                string_index: t_callable.string_index.clone(),
+                number_index: t_callable.number_index.clone(),
+                symbol: t_callable.symbol,
+            };
+            if !self
+                .check_object_subtype(&source_shape, None, None, &target_shape, None)
+                .is_true()
+            {
+                return SubtypeResult::False;
+            }
+        }
+
         SubtypeResult::True
     }
 
