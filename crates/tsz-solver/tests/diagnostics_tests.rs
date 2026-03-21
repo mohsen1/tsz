@@ -84,10 +84,7 @@ fn test_format_object_type_numeric_keys_sorted_first() {
     let obj = interner.object(vec![
         PropertyInfo::new(interner.intern_string("0"), TypeId::STRING),
         PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER),
-        PropertyInfo::new(
-            interner.intern_string("length"),
-            interner.literal_number(2.0),
-        ),
+        PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER),
     ]);
 
     assert_eq!(
@@ -106,10 +103,7 @@ fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
     // This simulates the case where all numeric keys get decl_order=1.
     let mut prop1 = PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER);
     let mut prop0 = PropertyInfo::new(interner.intern_string("0"), TypeId::STRING);
-    let mut prop_len = PropertyInfo::new(
-        interner.intern_string("length"),
-        interner.literal_number(2.0),
-    );
+    let mut prop_len = PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER);
     prop1.declaration_order = 1;
     prop0.declaration_order = 1;
     prop_len.declaration_order = 2;
@@ -564,8 +558,7 @@ fn test_optional_property_already_has_undefined_no_duplicate() {
 
 #[test]
 fn test_optional_function_param_shows_undefined() {
-    // tsc displays optional function params as `name?: T` without `| undefined`.
-    // The `?` already implies optionality.
+    // tsc displays optional function params WITH `| undefined` in diagnostic messages
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -594,14 +587,14 @@ fn test_optional_function_param_shows_undefined() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x: number, y?: number) => number",
-        "Optional params strip '| undefined' — '?' implies it"
+        formatted, "(x: number, y?: number | undefined) => number",
+        "Optional params include '| undefined' — matches tsc diagnostic display"
     );
 }
 
 #[test]
 fn test_optional_param_already_has_undefined_no_duplicate() {
-    // If the param type already includes undefined, strip it since `?` implies it.
+    // If the param type already includes undefined, display as-is (no duplicate)
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
 
@@ -623,8 +616,8 @@ fn test_optional_param_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x?: number) => void",
-        "Optional param strips '| undefined' — '?' implies it"
+        formatted, "(x?: number | undefined) => void",
+        "Optional param with number | undefined keeps display as-is"
     );
 }
 
