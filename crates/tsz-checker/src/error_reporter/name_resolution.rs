@@ -524,14 +524,16 @@ impl<'a> CheckerState<'a> {
         // emitted covering this identifier's position, suppress TS2304/TS2552.
         // This catches cases where get_extended parent info is unavailable.
         if computed_ctx.is_none()
-            && let Some(node) = self.ctx.arena.get(idx) {
-                let has_1164 = self.ctx.diagnostics.iter().any(|d| {
+            && let Some(node) = self.ctx.arena.get(idx)
+        {
+            let has_1164 =
+                self.ctx.diagnostics.iter().any(|d| {
                     d.code == 1164 && d.start <= node.pos && d.start + d.length >= node.pos
                 });
-                if has_1164 {
-                    return;
-                }
+            if has_1164 {
+                return;
             }
+        }
         let is_in_computed_property = computed_ctx == Some(true);
         // When there are parse errors, modifier keywords appearing as identifiers
         // are parser-recovery artifacts. Suppress TS2304 for these to avoid cascades.

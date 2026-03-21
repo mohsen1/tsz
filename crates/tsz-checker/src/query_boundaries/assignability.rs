@@ -547,9 +547,10 @@ fn suppress_excess_property_failure_if_needed(
     if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
         && members.iter().any(|member| {
             tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
-        }) {
-            return None;
-        }
+        })
+    {
+        return None;
+    }
 
     failure
 }
