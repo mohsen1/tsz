@@ -402,13 +402,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let in_static_member = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|class_info| class_info.in_static_member)
-            || self.is_in_static_class_member_context(type_idx);
-        if !in_static_member {
+        // Use the AST tree-walk to determine static context, not the
+        // `in_static_member` flag. The flag can be stale when lazy type
+        // resolution for instance properties is triggered from a static
+        // method context.
+        if !self.is_in_static_class_member_context(type_idx) {
             return;
         }
 
@@ -611,8 +609,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !enclosing_class.in_static_member && !self.is_in_static_class_member_context(error_node)
-        {
+        // Use the AST tree-walk, not the in_static_member flag, to avoid
+        // false TS2302 when lazy resolution is triggered from static context.
+        if !self.is_in_static_class_member_context(error_node) {
             return;
         }
 
