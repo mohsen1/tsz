@@ -170,9 +170,21 @@ impl<'a> CheckerState<'a> {
         };
 
         if names_share_scope {
-            // The var hoists to the same scope as the let/const — emit TS2451
-            // on both the var declaration and the block-scoped declaration,
-            // matching tsc's behavior for cases like:
+            // When the var and the block-scoped declaration are at the SAME
+            // direct scope level (e.g., `let x1; var x1;` both in the function
+            // body), `check_duplicate_identifiers` handles the conflict. Skip
+            // emitting TS2451 here to avoid duplicate diagnostics.
+            //
+            // Only emit TS2451 when the var is in a NESTED block (different
+            // scope from the let), since that case isn't handled by the
+            // duplicate identifiers check.
+            if found_scope_id == start_scope_id {
+                return;
+            }
+
+            // The var hoists from a nested block to the same scope as the
+            // let/const — emit TS2451 on both declarations, matching tsc's
+            // behavior for cases like:
             //   function f() { let x; { var x; } }
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let msg = crate::diagnostics::format_message(

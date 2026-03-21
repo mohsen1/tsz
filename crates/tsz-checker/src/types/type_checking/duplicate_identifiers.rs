@@ -1193,25 +1193,106 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Determine TS2451 vs TS2300:
-                // tsc uses TS2451 ("Cannot redeclare block-scoped variable")
-                // whenever ANY declaration in the conflict set is a block-scoped
-                // variable (let/const). This applies uniformly regardless of
-                // whether the conflict is cross-file or single-file, and
-                // regardless of whether conflicting declarations are at the
-                // same scope level. Only when NO block-scoped variable is
-                // involved does tsc use TS2300 ("Duplicate identifier").
                 //
-                // For non-block-scoped conflicts that span different scopes
-                // (e.g., var hoisted from a child block to conflict with a
-                // function at the parent level), we fall back to scope-based
-                // analysis to choose TS2451 vs TS2300.
+                // In tsc's binder (declareSymbol, line 814), the error code is
+                // decided by checking the EXISTING symbol's flags when a conflict
+                // is detected. Since the binder processes declarations in source
+                // order, the first declaration creates the symbol:
+                //   - If existing symbol has BlockScopedVariable → TS2451
+                //   - If existing symbol does NOT → TS2300
+                //
+                // When there are 3+ declarations (e.g., `let e0; var e0; function
+                // e0()`), after the second declaration conflicts, tsc creates a
+                // new symbol. The third declaration then conflicts with the NEW
+                // symbol (which has FunctionScopedVariable, not BlockScopedVariable),
+                // producing TS2300 diagnostics that overwrite the earlier TS2451
+                // at the same location.
+                //
+                // Our checker-based approach approximates this by checking:
+                // 1. If there are non-block-scoped declarations at the same
+                //    syntactic scope level as block-scoped ones:
+                //    a. 2+ non-block-scoped at same scope → TS2300
+                //    b. 1 non-block-scoped appears before first block-scoped → TS2300
+                //    c. Otherwise → TS2451
+                // 2. If all conflict declarations are block-scoped → TS2451
+                // 3. If no block-scoped → scope-based analysis
                 let has_block_scoped_conflict =
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
                 let use_ts2451 = if has_block_scoped_conflict {
-                    true
+                    if has_remote_declaration {
+                        // Cross-file: if either is block-scoped, use TS2451
+                        true
+                    } else {
+                        // Single-file: check if non-block-scoped declarations
+                        // are at the same syntactic scope as block-scoped ones.
+                        // Get the enclosing block scope for each conflicting
+                        // declaration WITHOUT walking up for var hoisting.
+                        let local_conflicts: Vec<(NodeIndex, u32)> = declarations
+                            .iter()
+                            .filter(|(decl_idx, _, is_local, _, _)| {
+                                *is_local && conflicts.contains(decl_idx)
+                            })
+                            .map(|(decl_idx, flags, _, _, _)| (*decl_idx, *flags))
+                            .collect();
+
+                        // Get the block scope of each declaration
+                        let get_direct_scope =
+                            |decl_idx: NodeIndex| -> Option<tsz_binder::ScopeId> {
+                                let parent_idx = self
+                                    .ctx
+                                    .arena
+                                    .get_extended(decl_idx)
+                                    .map(|ext| ext.parent)
+                                    .unwrap_or(decl_idx);
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, parent_idx)
+                            };
+
+                        // Find block-scoped declarations and their scopes
+                        let first_block_scoped = local_conflicts
+                            .iter()
+                            .find(|(_, flags)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0);
+
+                        if let Some(&(first_bs_idx, _)) = first_block_scoped {
+                            let bs_scope = get_direct_scope(first_bs_idx);
+
+                            // Count non-block-scoped declarations at the SAME
+                            // direct scope (not hoisted from a nested block)
+                            let non_bs_same_scope: Vec<NodeIndex> = local_conflicts
+                                .iter()
+                                .filter(|(_, flags)| {
+                                    (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                                })
+                                .filter(|(idx, _)| get_direct_scope(*idx) == bs_scope)
+                                .map(|(idx, _)| *idx)
+                                .collect();
+
+                            if non_bs_same_scope.len() >= 2 {
+                                // 2+ non-block-scoped at same scope → TS2300
+                                false
+                            } else if non_bs_same_scope.len() == 1 {
+                                // 1 non-block-scoped: check source order
+                                // If it appears before the first block-scoped → TS2300
+                                let nbs_idx = non_bs_same_scope[0];
+                                if nbs_idx.0 < first_bs_idx.0 {
+                                    false // TS2300
+                                } else {
+                                    true // TS2451
+                                }
+                            } else {
+                                // No non-block-scoped at same scope → TS2451
+                                true
+                            }
+                        } else {
+                            // No block-scoped found (shouldn't happen given
+                            // has_block_scoped_conflict), fall back to TS2451
+                            true
+                        }
+                    }
                 } else if has_remote_declaration {
                     false
                 } else {
