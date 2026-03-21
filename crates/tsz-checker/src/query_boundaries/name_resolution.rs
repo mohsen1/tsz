@@ -11,7 +11,7 @@
 //! Diagnostic families covered: TS2304, TS2552, TS2694, TS2708, TS2305, TS2724.
 
 use tsz_binder::SymbolId;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 // ---------------------------------------------------------------------------
 // Request model
@@ -457,9 +457,28 @@ impl<'a> CheckerState<'a> {
         request: &NameResolutionRequest<'_>,
         failure: &ResolutionFailure,
     ) {
+        // Suppress TS2304/TS2552 entirely for identifiers inside enum computed
+        // property names. tsc only emits TS1164 for these and doesn't resolve
+        // the expressions.
+        if self.is_in_enum_computed_property(request.idx) {
+            return;
+        }
+
+        // Suppress TS2304/TS2552 for expressions inside `export default` in a
+        // namespace. TS1319 is the correct diagnostic; name resolution produces
+        // false positives in this context.
+        if self.is_in_namespace_export_default(request.idx) {
+            return;
+        }
+
+        // Suppress spelling suggestions (TS2552 → TS2304) in files with parse
+        // errors. tsc keeps only primary diagnostics in these files and doesn't
+        // offer "did you mean" suggestions.
+        let suppress_suggestions = self.has_syntax_parse_errors();
+
         match &failure.kind {
             ResolutionFailureKind::NotFound => {
-                if failure.has_suggestions() {
+                if failure.has_suggestions() && !suppress_suggestions {
                     self.error_cannot_find_name_with_suggestions(
                         request.name,
                         &failure.suggestions,
@@ -522,6 +541,84 @@ impl<'a> CheckerState<'a> {
             }
             NameLookupKind::ExportedMember => {}
         }
+    }
+
+    /// Check if an identifier is inside an `export default` expression within
+    /// a namespace/module declaration. tsc emits TS1319 for `export default`
+    /// in a namespace but does not try to resolve the exported expression,
+    /// so TS2304/TS2552 would be a false positive.
+    fn is_in_namespace_export_default(&self, idx: NodeIndex) -> bool {
+        let mut cur = idx;
+        for _ in 0..8 {
+            let node = match self.ctx.arena.get(cur) {
+                Some(n) => n,
+                None => return false,
+            };
+            // Heritage clauses should always emit TS2304 — stop walking.
+            if node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                return false;
+            }
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                || node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            {
+                // Only suppress for `export default`, not `export =`.
+                let is_export_equals = node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    && self
+                        .ctx
+                        .arena
+                        .get_export_assignment(node)
+                        .is_some_and(|data| data.is_export_equals);
+                if is_export_equals {
+                    return false;
+                }
+                // Check if this export is inside a namespace/module declaration.
+                let mut ns = cur;
+                for _ in 0..8 {
+                    if let Some(nn) = self.ctx.arena.get(ns)
+                        && nn.kind == syntax_kind_ext::MODULE_DECLARATION
+                    {
+                        return true;
+                    }
+                    match self.ctx.arena.get_extended(ns) {
+                        Some(e) if e.parent.is_some() => ns = e.parent,
+                        _ => return false,
+                    }
+                }
+                return false;
+            }
+            match self.ctx.arena.get_extended(cur) {
+                Some(e) if e.parent.is_some() => cur = e.parent,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Check if an identifier is inside a computed property name within an
+    /// enum member. tsc suppresses TS2304/TS2552 in this context because
+    /// computed property names are not valid in enums (TS1164 is emitted
+    /// instead by the parser).
+    fn is_in_enum_computed_property(&self, idx: NodeIndex) -> bool {
+        let ext = match self.ctx.arena.get_extended(idx) {
+            Some(ext) => ext,
+            None => return false,
+        };
+        let parent = match self.ctx.arena.get(ext.parent) {
+            Some(p) => p,
+            None => return false,
+        };
+        if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let gp_ext = match self.ctx.arena.get_extended(ext.parent) {
+            Some(gp) => gp,
+            None => return false,
+        };
+        let gp = match self.ctx.arena.get(gp_ext.parent) {
+            Some(gp) => gp,
+            None => return false,
+        };
+        gp.kind == syntax_kind_ext::ENUM_MEMBER
     }
 
     /// Convenience: resolve a name and report any failure in one call.
