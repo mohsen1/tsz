@@ -1,7 +1,6 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::checkers::generic as query;
-use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -449,8 +448,8 @@ impl<'a> CheckerState<'a> {
         // Get the type parameters from the callee type. For callables with overloads,
         // prefer a signature whose type parameter arity matches the provided type args.
         // Delegates to solver query which handles Function/Callable/overload matching.
-        let Some(type_params) = tsz_solver::type_queries::data::extract_type_params_for_call(
-            self.ctx.types,
+        let Some(type_params) = query::extract_type_params_for_call(
+            self.ctx.types.as_type_database(),
             callee_type,
             got,
         ) else {
@@ -742,7 +741,7 @@ impl<'a> CheckerState<'a> {
                 // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }`
                 // where `BoxOfFoo<T extends Foo>` — `this` satisfies `T extends Foo`
                 // because `this` in `Bar` is bounded by `Bar` which extends `Foo`.
-                if tsz_solver::is_this_type(self.ctx.types, type_arg) {
+                if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
 
@@ -764,7 +763,7 @@ impl<'a> CheckerState<'a> {
                 // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }` where
                 // `BoxOfFoo<T extends Foo>` — `this` in Bar satisfies `Foo` but we can't
                 // prove it structurally at definition time.
-                if tsz_solver::visitor::is_this_type(self.ctx.types.as_type_database(), type_arg) {
+                if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
 
@@ -806,10 +805,7 @@ impl<'a> CheckerState<'a> {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
                                 let db = self.ctx.types.as_type_database();
                                 let constraint_is_callable =
-                                    tsz_solver::type_queries::is_callable_type(
-                                        db,
-                                        constraint_resolved,
-                                    );
+                                    query::is_callable_type(db, constraint_resolved);
                                 if !constraint_is_callable {
                                     continue;
                                 }
@@ -817,8 +813,7 @@ impl<'a> CheckerState<'a> {
                                 // If base still has type params and is not callable, emit TS2344.
                                 // Also try evaluating the base (e.g., mapped type indexed access
                                 // like `FunctionsObj<T>[keyof T]` → `() => unknown`).
-                                let base_is_callable =
-                                    tsz_solver::type_queries::is_callable_type(db, base);
+                                let base_is_callable = query::is_callable_type(db, base);
                                 if base_is_callable {
                                     // Base is callable even with type params — satisfied.
                                     continue;
@@ -827,16 +822,14 @@ impl<'a> CheckerState<'a> {
                                 // types may resolve to a callable template type.
                                 let base_evaluated = self.evaluate_type_for_assignability(base);
                                 if base_evaluated != base {
-                                    let base_eval_callable =
-                                        tsz_solver::type_queries::is_callable_type(
-                                            self.ctx.types.as_type_database(),
-                                            base_evaluated,
-                                        )
-                                            || crate::query_boundaries::common::callable_shape_for_type(
-                                                self.ctx.types.as_type_database(),
-                                                base_evaluated,
-                                            )
-                                            .is_some();
+                                    let base_eval_callable = query::is_callable_type(
+                                        self.ctx.types.as_type_database(),
+                                        base_evaluated,
+                                    ) || query::callable_shape_for_type(
+                                        self.ctx.types.as_type_database(),
+                                        base_evaluated,
+                                    )
+                                    .is_some();
                                     if base_eval_callable {
                                         continue;
                                     }
@@ -913,7 +906,7 @@ impl<'a> CheckerState<'a> {
                             // By contrast, `ReturnType<DataFetchFns['Boat'][F]>` → no TS2344
                             // because 'Boat' is concrete and all its values are callable.
                             let constraint_is_callable =
-                                tsz_solver::type_queries::is_callable_type(db, inst_constraint)
+                                query::is_callable_type(db, inst_constraint)
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
                                 && self.is_generic_indexed_access(type_arg)
@@ -935,7 +928,7 @@ impl<'a> CheckerState<'a> {
                                 || self.satisfies_array_like_constraint(base, inst_constraint);
                             if !is_satisfied {
                                 is_satisfied = self.is_function_constraint(original_constraint)
-                                    && tsz_solver::type_queries::is_callable_type(db, base);
+                                    && query::is_callable_type(db, base);
                             }
                             if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                                 if self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -1007,20 +1000,13 @@ impl<'a> CheckerState<'a> {
                                 let constraint_evaluated =
                                     self.evaluate_type_for_assignability(constraint_resolved);
                                 let constraint_is_callable =
-                                    tsz_solver::type_queries::is_callable_type(
-                                        db,
-                                        constraint_resolved,
-                                    ) || tsz_solver::type_queries::is_callable_type(
-                                        db,
-                                        constraint_evaluated,
-                                    ) || self.is_function_constraint(constraint)
+                                    query::is_callable_type(db, constraint_resolved)
+                                        || query::is_callable_type(db, constraint_evaluated)
+                                        || self.is_function_constraint(constraint)
                                         || self.is_function_constraint(constraint_resolved);
                                 if constraint_is_callable
-                                    && !tsz_solver::type_queries::is_callable_type(db, type_arg)
-                                    && crate::query_boundaries::common::callable_shape_for_type(
-                                        db, type_arg,
-                                    )
-                                    .is_none()
+                                    && !query::is_callable_type(db, type_arg)
+                                    && query::callable_shape_for_type(db, type_arg).is_none()
                                     && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                     && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                         arg_idx,
@@ -1125,12 +1111,7 @@ impl<'a> CheckerState<'a> {
                         // params often appear in conditional types where the true branch
                         // narrows to a specific union member. Checking the full union
                         // against the narrowed constraint would produce false positives.
-                        if tsz_solver::type_queries::get_union_members(
-                            self.ctx.types.as_type_database(),
-                            base,
-                        )
-                        .is_some()
-                        {
+                        if query::has_union_members(self.ctx.types.as_type_database(), base) {
                             continue;
                         }
                         if query::contains_type_parameters(self.ctx.types, base) {
@@ -1251,7 +1232,7 @@ impl<'a> CheckerState<'a> {
                     let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
                     let db = self.ctx.types.as_type_database();
                     is_satisfied = self.is_function_constraint(original_constraint)
-                        && tsz_solver::type_queries::is_callable_type(db, type_arg);
+                        && query::is_callable_type(db, type_arg);
                 }
                 if !is_satisfied {
                     is_satisfied =
@@ -1285,7 +1266,7 @@ impl<'a> CheckerState<'a> {
                         Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
                     ) {
                         // Primitives satisfy weak type constraints — skip TS2559
-                        if !tsz_solver::is_primitive_type(self.ctx.types, type_arg) {
+                        if !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg) {
                             self.error_no_common_properties_constraint(
                                 type_arg,
                                 instantiated_constraint,
@@ -1359,78 +1340,32 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::IndexKeyKind;
-
-        fn key_matches_string_index(
-            db: &dyn tsz_solver::TypeDatabase,
-            key_type: TypeId,
-            kind: &IndexKeyKind,
-        ) -> bool {
-            match kind {
-                IndexKeyKind::String
-                | IndexKeyKind::Number
-                | IndexKeyKind::StringLiteral
-                | IndexKeyKind::NumberLiteral
-                | IndexKeyKind::NumericStringLike
-                | IndexKeyKind::TemplateLiteralString => true,
-                IndexKeyKind::Union(members) => members.iter().all(|&member| {
-                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
-                    key_matches_string_index(db, member, &member_kind)
-                }),
-                IndexKeyKind::Other => {
-                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
-                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
-                }
-            }
-        }
-
-        fn key_matches_number_index(
-            db: &dyn tsz_solver::TypeDatabase,
-            key_type: TypeId,
-            kind: &IndexKeyKind,
-        ) -> bool {
-            match kind {
-                IndexKeyKind::Number
-                | IndexKeyKind::NumberLiteral
-                | IndexKeyKind::NumericStringLike => true,
-                IndexKeyKind::Union(members) => members.iter().all(|&member| {
-                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
-                    key_matches_number_index(db, member, &member_kind)
-                }),
-                IndexKeyKind::Other => {
-                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
-                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
-                }
-                _ => false,
-            }
-        }
-
         let db = self.ctx.types.as_type_database();
         let object_type = self.evaluate_type_for_assignability(object_type);
         let key_type = self.evaluate_type_for_assignability(index_type);
-        let key_kind = tsz_solver::type_queries::classify_index_key(db, key_type);
+        let key_kind = query::classify_index_key(db, key_type);
 
-        if let Some(shape) = common_query::object_shape_for_type(db, object_type) {
+        if let Some(shape) = query::get_object_shape(db, object_type) {
             if let Some(index) = &shape.string_index
-                && key_matches_string_index(db, key_type, &key_kind)
+                && query::key_matches_string_index(db, key_type, &key_kind)
             {
                 return Some(index.value_type);
             }
             if let Some(index) = &shape.number_index
-                && key_matches_number_index(db, key_type, &key_kind)
+                && query::key_matches_number_index(db, key_type, &key_kind)
             {
                 return Some(index.value_type);
             }
         }
 
-        if let Some(shape) = common_query::callable_shape_for_type(db, object_type) {
+        if let Some(shape) = query::callable_shape_for_type(db, object_type) {
             if let Some(index) = &shape.string_index
-                && key_matches_string_index(db, key_type, &key_kind)
+                && query::key_matches_string_index(db, key_type, &key_kind)
             {
                 return Some(index.value_type);
             }
             if let Some(index) = &shape.number_index
-                && key_matches_number_index(db, key_type, &key_kind)
+                && query::key_matches_number_index(db, key_type, &key_kind)
             {
                 return Some(index.value_type);
             }
@@ -1444,12 +1379,9 @@ impl<'a> CheckerState<'a> {
     /// Checks via Lazy(DefId) against the interner's registered boxed `DefIds`,
     /// or by direct TypeId match against the interner's registered boxed type.
     fn is_function_constraint(&self, type_id: TypeId) -> bool {
-        use tsz_solver::visitor::lazy_def_id;
         let db = self.ctx.types.as_type_database();
         // Direct match against interner's boxed Function TypeId
-        if let Some(boxed_id) = db.get_boxed_type(tsz_solver::IntrinsicKind::Function)
-            && type_id == boxed_id
-        {
+        if query::is_boxed_function_type(db, type_id) {
             return true;
         }
         // Cross-arena DefId equality alone is not strong enough here: imported
@@ -1461,12 +1393,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         // Check if the type is Lazy(DefId) with a known Function boxed DefId
-        if let Some(def_id) = lazy_def_id(db, type_id)
-            && db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Function)
-        {
-            return true;
-        }
-        false
+        query::is_boxed_function_def(db, type_id)
     }
 
     /// Check if a type is a "generic indexed access" — an `IndexAccess(A, B)` where
@@ -1522,21 +1449,16 @@ impl<'a> CheckerState<'a> {
         type_arg: TypeId,
         constraint: TypeId,
     ) -> bool {
-        use tsz_solver::visitor::{application_id, lazy_def_id};
         let db = self.ctx.types.as_type_database();
 
         // Get the Application base DefId from the constraint.
         // e.g., for AA<BB>, get the DefId of AA.
-        let constraint_base_def = application_id(db, constraint).and_then(|app_id| {
-            let app = db.type_application(app_id);
-            lazy_def_id(db, app.base)
-        });
-        let Some(constraint_base_def) = constraint_base_def else {
+        let Some(constraint_base_def) = query::application_base_def_id(db, constraint) else {
             return false;
         };
 
         // Get the type_arg's DefId (it must be an interface/class, i.e., Lazy type).
-        let type_arg_def = lazy_def_id(db, type_arg);
+        let type_arg_def = query::lazy_def_id(db, type_arg);
         let Some(type_arg_def) = type_arg_def else {
             // When the type_arg is an Application (e.g., AA<BB>) with the same base
             // as the constraint (e.g., AA<AA<BB>>), AND the inner type arguments of
@@ -1545,18 +1467,15 @@ impl<'a> CheckerState<'a> {
             // like `T extends AA<T>` where `interface BB extends AA<AA<BB>>` — checking
             // `AA<BB>` against `AA<AA<BB>>` leads to infinite nesting that tsc resolves
             // via deeply-nested type detection.
-            let type_arg_app_info = application_id(db, type_arg).map(|app_id| {
-                let app = db.type_application(app_id);
-                (lazy_def_id(db, app.base), app.args.clone())
-            });
-            if let Some((Some(type_arg_base_def), ref type_arg_args)) = type_arg_app_info
+            if let Some((Some(type_arg_base_def), ref type_arg_args)) =
+                query::application_base_def_and_args(db, type_arg)
                 && type_arg_base_def == constraint_base_def
             {
                 // Same base type (e.g., both are AA<...>).
                 // Check if any inner type argument extends the constraint base,
                 // which would create the circular recursion pattern.
                 for &inner_arg in type_arg_args.iter() {
-                    if let Some(inner_def) = lazy_def_id(db, inner_arg) {
+                    if let Some(inner_def) = query::lazy_def_id(db, inner_arg) {
                         let inner_sym = self.ctx.def_to_symbol_id(inner_def);
                         let constraint_sym = self.ctx.def_to_symbol_id(constraint_base_def);
                         if let (Some(inner_sym_id), Some(constraint_sym_id)) =
@@ -1644,9 +1563,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_structural_array_surface(&self, source: TypeId, target: TypeId) -> bool {
-        use tsz_solver::type_queries::{self as query, ArrayLikeKind};
+        let db = self.ctx.types.as_type_database();
 
-        let Some(shape) = query::get_object_shape(self.ctx.types, source) else {
+        let Some(shape) = query::get_object_shape(db, source) else {
             return false;
         };
         if shape.number_index.is_none() {
@@ -1654,15 +1573,15 @@ impl<'a> CheckerState<'a> {
         }
 
         for name in ["length", "concat", "slice"] {
-            if query::find_property_in_object_by_str(self.ctx.types, source, name).is_none() {
+            if !query::has_property_by_name(db, source, name) {
                 return false;
             }
         }
 
         if !matches!(
-            query::classify_array_like(self.ctx.types, target),
-            ArrayLikeKind::Readonly(_)
-        ) && query::find_property_in_object_by_str(self.ctx.types, source, "push").is_none()
+            query::classify_array_like(db, target),
+            query::ArrayLikeKind::Readonly(_)
+        ) && !query::has_property_by_name(db, source, "push")
         {
             return false;
         }
