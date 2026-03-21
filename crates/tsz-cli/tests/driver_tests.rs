@@ -157,7 +157,6 @@ fn compile_with_source_map_emits_map_outputs() {
 }
 
 #[test]
-#[ignore = "private static accessor behavior changed after merge"]
 fn private_static_accessor_on_derived_constructor_reports_ts2339_in_project_mode() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -314,7 +313,6 @@ const q: PromiseLike<number> = p;
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn compile_constructor_parameters_rest_contextually_types_object_literal_methods() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

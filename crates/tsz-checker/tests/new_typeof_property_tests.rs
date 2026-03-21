@@ -150,7 +150,6 @@ function e(x: I<"A" | "B">) {
 /// `typeof x.p` outside of any narrowing block should still resolve to
 /// the full declared type (no spurious narrowing).
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_typeof_qualified_name_no_narrowing_outside_guard() {
     let codes = get_error_codes(
         r#"
@@ -171,7 +170,6 @@ function e(x: I<"A" | "B">) {
 
 /// `typeof c` in a type alias inside a narrowed branch should see the narrowed type.
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_typeof_identifier_narrowed_by_typeof_guard_in_type_alias() {
     let codes = get_error_codes(
         r#"
@@ -190,7 +188,6 @@ if (typeof c === "string") {
 
 /// `typeof c` in a variable annotation inside a narrowed branch should also see the narrowed type.
 #[test]
-#[ignore = "typeof type query resolution changed after merge"]
 fn test_typeof_identifier_narrowed_by_typeof_guard_in_variable_annotation() {
     let codes = get_error_codes(
         r#"

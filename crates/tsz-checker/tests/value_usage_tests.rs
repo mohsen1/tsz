@@ -1058,7 +1058,6 @@ var r = undefined + 1;
 }
 
 #[test]
-#[ignore = "TS18048 emission changed after merge"]
 fn test_variable_with_undefined_type_in_binary_op_emits_ts18048() {
     // When a variable whose type is `undefined` is used in a binary operation,
     // tsc emits TS18048 "'x' is possibly 'undefined'." (not TS18050).
