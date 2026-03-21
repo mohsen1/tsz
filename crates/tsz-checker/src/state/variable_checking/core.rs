@@ -798,6 +798,7 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.diagnostics.retain(|diag| {
                             diag.code
                                 == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                                || diag.code == 2454
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });

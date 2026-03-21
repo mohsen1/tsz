@@ -88,6 +88,9 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
             || diag.code == diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE
+            // TS2454: Variable used before assignment — definite assignment errors
+            // are independent of call resolution speculation and must survive rollback.
+            || diag.code == 2454
     }
 
     pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(
