@@ -9,9 +9,9 @@
 //! - TS2823: Import attributes module option check (feature gate)
 //! - Feature gate queries (import attributes, using, etc.)
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -20,7 +20,7 @@ use tsz_solver::TypeInterner;
 fn check_with_options(
     source: &str,
     options: CheckerOptions,
-) -> Vec<crate::diagnostics::Diagnostic> {
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -41,7 +41,7 @@ fn check_with_options(
 }
 
 /// Helper: check source without lib files.
-fn check_no_lib(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     check_with_options(source, CheckerOptions::default())
 }
 
@@ -65,7 +65,7 @@ fn test_node_global_process_classified_correctly() {
     // Full checker integration (TS2591 emission) depends on the identifier reaching
     // the name resolution error path, which requires the identifier to be used
     // in a value expression context that doesn't short-circuit.
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
     let opts = CheckerOptions::default();
     let caps = EnvironmentCapabilities::from_options(&opts, true);
     assert_eq!(
@@ -218,7 +218,7 @@ declare function foo(): void;
 
 #[test]
 fn test_capabilities_matrix_esnext_module() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
 
     let opts = CheckerOptions {
         module: ModuleKind::ESNext,
@@ -239,7 +239,7 @@ fn test_capabilities_matrix_esnext_module() {
 
 #[test]
 fn test_capabilities_matrix_commonjs_module() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
 
     let opts = CheckerOptions {
         module: ModuleKind::CommonJS,
@@ -260,7 +260,7 @@ fn test_capabilities_matrix_commonjs_module() {
 
 #[test]
 fn test_capabilities_matrix_none_module_no_json() {
-    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
 
     let opts = CheckerOptions {
         module: ModuleKind::None,
@@ -277,7 +277,7 @@ fn test_capabilities_matrix_none_module_no_json() {
 
 #[test]
 fn test_capabilities_classify_global_names() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
 
     let opts = CheckerOptions::default();
     let caps = EnvironmentCapabilities::from_options(&opts, true);
@@ -323,7 +323,7 @@ fn test_capabilities_classify_global_names() {
 
 #[test]
 fn test_capabilities_has_lib_updates() {
-    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
 
     let opts = CheckerOptions::default();
     let mut caps = EnvironmentCapabilities::from_options(&opts, false);
@@ -339,8 +339,8 @@ fn test_capabilities_has_lib_updates() {
 
 #[test]
 fn test_capability_diagnostic_disposable_prerequisite() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // Without lib, using requires Disposable
     let opts = CheckerOptions::default();
@@ -366,8 +366,8 @@ fn test_capability_diagnostic_disposable_prerequisite() {
 
 #[test]
 fn test_capability_diagnostic_async_disposable_prerequisite() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // Without lib, await using requires AsyncDisposable
     let opts = CheckerOptions::default();
@@ -385,8 +385,8 @@ fn test_capability_diagnostic_async_disposable_prerequisite() {
 
 #[test]
 fn test_capability_diagnostic_node_global_availability() {
-    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     let caps = EnvironmentCapabilities::from_options(&CheckerOptions::default(), true);
 
@@ -403,8 +403,8 @@ fn test_capability_diagnostic_node_global_availability() {
 
 #[test]
 fn test_capability_diagnostic_import_attributes_check() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // CommonJS → TS2823
     let opts = CheckerOptions {
@@ -447,8 +447,8 @@ fn test_capability_diagnostic_import_attributes_check() {
 
 #[test]
 fn test_capability_diagnostic_top_level_await_using() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // CommonJS + ESNext target → TS2854 (wrong module)
     let opts = CheckerOptions {
@@ -489,8 +489,8 @@ fn test_capability_diagnostic_top_level_await_using() {
 
 #[test]
 fn test_capability_diagnostic_config_compatibility() {
-    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // resolveJsonModule + System → TS5071
     let opts = CheckerOptions {
@@ -528,8 +528,8 @@ fn test_capability_diagnostic_config_compatibility() {
 
 #[test]
 fn test_capability_diagnostic_generator_prerequisite() {
-    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // Without lib, generators require IterableIterator
     let opts = CheckerOptions::default();
@@ -556,7 +556,7 @@ fn test_capability_diagnostic_generator_prerequisite() {
 
 #[test]
 fn test_capability_diagnostic_code_mapping() {
-    use crate::query_boundaries::environment::CapabilityDiagnostic;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
     // Verify code() returns the correct diagnostic code for each variant
     assert_eq!(
@@ -621,4 +621,214 @@ fn test_capability_diagnostic_code_mapping() {
         CapabilityDiagnostic::ResolveJsonModuleIncompatible.code(),
         5071
     );
+    assert_eq!(
+        CapabilityDiagnostic::DeprecatedOption {
+            name: "baseUrl".to_string()
+        }
+        .code(),
+        5101
+    );
+    assert_eq!(
+        CapabilityDiagnostic::DeprecatedOptionValue {
+            name: "target".to_string(),
+            value: "ES5".to_string(),
+        }
+        .code(),
+        5107
+    );
+}
+
+// =============================================================================
+// TS2854: Top-level await using prerequisites (integration tests)
+// =============================================================================
+
+#[test]
+fn test_top_level_await_using_emits_ts2854_with_commonjs() {
+    let diags = check_with_options(
+        "await using x = getResource();",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2854: Vec<_> = diags.iter().filter(|d| d.code == 2854).collect();
+    assert!(
+        !ts2854.is_empty(),
+        "Expected TS2854 for top-level await using with CommonJS module, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_using_no_ts2854_with_esnext() {
+    let diags = check_with_options(
+        "await using x = getResource();",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2854: Vec<_> = diags.iter().filter(|d| d.code == 2854).collect();
+    assert!(
+        ts2854.is_empty(),
+        "Expected NO TS2854 for top-level await using with ESNext, got: {ts2854:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_using_emits_ts2854_with_es5_target() {
+    let diags = check_with_options(
+        "await using x = getResource();",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES5,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2854: Vec<_> = diags.iter().filter(|d| d.code == 2854).collect();
+    assert!(
+        !ts2854.is_empty(),
+        "Expected TS2854 for top-level await using with ES5 target, got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// TS5071: resolveJsonModule incompatibility (boundary tests)
+// =============================================================================
+
+#[test]
+fn test_resolve_json_module_incompatible_with_none() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::None,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    let diags = caps.check_config_compatibility();
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        diags[0],
+        CapabilityDiagnostic::ResolveJsonModuleIncompatible
+    );
+}
+
+#[test]
+fn test_resolve_json_module_compatible_with_esnext() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::ESNext,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert!(caps.check_config_compatibility().is_empty());
+}
+
+#[test]
+fn test_resolve_json_module_no_diag_when_not_set() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::None,
+        resolve_json_module: false,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert!(caps.check_config_compatibility().is_empty());
+}
+
+// =============================================================================
+// TS5101/TS5107: Deprecation diagnostic awareness
+// =============================================================================
+
+#[test]
+fn test_deprecation_state_skip_lib_resolution() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions::default();
+    let mut caps = EnvironmentCapabilities::from_options(&opts, true);
+
+    // Default: no deprecation diagnostics
+    assert!(!caps.should_skip_lib_type_resolution());
+
+    // After setting deprecation state
+    caps.has_deprecation_diagnostics = true;
+    assert!(caps.should_skip_lib_type_resolution());
+}
+
+// =============================================================================
+// Feature gate → required type reverse mapping
+// =============================================================================
+
+#[test]
+fn test_gate_for_required_type_mapping() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("Disposable"),
+        Some(FeatureGate::UsingDeclaration)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("AsyncDisposable"),
+        Some(FeatureGate::AwaitUsingDeclaration)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("IterableIterator"),
+        Some(FeatureGate::Generators)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("AsyncIterableIterator"),
+        Some(FeatureGate::AsyncGenerators)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("TypedPropertyDescriptor"),
+        Some(FeatureGate::ExperimentalDecorators)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("Promise"),
+        Some(FeatureGate::AsyncFunction)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("Awaited"),
+        Some(FeatureGate::AsyncFunction)
+    );
+    assert_eq!(
+        EnvironmentCapabilities::gate_for_required_type("SomeUnknownType"),
+        None
+    );
+}
+
+// =============================================================================
+// AsyncFunction feature gate
+// =============================================================================
+
+#[test]
+fn test_async_function_requires_promise_no_lib() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, false);
+    let diag = caps.check_feature_gate(FeatureGate::AsyncFunction);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+            gate: FeatureGate::AsyncFunction,
+            required_type: "Promise",
+        })
+    );
+}
+
+#[test]
+fn test_async_function_no_diagnostic_with_lib() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(caps.check_feature_gate(FeatureGate::AsyncFunction), None);
 }
