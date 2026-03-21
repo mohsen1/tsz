@@ -233,6 +233,26 @@ pub(crate) fn collect_enum_def_ids(
 
 // ── Redeclaration widening helpers ──
 
+/// Widen a literal return type in a function-shaped type for TS2403 comparison.
+///
+/// For `Function` types (e.g., `(s: string) => 3`), widens the return type
+/// from a literal to its base (e.g., `3` → `number`). Returns the original
+/// type unchanged if it is not a `Function` or no widening is needed.
+///
+/// This is a thin boundary wrapper that keeps direct `type_queries` and
+/// `widen_literal_type` calls out of checker modules.
+pub(crate) fn widen_function_literal_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    let widened_return = tsz_solver::widen_literal_type(db, shape.return_type);
+    if widened_return != shape.return_type {
+        tsz_solver::type_queries::replace_function_return_type(db, type_id, widened_return)
+    } else {
+        type_id
+    }
+}
+
 /// Widen literal return types in callable call-signatures for TS2403 comparison.
 ///
 /// For `Callable` types (e.g., `{ (s: string): 3 }`), widens each call
