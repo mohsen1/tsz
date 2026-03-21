@@ -17518,3 +17518,155 @@ var x: Readonly2<{ a: number }>;
         }
     }
 }
+
+// ========================================================================
+// Regression tests: RelationRequest canonical path
+// ========================================================================
+// These tests verify that the canonical RelationRequest / RelationOutcome
+// path produces correct diagnostics for freshness, excess properties,
+// missing properties, and call-argument compatibility.
+
+#[test]
+fn test_canonical_path_fresh_object_literal_excess_property() {
+    // Fresh object literal assigned to typed variable: TS2353 for excess
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const p: Point = { x: 1, y: 2, z: 3 };
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2353),
+        "Fresh object literal excess property should emit TS2353, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_nonfresh_object_no_excess_error() {
+    // Non-fresh object assigned to typed variable: no TS2353
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const obj = { x: 1, y: 2, z: 3 };
+const p: Point = obj;
+"#,
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.0 == 2353),
+        "Non-fresh object should NOT emit TS2353, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.0 == 2322),
+        "Non-fresh object with extra properties should NOT emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_missing_required_property() {
+    // Missing required property: TS2741
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const p: Point = { x: 1 };
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2741),
+        "Missing required property should emit TS2741, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_call_arg_excess_property() {
+    // Object literal as call argument: TS2353 for excess properties
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Options { width: number; height: number }
+function create(opts: Options): void {}
+create({ width: 100, height: 200, depth: 50 });
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2353),
+        "Object literal call arg with excess property should emit TS2353, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_call_arg_type_mismatch() {
+    // Call argument type mismatch: TS2345
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f(x: string): void {}
+f(42);
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2345),
+        "Call argument type mismatch should emit TS2345, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_satisfies_excess_property() {
+    // satisfies with excess property: TS2353 (not TS1360)
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const p = { x: 1, y: 2, z: 3 } satisfies Point;
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2353),
+        "satisfies with excess property should emit TS2353, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_union_excess_property_any_member() {
+    // Union target: excess property not in ANY member -> TS2353
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { kind: "a"; x: number }
+type B = { kind: "b"; y: number }
+type AB = A | B
+const val: AB = { kind: "a", x: 1, z: 99 };
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2353),
+        "Union excess property not in any member should emit TS2353, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_weak_union_skips_ts2322() {
+    // Weak type: object with no common properties should emit TS2559, not TS2322
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Weak { a?: number; b?: string }
+const w: Weak = { c: 1 };
+"#,
+    );
+    // tsc emits TS2559 for weak types with no common properties
+    // and/or TS2353 for the excess property 'c'
+    assert!(
+        !diagnostics.iter().any(|d| d.0 == 2322),
+        "Weak type should NOT emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_canonical_path_property_value_mismatch_ts2322() {
+    // Property value type mismatch: TS2322
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Point { x: number; y: number }
+const p: Point = { x: "hello", y: 2 };
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.0 == 2322),
+        "Property value type mismatch should emit TS2322, got: {diagnostics:?}"
+    );
+}
