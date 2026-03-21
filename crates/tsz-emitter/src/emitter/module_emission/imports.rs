@@ -311,6 +311,46 @@ impl<'a> Printer<'a> {
         if clause.is_type_only {
             return;
         }
+
+        // Detect `import {} from "x"` early — it has no runtime bindings but
+        // preserves side effects in CJS mode (same as bare `import "x"`).
+        // Must check before the value-usage heuristic, which would elide it.
+        let empty_named_import_preserves_side_effects = clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named_imports| {
+                    named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
+                });
+
+        if empty_named_import_preserves_side_effects {
+            // Wrapped module formats handle imports via wrapper parameters/setters.
+            if matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+            ) {
+                return;
+            }
+            // `import {} from "x"` → `require("x");` for side effects
+            let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
+                if let Some(lit) = self.arena.get_literal(spec_node) {
+                    lit.text.clone()
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            };
+            let module_spec = self.rewrite_module_spec(&module_spec);
+            self.write("require(\"");
+            self.write(&module_spec);
+            self.write("\");");
+            self.write_line();
+            return;
+        }
+
         // With --verbatimModuleSyntax or in JS files, non-type-only imports are
         // always preserved (no heuristic elision). tsc's checker treats all
         // imports in JS files as value imports.
@@ -342,16 +382,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let empty_named_import_preserves_side_effects = clause.name.is_none()
-            && clause.named_bindings.is_some()
-            && self
-                .arena
-                .get(clause.named_bindings)
-                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
-                .is_some_and(|named_imports| {
-                    named_imports.name.is_none() && named_imports.elements.nodes.is_empty()
-                });
-
         let mut has_value_binding = clause.name.is_some();
         if clause.named_bindings.is_some()
             && let Some(bindings_node) = self.arena.get(clause.named_bindings)
@@ -370,16 +400,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if empty_named_import_preserves_side_effects {
-            // `import {} from "x"` has no runtime bindings; tsc elides it in CJS mode.
-            // Only bare `import "x"` (handled earlier) preserves side effects.
-            return;
-        }
-
         if !has_value_binding {
-            // `import { type Foo } from "x"` has no runtime bindings and is elided
-            // in CJS mode. Bare side-effect imports are handled earlier, and
-            // `import {} from "x"` is preserved above as `require("x");`.
+            // `import { type Foo } from "x"` has no runtime bindings and is elided.
             return;
         }
 
