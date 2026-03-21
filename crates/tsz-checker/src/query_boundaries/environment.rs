@@ -228,7 +228,10 @@ mod tests {
             diag,
             Some(CapabilityDiagnostic::ImportAttributesUnsupported)
         );
-        assert_eq!(diag.unwrap().code(), 2823);
+        assert_eq!(
+            diag.expect("import attributes gate should fire").code(),
+            2823
+        );
     }
 
     #[test]
@@ -267,7 +270,10 @@ mod tests {
             diag,
             Some(CapabilityDiagnostic::TopLevelAwaitUsingUnsupported)
         );
-        assert_eq!(diag.unwrap().code(), 2854);
+        assert_eq!(
+            diag.expect("top-level await/using gate should fire").code(),
+            2854
+        );
 
         // Wrong target
         let opts = CheckerOptions {
@@ -380,7 +386,11 @@ mod tests {
                 name: "require".to_string(),
             })
         );
-        assert_eq!(diag.unwrap().code(), 2591);
+        assert_eq!(
+            diag.expect("missing node global diagnostic expected")
+                .code(),
+            2591
+        );
     }
 
     #[test]
@@ -393,7 +403,10 @@ mod tests {
                 name: "document".to_string(),
             })
         );
-        assert_eq!(diag.unwrap().code(), 2584);
+        assert_eq!(
+            diag.expect("missing DOM global diagnostic expected").code(),
+            2584
+        );
     }
 
     #[test]
@@ -404,7 +417,11 @@ mod tests {
             diag,
             Some(CapabilityDiagnostic::MissingEs2015Type { .. })
         ));
-        assert_eq!(diag.unwrap().code(), 2583);
+        assert_eq!(
+            diag.expect("missing ES2015 type diagnostic expected")
+                .code(),
+            2583
+        );
     }
 
     #[test]

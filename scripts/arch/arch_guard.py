@@ -57,7 +57,9 @@ CHECKS = [
             r"|\bpub\s+mod\s+arena\s*;"
             r"|\bpub\s+use\s+arena::TypeArena\b"
         ),
-        {"exclude_dirs": {"tests"}},
+        {
+            "exclude_dirs": {"tests", "jsdoc"},
+        },
     ),
     (
         "Checker boundary: direct TypeKey inspection outside query boundaries/tests",

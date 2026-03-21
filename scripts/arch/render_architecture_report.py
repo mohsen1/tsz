@@ -65,10 +65,98 @@ def collect_largest_by_crate(*, include_tests: bool = True) -> list[tuple[str, s
     return rows
 
 
+PREVIOUS_JSON = REPORT_DIR / "arch_guard_report.prev.json"
+
+
+def load_previous_report() -> dict | None:
+    if not PREVIOUS_JSON.exists():
+        return None
+    try:
+        return json.loads(PREVIOUS_JSON.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def build_failure_index(payload: dict) -> dict[str, int]:
+    """Map failure group name -> hit count."""
+    index: dict[str, int] = {}
+    for failure in payload.get("failures", []):
+        name = failure.get("name", "unnamed")
+        index[name] = len(failure.get("hits", []))
+    return index
+
+
+def render_ratchet_section(current: dict, previous: dict | None) -> list[str]:
+    """Render a ratchet metrics section comparing current vs previous runs."""
+    lines: list[str] = []
+    lines.append("## Ratchet Metrics")
+    lines.append("")
+
+    cur_total = current.get("total_hits", 0)
+    cur_groups = len(current.get("failures", []))
+    cur_index = build_failure_index(current)
+
+    if previous is None:
+        lines.append("*No previous report found for comparison.*")
+        lines.append("")
+        lines.append(f"- Total guard hits: **{cur_total}**")
+        lines.append(f"- Failure groups: **{cur_groups}**")
+        lines.append("")
+        if cur_index:
+            lines.append("| Guard rule | Hits | Status |")
+            lines.append("|---|---:|---|")
+            for name, count in sorted(cur_index.items()):
+                lines.append(f"| {name} | {count} | FAIL |")
+            lines.append("")
+        return lines
+
+    prev_total = previous.get("total_hits", 0)
+    prev_groups = len(previous.get("failures", []))
+    prev_index = build_failure_index(previous)
+
+    delta_total = cur_total - prev_total
+    delta_groups = cur_groups - prev_groups
+    delta_sign = lambda d: f"+{d}" if d > 0 else str(d)
+
+    lines.append(f"| Metric | Previous | Current | Delta |")
+    lines.append("|---|---:|---:|---:|")
+    lines.append(f"| Total guard hits | {prev_total} | {cur_total} | {delta_sign(delta_total)} |")
+    lines.append(f"| Failure groups | {prev_groups} | {cur_groups} | {delta_sign(delta_groups)} |")
+    lines.append("")
+
+    all_names = sorted(set(cur_index.keys()) | set(prev_index.keys()))
+    if all_names:
+        lines.append("### Per-rule ratchet")
+        lines.append("")
+        lines.append("| Guard rule | Previous | Current | Delta | Status |")
+        lines.append("|---|---:|---:|---:|---|")
+        for name in all_names:
+            prev_count = prev_index.get(name, 0)
+            cur_count = cur_index.get(name, 0)
+            delta = cur_count - prev_count
+            if cur_count == 0 and prev_count > 0:
+                status = "FIXED"
+            elif cur_count == 0:
+                status = "PASS"
+            elif delta > 0:
+                status = "REGRESSED"
+            elif delta < 0:
+                status = "IMPROVED"
+            else:
+                status = "UNCHANGED"
+            lines.append(
+                f"| {name} | {prev_count} | {cur_count} | {delta_sign(delta)} | {status} |"
+            )
+        lines.append("")
+
+    return lines
+
+
 def render_markdown(payload: dict) -> str:
     status = payload.get("status", "unknown")
     total_hits = payload.get("total_hits", 0)
     failures = payload.get("failures", [])
+    previous = load_previous_report()
     largest_files = collect_largest_rs_files()
     largest_source_files = collect_largest_rs_files(include_tests=False)
     largest_by_crate = collect_largest_by_crate()
@@ -84,6 +172,8 @@ def render_markdown(payload: dict) -> str:
     lines.append(f"- Total guard hits: **{total_hits}**")
     lines.append(f"- Failure groups: **{len(failures)}**")
     lines.append("")
+
+    lines.extend(render_ratchet_section(payload, previous))
 
     lines.append("## Largest Rust files")
     lines.append("")
@@ -150,6 +240,9 @@ def main() -> int:
     payload = json.loads(INPUT_JSON.read_text(encoding="utf-8"))
     OUTPUT_MD.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_MD.write_text(render_markdown(payload), encoding="utf-8")
+    # Rotate current report to previous for next ratchet comparison
+    import shutil
+    shutil.copy2(INPUT_JSON, PREVIOUS_JSON)
     print(f"Architecture markdown report: {OUTPUT_MD}")
     return 0
 
