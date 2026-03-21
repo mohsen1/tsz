@@ -313,16 +313,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // the Application structure that `try_application_infer_match` needs when
                 // this deferred conditional is later instantiated with concrete type args
                 // and re-evaluated.
-                let raw_extends_is_app_infer = self.type_contains_infer(cond.extends_type)
-                    && matches!(
-                        self.interner().lookup(cond.extends_type),
-                        Some(TypeData::Application(_))
-                    );
-                let deferred_extends = if raw_extends_is_app_infer {
-                    cond.extends_type
-                } else {
-                    extends_type
-                };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
                 // Preserve the raw extends_type when it's an Application containing infer.
