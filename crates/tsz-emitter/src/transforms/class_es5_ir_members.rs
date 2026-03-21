@@ -665,10 +665,20 @@ impl<'a> ES5ClassTransformer<'a> {
                             IRNode::id(self.class_name.clone()),
                             IRNode::number(n.clone()),
                         ),
-                        PropertyNameIR::Computed(expr_idx) => IRNode::elem(
-                            IRNode::id(self.class_name.clone()),
-                            self.convert_expression_static(*expr_idx),
-                        ),
+                        PropertyNameIR::Computed(expr_idx) => {
+                            // Use hoisted temp if available
+                            if let Some(temp) = self.computed_prop_temp_map.get(expr_idx) {
+                                IRNode::elem(
+                                    IRNode::id(self.class_name.clone()),
+                                    IRNode::id(temp.clone()),
+                                )
+                            } else {
+                                IRNode::elem(
+                                    IRNode::id(self.class_name.clone()),
+                                    self.convert_expression_static(*expr_idx),
+                                )
+                            }
+                        }
                     };
 
                     // Use class alias for the initializer value if needed
@@ -1232,10 +1242,20 @@ impl<'a> ES5ClassTransformer<'a> {
                                 IRNode::id(self.class_name.clone()),
                                 IRNode::number(n.clone()),
                             ),
-                            PropertyNameIR::Computed(expr_idx) => IRNode::elem(
-                                IRNode::id(self.class_name.clone()),
-                                self.convert_expression_static(*expr_idx),
-                            ),
+                            PropertyNameIR::Computed(expr_idx) => {
+                                // Use hoisted temp if available
+                                if let Some(temp) = self.computed_prop_temp_map.get(expr_idx) {
+                                    IRNode::elem(
+                                        IRNode::id(self.class_name.clone()),
+                                        IRNode::id(temp.clone()),
+                                    )
+                                } else {
+                                    IRNode::elem(
+                                        IRNode::id(self.class_name.clone()),
+                                        self.convert_expression_static(*expr_idx),
+                                    )
+                                }
+                            }
                         };
                         let value = if let Some(ref alias) = class_alias {
                             self.convert_expression_static_with_class_alias(

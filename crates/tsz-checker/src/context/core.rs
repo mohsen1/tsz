@@ -1004,8 +1004,7 @@ mod index_tests {
         use rustc_hash::FxHashMap;
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
-        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> =
-            FxHashMap::default();
+        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
         for (file_idx, binder) in binders.iter().enumerate() {
             for (module_spec, augmentations) in binder.module_augmentations.iter() {
                 module_augs_index

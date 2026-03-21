@@ -904,6 +904,10 @@ impl<'a> Printer<'a> {
                 let text = self.arena.get_literal_text(idx)?;
                 Some(PropertyNameEmit::BracketNumeric(text.to_string()))
             }
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+                let text = self.arena.get_literal_text(idx)?;
+                Some(PropertyNameEmit::Bracket(format!("`{text}`")))
+            }
             k if k == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                 let computed = self.arena.get_computed_property(node)?;
                 // Recursively resolve the inner expression

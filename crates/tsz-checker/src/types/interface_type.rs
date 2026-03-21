@@ -1275,7 +1275,10 @@ impl<'a> CheckerState<'a> {
                 if candidates.iter().any(|c| c == aug_key) {
                     continue;
                 }
-                if !indexed_augs.iter().any(|(_, aug)| aug.name == interface_name) {
+                if !indexed_augs
+                    .iter()
+                    .any(|(_, aug)| aug.name == interface_name)
+                {
                     continue;
                 }
                 // Use the first file_idx that has this augmentation for resolution
