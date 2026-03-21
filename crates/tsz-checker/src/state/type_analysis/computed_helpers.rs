@@ -289,7 +289,7 @@ impl<'a> CheckerState<'a> {
                 false
             }
             ContextualLiteralAllowKind::Mapped => {
-                let expanded = self.evaluate_mapped_type_with_resolution(ctx_type);
+                let expanded = self.evaluate_type_with_env(ctx_type);
                 if expanded != ctx_type {
                     return self.contextual_type_allows_literal_inner(
                         expanded,

@@ -239,13 +239,14 @@ impl<'a> CheckerState<'a> {
 
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
         // the solver's NoopResolver can't resolve Lazy(DefId) constraints (type alias refs).
-        // Expand the mapped type using the checker's type environment and retry.
+        // Evaluate the mapped type via the solver's TypeEvaluator with full resolver
+        // context (CheckerContext), which can resolve Lazy(DefId) types on the fly.
         if matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
         ) && query::is_mapped_type(self.ctx.types, resolved_object_type)
         {
-            let expanded = self.evaluate_mapped_type_with_resolution(resolved_object_type);
+            let expanded = self.evaluate_type_with_env(resolved_object_type);
             if expanded != resolved_object_type
                 && expanded != TypeId::ANY
                 && expanded != TypeId::ERROR
