@@ -1178,10 +1178,18 @@ impl<'a> CheckerState<'a> {
         name: &str,
         mut accept: impl FnMut(SymbolId, &tsz_binder::Symbol) -> bool,
     ) -> Option<SymbolId> {
+        // Use the pre-built global index for O(1) lookup instead of O(N) binder scan
+        let entries = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name));
+
         let all_binders = self.ctx.all_binders.as_ref()?;
 
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            if let Some(sym_id) = binder.file_locals.get(name) {
+        if let Some(entries) = entries {
+            for &(file_idx, sym_id) in entries {
+                let binder = &all_binders[file_idx];
                 let Some(sym_symbol) = binder.get_symbol(sym_id) else {
                     continue;
                 };
@@ -1225,9 +1233,14 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         let all_binders = self.ctx.all_binders.as_ref()?;
 
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            // Try to find namespace in file_locals first (top-level namespaces)
-            if let Some(ns_sym_id) = binder.file_locals.get(namespace_name) {
+        // Use the pre-built global index for O(1) namespace lookup
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(namespace_name))
+        {
+            for &(file_idx, ns_sym_id) in entries {
                 // Use checker's binder for symbol data (cross-file binders have empty arenas)
                 if let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
                     && ns_symbol.flags
@@ -1248,9 +1261,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
 
-            // For nested namespaces (e.g., `Utils` inside `A`): search parent
-            // namespace exports in this binder for the target namespace name.
+        // For nested namespaces (e.g., `Utils` inside `A`): search parent
+        // namespace exports in each binder for the target namespace name.
+        // This part still scans all_binders since the nested namespace name
+        // isn't a file_locals key — it's an export of a parent namespace.
+        for (file_idx, binder) in all_binders.iter().enumerate() {
             for (_, &parent_sym_id) in binder.file_locals.iter() {
                 let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
                     continue;

@@ -108,6 +108,8 @@ impl<'a> CheckerState<'a> {
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             checker.ctx.all_arenas = Some(all_arenas.clone());
             checker.ctx.all_binders = Some(all_binders.clone());
+            checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
+            checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
             checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
             checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
             checker.ctx.current_file_idx = file_idx;

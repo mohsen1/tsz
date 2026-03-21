@@ -329,6 +329,8 @@ impl<'a> CheckerState<'a> {
             // Copy all_arenas and all_binders for nested cross-file resolution
             checker.ctx.all_arenas = self.ctx.all_arenas.clone();
             checker.ctx.all_binders = self.ctx.all_binders.clone();
+        checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
+        checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
             checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
             checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
@@ -677,6 +679,8 @@ impl<'a> CheckerState<'a> {
         }
         checker.ctx.all_arenas = self.ctx.all_arenas.clone();
         checker.ctx.all_binders = self.ctx.all_binders.clone();
+        checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
+        checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
         checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
         checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
@@ -765,6 +769,8 @@ impl<'a> CheckerState<'a> {
         }
         checker.ctx.all_arenas = self.ctx.all_arenas.clone();
         checker.ctx.all_binders = self.ctx.all_binders.clone();
+        checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
+        checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
         checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
         checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
