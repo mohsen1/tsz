@@ -123,19 +123,20 @@ impl<'a> CheckerState<'a> {
         // This replaces the previous checker-local property enumeration and
         // per-property assignability re-checking.
         if let Some(outcome) = outcome
-            && let Some(ref cls) = outcome.property_classification {
-                // No excess properties → don't skip
-                if cls.excess_properties.is_empty() {
-                    return false;
-                }
-                // Has excess properties AND all matching ones are compatible
-                // AND trimmed source is structurally assignable → skip
-                if cls.all_matching_compatible && cls.trimmed_source_assignable {
-                    return true;
-                }
-                // Has incompatible matching properties → don't skip
+            && let Some(ref cls) = outcome.property_classification
+        {
+            // No excess properties → don't skip
+            if cls.excess_properties.is_empty() {
                 return false;
             }
+            // Has excess properties AND all matching ones are compatible
+            // AND trimmed source is structurally assignable → skip
+            if cls.all_matching_compatible && cls.trimmed_source_assignable {
+                return true;
+            }
+            // Has incompatible matching properties → don't skip
+            return false;
+        }
 
         // Fallback: no outcome available, use legacy path.
         // Check if there are excess properties.
