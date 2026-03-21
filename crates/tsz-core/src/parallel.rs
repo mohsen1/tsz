@@ -1040,6 +1040,437 @@ fn bind_file_with_libs(
 }
 
 // =============================================================================
+// File Skeleton IR
+// =============================================================================
+//
+// The skeleton captures the minimal per-file information needed for global merge
+// decisions (symbol merging, augmentation stitching, export/re-export graphs)
+// without retaining the full AST arena, flow graph, or scope tree.
+//
+// Pipeline: BindResult → extract_skeleton() → FileSkeleton
+//           Vec<FileSkeleton> → reduce_skeletons() → SkeletonIndex
+//
+// The legacy full-arena path (`merge_bind_results`) remains unchanged.
+// Skeletons run alongside it to prove the data can be captured without full
+// arena retention, as a stepping stone toward Phase 2 of the large-repo plan.
+
+/// A top-level symbol as seen from the skeleton layer.
+///
+/// This contains only the merge-relevant fields from `Symbol`, not the full
+/// declaration list or member/export sub-tables (which require arena access).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkeletonSymbol {
+    /// The escaped name (same semantics as `Symbol::escaped_name`).
+    pub name: String,
+    /// Symbol flags (same encoding as `symbol_flags`).
+    pub flags: u32,
+    /// Whether this symbol is exported from its file.
+    pub is_exported: bool,
+    /// Number of declarations in the source file.
+    pub declaration_count: u32,
+    /// Whether the symbol has an `exports` sub-table (namespace/module).
+    pub has_exports: bool,
+    /// Whether the symbol has a `members` sub-table (class/interface).
+    pub has_members: bool,
+    /// Whether this symbol originated from a lib file.
+    pub is_lib_origin: bool,
+    /// Whether this is an external-module import alias.
+    pub is_import_alias: bool,
+    /// Import module specifier, if this is an import alias.
+    pub import_module: Option<String>,
+}
+
+/// Augmentation candidate as seen from the skeleton layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkeletonAugmentation {
+    /// Target name (interface name for global augmentations, module specifier for module augmentations).
+    pub target: String,
+    /// Number of augmentation declarations for this target in this file.
+    pub declaration_count: u32,
+}
+
+/// Re-export edge as seen from the skeleton layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkeletonReexport {
+    /// The exported name (as visible to importers).
+    pub exported_name: String,
+    /// Source module specifier.
+    pub source_module: String,
+    /// Original name in the source module (None = same as `exported_name`).
+    pub original_name: Option<String>,
+}
+
+/// Wildcard re-export edge (`export * from 'module'`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkeletonWildcardReexport {
+    /// Source module specifier.
+    pub source_module: String,
+    /// Whether this is a type-only re-export.
+    pub type_only: bool,
+}
+
+/// Minimal per-file skeleton extracted from a `BindResult`.
+///
+/// Contains only the data needed for:
+/// - Determining which top-level symbols exist and whether they can merge.
+/// - Tracking augmentation candidates (global and module).
+/// - Capturing re-export/wildcard-re-export graph edges.
+/// - Identifying declared ambient modules and shorthand modules.
+///
+/// Does NOT contain: full AST arena, flow graph, scope tree, node-to-symbol
+/// mappings, parse diagnostics, or per-node data. Those remain in the legacy
+/// `BindResult`/`BoundFile` path.
+#[derive(Debug, Clone)]
+pub struct FileSkeleton {
+    /// Source file name.
+    pub file_name: String,
+    /// Whether this file is an external module (has imports/exports).
+    pub is_external_module: bool,
+    /// Top-level symbols (root scope + exported file_locals).
+    pub symbols: Vec<SkeletonSymbol>,
+    /// Global augmentation targets from `declare global {}` blocks.
+    pub global_augmentations: Vec<SkeletonAugmentation>,
+    /// Module augmentation targets from `declare module 'x' {}` blocks.
+    pub module_augmentations: Vec<SkeletonAugmentation>,
+    /// Named re-exports (`export { x } from 'module'`).
+    pub reexports: Vec<SkeletonReexport>,
+    /// Wildcard re-exports (`export * from 'module'`).
+    pub wildcard_reexports: Vec<SkeletonWildcardReexport>,
+    /// Ambient module declarations (`declare module "foo"`).
+    pub declared_modules: Vec<String>,
+    /// Shorthand ambient modules (`declare module "foo"` without body).
+    pub shorthand_ambient_modules: Vec<String>,
+    /// Binder-detected file features (generators, decorators, etc.).
+    pub file_features: crate::binder::FileFeatures,
+}
+
+/// Extract a `FileSkeleton` from a `BindResult` without consuming it.
+///
+/// This is a pure map operation: one `BindResult` → one `FileSkeleton`.
+/// The skeleton captures merge-relevant data without retaining the arena.
+pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
+    // Collect top-level symbols from root scope + file_locals.
+    // We use file_locals as the primary source since it represents what the
+    // binder considers top-level (including symbols from nested scopes that
+    // are hoisted to file-level, like `declare namespace`).
+    let mut symbols = Vec::new();
+    let mut seen_names = FxHashSet::default();
+
+    for (name, &sym_id) in result.file_locals.iter() {
+        if !seen_names.insert(name.clone()) {
+            continue;
+        }
+        if let Some(sym) = result.symbols.get(sym_id) {
+            symbols.push(SkeletonSymbol {
+                name: name.clone(),
+                flags: sym.flags,
+                is_exported: sym.is_exported,
+                declaration_count: sym.declarations.len() as u32,
+                has_exports: sym.exports.is_some(),
+                has_members: sym.members.is_some(),
+                is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
+                is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
+                import_module: sym.import_module.clone(),
+            });
+        }
+    }
+
+    // Also include root-scope symbols NOT in file_locals (rare, but possible
+    // for non-exported declarations in script files).
+    if let Some(root_scope) = result.scopes.first() {
+        for (name, &sym_id) in root_scope.table.iter() {
+            if seen_names.contains(name) {
+                continue;
+            }
+            if let Some(sym) = result.symbols.get(sym_id) {
+                seen_names.insert(name.clone());
+                symbols.push(SkeletonSymbol {
+                    name: name.clone(),
+                    flags: sym.flags,
+                    is_exported: sym.is_exported,
+                    declaration_count: sym.declarations.len() as u32,
+                    has_exports: sym.exports.is_some(),
+                    has_members: sym.members.is_some(),
+                    is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
+                    is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
+                    import_module: sym.import_module.clone(),
+                });
+            }
+        }
+    }
+
+    // Sort symbols by name for deterministic output.
+    symbols.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Global augmentations
+    let mut global_augmentations: Vec<SkeletonAugmentation> = result
+        .global_augmentations
+        .iter()
+        .map(|(target, augs)| SkeletonAugmentation {
+            target: target.clone(),
+            declaration_count: augs.len() as u32,
+        })
+        .collect();
+    global_augmentations.sort_by(|a, b| a.target.cmp(&b.target));
+
+    // Module augmentations
+    let mut module_augmentations: Vec<SkeletonAugmentation> = result
+        .module_augmentations
+        .iter()
+        .map(|(target, augs)| SkeletonAugmentation {
+            target: target.clone(),
+            declaration_count: augs.len() as u32,
+        })
+        .collect();
+    module_augmentations.sort_by(|a, b| a.target.cmp(&b.target));
+
+    // Named re-exports
+    let mut reexports = Vec::new();
+    for (file_name, file_reexports) in &result.reexports {
+        // Only include re-exports from this file (the reexport map key is the file name)
+        if file_name == &result.file_name {
+            for (exported_name, (source_module, original_name)) in file_reexports {
+                reexports.push(SkeletonReexport {
+                    exported_name: exported_name.clone(),
+                    source_module: source_module.clone(),
+                    original_name: original_name.clone(),
+                });
+            }
+        }
+    }
+    reexports.sort_by(|a, b| a.exported_name.cmp(&b.exported_name));
+
+    // Wildcard re-exports
+    let mut wildcard_reexports = Vec::new();
+    if let Some(sources) = result.wildcard_reexports.get(&result.file_name) {
+        let type_only_entries = result.wildcard_reexports_type_only.get(&result.file_name);
+        for (i, source_module) in sources.iter().enumerate() {
+            let type_only = type_only_entries
+                .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
+                .unwrap_or(false);
+            wildcard_reexports.push(SkeletonWildcardReexport {
+                source_module: source_module.clone(),
+                type_only,
+            });
+        }
+    }
+    wildcard_reexports.sort_by(|a, b| a.source_module.cmp(&b.source_module));
+
+    // Declared modules
+    let mut declared_modules: Vec<String> = result.declared_modules.iter().cloned().collect();
+    declared_modules.sort();
+
+    // Shorthand ambient modules
+    let mut shorthand_ambient_modules: Vec<String> =
+        result.shorthand_ambient_modules.iter().cloned().collect();
+    shorthand_ambient_modules.sort();
+
+    FileSkeleton {
+        file_name: result.file_name.clone(),
+        is_external_module: result.is_external_module,
+        symbols,
+        global_augmentations,
+        module_augmentations,
+        reexports,
+        wildcard_reexports,
+        declared_modules,
+        shorthand_ambient_modules,
+        file_features: result.file_features,
+    }
+}
+
+/// A merge candidate discovered during skeleton reduction.
+///
+/// Records that a symbol name appears in multiple files and can potentially
+/// be merged (interfaces, namespaces, etc.).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkeletonMergeCandidate {
+    /// The symbol name.
+    pub name: String,
+    /// Combined flags from all contributing files.
+    pub merged_flags: u32,
+    /// Files contributing to this symbol (indices into the original skeleton slice).
+    pub source_files: Vec<usize>,
+    /// Whether the merge is valid according to `can_merge_symbols_cross_file`.
+    pub is_valid_merge: bool,
+}
+
+/// Global index produced by reducing a set of file skeletons.
+///
+/// This is a lightweight alternative to `MergedProgram` that captures the
+/// merge topology without retaining any arena or symbol data.
+#[derive(Debug, Clone)]
+pub struct SkeletonIndex {
+    /// Number of files in the index.
+    pub file_count: usize,
+    /// Symbols that appear in multiple files and can merge.
+    pub merge_candidates: Vec<SkeletonMergeCandidate>,
+    /// All global augmentation targets across all files, with contributing file indices.
+    pub global_augmentation_targets: FxHashMap<String, Vec<usize>>,
+    /// All module augmentation targets across all files, with contributing file indices.
+    pub module_augmentation_targets: FxHashMap<String, Vec<usize>>,
+    /// All declared ambient modules across all files.
+    pub declared_modules: FxHashSet<String>,
+    /// All shorthand ambient modules across all files.
+    pub shorthand_ambient_modules: FxHashSet<String>,
+    /// Total number of top-level symbols across all files (before merge).
+    pub total_symbol_count: usize,
+    /// Total number of re-export edges across all files.
+    pub total_reexport_count: usize,
+    /// Total number of wildcard re-export edges across all files.
+    pub total_wildcard_reexport_count: usize,
+}
+
+/// Deterministically reduce a set of file skeletons into a `SkeletonIndex`.
+///
+/// This is a pure function: the same input skeletons (in the same order) always
+/// produce the same output. The reduction is sequential and ordered.
+///
+/// # Arguments
+/// * `skeletons` - Slice of file skeletons, in file order.
+pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
+    let mut symbol_map: FxHashMap<String, (u32, Vec<usize>)> = FxHashMap::default();
+    let mut global_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut declared_modules = FxHashSet::default();
+    let mut shorthand_ambient_modules = FxHashSet::default();
+    let mut total_symbol_count = 0usize;
+    let mut total_reexport_count = 0usize;
+    let mut total_wildcard_reexport_count = 0usize;
+
+    for (file_idx, skeleton) in skeletons.iter().enumerate() {
+        // Only merge symbols from non-external-module files (script files).
+        // External modules' symbols are file-scoped and don't contribute to globals.
+        if !skeleton.is_external_module {
+            for sym in &skeleton.symbols {
+                if sym.is_lib_origin || sym.is_import_alias {
+                    continue;
+                }
+                total_symbol_count += 1;
+                let entry = symbol_map
+                    .entry(sym.name.clone())
+                    .or_insert_with(|| (0, Vec::new()));
+                entry.0 |= sym.flags;
+                entry.1.push(file_idx);
+            }
+        } else {
+            total_symbol_count += skeleton.symbols.len();
+        }
+
+        for aug in &skeleton.global_augmentations {
+            global_augmentation_targets
+                .entry(aug.target.clone())
+                .or_default()
+                .push(file_idx);
+        }
+
+        for aug in &skeleton.module_augmentations {
+            module_augmentation_targets
+                .entry(aug.target.clone())
+                .or_default()
+                .push(file_idx);
+        }
+
+        declared_modules.extend(skeleton.declared_modules.iter().cloned());
+        shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
+
+        total_reexport_count += skeleton.reexports.len();
+        total_wildcard_reexport_count += skeleton.wildcard_reexports.len();
+    }
+
+    // Build merge candidates: symbols appearing in >1 file.
+    let mut merge_candidates: Vec<SkeletonMergeCandidate> = symbol_map
+        .into_iter()
+        .filter(|(_, (_, files))| files.len() > 1)
+        .map(|(name, (merged_flags, source_files))| {
+            // Determine if the merge is valid by checking all pairs.
+            // A simple approximation: check if the first file's flags can merge
+            // with the combined flags of all others.
+            let is_valid_merge = {
+                let first_flags = skeletons[source_files[0]]
+                    .symbols
+                    .iter()
+                    .find(|s| s.name == name)
+                    .map(|s| s.flags)
+                    .unwrap_or(0);
+                let rest_flags = merged_flags & !first_flags | first_flags;
+                // Check pairwise: for simplicity, check first vs rest_combined.
+                // This is an approximation; the full merge uses pairwise checks.
+                can_merge_symbols_cross_file(first_flags, merged_flags & !first_flags)
+                    || can_merge_symbols_cross_file(first_flags, rest_flags)
+            };
+            SkeletonMergeCandidate {
+                name,
+                merged_flags,
+                source_files,
+                is_valid_merge,
+            }
+        })
+        .collect();
+
+    // Sort for deterministic output.
+    merge_candidates.sort_by(|a, b| a.name.cmp(&b.name));
+
+    SkeletonIndex {
+        file_count: skeletons.len(),
+        merge_candidates,
+        global_augmentation_targets,
+        module_augmentation_targets,
+        declared_modules,
+        shorthand_ambient_modules,
+        total_symbol_count,
+        total_reexport_count,
+        total_wildcard_reexport_count,
+    }
+}
+
+/// Estimate the in-memory size of a `FileSkeleton` in bytes.
+///
+/// This is a rough estimate for comparison with full `BindResult` size.
+/// It counts string allocations and vec capacities.
+impl FileSkeleton {
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+        size += self.file_name.capacity();
+        for sym in &self.symbols {
+            size += std::mem::size_of::<SkeletonSymbol>();
+            size += sym.name.capacity();
+            if let Some(ref m) = sym.import_module {
+                size += m.capacity();
+            }
+        }
+        for aug in &self.global_augmentations {
+            size += std::mem::size_of::<SkeletonAugmentation>();
+            size += aug.target.capacity();
+        }
+        for aug in &self.module_augmentations {
+            size += std::mem::size_of::<SkeletonAugmentation>();
+            size += aug.target.capacity();
+        }
+        for re in &self.reexports {
+            size += std::mem::size_of::<SkeletonReexport>();
+            size += re.exported_name.capacity();
+            size += re.source_module.capacity();
+            if let Some(ref o) = re.original_name {
+                size += o.capacity();
+            }
+        }
+        for wre in &self.wildcard_reexports {
+            size += std::mem::size_of::<SkeletonWildcardReexport>();
+            size += wre.source_module.capacity();
+        }
+        for dm in &self.declared_modules {
+            size += dm.capacity();
+        }
+        for sm in &self.shorthand_ambient_modules {
+            size += sm.capacity();
+        }
+        size
+    }
+}
+
+// =============================================================================
 // Symbol Merging
 // =============================================================================
 
