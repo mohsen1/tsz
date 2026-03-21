@@ -392,6 +392,9 @@ pub struct TypeEnvironment {
     /// Shared `DefinitionStore` for fallback lookups (e.g., `DefKind` when `def_kinds`
     /// map wasn't populated due to `RefCell` borrow conflicts during recursive resolution).
     definition_store: Option<Arc<DefinitionStore>>,
+    /// The concrete type that `ThisType` should resolve to in the current context.
+    /// Set by the checker when performing relation checks inside a class scope.
+    this_type: Option<TypeId>,
 }
 
 impl TypeEnvironment {
@@ -415,7 +418,17 @@ impl TypeEnvironment {
             class_extends: FxHashMap::default(),
             instance_type_to_class: FxHashMap::default(),
             definition_store: None,
+            this_type: None,
         }
+    }
+
+    /// Set the concrete type that `ThisType` should resolve to.
+    ///
+    /// Called by the checker when performing relation checks inside a class
+    /// scope so the solver can resolve `this` type references during
+    /// subtype/identity comparisons.
+    pub fn set_this_type(&mut self, this_type: Option<TypeId>) {
+        self.this_type = this_type;
     }
 
     /// Set the shared `DefinitionStore` for fallback `DefKind` lookups.
@@ -703,6 +716,10 @@ impl TypeResolver for TypeEnvironment {
             }
             self.get_def(*real_def)
         })
+    }
+
+    fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.this_type
     }
 
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
