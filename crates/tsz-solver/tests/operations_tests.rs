@@ -2341,10 +2341,12 @@ fn test_call_generic_direct_param_candidate_keeps_first_for_conflicting_literals
     let two = interner.literal_string("");
 
     let result = evaluator.resolve_call(func, &[one, two]);
-    // tsc unions multiple inference candidates: T = 1 | ""
+    // tsc's getSingleCommonSupertype uses first-wins for fresh literals:
+    // T = 1 (widened to number), then "" is checked against number → TS2345.
+    // So the call FAILS with ArgumentTypeMismatch, not Success.
     assert!(
-        matches!(result, CallResult::Success(_)),
-        "Expected Success with union type, got {result:?}"
+        matches!(result, CallResult::ArgumentTypeMismatch { .. }),
+        "Expected ArgumentTypeMismatch (tsc's first-wins), got {result:?}"
     );
 }
 
