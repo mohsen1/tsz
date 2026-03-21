@@ -968,25 +968,26 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Also emit TS2322 for wrapper-like built-ins (Boolean, Number, String, Object)
-                // instead of TS2739/TS2740.
-                // These built-in types inherit properties from Object, and object literals don't
-                // explicitly list inherited properties, so TS2739 would be incorrect.
-                // Check both the solver's target_type and the original target.
-                let tgt_str_check = self.format_type_diagnostic(*target_type);
-                let original_tgt_check = self.format_type_diagnostic(target);
-                if is_builtin_wrapper_name(&tgt_str_check)
-                    || is_builtin_wrapper_name(&original_tgt_check)
+                // Emit TS2322 instead of TS2739/TS2740 when the SOURCE is a
+                // wrapper-like built-in (Boolean, Number, String, Object).
+                // These types have many inherited properties from Object, so
+                // "missing properties" framing is misleading — the source has
+                // MORE properties than most targets. When the target is a wrapper,
+                // TS2740 is correct (the source genuinely lacks wrapper properties).
+                let src_str_check = self.format_type_diagnostic(*source_type);
+                let original_src_check = self.format_type_diagnostic(source);
+                if is_builtin_wrapper_name(&src_str_check)
+                    || is_builtin_wrapper_name(&original_src_check)
                 {
-                    let src_str = self.format_type_diagnostic(*source_type);
-                    let display_tgt = if is_builtin_wrapper_name(&original_tgt_check) {
-                        &original_tgt_check
+                    let display_src = if is_builtin_wrapper_name(&original_src_check) {
+                        &original_src_check
                     } else {
-                        &tgt_str_check
+                        &src_str_check
                     };
+                    let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, display_tgt],
+                        &[display_src, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
