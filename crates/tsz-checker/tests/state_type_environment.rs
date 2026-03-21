@@ -182,21 +182,27 @@ fn solver_evaluator_handles_mapped_type_with_resolver() {
         result, mapped_type,
         "Mapped type should be evaluated to an Object"
     );
-    // Should be an object with 2 properties
-    match types.lookup(result) {
-        Some(tsz_solver::TypeData::Object(shape_id)) => {
-            let shape = types.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 2, "Should have 2 properties");
-            // Both properties should be number
-            for prop in &shape.properties {
-                assert_eq!(
-                    prop.type_id,
-                    TypeId::NUMBER,
-                    "Property {:?} should be number",
-                    types.resolve_atom(prop.name)
-                );
-            }
-        }
-        other => panic!("Expected Object, got {:?}", other),
-    }
+    // Should be an object — use solver query API to check
+    assert!(
+        tsz_solver::type_queries::is_object_type(&*types, result),
+        "Mapped type should evaluate to an Object"
+    );
+    // Check properties via PropertyAccessEvaluator
+    let evaluator = tsz_solver::operations::PropertyAccessEvaluator::new(&*types);
+    let a_type = evaluator
+        .resolve_property_access(result, "a")
+        .success_type();
+    let b_type = evaluator
+        .resolve_property_access(result, "b")
+        .success_type();
+    assert_eq!(
+        a_type,
+        Some(TypeId::NUMBER),
+        "Property 'a' should be number"
+    );
+    assert_eq!(
+        b_type,
+        Some(TypeId::NUMBER),
+        "Property 'b' should be number"
+    );
 }
