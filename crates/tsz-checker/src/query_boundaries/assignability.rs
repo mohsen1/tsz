@@ -418,6 +418,11 @@ pub(crate) struct RelationOutcome {
     /// When true, the checker should emit excess-property diagnostics
     /// instead of the standard assignability error.
     pub weak_union_violation: bool,
+    /// Structured property-level classification for object compatibility.
+    /// Populated when the request has `source_is_fresh` set and the source/target
+    /// are object types. Provides the canonical excess/missing/incompatible lists
+    /// so the checker does not need to re-derive them.
+    pub property_classification: Option<super::relation_types::PropertyClassification>,
 }
 
 impl RelationOutcome {
@@ -467,6 +472,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
             related: true,
             failure: None,
             weak_union_violation: false,
+            property_classification: None,
         };
     }
 
@@ -490,10 +496,244 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         None => (false, None),
     };
 
+    // Populate property classification for fresh object-literal sources.
+    let property_classification =
+        if request.source_is_fresh || request.excess_property_mode != ExcessPropertyMode::Skip {
+            classify_object_properties(db.as_type_database(), request.source, request.target)
+        } else {
+            None
+        };
+
     RelationOutcome {
         related: false,
         failure,
         weak_union_violation,
+        property_classification,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// classify_object_properties: canonical property-level classification
+// ---------------------------------------------------------------------------
+
+/// Classify properties between source and target object types.
+///
+/// This is the authoritative boundary function for property-level analysis.
+/// It replaces the duplicated property enumeration logic that was previously
+/// spread across `state_checking/property.rs` (excess checking) and
+/// `assignability_diagnostics.rs` (should_skip_weak_union_error).
+///
+/// Returns `None` when the source or target is not an object type with
+/// extractable properties.
+pub(crate) fn classify_object_properties(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> Option<super::relation_types::PropertyClassification> {
+    use super::common::{
+        intersection_members, is_type_parameter_like, object_shape_for_type, union_members,
+    };
+    use super::relation_types::PropertyClassification;
+
+    // Cannot classify if target is a type parameter.
+    if is_type_parameter_like(db, target) {
+        return Some(PropertyClassification {
+            target_is_type_parameter: true,
+            ..Default::default()
+        });
+    }
+
+    let source_shape = object_shape_for_type(db, source)?;
+    let source_props = source_shape.properties.as_slice();
+
+    if source_props.is_empty() {
+        return Some(PropertyClassification::default());
+    }
+
+    // Collect all target property names from all branches (union/intersection/object).
+    let target_property_names = collect_target_property_names(db, target);
+
+    let mut classification = PropertyClassification::default();
+
+    // Check for index signatures and empty object targets.
+    if let Some(target_shape) = object_shape_for_type(db, target) {
+        if target_shape.string_index.is_some() {
+            classification.target_has_index_signature = true;
+        }
+        if target_shape.properties.is_empty()
+            && target_shape.string_index.is_none()
+            && target_shape.number_index.is_none()
+        {
+            classification.target_is_empty_object = true;
+        }
+        if target_shape.number_index.is_some() {
+            classification.target_has_index_signature = true;
+        }
+        // Detect global Object/Function shapes.
+        if is_global_object_or_function_shape(db, &target_shape) {
+            classification.target_is_global_object_or_function = true;
+        }
+    } else if let Some(members) = union_members(db, target) {
+        // For unions, check if any member has index signatures or is special.
+        for &member in &members {
+            if let Some(shape) = object_shape_for_type(db, member) {
+                if shape.string_index.is_some() {
+                    classification.target_has_index_signature = true;
+                }
+                if shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+                {
+                    classification.target_is_empty_object = true;
+                }
+                if is_global_object_or_function_shape(db, &shape) {
+                    classification.target_is_global_object_or_function = true;
+                }
+            }
+            if member == TypeId::OBJECT {
+                classification.target_is_empty_object = true;
+            }
+        }
+    } else if let Some(members) = intersection_members(db, target) {
+        for &member in members.iter() {
+            if is_type_parameter_like(db, member) {
+                classification.target_is_type_parameter = true;
+            }
+            if let Some(shape) = object_shape_for_type(db, member) {
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    classification.target_has_index_signature = true;
+                }
+            }
+        }
+    }
+
+    // Classify each source property.
+    for source_prop in source_props {
+        let name_str = db.resolve_atom_ref(source_prop.name);
+        if target_property_names.contains(name_str.as_ref()) {
+            // Property exists in target — it may be compatible or incompatible,
+            // but it is NOT excess. Detailed type compatibility is in the solver's
+            // failure reason, not re-derived here.
+        } else if !classification.target_has_index_signature
+            && !classification.target_is_empty_object
+            && !classification.target_is_global_object_or_function
+            && !classification.target_is_type_parameter
+        {
+            classification.excess_properties.push(source_prop.name);
+        }
+    }
+
+    Some(classification)
+}
+
+/// Collect all property names from a target type (handling unions/intersections).
+fn collect_target_property_names(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+) -> std::collections::HashSet<String> {
+    use super::common::{intersection_members, object_shape_for_type, union_members};
+    let mut names = std::collections::HashSet::new();
+
+    if let Some(shape) = object_shape_for_type(db, target) {
+        for prop in shape.properties.iter() {
+            names.insert(db.resolve_atom(prop.name));
+        }
+    }
+
+    if let Some(members) = union_members(db, target) {
+        for &member in &members {
+            if let Some(shape) = object_shape_for_type(db, member) {
+                for prop in shape.properties.iter() {
+                    names.insert(db.resolve_atom(prop.name));
+                }
+            }
+        }
+    }
+
+    if let Some(members) = intersection_members(db, target) {
+        for &member in members.iter() {
+            if let Some(shape) = object_shape_for_type(db, member) {
+                for prop in shape.properties.iter() {
+                    names.insert(db.resolve_atom(prop.name));
+                }
+            }
+        }
+    }
+
+    names
+}
+
+/// Check if an object shape represents the global Object or Function interface.
+///
+/// These types have only inherited method properties and should suppress
+/// excess property checking. This is the canonical boundary-level check,
+/// replacing the checker-local `is_global_object_or_function_shape`.
+///
+/// Public boundary variant for checker code that needs to check a pre-resolved shape.
+pub(crate) fn is_global_object_or_function_shape_boundary(
+    db: &dyn TypeDatabase,
+    shape: &tsz_solver::ObjectShape,
+) -> bool {
+    is_global_object_or_function_shape(db, shape)
+}
+
+fn is_global_object_or_function_shape(
+    db: &dyn TypeDatabase,
+    shape: &tsz_solver::ObjectShape,
+) -> bool {
+    static OBJECT_PROTO: &[&str] = &[
+        "constructor",
+        "toString",
+        "toLocaleString",
+        "valueOf",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+    ];
+    static FUNCTION_PROTO: &[&str] = &[
+        "apply",
+        "call",
+        "bind",
+        "toString",
+        "length",
+        "arguments",
+        "caller",
+        "prototype",
+        "constructor",
+        "toLocaleString",
+        "valueOf",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+    ];
+
+    if shape.properties.is_empty() {
+        return false;
+    }
+
+    shape.properties.iter().all(|prop| {
+        let name = db.resolve_atom_ref(prop.name);
+        OBJECT_PROTO.contains(&name.as_ref()) || FUNCTION_PROTO.contains(&name.as_ref())
+    })
+}
+
+/// Boolean query: does the source have excess properties relative to the target?
+///
+/// This is the canonical boundary function replacing the checker-local
+/// `source_has_excess_properties`. Uses the same property classification
+/// logic as `classify_object_properties` but returns only a boolean.
+pub(crate) fn source_has_excess_properties_boundary(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if !tsz_solver::relations::freshness::is_fresh_object_type(db, source) {
+        return false;
+    }
+
+    match classify_object_properties(db, source, target) {
+        Some(classification) => !classification.excess_properties.is_empty(),
+        None => false,
     }
 }
 
