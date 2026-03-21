@@ -89,6 +89,9 @@ pub mod test_utils;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "../tests/class_member_closure_tests.rs"]
+mod class_member_closure_tests;
+#[cfg(test)]
 #[path = "../tests/conformance_issues.rs"]
 mod conformance_issues;
 #[cfg(test)]
