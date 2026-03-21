@@ -1198,17 +1198,15 @@ impl<'a> CheckerState<'a> {
     /// contains 'any' in its type structure.
     pub(crate) fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
         // void is a valid inferred return type (functions with no return statements),
-        // it should NOT trigger TS7010 "Function lacks ending return statement"
+        // it should NOT trigger TS7010.
         if return_type == TypeId::VOID {
             return false;
         }
-        // Under strictNullChecks, null and undefined are concrete types (not implicit any).
-        // Only treat null/undefined returns as implicit any when strictNullChecks is OFF,
-        // where they widen to `any`.
-        if return_type == TypeId::ANY {
-            return true;
-        }
-        !self.ctx.strict_null_checks() && self.is_null_or_undefined_only(return_type)
+        // null and undefined are valid inferred return types, not implicit any.
+        // tsc does not emit TS7010 for functions that return null/undefined,
+        // regardless of strictNullChecks. Only report when the return type is
+        // exactly `any`.
+        return_type == TypeId::ANY
     }
 
     // =========================================================================

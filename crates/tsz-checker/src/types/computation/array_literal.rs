@@ -664,7 +664,9 @@ impl<'a> CheckerState<'a> {
         // TS2590: Expression produces a union type that is too complex to represent.
         // The solver sets a flag when union normalization detects that pairwise subtype
         // reduction would exceed tsc's complexity threshold (~1M comparisons).
-        if element_type == TypeId::ERROR && self.ctx.types.take_union_too_complex() {
+        // Check the flag regardless of element_type — the solver preserves the union
+        // (doesn't collapse to ERROR) so the element_type may be a valid large union.
+        if self.ctx.types.take_union_too_complex() {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,
