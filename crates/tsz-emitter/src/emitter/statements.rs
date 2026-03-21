@@ -1049,6 +1049,8 @@ impl<'a> Printer<'a> {
             self.write_space();
         }
 
+        let prev_stmt_expr = self.ctx.flags.in_statement_expression;
+        self.ctx.flags.in_statement_expression = true;
         if needs_parens {
             // TSC special case: when the expression (after type erasure) is a
             // CallExpression whose direct callee is a function/object expression,
@@ -1066,6 +1068,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(expr_stmt.expression);
         }
+        self.ctx.flags.in_statement_expression = prev_stmt_expr;
         self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
@@ -1428,7 +1431,10 @@ impl<'a> Printer<'a> {
         self.write(";");
         if loop_stmt.incrementor.is_some() {
             self.write(" ");
+            let prev_stmt = self.ctx.flags.in_statement_expression;
+            self.ctx.flags.in_statement_expression = true;
             self.emit(loop_stmt.incrementor);
+            self.ctx.flags.in_statement_expression = prev_stmt;
         }
         // Map closing `)` — scan backward from body start
         if let Some(body_node) = self.arena.get(loop_stmt.statement) {

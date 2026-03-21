@@ -55,6 +55,11 @@ pub struct EmitFlags {
     /// whose direct callee is a function/object expression. This produces TSC-style
     /// `(function(){})()` instead of `(function(){}())`.
     pub paren_leftmost_function_or_object: bool,
+
+    /// Whether the current expression's result value is discarded (statement context).
+    /// Set by expression-statement and for-loop incrementor emitters so that
+    /// postfix unary lowering can use the simpler (non-value-preserving) form.
+    pub in_statement_expression: bool,
 }
 
 /// State for arrow function ES5 transformation
