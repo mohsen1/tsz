@@ -1851,32 +1851,32 @@ impl<'a> CheckerState<'a> {
         // Method calls that mutate: x.push(), x.splice(), etc.
         if grand_node.kind == syntax_kind_ext::CALL_EXPRESSION
             && let Some(call) = self.ctx.arena.get_call_expr(grand_node)
-                && call.expression == parent
-            {
-                return matches!(
-                    self.identifier_member_name(access.name_or_argument),
-                    Some(
-                        "copyWithin"
-                            | "fill"
-                            | "pop"
-                            | "push"
-                            | "reverse"
-                            | "shift"
-                            | "sort"
-                            | "splice"
-                            | "unshift"
-                    )
-                );
-            }
+            && call.expression == parent
+        {
+            return matches!(
+                self.identifier_member_name(access.name_or_argument),
+                Some(
+                    "copyWithin"
+                        | "fill"
+                        | "pop"
+                        | "push"
+                        | "reverse"
+                        | "shift"
+                        | "sort"
+                        | "splice"
+                        | "unshift"
+                )
+            );
+        }
         // Element access assignments: x[0] = value
         if grand_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             && let Some(bin) = self.ctx.arena.get_binary_expr(grand_node)
-                && bin.operator_token == SyntaxKind::EqualsToken as u16
-                && bin.left == parent
-            {
-                return true;
-            }
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+            && bin.left == parent
+        {
+            return true;
+        }
         false
     }
 

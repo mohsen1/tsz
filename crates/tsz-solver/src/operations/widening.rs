@@ -90,6 +90,19 @@ pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: Ty
     widen_type_cached(db, type_id, &mut cache, true, false)
 }
 
+/// Deep-widen a type including function/callable return types.
+///
+/// Unlike `widen_type` (which skips functions in the fast path), this function
+/// widens literal types inside function return types and parameter types.
+/// Used for TS2403 redeclaration checking where `var fn = (s: string) => 3`
+/// should produce widened type `(s: string) => number` for identity comparison.
+pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    // Skip the fast path that excludes functions by going directly to widen_type_cached
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache, true, true)
+}
+
 fn widen_type_cached(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
