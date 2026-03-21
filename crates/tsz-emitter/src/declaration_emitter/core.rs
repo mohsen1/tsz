@@ -1005,14 +1005,31 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             if !has_effective_export && kind != syntax_kind_ext::EXPORT_DECLARATION {
-                // A declaration without export modifier was emitted
-                let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
+                // A declaration without export modifier was emitted.
+                // Module augmentations (`declare global`, `declare module "foo"`)
+                // are not regular declarations and should not trigger
+                // the `export {};` scope-fix marker.
+                let is_module_augmentation = kind == syntax_kind_ext::MODULE_DECLARATION
+                    && self
+                        .arena
+                        .get(stmt_idx)
+                        .and_then(|n| self.arena.get_module(n))
+                        .and_then(|m| self.arena.get(m.name))
+                        .is_some_and(|name_node| {
+                            name_node.kind == SyntaxKind::StringLiteral as u16
+                                || self
+                                    .arena
+                                    .get_identifier(name_node)
+                                    .is_some_and(|id| id.escaped_text == "global")
+                        });
+                let is_declaration_kind = (kind == syntax_kind_ext::FUNCTION_DECLARATION
                     || kind == syntax_kind_ext::CLASS_DECLARATION
                     || kind == syntax_kind_ext::INTERFACE_DECLARATION
                     || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     || kind == syntax_kind_ext::ENUM_DECLARATION
                     || kind == syntax_kind_ext::VARIABLE_STATEMENT
-                    || kind == syntax_kind_ext::MODULE_DECLARATION;
+                    || kind == syntax_kind_ext::MODULE_DECLARATION)
+                    && !is_module_augmentation;
                 if is_declaration_kind {
                     self.emitted_non_exported_declaration = true;
                 }
