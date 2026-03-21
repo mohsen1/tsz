@@ -944,7 +944,8 @@ impl<'a> FlowAnalyzer<'a> {
             member_name_owned = member_ident.escaped_text.clone();
         } else if let Some(member_node) = self.arena.get(member_name_node) {
             if (member_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || member_node.kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                || member_node.kind
+                    == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             {
                 if let Some(lit) = self.arena.get_literal(member_node) {
                     member_name_owned = lit.text.clone();
