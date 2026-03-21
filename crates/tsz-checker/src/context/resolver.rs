@@ -97,7 +97,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // If this is a fallback from a raw SymbolId-based DefId, check if there's
             // a proper DefId registered for this symbol and redirect through it.
             if self.def_to_symbol.borrow().get(&def_id).is_none()
-                && let Some(&real_def_id) = self.symbol_to_def.borrow().get(&sym_id)
+                && let Some(real_def_id) = self.get_existing_def_id(sym_id)
                 && real_def_id != def_id
             {
                 return self.resolve_lazy(real_def_id, _interner);
@@ -489,8 +489,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Convert SymbolRef to SymbolId
         let sym_id = SymbolId(symbol.0);
 
-        // Look up in the symbol_to_def mapping (populated by get_or_create_def_id)
-        self.symbol_to_def.borrow().get(&sym_id).copied()
+        // Look up via get_existing_def_id (checks local cache + authoritative index)
+        self.get_existing_def_id(sym_id)
     }
 
     /// Check if a `TypeId` represents a full Enum type (not a specific member).

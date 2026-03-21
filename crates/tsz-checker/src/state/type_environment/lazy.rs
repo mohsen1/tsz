@@ -903,7 +903,7 @@ impl<'a> CheckerState<'a> {
 
         // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
         // Skipping all Lazy types breaks alias chains (type A = B).
-        let current_def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
+        let current_def_id = self.ctx.get_existing_def_id(sym_id);
         if let Some(target_def_id) = query::lazy_def_id(self.ctx.types, resolved)
             && Some(target_def_id) == current_def_id
         {
@@ -911,7 +911,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol_ref = SymbolRef(sym_id.0);
-        let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
+        let def_id = current_def_id;
 
         // Reuse cached params already in the environment when available.
         let mut cached_env_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;

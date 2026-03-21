@@ -691,7 +691,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         alias_type: TypeId,
     ) -> bool {
-        let own_def_id = match self.ctx.symbol_to_def.borrow().get(&sym_id).copied() {
+        let own_def_id = match self.ctx.get_existing_def_id(sym_id) {
             Some(def_id) => def_id,
             None => return false,
         };

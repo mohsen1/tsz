@@ -1476,13 +1476,13 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_set
             .iter()
-            .filter_map(|sid| self.ctx.symbol_to_def.borrow().get(sid).copied())
+            .filter_map(|sid| self.ctx.get_existing_def_id(*sid))
             .collect();
         if resolving_defs.is_empty() {
             return false;
         }
 
-        let Some(start_def_id) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied() else {
+        let Some(start_def_id) = self.ctx.get_existing_def_id(sym_id) else {
             return false;
         };
 

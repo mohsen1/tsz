@@ -1638,7 +1638,7 @@ impl<'a> CheckerState<'a> {
             // If we can't borrow, skip the cache update - the type is still computed correctly.
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
                 // Get the DefId if one exists (Phase 4.3 migration)
-                let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
+                let def_id = self.ctx.get_existing_def_id(sym_id);
 
                 // For CLASS symbols:
                 // - `result` is the constructor type (Callable with construct signatures)
@@ -1682,8 +1682,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(def_id) = def_id {
                         let parents = self.ctx.inheritance_graph.get_parents(sym_id);
                         if let Some(&parent_sym) = parents.first() {
-                            let symbol_to_def = self.ctx.symbol_to_def.borrow();
-                            if let Some(&parent_def_id) = symbol_to_def.get(&parent_sym) {
+                            if let Some(parent_def_id) =
+                                self.ctx.get_existing_def_id(parent_sym)
+                            {
                                 env.register_class_extends(def_id, parent_def_id);
                             }
                         }
@@ -1723,9 +1724,7 @@ impl<'a> CheckerState<'a> {
                     && (symbol.flags & symbol_flags::ENUM_MEMBER) != 0
                 {
                     let parent_sym_id = symbol.parent;
-                    if let Some(&parent_def_id) =
-                        self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
-                    {
+                    if let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym_id) {
                         env.register_enum_parent(def_id, parent_def_id);
                     }
                 }

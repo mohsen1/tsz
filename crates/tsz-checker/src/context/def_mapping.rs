@@ -298,8 +298,29 @@ impl<'a> CheckerContext<'a> {
     /// Returns None if the symbol doesn't have a `DefId` yet.
     /// This is used by the `DefId` resolver in `TypeLowering` to prefer
     /// `DefId` when available but fall back to `SymbolRef` otherwise.
+    ///
+    /// ## Lookup strategy
+    ///
+    /// 1. **Local cache** (`symbol_to_def`): O(1) `FxHashMap` lookup, no locking.
+    /// 2. **Authoritative index** (`DefinitionStore::symbol_only_index`): O(1)
+    ///    `DashMap` lookup. This catches DefIds created in other checker contexts
+    ///    (e.g., cross-file references, lib types) that aren't yet in the local cache.
+    ///    On a hit, the local caches are populated for future fast-path access.
     pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
-        self.symbol_to_def.borrow().get(&sym_id).copied()
+        // Fast path: local cache
+        if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
+            return Some(def_id);
+        }
+
+        // Fallback: authoritative index (catches cross-context DefIds)
+        if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
+            // Populate local caches for future fast-path hits
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return Some(def_id);
+        }
+
+        None
     }
 
     /// Create a `TypeFormatter` with full context for displaying types (Phase 4.2.1).
@@ -352,7 +373,7 @@ impl<'a> CheckerContext<'a> {
             }
 
             // Also insert with DefId key if one exists (Phase 4.3 migration)
-            if let Some(&def_id) = self.symbol_to_def.borrow().get(&sym_id) {
+            if let Some(def_id) = self.get_existing_def_id(sym_id) {
                 if type_params.is_empty() {
                     env.insert_def(def_id, type_id);
                 } else {

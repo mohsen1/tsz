@@ -89,8 +89,7 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                let Some(member_def_id) =
-                    self.ctx.symbol_to_def.borrow().get(&member_sym_id).copied()
+                let Some(member_def_id) = self.ctx.get_existing_def_id(member_sym_id)
                 else {
                     continue;
                 };

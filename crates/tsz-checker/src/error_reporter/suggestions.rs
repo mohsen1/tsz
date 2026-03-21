@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(symbol.escaped_name.clone());
             }
-            if let Some(&def_id) = self.ctx.symbol_to_def.borrow().get(&sym_id)
+            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
                 && let Some(def) = self.ctx.definition_store.get(def_id)
             {
                 let name = self.ctx.types.resolve_atom(def.name);
