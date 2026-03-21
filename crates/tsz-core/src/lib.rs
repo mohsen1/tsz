@@ -540,7 +540,10 @@ impl CompilerOptions {
             return value;
         }
         if strict_implies {
-            return self.strict.unwrap_or(false);
+            // In TypeScript 6.0+, strict-family flags default to true even
+            // without `--strict`. When `strict` is not explicitly set (None),
+            // strict-implied flags are enabled by default.
+            return self.strict.unwrap_or(true);
         }
         false
     }
