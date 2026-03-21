@@ -700,6 +700,11 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
+    /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
+    /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
+    /// delegation without implicit global state.
+    pub eval_session: Rc<tsz_solver::EvaluationSession>,
+
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
     pub recursion_depth: RefCell<tsz_solver::recursion::DepthCounter>,
@@ -1057,8 +1062,7 @@ pub struct ProjectEnv {
         Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
     /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, file_idx)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
-    pub global_augmentation_targets_index:
-        Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
+    pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
@@ -1135,14 +1139,12 @@ impl ProjectEnv {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
-        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> =
-            FxHashMap::default();
+        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
-        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> =
-            FxHashMap::default();
+        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
 
         // Also build declared_modules if not already from skeleton.
         let mut declared_modules = if self.skeleton_declared_modules.is_some() {
