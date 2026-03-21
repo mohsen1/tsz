@@ -779,7 +779,6 @@ impl<'a> CheckerState<'a> {
                 let base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
                     .filter(|&base| base != type_arg);
-                {}
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
@@ -805,6 +804,71 @@ impl<'a> CheckerState<'a> {
                             if query::contains_type_parameters(self.ctx.types, base) {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
                                 let db = self.ctx.types.as_type_database();
+
+                                // Check if the base is a conditional type whose extends
+                                // type satisfies the constraint. This check applies
+                                // regardless of whether the constraint is callable.
+                                // For `Extract<T, C>` (= `T extends C ? T : never`),
+                                // the result is always a subtype of C, so if C satisfies
+                                // the constraint, skip. If C does NOT satisfy, emit TS2344.
+                                if let Some((cond_extends, cond_false)) =
+                                    query::conditional_type_components(
+                                        self.ctx.types.as_type_database(),
+                                        base,
+                                    )
+                                {
+                                    if cond_false == TypeId::NEVER {
+                                        let ext_resolved = self.resolve_lazy_type(cond_extends);
+                                        let ext_evaluated =
+                                            self.evaluate_type_for_assignability(ext_resolved);
+                                        if self.is_assignable_to(ext_evaluated, constraint_resolved)
+                                            || self
+                                                .is_assignable_to(ext_resolved, constraint_resolved)
+                                        {
+                                            continue;
+                                        }
+                                        // Extract-like pattern (? TrueType : never) but the
+                                        // extends type does NOT satisfy the constraint. tsc
+                                        // reports TS2344 in this case. Instantiate constraint
+                                        // with type args for accurate error messages.
+                                        let mut subst =
+                                            crate::query_boundaries::common::TypeSubstitution::new(
+                                            );
+                                        for (j, p) in type_params.iter().enumerate() {
+                                            if let Some(&arg) = type_args.get(j) {
+                                                subst.insert(p.name, arg);
+                                            }
+                                        }
+                                        let inst_constraint = if subst.is_empty() {
+                                            constraint_resolved
+                                        } else {
+                                            crate::query_boundaries::common::instantiate_type(
+                                                self.ctx.types,
+                                                constraint_resolved,
+                                                &subst,
+                                            )
+                                        };
+                                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                            && !self
+                                                .type_argument_is_narrowed_by_conditional_true_branch(
+                                                    arg_idx,
+                                                    inst_constraint,
+                                                )
+                                        {
+                                            self.error_type_constraint_not_satisfied(
+                                                type_arg,
+                                                inst_constraint,
+                                                arg_idx,
+                                            );
+                                        }
+                                        continue;
+                                    } else {
+                                        // General conditional with type params — defer
+                                        // to instantiation time, matching tsc behavior.
+                                        continue;
+                                    }
+                                }
+
                                 let constraint_is_callable =
                                     tsz_solver::type_queries::is_callable_type(
                                         db,
@@ -838,32 +902,6 @@ impl<'a> CheckerState<'a> {
                                             )
                                             .is_some();
                                     if base_eval_callable {
-                                        continue;
-                                    }
-                                }
-                                // Check if the base is a conditional type whose extends
-                                // type satisfies the constraint. For `Extract<T, C>`
-                                // (= `T extends C ? T : never`), the result is always
-                                // a subtype of C, so if C satisfies the constraint, skip.
-                                if let Some((cond_extends, cond_false)) =
-                                    query::conditional_type_components(
-                                        self.ctx.types.as_type_database(),
-                                        base,
-                                    )
-                                {
-                                    if cond_false == TypeId::NEVER {
-                                        let ext_resolved = self.resolve_lazy_type(cond_extends);
-                                        let ext_evaluated =
-                                            self.evaluate_type_for_assignability(ext_resolved);
-                                        if self.is_assignable_to(ext_evaluated, constraint_resolved)
-                                            || self
-                                                .is_assignable_to(ext_resolved, constraint_resolved)
-                                        {
-                                            continue;
-                                        }
-                                    } else {
-                                        // General conditional with type params — defer
-                                        // to instantiation time, matching tsc behavior.
                                         continue;
                                     }
                                 }
@@ -998,8 +1036,6 @@ impl<'a> CheckerState<'a> {
                                     // tsc defers constraint checks for conditional types
                                     // with free type variables.
                                 }
-                                // Continue to skip TS2344 for conditional types
-                                // with type parameters — matches tsc deferral.
                             } else {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
                                 // Also try evaluating the constraint in case it's a lazy reference
