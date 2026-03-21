@@ -1443,7 +1443,12 @@ impl<'a> CheckerState<'a> {
                     if !self.is_unresolved_import_symbol(missing_idx)
                         && let Some(name) = self.entity_name_text(missing_idx)
                     {
-                        self.error_cannot_find_name_at(&name, missing_idx);
+                        // Route through boundary for TS2304/TS2552 with suggestion collection
+                        self.report_not_found_at_boundary(
+                            &name,
+                            missing_idx,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                     }
                     return (TypeId::ERROR, Vec::new());
                 }

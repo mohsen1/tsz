@@ -316,16 +316,9 @@ impl<'a> CheckerState<'a> {
     fn resolve_scoped_name(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
         let sym_id = self.resolve_identifier_symbol(request.idx);
         let Some(sym_id) = sym_id else {
-            // Not found — try spelling suggestions
-            let meaning_flags = match request.kind {
-                NameLookupKind::Value => symbol_flags::VALUE,
-                NameLookupKind::Type => symbol_flags::TYPE,
-                NameLookupKind::Namespace => symbol_flags::NAMESPACE_MODULE,
-                NameLookupKind::ExportedMember => unreachable!(),
-            };
-            let suggestions = self
-                .find_similar_identifiers(request.name, request.idx, meaning_flags)
-                .unwrap_or_default();
+            // Not found — collect spelling suggestions via shared helper
+            // which respects all tsc suppression rules.
+            let suggestions = self.collect_spelling_suggestions(request.name, request.idx);
             return Err(if suggestions.is_empty() {
                 ResolutionFailure::not_found()
             } else {
@@ -546,6 +539,69 @@ impl<'a> CheckerState<'a> {
                 None
             }
         }
+    }
+
+    /// Resolve a value-position name through the boundary and report any failure.
+    ///
+    /// Returns `Ok(ResolvedName)` if the name resolves with value meaning,
+    /// or emits the appropriate diagnostic (TS2304/TS2552/TS2693) and returns `Err(())`.
+    ///
+    /// Use this for value-position lookups that currently call
+    /// `error_cannot_find_name_at` or `error_type_only_value_at` directly.
+    pub(crate) fn resolve_value_name_or_report(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Result<ResolvedName, ()> {
+        let req = NameResolutionRequest::value(name, idx);
+        match self.resolve_name_structured(&req) {
+            Ok(resolved) => Ok(resolved),
+            Err(failure) => {
+                self.report_name_resolution_failure(&req, &failure);
+                Err(())
+            }
+        }
+    }
+
+    /// Report a "not found" diagnostic with suggestion collection at the boundary.
+    ///
+    /// Collects spelling suggestions via `collect_spelling_suggestions` (which
+    /// respects all tsc suppression rules: accessibility modifiers, spread
+    /// elements, `arguments`, max-suggestion cap, parse-error suppression) and
+    /// emits TS2304 or TS2552 accordingly.
+    ///
+    /// Use this when the caller already knows the name is not found (e.g.,
+    /// after binder resolution failed) but wants suggestion-enriched diagnostics
+    /// routed through the boundary.
+    pub(crate) fn report_not_found_at_boundary(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        kind: NameLookupKind,
+    ) {
+        if matches!(kind, NameLookupKind::ExportedMember) {
+            return;
+        }
+
+        // Delegate to the shared suggestion collector which applies all
+        // suppression predicates (accessibility modifiers, spread elements,
+        // arguments, max cap, parse errors).
+        let suggestions = self.collect_spelling_suggestions(name, idx);
+
+        let req = match kind {
+            NameLookupKind::Value => NameResolutionRequest::value(name, idx),
+            NameLookupKind::Type => NameResolutionRequest::type_ref(name, idx),
+            NameLookupKind::Namespace => NameResolutionRequest::namespace(name, idx),
+            NameLookupKind::ExportedMember => unreachable!(),
+        };
+
+        let failure = if suggestions.is_empty() {
+            ResolutionFailure::not_found()
+        } else {
+            ResolutionFailure::not_found_with_suggestions(suggestions)
+        };
+
+        self.report_name_resolution_failure(&req, &failure);
     }
 }
 

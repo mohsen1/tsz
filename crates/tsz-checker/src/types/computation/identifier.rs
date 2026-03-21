@@ -230,7 +230,12 @@ impl<'a> CheckerState<'a> {
                         if self.is_heritage_type_only_context(idx) {
                             return TypeId::ERROR;
                         }
-                        self.error_cannot_find_name_at(name, idx);
+                        // Route through boundary for TS2304/TS2552 with suggestion collection
+                        self.report_not_found_at_boundary(
+                            name,
+                            idx,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                         return TypeId::ERROR;
                     }
                     // TS2693: Type parameters cannot be used as values
@@ -1138,7 +1143,9 @@ impl<'a> CheckerState<'a> {
         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
             return value_type;
         }
-        self.error_type_only_value_at(name, idx);
+        // Route through wrong-meaning boundary: Symbol is a type-only name
+        use crate::query_boundaries::name_resolution::NameLookupKind;
+        self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
         TypeId::ERROR
     }
 
@@ -1257,14 +1264,24 @@ impl<'a> CheckerState<'a> {
             {
                 self.error_cannot_find_name_change_lib(name, idx);
             } else {
-                self.error_cannot_find_name_at(name, idx);
+                // Route through boundary for TS2304/TS2552 with suggestion collection
+                self.report_not_found_at_boundary(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
             }
             return TypeId::ERROR;
         }
 
         match self.ctx.capabilities.diagnose_missing_name(name) {
             Some(CapabilityDiagnostic::MissingDomGlobal { .. }) => {
-                self.error_cannot_find_name_at(name, idx);
+                // Route through boundary for TS2304/TS2552 with suggestion collection
+                self.report_not_found_at_boundary(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
                 return TypeId::ERROR;
             }
             Some(CapabilityDiagnostic::MissingEs2015Type { .. }) => {
@@ -1315,14 +1332,21 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            self.error_type_only_value_at(name, idx);
+            // Route through wrong-meaning boundary: primitive keyword is type-only
+            use crate::query_boundaries::name_resolution::NameLookupKind;
+            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
             return TypeId::ERROR;
         }
 
         if self.ctx.is_known_global_type(name) {
             self.error_cannot_find_global_type(name, idx);
         } else {
-            self.error_cannot_find_name_at(name, idx);
+            // Route through boundary for TS2304/TS2552 with suggestion collection
+            self.report_not_found_at_boundary(
+                name,
+                idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+            );
         }
         TypeId::ERROR
     }
@@ -1389,7 +1413,9 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            self.error_type_only_value_at(name, idx);
+            // Route through wrong-meaning boundary: primitive keyword is type-only
+            use crate::query_boundaries::name_resolution::NameLookupKind;
+            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives

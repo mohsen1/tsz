@@ -446,3 +446,125 @@ let x: Outer.Inner.DoesNotExist;
         "Expected TS2694 for missing nested namespace export, got: {diags:?}"
     );
 }
+
+// =========================================================================
+// Phase 2.5: Wrong-meaning migration through boundary
+// =========================================================================
+
+/// Primitive keyword types used as values route through wrong-meaning boundary
+#[test]
+fn phase2_primitive_keyword_type_as_value_routes_through_boundary() {
+    // NOTE: "void" and "undefined" excluded — they are keyword tokens with
+    // special parsing rules, not identifiers in `const x = void` context.
+    // "null" excluded — it's a valid value (NullKeyword).
+    for keyword in &[
+        "number", "string", "boolean", "any", "unknown", "never", "object", "bigint",
+    ] {
+        let src = format!("const x = {keyword};");
+        let diags = check(&src);
+        assert!(
+            diags.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for '{keyword}' used as value, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        // Should not emit TS2304 alongside TS2693
+        assert!(
+            !diags.iter().any(|d| d.code == 2304),
+            "Should not emit TS2304 alongside TS2693 for '{keyword}', got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Value-only symbol in type position routes through wrong-meaning boundary (TS2749)
+#[test]
+fn phase2_value_only_type_routes_through_boundary_in_return_type() {
+    let diags = check(
+        r#"
+const myVal = "hello";
+function f(): myVal { return ""; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2749),
+        "Expected TS2749 for value used as return type, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Keyword type in `new` expression routes through wrong-meaning boundary
+#[test]
+fn phase2_keyword_type_in_new_routes_through_boundary() {
+    let diags = check("const x = new string();");
+    assert!(
+        diags.iter().any(|d| d.code == 2693),
+        "Expected TS2693 for 'new string()', got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Heritage clause with unresolved name routes through boundary for suggestions
+#[test]
+fn phase2_heritage_unresolved_routes_through_boundary() {
+    let diags = check(
+        r#"
+class Base {}
+class Derived extends Bace {}
+"#,
+    );
+    // Should get TS2304 or TS2552 (spelling suggestion for "Base" -> "Bace")
+    assert!(
+        diags.iter().any(|d| d.code == 2304 || d.code == 2552),
+        "Expected TS2304/TS2552 for misspelled heritage name, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `typeof default` emits TS2304 through boundary
+#[test]
+fn phase2_typeof_default_routes_through_boundary() {
+    let diags = check("type T = typeof default;");
+    assert!(
+        diags.iter().any(|d| d.code == 2304),
+        "Expected TS2304 for 'typeof default', got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Suggestion suppression: accessibility modifiers don't get TS2552
+#[test]
+fn phase2_suggestion_suppression_for_accessibility_modifiers() {
+    // "private" used as identifier — should get TS2304, not TS2552
+    let diags = check(
+        r#"
+function f() {
+    return private;
+}
+"#,
+    );
+    // Should not produce TS2552 suggestions for "private"
+    let has_ts2552 = diags.iter().any(|d| d.code == 2552);
+    // Either TS2304 or no error (strict mode may produce different diagnostics)
+    assert!(
+        !has_ts2552,
+        "Should not emit TS2552 for 'private', got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// No double diagnostics after migration: globalThis property type-only
+#[test]
+fn phase2_no_double_diagnostic_for_global_type_only() {
+    let diags = check(
+        r#"
+interface Foo { x: number; }
+const a = Foo;
+"#,
+    );
+    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    assert!(
+        ts2693_count <= 1,
+        "Should emit at most 1 TS2693 for interface as value, got {ts2693_count}: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}

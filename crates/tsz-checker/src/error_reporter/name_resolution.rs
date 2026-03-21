@@ -730,6 +730,40 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Suggestion collection and diagnostic emission are now handled by
+        // `collect_spelling_suggestions` + the boundary's `report_name_resolution_failure`.
+        // Attempt to collect suggestions and emit the appropriate diagnostic.
+        let suggestions = self.collect_spelling_suggestions(name, idx);
+        if !suggestions.is_empty() {
+            self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
+            return;
+        }
+
+        // Fall back to standard error without suggestions
+        if let Some(loc) = self.get_source_location(idx) {
+            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                self.ctx.types,
+                &self.ctx.binder.symbols,
+                self.ctx.file_name.as_str(),
+            )
+            .with_def_store(&self.ctx.definition_store);
+            let diag = builder.cannot_find_name(name, loc.start, loc.length());
+            self.ctx
+                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Collect spelling suggestions for an unresolved name, respecting all
+    /// suppression rules (accessibility modifiers, spread elements, `arguments`,
+    /// max-suggestion cap, parse-error suppression).
+    ///
+    /// Returns an empty `Vec` when suggestions should be suppressed.
+    /// This is the single source of truth for suggestion collection, shared by
+    /// both `error_cannot_find_name_at` and the boundary's
+    /// `report_not_found_at_boundary`.
+    pub(crate) fn collect_spelling_suggestions(&self, name: &str, idx: NodeIndex) -> Vec<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
         // tsc does not emit TS2552 suggestions (e.g. "private" -> "print") in these cases.
         let is_accessibility_modifier_name = matches!(name, "public" | "private" | "protected");
@@ -762,6 +796,23 @@ impl<'a> CheckerState<'a> {
         let suppress_spelling_suggestion =
             is_accessibility_modifier_name || is_in_spread_element || is_arguments_name;
 
+        if suppress_spelling_suggestion {
+            return Vec::new();
+        }
+
+        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
+        if reached_max_suggestions {
+            return Vec::new();
+        }
+
+        // Suppress spelling suggestions in files with parse errors.
+        // When the AST is malformed, symbols may not be properly bound and
+        // name resolution cascades are unhelpful.  tsc keeps only primary
+        // diagnostics in these files.
+        if self.has_syntax_parse_errors() {
+            return Vec::new();
+        }
+
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
@@ -772,38 +823,8 @@ impl<'a> CheckerState<'a> {
             tsz_binder::symbol_flags::VALUE
         };
 
-        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
-
-        // Suppress spelling suggestions in files with parse errors.
-        // When the AST is malformed, symbols may not be properly bound and
-        // name resolution cascades are unhelpful.  tsc keeps only primary
-        // diagnostics in these files.
-        let suppress_for_parse_errors = self.has_syntax_parse_errors();
-
-        // Try to find similar identifiers in scope for better error messages
-        if !suppress_spelling_suggestion
-            && !reached_max_suggestions
-            && !suppress_for_parse_errors
-            && let Some(suggestions) = self.find_similar_identifiers(name, idx, suggestion_meaning)
-            && !suggestions.is_empty()
-        {
-            // Use the first suggestion for "Did you mean?" error
-            self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
-            return;
-        }
-
-        // Fall back to standard error without suggestions
-        if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-            let diag = builder.cannot_find_name(name, loc.start, loc.length());
-            self.ctx
-                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
-        }
+        self.find_similar_identifiers(name, idx, suggestion_meaning)
+            .unwrap_or_default()
     }
 
     /// Report TS2318: Cannot find global type 'X' at a raw source position.

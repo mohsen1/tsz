@@ -1585,7 +1585,13 @@ impl<'a> CheckerState<'a> {
                                 | "bigint"
                         )
                     {
-                        self.error_type_only_value_at(&name, type_ref.type_name);
+                        // Route through wrong-meaning boundary: primitive keyword type-only
+                        use crate::query_boundaries::name_resolution::NameLookupKind;
+                        self.report_wrong_meaning_diagnostic(
+                            &name,
+                            type_ref.type_name,
+                            NameLookupKind::Type,
+                        );
                         self.ctx.node_types.insert(idx.0, TypeId::ERROR);
                         return TypeId::ERROR;
                     }
@@ -1734,9 +1740,12 @@ impl<'a> CheckerState<'a> {
                                 _ => None,
                             };
                             if let Some(keyword_name) = keyword_name {
-                                self.error_type_only_value_at(
+                                // Route through wrong-meaning boundary: keyword type-only
+                                use crate::query_boundaries::name_resolution::NameLookupKind;
+                                self.report_wrong_meaning_diagnostic(
                                     keyword_name,
                                     array_type.element_type,
+                                    NameLookupKind::Type,
                                 );
                                 self.ctx.node_types.insert(idx.0, TypeId::ERROR);
                                 return TypeId::ERROR;
@@ -2063,12 +2072,16 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         if let Some(sym_id) = self.resolve_global_value_symbol(name) {
             if self.alias_resolves_to_type_only(sym_id) {
-                self.error_type_only_value_at(name, error_node);
+                // Route through wrong-meaning boundary: alias resolves to type-only
+                use crate::query_boundaries::name_resolution::NameLookupKind;
+                self.report_wrong_meaning_diagnostic(name, error_node, NameLookupKind::Type);
                 return TypeId::ERROR;
             }
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 if (symbol.flags & symbol_flags::VALUE) == 0 {
-                    self.error_type_only_value_at(name, error_node);
+                    // Route through wrong-meaning boundary: symbol has no value meaning
+                    use crate::query_boundaries::name_resolution::NameLookupKind;
+                    self.report_wrong_meaning_diagnostic(name, error_node, NameLookupKind::Type);
                     return TypeId::ERROR;
                 }
                 // In TypeScript, `typeof globalThis` only exposes `var`-declared
