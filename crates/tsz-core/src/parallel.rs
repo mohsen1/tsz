@@ -1277,8 +1277,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     shorthand_ambient_modules.sort();
 
     // Module export specifiers (keys from module_exports map)
-    let mut module_export_specifiers: Vec<String> =
-        result.module_exports.keys().cloned().collect();
+    let mut module_export_specifiers: Vec<String> = result.module_exports.keys().cloned().collect();
     module_export_specifiers.sort();
 
     FileSkeleton {
