@@ -1,5 +1,67 @@
+//! JSX runtime/factory handling: import source validation (TS2875),
+//! factory-in-scope checks (TS2874), fragment factory (TS17016/TS2879),
+//! pragma extraction, and factory symbol referencing.
+
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+
+/// Extract the `@jsx` pragma factory name from a source file's leading comments.
+///
+/// Matches the tsc behavior: scans for `@jsx <identifier>` in block comments
+/// (`/* ... */` or `/** ... */`). Returns the factory expression (e.g., `"h"`,
+/// `"React.createElement"`). Only the first occurrence is used.
+pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
+    // Only scan leading comments (pragmas must appear before code).
+    // We limit scanning to prevent searching entire large files.
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    while pos < bytes.len() {
+        // Skip whitespace
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        // Look for block comments (/* ... */ or /** ... */)
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                // Search for @jsx within this comment
+                if let Some(jsx_pos) = comment_body.find("@jsx ") {
+                    let after_jsx = &comment_body[jsx_pos + 5..];
+                    let factory: String = after_jsx
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
+                        .collect();
+                    if !factory.is_empty() {
+                        return Some(factory);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break; // Unterminated comment
+            }
+            continue;
+        }
+        // Look for line comments (// ...)
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            // Line comments can't contain @jsx pragmas (tsc only uses block comments)
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        // Hit non-comment code — stop scanning
+        break;
+    }
+    None
+}
 
 impl<'a> CheckerState<'a> {
     /// Check that the JSX import source module can be resolved (TS2875).
@@ -214,5 +276,149 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::USING_JSX_FRAGMENTS_REQUIRES_FRAGMENT_FACTORY_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE,
             &[&root_ident_owned],
         );
+    }
+
+    /// Mark a JSX factory or fragment factory name as referenced for
+    /// unused-import checking (TS6192). The name may be dotted (e.g.,
+    /// `React.createElement`); we resolve only the root identifier.
+    pub(crate) fn mark_jsx_name_as_referenced(&mut self, name: &str, node_idx: NodeIndex) {
+        let root_ident = name.split('.').next().unwrap_or(name);
+        if root_ident.is_empty() {
+            return;
+        }
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self.ctx.binder.resolve_name_with_filter(
+            root_ident,
+            self.ctx.arena,
+            node_idx,
+            &lib_binders,
+            |_| true,
+        ) {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+    }
+
+    /// Check that the JSX factory is in scope (TS2874).
+    ///
+    /// tsc 6.0 behavior:
+    /// - Only classic "react" mode requires the factory in scope.
+    /// - When `jsxFactory` compiler option is explicitly set, tsc skips scope
+    ///   checking (the option is a name hint, not a scope requirement).
+    /// - When using default (`React.createElement`) or `reactNamespace`, tsc
+    ///   checks the full scope chain (local, imports, namespace, global).
+    pub(crate) fn check_jsx_factory_in_scope(&mut self, node_idx: NodeIndex) {
+        use tsz_common::checker_options::JsxMode;
+
+        // Only classic "react" mode requires the factory in scope
+        if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+            return;
+        }
+
+        // When @jsxImportSource pragma is present, it overrides react mode
+        // to react-jsx behavior, so the factory scope check doesn't apply.
+        if self.extract_jsx_import_source_pragma().is_some() {
+            return;
+        }
+
+        // tsc 6.0 skips scope checking when jsxFactory is explicitly set.
+        // However, we still need to mark the factory symbol as referenced
+        // so that unused-import checking (TS6192) doesn't flag it.
+        if self.ctx.compiler_options.jsx_factory_from_config {
+            self.mark_jsx_name_as_referenced(
+                &self.ctx.compiler_options.jsx_factory.clone(),
+                node_idx,
+            );
+            return;
+        }
+
+        // Check for per-file /** @jsx factory */ pragma
+        let pragma_factory = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| extract_jsx_pragma(&sf.text));
+
+        let factory =
+            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+        let root_ident = factory.split('.').next().unwrap_or(&factory);
+
+        if root_ident.is_empty() {
+            return;
+        }
+
+        // Check full scope chain (accept-all filter to include class members)
+        let lib_binders = self.get_lib_binders();
+        let found = self.ctx.binder.resolve_name_with_filter(
+            root_ident,
+            self.ctx.arena,
+            node_idx,
+            &lib_binders,
+            |_| true, // Accept any symbol, including class members
+        );
+        if found.is_some() {
+            return;
+        }
+
+        // Also check global scope as fallback (for lib-loaded symbols)
+        if self.resolve_global_value_symbol(root_ident).is_some() {
+            return;
+        }
+
+        // If not found, emit TS2874 at the tag name (tsc points at the tag name, not `<`)
+        let error_node = self
+            .ctx
+            .arena
+            .get(node_idx)
+            .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+            .map(|jsx| jsx.tag_name)
+            .unwrap_or(node_idx);
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            error_node,
+            diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+            &[root_ident],
+        );
+    }
+
+    /// Try to resolve JSX namespace from a custom jsxFactory's parent entity.
+    ///
+    /// For `@jsxFactory: X.jsx`, resolves `X` in file scope, then looks for `JSX`
+    /// in its exports/members. Returns `None` if no custom factory or the namespace
+    /// can't be found.
+    pub(crate) fn resolve_jsx_namespace_from_factory(&mut self) -> Option<tsz_binder::SymbolId> {
+        // Get the effective factory name (pragma overrides config)
+        let pragma_factory = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let factory = pragma_factory.or_else(|| {
+            if self.ctx.compiler_options.jsx_factory_from_config {
+                Some(self.ctx.compiler_options.jsx_factory.clone())
+            } else {
+                None
+            }
+        })?;
+
+        // Only applies to dotted factories (e.g., "X.jsx", "MyLib.createElement")
+        let dot_pos = factory.find('.')?;
+        let root_name = &factory[..dot_pos];
+        if root_name.is_empty() {
+            return None;
+        }
+
+        // Resolve the root entity (e.g., "X") in file scope
+        let root_sym = self.ctx.binder.file_locals.get(root_name)?;
+        let lib_binders = self.get_lib_binders();
+        let root_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(root_sym, &lib_binders)?;
+
+        // Look for "JSX" in the root entity's exports (namespace members)
+        let exports = root_symbol.exports.as_ref()?;
+        exports.get("JSX")
     }
 }

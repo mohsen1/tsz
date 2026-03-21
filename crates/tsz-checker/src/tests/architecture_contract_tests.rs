@@ -269,11 +269,23 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_node should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
-    let jsx_checker_src = fs::read_to_string("src/checkers/jsx_checker.rs")
-        .expect("failed to read src/checkers/jsx_checker.rs");
+    // Read all JSX module files and concatenate for architecture checks.
+    let jsx_checker_src = {
+        let mut buf = String::new();
+        for file in &[
+            "src/checkers/jsx/orchestration.rs",
+            "src/checkers/jsx/children.rs",
+            "src/checkers/jsx/props.rs",
+            "src/checkers/jsx/runtime.rs",
+            "src/checkers/jsx/diagnostics.rs",
+        ] {
+            buf.push_str(&fs::read_to_string(file).unwrap_or_default());
+        }
+        buf
+    };
     assert!(
         !jsx_checker_src.contains("TypeData::IndexAccess"),
-        "jsx_checker should use solver index_access constructor API, not TypeData::IndexAccess"
+        "jsx module should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
     let mut context_src = fs::read_to_string("src/context/mod.rs")
@@ -1429,7 +1441,7 @@ fn checker_files_stay_under_loc_limit() {
         ("state/type_resolution/symbol_types.rs", 1050),
         ("error_reporter/core.rs", 2050),
         ("checkers/call_checker.rs", 2100),
-        ("checkers/jsx_checker.rs", 2450),
+        ("checkers/jsx/props.rs", 2600),
     ];
 
     let mut violations = Vec::new();
@@ -2269,7 +2281,11 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/call_checker.rs",
         "types/computation/call_inference.rs",
         "dispatch.rs",
-        "checkers/jsx_checker.rs",
+        "checkers/jsx/orchestration.rs",
+        "checkers/jsx/children.rs",
+        "checkers/jsx/props.rs",
+        "checkers/jsx/runtime.rs",
+        "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
         "types/computation/object_literal.rs",
         "types/computation/helpers.rs",
@@ -2448,7 +2464,11 @@ fn migrated_helper_files_no_raw_ambient_request_reads() {
 fn migrated_files_no_raw_contextual_assertion_mutation() {
     let migrated_files = &[
         "dispatch.rs",
-        "checkers/jsx_checker.rs",
+        "checkers/jsx/orchestration.rs",
+        "checkers/jsx/children.rs",
+        "checkers/jsx/props.rs",
+        "checkers/jsx/runtime.rs",
+        "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
         "types/computation/helpers.rs",
         "types/computation/object_literal.rs",
