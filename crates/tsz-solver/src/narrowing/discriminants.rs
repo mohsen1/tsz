@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use crate::TypeData;
 use rustc_hash::FxHashMap;
 
 use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
@@ -269,6 +270,23 @@ impl<'a> NarrowingContext<'a> {
     fn get_top_level_property_type_fast(&self, type_id: TypeId, property: Atom) -> Option<TypeId> {
         let key = (type_id, property);
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
+            // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
+            // has been populated since the cache entry was created.
+            if let Some(prop_type) = cached {
+                if !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))) {
+                    return cached;
+                }
+                // Re-resolve the Lazy type
+                let re_resolved = self.resolve_type(prop_type);
+                if re_resolved != prop_type {
+                    self.cache
+                        .property_cache
+                        .borrow_mut()
+                        .insert(key, Some(re_resolved));
+                    return Some(re_resolved);
+                }
+                return cached;
+            }
             return cached;
         }
 
@@ -276,7 +294,15 @@ impl<'a> NarrowingContext<'a> {
         let result = self
             .get_top_level_property_type_fast_uncached(type_id, property)
             .map(|prop_type| self.resolve_type(prop_type));
-        self.cache.property_cache.borrow_mut().insert(key, result);
+        // Don't cache unresolved Lazy property types — the TypeEnvironment may be
+        // populated later during checking, and we need to re-resolve on next access.
+        let should_cache = match result {
+            Some(prop_type) => !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))),
+            None => true,
+        };
+        if should_cache {
+            self.cache.property_cache.borrow_mut().insert(key, result);
+        }
         result
     }
 

@@ -347,14 +347,30 @@ impl<'a> NarrowingContext<'a> {
     /// to their actual structural types before performing narrowing operations.
     pub(crate) fn resolve_type(&self, type_id: TypeId) -> TypeId {
         if let Some(&cached) = self.cache.resolve_cache.borrow().get(&type_id) {
-            return cached;
+            // A self-mapping cache entry for a Lazy type means a previous resolution
+            // attempt failed (TypeEnvironment wasn't populated yet). Re-attempt resolution
+            // since the environment may have been populated since then.
+            if cached != type_id {
+                return cached;
+            }
+            if let Some(TypeData::Lazy(_)) = self.db.lookup(type_id) {
+                // Fall through to re-resolve — don't trust stale self-mapping for Lazy
+            } else {
+                return cached;
+            }
         }
 
         let result = self.resolve_type_uncached(type_id);
-        self.cache
-            .resolve_cache
-            .borrow_mut()
-            .insert(type_id, result);
+        // Only cache if we actually resolved it — don't cache Lazy → Lazy self-mappings
+        // since the TypeEnvironment may be populated later with the real mapping.
+        let is_unresolved_lazy =
+            result == type_id && matches!(self.db.lookup(type_id), Some(TypeData::Lazy(_)));
+        if !is_unresolved_lazy {
+            self.cache
+                .resolve_cache
+                .borrow_mut()
+                .insert(type_id, result);
+        }
         result
     }
 
