@@ -118,7 +118,7 @@ impl EnvironmentCapabilities {
     ///
     /// This is the single decision point for "should a feature-gate diagnostic
     /// be emitted?" — replacing per-call-site `if !capabilities.X { emit }` patterns.
-    pub fn check_feature_gate(&self, gate: FeatureGate) -> Option<CapabilityDiagnostic> {
+    pub(crate) fn check_feature_gate(&self, gate: FeatureGate) -> Option<CapabilityDiagnostic> {
         match gate {
             FeatureGate::ImportAttributes => {
                 if !self.import_attributes_supported {
@@ -181,7 +181,7 @@ impl EnvironmentCapabilities {
     /// This wraps `classify_missing_global` and resolves the classification
     /// into a concrete `CapabilityDiagnostic` with all context needed for
     /// error emission.
-    pub fn diagnose_missing_name(&self, name: &str) -> Option<CapabilityDiagnostic> {
+    pub(crate) fn diagnose_missing_name(&self, name: &str) -> Option<CapabilityDiagnostic> {
         let kind = self.classify_missing_global(name)?;
         match kind {
             MissingGlobalKind::CoreGlobalType => Some(CapabilityDiagnostic::MissingGlobalType {
@@ -244,7 +244,7 @@ impl EnvironmentCapabilities {
     ///
     /// Currently checks:
     /// - TS5071: resolveJsonModule incompatible with module kind
-    pub fn check_config_compatibility(&self) -> Vec<CapabilityDiagnostic> {
+    pub(crate) fn check_config_compatibility(&self) -> Vec<CapabilityDiagnostic> {
         let mut diags = Vec::new();
 
         // TS5071: resolveJsonModule with incompatible module kind
