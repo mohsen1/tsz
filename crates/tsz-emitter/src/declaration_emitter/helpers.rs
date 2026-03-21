@@ -16,6 +16,27 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+/// Escape a cooked string value for embedding in a double-quoted string literal.
+///
+/// The scanner stores "cooked" (unescaped) text for string literals. When
+/// writing strings back into `.d.ts` output we must re-escape characters
+/// that cannot appear raw inside double-quoted string literals.
+fn escape_string_for_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 type JsFoldedNamedExports = (
     FxHashSet<String>,
     FxHashMap<NodeIndex, Vec<NodeIndex>>,
@@ -5167,7 +5188,7 @@ impl<'a> DeclarationEmitter<'a> {
         if Self::is_unquoted_property_name(text) {
             text.to_string()
         } else {
-            format!("\"{text}\"")
+            format!("\"{}\"", escape_string_for_double_quote(text))
         }
     }
 
@@ -7752,7 +7773,7 @@ impl<'a> DeclarationEmitter<'a> {
         let needs_quotes = !(first == '_' || first == '$' || first.is_ascii_alphabetic())
             || chars.any(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
         if needs_quotes {
-            format!("\"{name}\"")
+            format!("\"{}\"", escape_string_for_double_quote(name))
         } else {
             name.to_string()
         }
@@ -8165,7 +8186,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> String {
         match lit {
             tsz_solver::types::LiteralValue::String(atom) => {
-                format!("\"{}\"", interner.resolve_atom(*atom))
+                format!("\"{}\"", escape_string_for_double_quote(&interner.resolve_atom(*atom)))
             }
             tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
@@ -8270,7 +8291,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::StringLiteral as u16 => self
                 .arena
                 .get_literal(expr_node)
-                .map(|lit| format!("\"{}\"", lit.text)),
+                .map(|lit| format!("\"{}\"", escape_string_for_double_quote(&lit.text))),
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 self.arena.get_literal(expr_node).map(|lit| {
                     // For large numbers (21+ digits), parse as f64 and format
