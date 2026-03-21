@@ -115,8 +115,16 @@ impl<'a> CheckerState<'a> {
         // 5. Check if the driver has a resolution error for this specifier
         //    (positive evidence of failed resolution)
         if let Some(error) = self.ctx.get_resolution_error(&module_name) {
-            let error_code = error.code;
-            let error_message = error.message.clone();
+            // For Node.js built-in modules, use TS2591 instead of TS2307
+            // (tsc emits "Cannot find name 'X'. Install @types/node" for these)
+            let (error_message, error_code) = {
+                let (msg, code) = self.module_not_found_diagnostic(&module_name);
+                if code != error.code {
+                    (msg, code) // module_not_found_diagnostic upgraded to TS2591
+                } else {
+                    (error.message.clone(), error.code)
+                }
+            };
             let module_key = module_name.to_string();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);

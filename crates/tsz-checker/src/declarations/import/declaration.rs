@@ -35,7 +35,7 @@ pub(crate) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
 
 /// Check if a module specifier refers to a Node.js built-in module.
 /// Handles both bare names ("fs") and the `node:` prefix ("node:fs").
-fn is_node_builtin_module(name: &str) -> bool {
+pub(crate) fn is_node_builtin_module(name: &str) -> bool {
     let bare = name.strip_prefix("node:").unwrap_or(name);
     matches!(
         bare,

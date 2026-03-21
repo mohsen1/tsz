@@ -221,12 +221,72 @@ impl EnvironmentCapabilities {
 // Global name classifiers (moved from name_resolution.rs to centralize)
 // =============================================================================
 
-/// Check if a name is a known Node.js global that requires @types/node (TS2591).
+/// Check if a name is a known Node.js global or built-in module name
+/// that requires @types/node (TS2591).
+///
+/// tsc emits TS2591 for both:
+/// 1. Node.js runtime globals: `require`, `process`, `Buffer`, etc.
+/// 2. Node.js built-in module names used as identifiers (e.g. from
+///    `import fs = require("fs")`): `fs`, `url`, `events`, etc.
+/// 3. `node:`-prefixed module specifiers used as names.
 pub(crate) fn is_known_node_global(name: &str) -> bool {
-    matches!(
+    // Node.js runtime globals
+    if matches!(
         name,
         "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
-    )
+    ) {
+        return true;
+    }
+    // Node.js built-in module names (commonly used as identifiers via
+    // `import X = require("X")` patterns).
+    // NOTE: "console" is intentionally excluded — tsc classifies standalone
+    // "console" as a DOM global (TS2584), not a Node global (TS2591).
+    if matches!(
+        name,
+        "assert"
+            | "buffer"
+            | "child_process"
+            | "cluster"
+            | "constants"
+            | "crypto"
+            | "dgram"
+            | "dns"
+            | "domain"
+            | "events"
+            | "fs"
+            | "http"
+            | "http2"
+            | "https"
+            | "inspector"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "perf_hooks"
+            | "punycode"
+            | "querystring"
+            | "readline"
+            | "repl"
+            | "stream"
+            | "string_decoder"
+            | "sys"
+            | "timers"
+            | "tls"
+            | "tty"
+            | "url"
+            | "util"
+            | "v8"
+            | "vm"
+            | "worker_threads"
+            | "zlib"
+    ) {
+        return true;
+    }
+    // node:-prefixed module specifiers (e.g. "node:path")
+    if name.starts_with("node:") {
+        return true;
+    }
+    false
 }
 
 /// Check if a module specifier is a known Node.js built-in module (TS2591).

@@ -39,6 +39,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // When the module specifier is a known Node.js built-in module name,
+        // tsc emits TS2591 ("Cannot find name 'X'. Do you need to install type
+        // definitions for node?") instead of TS2307. This check must come before
+        // the driver resolution error check, because the driver always produces
+        // TS2307 for unresolved modules — but for Node built-ins, tsc uses TS2591.
+        // In Node16/NodeNext mode, the error is suppressed entirely upstream;
+        // in CommonJS/other modes, this substitution produces the correct diagnostic.
+        if super::declaration::is_node_builtin_module(module_name) {
+            return (
+                format_message(
+                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                    &[module_name],
+                ),
+                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+            );
+        }
+
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             return (error.message.clone(), error.code);
         }
