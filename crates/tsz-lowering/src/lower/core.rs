@@ -1325,20 +1325,16 @@ impl<'a> TypeLowering<'a> {
 
             let type_id = self.lower_type(param_data.type_annotation);
             let optional = param_data.question_token || param_data.initializer != NodeIndex::NONE;
-            // Under strictNullChecks, optional parameters (?) include undefined.
-            let effective_type = if optional
-                && self.strict_null_checks
-                && type_id != TypeId::ANY
-                && type_id != TypeId::ERROR
-                && type_id != TypeId::UNDEFINED
-            {
-                self.interner.union(vec![type_id, TypeId::UNDEFINED])
-            } else {
-                type_id
-            };
+            // Store the declared base type in the signature, NOT `type | undefined`.
+            // The `optional: true` flag conveys optionality.  Adding `| undefined`
+            // eagerly prevents union subtype reduction from recognizing that e.g.
+            // `(x: string | undefined) => void` is a subtype of `(x?: string) => void`
+            // because both end up with the same param TypeId, triggering the
+            // identical-params guard.  This matches tsc which stores the declared type
+            // and adds `| undefined` at the use site.
             lowered.push(ParamInfo {
                 name: self.lower_parameter_name(param_data.name),
-                type_id: effective_type,
+                type_id,
                 optional,
                 rest: param_data.dot_dot_dot_token,
             });
