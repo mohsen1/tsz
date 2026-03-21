@@ -2931,7 +2931,7 @@ fn semantic_defs_file_id_is_correct_after_merge() {
     let results = parse_and_bind_parallel(files);
     let program = merge_bind_results(results);
 
-    for (_, entry) in &program.semantic_defs {
+    for entry in program.semantic_defs.values() {
         match entry.name.as_str() {
             "Alpha" => assert_eq!(entry.file_id, 0, "Alpha should be in file 0"),
             "Beta" => assert_eq!(entry.file_id, 1, "Beta should be in file 1"),

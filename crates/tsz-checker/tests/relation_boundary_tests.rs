@@ -8,7 +8,6 @@
 //! - Property compatibility on unions/intersections
 //! - Call-argument object-literal compatibility
 
-use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source_diagnostics;
 
 // ============================================================================
