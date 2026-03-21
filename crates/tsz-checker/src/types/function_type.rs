@@ -2181,6 +2181,10 @@ impl<'a> CheckerState<'a> {
                         && self.ctx.no_implicit_any()
                         && !self.is_js_file()
                         && !self.ctx.generator_had_ts7057
+                        // Suppress TS7055/TS7025 when the generator has a contextual
+                        // yield type — the yield type is implicitly provided by context,
+                        // not truly missing.
+                        && early_yield_type.is_none()
                     {
                         use crate::diagnostics::diagnostic_codes;
                         if let Some(name) = &name_for_error {
