@@ -241,6 +241,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
+        semantic_defs: binder.semantic_defs,
     }
 }
 
@@ -450,6 +451,9 @@ pub struct BindResult {
     /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
     pub file_features: crate::binder::FileFeatures,
+    /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Maps pre-remap `SymbolId` → `SemanticDefEntry`.
+    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -519,6 +523,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 expando_properties: std::mem::take(&mut binder.expando_properties),
                 alias_partners: binder.alias_partners,
                 file_features: binder.file_features,
+                semantic_defs: binder.semantic_defs,
             }
         })
         .collect()
@@ -572,6 +577,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
+        semantic_defs: binder.semantic_defs,
     }
 }
 
@@ -1036,6 +1042,7 @@ fn bind_file_with_libs(
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
+        semantic_defs: binder.semantic_defs,
     }
 }
 
@@ -1127,6 +1134,10 @@ pub struct MergedProgram {
     /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
     /// holds the `TYPE_ALIAS` symbol and this map links it to the ALIAS symbol for value resolution.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
+    /// The checker reads this during construction to pre-create solver DefIds.
+    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
 }
 
 /// High-level residency counters for `MergedProgram` state.
@@ -1400,6 +1411,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
     let mut alias_partners: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
+    let mut semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
+        FxHashMap::default();
     let mut reexports: Reexports = FxHashMap::default();
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
     let mut wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>> =
@@ -2093,6 +2106,17 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
 
+        // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first)
+        for (old_sym_id, entry) in &result.semantic_defs {
+            if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                // Update file_id to use the global file index
+                let mut remapped_entry = entry.clone();
+                remapped_entry.file_id = file_idx as u32;
+                // Only insert the first occurrence (declaration merging keeps first identity)
+                semantic_defs.entry(new_sym_id).or_insert(remapped_entry);
+            }
+        }
+
         // Collect all nested merge pairs across all symbols in this file,
         // then process them AFTER all symbols have their data populated.
         // This is critical because HashMap iteration order is random — if a
@@ -2462,6 +2486,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         lib_symbol_ids: global_lib_symbol_ids,
         type_interner: TypeInterner::new(),
         alias_partners,
+        semantic_defs,
     }
 }
 
@@ -2952,6 +2977,7 @@ pub fn create_binder_from_bound_file(
 
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
+    binder.semantic_defs = program.semantic_defs.clone();
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = crate::binder::ScopeId(0);

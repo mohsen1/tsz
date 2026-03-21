@@ -3151,3 +3151,180 @@ interface Foo {
         "should have at least 3 declarations for merged interface"
     );
 }
+
+// =============================================================================
+// Phase 1 DefId-First Stable Identity Tests
+// =============================================================================
+
+/// Helper: parse + bind a source file and return the binder state.
+fn bind_source(source: &str) -> BinderState {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    binder
+}
+
+#[test]
+fn semantic_defs_captures_top_level_class() {
+    let binder = bind_source("class Foo {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for class Foo");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+    assert_eq!(entry.name, "Foo");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_interface() {
+    let binder = bind_source("interface Bar { x: number }");
+    let sym_id = binder.file_locals.get("Bar").expect("expected Bar");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for interface Bar");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    assert_eq!(entry.name, "Bar");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_type_alias() {
+    let binder = bind_source("type Baz = string | number");
+    let sym_id = binder.file_locals.get("Baz").expect("expected Baz");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for type alias Baz");
+    assert_eq!(entry.kind, super::SemanticDefKind::TypeAlias);
+    assert_eq!(entry.name, "Baz");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_enum() {
+    let binder = bind_source("enum Color { Red, Green, Blue }");
+    let sym_id = binder.file_locals.get("Color").expect("expected Color");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for enum Color");
+    assert_eq!(entry.kind, super::SemanticDefKind::Enum);
+    assert_eq!(entry.name, "Color");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_namespace() {
+    let binder = bind_source("namespace NS { export type T = number }");
+    let sym_id = binder.file_locals.get("NS").expect("expected NS");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for namespace NS");
+    assert_eq!(entry.kind, super::SemanticDefKind::Namespace);
+    assert_eq!(entry.name, "NS");
+}
+
+#[test]
+fn semantic_defs_excludes_nested_declarations() {
+    let binder = bind_source(
+        "
+function outer() {
+    class Inner {}
+    type Local = string;
+}
+",
+    );
+    // Inner and Local should NOT be in semantic_defs because they're inside a function body
+    for (_, entry) in &binder.semantic_defs {
+        assert_ne!(entry.name, "Inner", "nested class should not be captured");
+        assert_ne!(
+            entry.name, "Local",
+            "nested type alias should not be captured"
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_stable_across_rebuild() {
+    // Binding the same source twice should produce identical semantic_defs
+    let source = "
+class A {}
+interface B { x: number }
+type C = string;
+enum D { X }
+namespace E { export const v = 1 }
+";
+    let binder1 = bind_source(source);
+    let binder2 = bind_source(source);
+
+    // Same number of semantic defs
+    assert_eq!(binder1.semantic_defs.len(), binder2.semantic_defs.len());
+
+    // Same names and kinds
+    for (sym_id, entry1) in &binder1.semantic_defs {
+        let entry2 = binder2
+            .semantic_defs
+            .get(sym_id)
+            .expect("same SymbolId should exist in second binding");
+        assert_eq!(
+            entry1.kind, entry2.kind,
+            "kind mismatch for {}",
+            entry1.name
+        );
+        assert_eq!(entry1.name, entry2.name, "name mismatch");
+        assert_eq!(
+            entry1.span_start, entry2.span_start,
+            "span_start mismatch for {}",
+            entry1.name
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_declaration_merging_keeps_first_identity() {
+    // When a symbol is declared multiple times (interface merging),
+    // the first declaration's span should be preserved.
+    let binder = bind_source(
+        "
+interface Merged { a: string }
+interface Merged { b: number }
+",
+    );
+    let sym_id = binder.file_locals.get("Merged").expect("expected Merged");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Merged");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    assert_eq!(entry.name, "Merged");
+    // Span should be from the FIRST declaration
+    let first_decl = binder.symbols.get(sym_id).unwrap().declarations[0];
+    assert_eq!(entry.span_start, first_decl.0);
+}
+
+#[test]
+fn semantic_defs_covers_all_five_declaration_kinds() {
+    let binder = bind_source(
+        "
+class MyClass {}
+interface MyInterface {}
+type MyType = number;
+enum MyEnum { A }
+namespace MyNS {}
+",
+    );
+    assert_eq!(
+        binder.semantic_defs.len(),
+        5,
+        "expected exactly 5 semantic defs, got {}",
+        binder.semantic_defs.len()
+    );
+    let kinds: std::collections::HashSet<_> =
+        binder.semantic_defs.values().map(|e| e.kind).collect();
+    assert!(kinds.contains(&super::SemanticDefKind::Class));
+    assert!(kinds.contains(&super::SemanticDefKind::Interface));
+    assert!(kinds.contains(&super::SemanticDefKind::TypeAlias));
+    assert!(kinds.contains(&super::SemanticDefKind::Enum));
+    assert!(kinds.contains(&super::SemanticDefKind::Namespace));
+}

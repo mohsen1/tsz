@@ -60,6 +60,12 @@ impl<'a> CheckerState<'a> {
                 self.register_function_def_ids_early();
             }
 
+            // Phase 1 DefId-first: pre-populate solver DefIds from binder's semantic index.
+            // This ensures stable identity for top-level declarations before any type
+            // checking or environment building runs. The binder captured these during
+            // binding; we convert them to solver DefIds here once, deterministically.
+            self.ctx.pre_populate_def_ids_from_binder();
+
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
