@@ -112,7 +112,12 @@ impl ProjectFile {
     /// Creates a standalone file with its own `TypeInterner`. For files
     /// within a `Project`, use `with_shared_interner` instead.
     pub fn with_strict(file_name: String, source_text: String, strict: bool) -> Self {
-        Self::with_shared_interner(file_name, source_text, strict, Arc::new(TypeInterner::new()))
+        Self::with_shared_interner(
+            file_name,
+            source_text,
+            strict,
+            Arc::new(TypeInterner::new()),
+        )
     }
 
     /// Parse and bind a single source file with a shared `TypeInterner`.
