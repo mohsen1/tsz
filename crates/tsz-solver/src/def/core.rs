@@ -369,6 +369,19 @@ pub struct DefinitionStore {
     /// so the `TypeFormatter` can display the class/interface name instead of expanding
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DashMap<TypeId, DefId>,
+
+    /// Authoritative `(SymbolId, file_idx)` -> `DefId` index.
+    ///
+    /// This replaces the per-context `symbol_to_def` cache as the single source of
+    /// truth for SymbolId→DefId mappings. The composite key `(symbol_id, file_idx)`
+    /// naturally disambiguates the same raw `SymbolId(u32)` across different binders
+    /// (each binder has a unique `file_idx`), eliminating the need for expensive
+    /// post-hoc name/file validation on every cache hit.
+    ///
+    /// The per-context `symbol_to_def` map is retained as a thin local cache for
+    /// backward compatibility and to avoid `DashMap` overhead on repeated lookups
+    /// within the same context.
+    symbol_def_index: DashMap<(u32, u32), DefId>,
 }
 
 impl Default for DefinitionStore {
@@ -387,6 +400,7 @@ impl DefinitionStore {
             definitions: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             type_to_def: DashMap::new(),
+            symbol_def_index: DashMap::new(),
         }
     }
 
@@ -413,6 +427,24 @@ impl DefinitionStore {
         );
         self.definitions.insert(id, info);
         id
+    }
+
+    /// Register a `(SymbolId, file_idx)` → `DefId` mapping in the authoritative index.
+    ///
+    /// This should be called whenever a new `DefId` is created from a binder symbol,
+    /// using the symbol's raw id and its `decl_file_idx`. The composite key ensures
+    /// that the same `SymbolId(u32)` from different binders maps to different `DefIds`.
+    pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
+        self.symbol_def_index.insert((symbol_id, file_idx), def_id);
+    }
+
+    /// Look up a `DefId` by `(SymbolId, file_idx)`.
+    ///
+    /// Returns `Some(def_id)` if a mapping was previously registered via
+    /// `register_symbol_mapping`. This is an O(1) lookup that replaces the
+    /// expensive multi-binder validation in `get_or_create_def_id`.
+    pub fn lookup_by_symbol(&self, symbol_id: u32, file_idx: u32) -> Option<DefId> {
+        self.symbol_def_index.get(&(symbol_id, file_idx)).map(|r| *r)
     }
 
     /// Get definition info by `DefId`.
@@ -497,6 +529,7 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
+        self.symbol_def_index.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 

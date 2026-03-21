@@ -19,76 +19,62 @@ impl<'a> CheckerContext<'a> {
     ///
     /// This is used during the migration from `SymbolRef` to `DefId`.
     /// Eventually, all type references will use `DefId` directly.
+    ///
+    /// ## Lookup strategy
+    ///
+    /// 1. **Local cache** (`symbol_to_def`): O(1) `FxHashMap` lookup, no locking.
+    /// 2. **Authoritative index** (`DefinitionStore::symbol_def_index`): O(1)
+    ///    `DashMap` lookup keyed by `(symbol_id, file_idx)`. This naturally
+    ///    disambiguates the same raw `SymbolId(u32)` across different binders
+    ///    and eliminates the expensive multi-binder name-validation that was
+    ///    previously done on every cache hit.
+    /// 3. **Create**: look up the symbol, build `DefinitionInfo`, register in
+    ///    both the store and the index.
     pub fn get_or_create_def_id(&self, sym_id: SymbolId) -> DefId {
         use tsz_solver::def::DefinitionInfo;
 
-        let existing_def_id = self.symbol_to_def.borrow().get(&sym_id).copied();
-        if let Some(def_id) = existing_def_id {
-            // Validate cached mapping to guard against cross-binder SymbolId collisions.
-            // In multi-file/lib flows, the same raw SymbolId can refer to different symbols
-            // in different binders; stale mappings can make Lazy(def) point to the wrong symbol.
-            let mapped_symbol = self
-                .binder
-                .symbols
-                .get(sym_id)
-                .or_else(|| {
-                    self.lib_contexts
-                        .iter()
-                        .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
-                })
-                .or_else(|| {
-                    self.all_binders.as_ref().and_then(|binders| {
-                        binders.iter().find_map(|binder| binder.symbols.get(sym_id))
-                    })
-                });
-
-            let is_valid_mapping = if let (Some(info), Some(sym)) =
-                (self.definition_store.get(def_id), mapped_symbol)
-            {
-                let def_name = self.types.resolve_atom_ref(info.name);
-                def_name.as_ref() == sym.escaped_name
-                    && info.file_id.is_none_or(|fid| fid == sym.decl_file_idx)
-                    && info.symbol_id == Some(sym_id.0)
-            } else {
-                false
-            };
-
-            if is_valid_mapping {
-                return def_id;
-            }
-
-            self.symbol_to_def.borrow_mut().remove(&sym_id);
-            if self
-                .def_to_symbol
-                .borrow()
-                .get(&def_id)
-                .is_some_and(|mapped| *mapped == sym_id)
-            {
-                self.def_to_symbol.borrow_mut().remove(&def_id);
-            }
+        // ---- Step 1: local cache fast path ----
+        if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
+            return def_id;
         }
 
-        // Get symbol info to create DefinitionInfo
-        // First try the main binder, then check lib binders
-        let symbol = if let Some(sym) = self.binder.symbols.get(sym_id) {
-            sym
-        } else {
-            // Try to find in lib binders
-            let mut found = None;
-            for lib_ctx in &self.lib_contexts {
-                if let Some(lib_symbol) = lib_ctx.binder.symbols.get(sym_id) {
-                    found = Some(lib_symbol);
-                    break;
-                }
-            }
-            match found {
-                Some(s) => s,
-                None => {
-                    // Symbol not found anywhere - return invalid DefId
-                    return DefId::INVALID;
-                }
-            }
+        // ---- Step 2: look up the symbol to get its file_idx ----
+        // We need the symbol to determine which binder it came from.
+        let symbol = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+            })
+            .or_else(|| {
+                self.all_binders.as_ref().and_then(|binders| {
+                    binders
+                        .iter()
+                        .find_map(|binder| binder.symbols.get(sym_id))
+                })
+            });
+
+        let symbol = match symbol {
+            Some(s) => s,
+            None => return DefId::INVALID,
         };
+
+        let file_idx = symbol.decl_file_idx;
+
+        // ---- Step 3: authoritative index lookup ----
+        // The composite key (symbol_id, file_idx) uniquely identifies a symbol
+        // across all binders, so no name-validation is needed.
+        if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx) {
+            // Populate local caches for future fast-path hits.
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return def_id;
+        }
+
+        // ---- Step 4: create new DefId ----
         let name = self.types.intern_string(&symbol.escaped_name);
 
         // Determine DefKind from symbol flags.
@@ -128,7 +114,7 @@ impl<'a> CheckerContext<'a> {
             implements: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(), // Will be populated for namespaces/modules
-            file_id: Some(symbol.decl_file_idx),
+            file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
         };
@@ -141,6 +127,12 @@ impl<'a> CheckerContext<'a> {
             kind = ?kind,
             "Mapping symbol to DefId"
         );
+
+        // Register in the authoritative index (shared across contexts).
+        self.definition_store
+            .register_symbol_mapping(sym_id.0, file_idx, def_id);
+
+        // Populate local caches.
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
