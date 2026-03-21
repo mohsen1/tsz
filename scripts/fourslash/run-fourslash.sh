@@ -189,6 +189,12 @@ build_typescript_harness() {
     # Pin TypeScript version after deps are installed
     "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
 
+    # Restore deps that may have been removed by ensure-pinned-typescript.sh
+    if [[ ! -d "node_modules/chai" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
+        log_info "Restoring test dependencies..."
+        npm install --no-save --no-audit --no-fund --ignore-scripts --legacy-peer-deps 2>/dev/null || true
+    fi
+
     # Check if harness is already built
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
         # Re-apply patches even if already built (idempotent)
