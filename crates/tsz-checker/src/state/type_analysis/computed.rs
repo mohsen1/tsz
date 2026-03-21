@@ -932,6 +932,28 @@ impl<'a> CheckerState<'a> {
             return (TypeId::UNKNOWN, Vec::new());
         }
 
+        // Class property declarations: resolve type from annotation or initializer.
+        if flags & symbol_flags::PROPERTY != 0 {
+            if let Some(node) = self.ctx.arena.get(value_decl) {
+                if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    if let Some(prop_decl) = self.ctx.arena.get_property_decl(node) {
+                        if prop_decl.type_annotation.is_some() {
+                            let annotation_type =
+                                self.get_type_from_type_node(prop_decl.type_annotation);
+                            return (annotation_type, Vec::new());
+                        }
+                        if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                            return (jsdoc_type, Vec::new());
+                        }
+                        if prop_decl.initializer.is_some() {
+                            let init_type = self.get_type_of_node(prop_decl.initializer);
+                            return (init_type, Vec::new());
+                        }
+                    }
+                }
+            }
+        }
+
         // Variable - get type from annotation or infer from initializer
         if flags & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
             != 0
