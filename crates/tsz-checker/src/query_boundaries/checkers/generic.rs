@@ -232,12 +232,14 @@ pub(crate) fn mapped_type_id(
     tsz_solver::mapped_type_id(db, type_id)
 }
 
-/// Get the template (value) type of a mapped type.
+/// Check if a mapped type's template is callable (has call/construct signatures).
 ///
-/// For `{ [K in C]: T }`, returns `Some(T)`.
-/// Used during constraint checking to resolve indexed access into mapped types.
-pub(crate) fn mapped_type_template(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    let mapped_id = tsz_solver::type_queries::get_mapped_type_id(db, type_id)?;
-    let mapped = db.get_mapped(mapped_id);
-    Some(mapped.template)
+/// Used for TS2344 constraint checking: when an indexed access into a mapped
+/// type is checked against a callable constraint, the template type determines
+/// whether the indexed value is callable.
+pub(crate) fn is_mapped_template_callable(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> bool {
+    tsz_solver::type_queries::is_mapped_template_callable(db, mapped_id)
 }
