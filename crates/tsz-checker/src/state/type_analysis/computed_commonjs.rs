@@ -155,6 +155,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         preserve_js_extension: bool,
     ) -> TypeId {
+        // Use the cached JsExportSurface for typed exports instead of
+        // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
+        let current_file_idx = self.ctx.current_file_idx;
+        let surface = self.resolve_js_export_surface(current_file_idx);
+
+        // Deep-scan the AST for export names that may be nested (in if-blocks, etc.)
+        // and not captured by the surface's top-level + IIFE scan.
         let mut export_names = BTreeSet::new();
         for source_file in &self.ctx.arena.source_files {
             for &stmt_idx in &source_file.statements.nodes {
@@ -162,9 +169,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut props = Vec::with_capacity(export_names.len());
-        for (declaration_order, name) in export_names.into_iter().enumerate() {
-            let name_atom = self.ctx.types.intern_string(&name);
+        // Start with the surface's typed named exports
+        let mut props = surface.named_exports.clone();
+
+        // Add ANY-typed entries for any deep-scan names not already in the surface
+        for name in &export_names {
+            let name_atom = self.ctx.types.intern_string(name);
+            if props.iter().any(|p| p.name == name_atom) {
+                continue;
+            }
             props.push(PropertyInfo {
                 name: name_atom,
                 type_id: TypeId::ANY,
@@ -175,14 +188,9 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: declaration_order as u32,
+                declaration_order: props.len() as u32,
             });
         }
-
-        self.augment_namespace_props_with_commonjs_exports_for_file(
-            self.ctx.current_file_idx,
-            &mut props,
-        );
 
         let namespace_type = self.ctx.types.factory().object(props);
         self.ctx.namespace_module_names.insert(
@@ -1247,6 +1255,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Use the cached JsExportSurface to merge CommonJS property-assignment
+            // exports (exports.foo = ..., module.exports.foo = ..., Object.defineProperty)
+            // instead of re-scanning the target file AST.
             let augment_target = source_file_idx
                 .and_then(|src_idx| {
                     self.ctx
@@ -1254,7 +1265,18 @@ impl<'a> CheckerState<'a> {
                 })
                 .or(target_file_idx);
             if let Some(target_idx) = augment_target {
-                self.augment_namespace_props_with_commonjs_exports_for_file(target_idx, &mut props);
+                let surface = self.resolve_js_export_surface(target_idx);
+                for surface_prop in &surface.named_exports {
+                    if let Some(existing) = props.iter_mut().find(|p| p.name == surface_prop.name) {
+                        // Surface has inferred types; upgrade ANY-typed ESM stubs
+                        existing.type_id = surface_prop.type_id;
+                        existing.write_type = surface_prop.write_type;
+                    } else {
+                        let mut prop = surface_prop.clone();
+                        prop.declaration_order = props.len() as u32;
+                        props.push(prop);
+                    }
+                }
             }
 
             let namespace_type = factory.object(props);
