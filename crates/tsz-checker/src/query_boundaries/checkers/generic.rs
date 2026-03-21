@@ -39,6 +39,26 @@ pub(crate) fn conditional_type_components(
     Some((cond.extends_type, cond.false_type))
 }
 
+/// Get all four components of a conditional type: check, extends, true, false.
+///
+/// Returns `Some((check_type, extends_type, true_type, false_type))` if the
+/// type is a `Conditional`. Used for distinguishing true Extract patterns
+/// (`T extends C ? T : never` where true_type == check_type) from general
+/// conditional types with custom true branches.
+pub(crate) fn full_conditional_type_components(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId, TypeId, TypeId)> {
+    let cond_id = tsz_solver::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.get_conditional(cond_id);
+    Some((
+        cond.check_type,
+        cond.extends_type,
+        cond.true_type,
+        cond.false_type,
+    ))
+}
+
 // =========================================================================
 // Type query wrappers — callable/this/primitive/union classification
 // =========================================================================
