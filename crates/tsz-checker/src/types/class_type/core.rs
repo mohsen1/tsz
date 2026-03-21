@@ -1484,6 +1484,76 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+
+            // When the symbol has INTERFACE flags (class merged with interface) but no
+            // local interface declarations were found, the interface declarations live
+            // in a lib arena (e.g., user `class TemplateStringsArray {}` merged with
+            // built-in `interface TemplateStringsArray extends ReadonlyArray<string>`).
+            // Check cross-arena declarations and resolve the lib interface type.
+            if interface_decls.is_empty()
+                && (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                && !self.ctx.lib_contexts.is_empty()
+            {
+                // Check for cross-arena interface declarations
+                let mut cross_arena_interface_type: Option<TypeId> = None;
+                for &decl_idx in &symbol.declarations {
+                    if let Some(arenas) =
+                        self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    {
+                        for arena in arenas.iter() {
+                            if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                                continue;
+                            }
+                            if let Some(node) = arena.get(decl_idx)
+                                && arena.get_interface(node).is_some()
+                            {
+                                let cross_type =
+                                    self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
+                                if cross_type != TypeId::ERROR {
+                                    cross_arena_interface_type =
+                                        Some(if let Some(existing) = cross_arena_interface_type {
+                                            self.merge_interface_types(existing, cross_type)
+                                        } else {
+                                            cross_type
+                                        });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fall back to resolve_lib_type_by_name if no cross-arena decls found
+                let lib_interface_type = cross_arena_interface_type
+                    .or_else(|| self.resolve_lib_type_by_name(&symbol.escaped_name));
+
+                if let Some(interface_type) = lib_interface_type {
+                    // Merge heritage types for the lib interface
+                    let interface_type = self.merge_cross_file_heritage(
+                        &symbol.declarations,
+                        sym_id,
+                        interface_type,
+                    );
+                    merged_interface_type_for_class = Some(interface_type);
+
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
+                        for prop in &shape.properties {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
+                        if let Some(ref idx) = shape.string_index {
+                            Self::merge_index_signature(&mut string_index, idx.clone());
+                        }
+                        if let Some(ref idx) = shape.number_index {
+                            Self::merge_index_signature(&mut number_index, idx.clone());
+                        }
+                    } else if let Some(shape) =
+                        callable_shape_for_type(self.ctx.types, interface_type)
+                    {
+                        for prop in &shape.properties {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
+                    }
+                }
+            }
         }
 
         // NOTE: Object prototype members (toString, hasOwnProperty, etc.) are NOT
