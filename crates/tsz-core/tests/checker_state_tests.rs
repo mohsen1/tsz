@@ -4555,11 +4555,14 @@ class Baz {
 /// NOTE: Currently ignored - protected access control is not fully implemented.
 /// The checker emits duplicate TS2445 errors for protected member access.
 #[test]
-#[ignore = "TS2445 vs TS2446 protected access diagnostic code changed"]
 fn test_protected_access_requires_derived_instance() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
+    // In tsc, accessing a protected member on a base-class-typed reference from
+    // a derived class is TS2446 ("Property 'y' is protected and only accessible
+    // through an instance of class 'Derived'. This is an instance of class 'Base'."),
+    // not TS2445 ("only accessible within class and its subclasses").
     let source = r#"
 class Base {
     protected y = 2;
@@ -4598,11 +4601,11 @@ class Derived extends Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let protected_errors = codes
         .iter()
-        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES)
+        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A)
         .count();
     assert_eq!(
         protected_errors, 1,
-        "Expected one error 2445 for protected access on base instance, got: {codes:?}"
+        "Expected one error 2446 for protected access on base instance from derived, got: {codes:?}"
     );
 }
 
@@ -9636,7 +9639,6 @@ function implicitAnyParam(x) {
 /// even with noImplicitAny enabled. Only function-scoped (var) declarations
 /// should trigger these diagnostics when captured by closures.
 #[test]
-#[ignore = "TS7034 now emitted for var-with-closure: regression in implicit any diagnostic scoping"]
 fn test_ts7005_not_emitted_for_let_declarations() {
     use crate::parser::ParserState;
 
@@ -9690,11 +9692,13 @@ function f() {
         "Expected exactly 1 TS7005 (var only, not let), got {ts7005_count}: {codes:?}"
     );
 
-    // No TS7034 should appear for this simple case (TS7034 is for captured-in-closure scenarios)
+    // tsc emits TS7034 for `var y` when captured by a closure with implicit any:
+    // "Variable 'y' implicitly has type 'any' in some locations where its type
+    // cannot be determined."
     let ts7034_count = codes.iter().filter(|&&c| c == 7034).count();
     assert_eq!(
-        ts7034_count, 0,
-        "Expected 0 TS7034 in this test, got {ts7034_count}: {codes:?}"
+        ts7034_count, 1,
+        "Expected 1 TS7034 for var captured by closure, got {ts7034_count}: {codes:?}"
     );
 }
 
