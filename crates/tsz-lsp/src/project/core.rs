@@ -1,5 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+use std::sync::Arc;
 use web_time::Duration;
 
 use globset::Glob;
@@ -80,7 +81,13 @@ pub struct ProjectFile {
     pub(crate) parser: ParserState,
     pub(crate) binder: BinderState,
     pub(crate) line_map: LineMap,
-    pub(crate) type_interner: TypeInterner,
+    /// Shared type interner for cross-file type identity.
+    ///
+    /// All files in a `Project` share the same `TypeInterner` via `Arc`,
+    /// ensuring that `TypeId`s are globally unique and cross-file type
+    /// comparisons use identity checks rather than structural matching.
+    /// When used standalone (outside a `Project`), a per-file interner is created.
+    pub(crate) type_interner: Arc<TypeInterner>,
     pub(crate) type_cache: Option<TypeCache>,
     pub(crate) scope_cache: ScopeCache,
     pub(crate) strict: bool,
@@ -93,12 +100,31 @@ pub struct ProjectFile {
 
 impl ProjectFile {
     /// Parse and bind a single source file for LSP queries.
+    ///
+    /// Creates a standalone file with its own `TypeInterner`. For files
+    /// within a `Project`, use `with_shared_interner` instead.
     pub fn new(file_name: String, source_text: String) -> Self {
         Self::with_strict(file_name, source_text, false)
     }
 
     /// Parse and bind a single source file with explicit strict mode setting.
+    ///
+    /// Creates a standalone file with its own `TypeInterner`. For files
+    /// within a `Project`, use `with_shared_interner` instead.
     pub fn with_strict(file_name: String, source_text: String, strict: bool) -> Self {
+        Self::with_shared_interner(file_name, source_text, strict, Arc::new(TypeInterner::new()))
+    }
+
+    /// Parse and bind a single source file with a shared `TypeInterner`.
+    ///
+    /// All files sharing the same interner will have globally unique `TypeId`s,
+    /// enabling O(1) cross-file type identity checks.
+    pub fn with_shared_interner(
+        file_name: String,
+        source_text: String,
+        strict: bool,
+        type_interner: Arc<TypeInterner>,
+    ) -> Self {
         let mut parser = ParserState::new(file_name.clone(), source_text);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
@@ -115,7 +141,7 @@ impl ProjectFile {
             parser,
             binder,
             line_map,
-            type_interner: TypeInterner::new(),
+            type_interner,
             type_cache: None,
             scope_cache: ScopeCache::default(),
             strict,
@@ -364,7 +390,11 @@ impl ProjectFile {
     }
 
     fn reset_analysis_state(&mut self) {
-        self.type_interner = TypeInterner::new();
+        // Note: the type_interner is NOT reset here. It is shared across all
+        // files in a Project via Arc, and TypeInterner is append-only (interned
+        // types are never removed). Resetting it would invalidate TypeIds held
+        // by other files. The per-file caches (type_cache, scope_cache) are
+        // invalidated to force re-computation with the shared interner.
         self.type_cache = None;
         self.scope_cache.clear();
         self.diagnostics_dirty = true;
@@ -1127,17 +1157,23 @@ pub struct Project {
     pub(crate) workspace_roots: Vec<String>,
     /// Parsed tsconfig.json settings per workspace root.
     pub(crate) tsconfig_settings: FxHashMap<String, TsConfigSettings>,
+    /// Shared type interner for cross-file type identity.
+    ///
+    /// All `ProjectFile` instances in this project share the same `TypeInterner`,
+    /// ensuring that `TypeId`s are globally unique across files. This is a
+    /// prerequisite for wiring shared `DefinitionStore` into per-file checkers,
+    /// since `DefId -> TypeId` resolution requires a single type universe.
+    pub(crate) type_interner: Arc<TypeInterner>,
     /// Shared definition store for cross-file `DefId` consistency.
     ///
-    /// When present, all `CheckerState` instances created for files in this project
-    /// share the same `DefinitionStore`, ensuring that `DefId`s are globally unique
-    /// and cross-file type references resolve correctly. The store is wrapped in
-    /// `Arc` for thread-safe sharing.
+    /// All `CheckerState` instances created for files in this project share
+    /// the same `DefinitionStore`, ensuring that `DefId`s are globally unique
+    /// and cross-file type references resolve correctly.
     ///
     /// Currently populated but not yet wired into per-file checker creation paths.
-    /// Future iterations will pass this to `CheckerState::with_cache_and_shared_def_store`
-    /// once the `TypeInterner` is also shared at the project level.
-    pub(crate) definition_store: std::sync::Arc<DefinitionStore>,
+    /// Next step: pass this to `CheckerState::with_cache_and_shared_def_store`
+    /// now that the `TypeInterner` is shared at the project level.
+    pub(crate) definition_store: Arc<DefinitionStore>,
 }
 
 /// Parsed settings from tsconfig.json relevant to LSP operation.
@@ -1186,7 +1222,8 @@ impl Project {
             auto_imports_allowed_without_tsconfig: true,
             workspace_roots: Vec::new(),
             tsconfig_settings: FxHashMap::default(),
-            definition_store: std::sync::Arc::new(DefinitionStore::new()),
+            type_interner: Arc::new(TypeInterner::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
         }
     }
 
@@ -1206,7 +1243,8 @@ impl Project {
             auto_imports_allowed_without_tsconfig: true,
             workspace_roots: Vec::new(),
             tsconfig_settings: FxHashMap::default(),
-            definition_store: std::sync::Arc::new(DefinitionStore::new()),
+            type_interner: Arc::new(TypeInterner::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
         }
     }
 
@@ -1233,13 +1271,22 @@ impl Project {
         self.tsconfig_settings.get(root)
     }
 
+    /// Get the shared type interner for this project.
+    ///
+    /// Returns a clone of the `Arc`, allowing callers to share the interner
+    /// with checker instances or other components that need cross-file
+    /// type identity.
+    pub fn type_interner(&self) -> Arc<TypeInterner> {
+        Arc::clone(&self.type_interner)
+    }
+
     /// Get the shared definition store for this project.
     ///
     /// Returns a clone of the `Arc`, allowing callers to share the store
     /// with checker instances or other components that need cross-file
     /// `DefId` consistency.
-    pub fn definition_store(&self) -> std::sync::Arc<DefinitionStore> {
-        std::sync::Arc::clone(&self.definition_store)
+    pub fn definition_store(&self) -> Arc<DefinitionStore> {
+        Arc::clone(&self.definition_store)
     }
 
     /// Load and parse a tsconfig.json file, storing settings for the workspace root.
@@ -1450,7 +1497,12 @@ impl Project {
 
     /// Add or replace a file, re-parsing and re-binding its contents.
     pub fn set_file(&mut self, file_name: String, source_text: String) {
-        let file = ProjectFile::with_strict(file_name.clone(), source_text, self.strict);
+        let file = ProjectFile::with_shared_interner(
+            file_name.clone(),
+            source_text,
+            self.strict,
+            Arc::clone(&self.type_interner),
+        );
 
         // Update symbol index with the new file's binder data and AST identifiers
         // We need to get the arena before moving the file into self.files
