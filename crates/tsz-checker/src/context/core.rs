@@ -362,14 +362,14 @@ impl<'a> CheckerContext<'a> {
         &self,
         skeleton_expando: &FxHashMap<String, FxHashSet<String>>,
     ) {
-        if cfg!(debug_assertions) {
-            if let Some(ref built) = self.global_expando_index {
-                assert_eq!(
-                    built.as_ref(),
-                    skeleton_expando,
-                    "skeleton expando_index differs from binder-built"
-                );
-            }
+        if cfg!(debug_assertions)
+            && let Some(ref built) = self.global_expando_index
+        {
+            assert_eq!(
+                built.as_ref(),
+                skeleton_expando,
+                "skeleton expando_index differs from binder-built"
+            );
         }
     }
 

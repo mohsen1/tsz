@@ -479,7 +479,7 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env_impl(type_id, true)
     }
 
-    /// Resolve TypeQuery symbols in a type into the type environment.
+    /// Resolve `TypeQuery` symbols in a type into the type environment.
     ///
     /// This is a lightweight alternative to `ensure_relation_input_ready` that only
     /// resolves `typeof X` references. It's safe to call during symbol resolution
@@ -487,7 +487,7 @@ impl<'a> CheckerState<'a> {
     /// (not full heritage chain resolution that can cause OOM).
     ///
     /// This fixes the case where `Parameters<typeof x>` evaluates during type alias
-    /// processing: the evaluator needs `typeof x` resolved in the TypeEnvironment to
+    /// processing: the evaluator needs `typeof x` resolved in the `TypeEnvironment` to
     /// correctly evaluate the conditional type, but `ensure_relation_input_ready` is
     /// skipped because we're inside symbol resolution.
     fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {

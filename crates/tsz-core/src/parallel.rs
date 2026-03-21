@@ -1517,7 +1517,7 @@ impl SkeletonIndex {
     /// - `declared_modules` match exactly
     /// - `shorthand_ambient_modules` match exactly
     /// - `module_export_specifiers` match the keys of `module_exports`
-    ///   (excluding user file names that the legacy path inserts as module_exports keys)
+    ///   (excluding user file names that the legacy path inserts as `module_exports` keys)
     ///
     /// This proves the skeleton captures all merge-relevant ambient module topology
     /// without retaining arenas. In release builds, this is a no-op.
