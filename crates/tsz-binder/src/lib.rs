@@ -22,6 +22,6 @@ pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 pub use scopes::{ContainerKind, Scope, ScopeContext, ScopeId};
 pub use state::{
     BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
-    ModuleAugmentation, ValidationError,
+    ModuleAugmentation, SemanticDefEntry, SemanticDefKind, ValidationError,
 };
 pub use symbols::{Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};

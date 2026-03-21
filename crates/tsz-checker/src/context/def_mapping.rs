@@ -379,4 +379,84 @@ impl<'a> CheckerContext<'a> {
             }
         }
     }
+
+    /// Pre-populate `symbol_to_def` and `def_to_symbol` from the binder's
+    /// `semantic_defs` index (Phase 1 DefId-first stable identity).
+    ///
+    /// Called once during checker construction so that `get_or_create_def_id`
+    /// finds stable DefIds already present for top-level declarations. This
+    /// moves identity creation to bind time (deterministic, early) rather than
+    /// being recovered on-demand in hot checker paths (late, order-dependent).
+    ///
+    /// Returns the number of DefIds pre-populated.
+    pub fn pre_populate_def_ids_from_binder(&self) -> usize {
+        use tsz_solver::def::{DefKind, DefinitionInfo};
+
+        let semantic_defs = &self.binder.semantic_defs;
+        if semantic_defs.is_empty() {
+            return 0;
+        }
+
+        let mut count = 0;
+        for (&sym_id, entry) in semantic_defs {
+            // Skip if already mapped (e.g., from a previous lib merge pass)
+            if self.symbol_to_def.borrow().contains_key(&sym_id) {
+                continue;
+            }
+
+            // Verify the symbol actually exists in our binder
+            let symbol = match self.binder.symbols.get(sym_id) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Convert binder's SemanticDefKind to solver's DefKind
+            let kind = match entry.kind {
+                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
+                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
+                tsz_binder::SemanticDefKind::Class => DefKind::Class,
+                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
+                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
+            };
+
+            let name = self.types.intern_string(&symbol.escaped_name);
+            let span = symbol.declarations.first().map(|n| (n.0, n.0));
+
+            let info = DefinitionInfo {
+                kind,
+                name,
+                type_params: Vec::new(),
+                body: None,
+                instance_shape: None,
+                static_shape: None,
+                extends: None,
+                implements: Vec::new(),
+                enum_members: Vec::new(),
+                exports: Vec::new(),
+                file_id: Some(symbol.decl_file_idx),
+                span,
+                symbol_id: Some(sym_id.0),
+            };
+
+            let def_id = self.definition_store.register(info);
+            trace!(
+                symbol_name = %symbol.escaped_name,
+                symbol_id = %sym_id.0,
+                def_id = %def_id.0,
+                kind = ?kind,
+                "Pre-populated DefId from binder semantic_defs"
+            );
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+
+            // Propagate DefKind to TypeEnvironment
+            if let Ok(mut env) = self.type_env.try_borrow_mut() {
+                env.insert_def_kind(def_id, kind);
+            }
+
+            count += 1;
+        }
+
+        count
+    }
 }

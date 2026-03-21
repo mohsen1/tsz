@@ -567,7 +567,8 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                self.declare_symbol(name, flags, idx, is_exported);
+                let sym_id = self.declare_symbol(name, flags, idx, is_exported);
+                self.record_semantic_def(sym_id, crate::state::SemanticDefKind::Class, name, idx);
             }
 
             // Enter class scope for members
@@ -813,6 +814,7 @@ impl BinderState {
             }
 
             let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
+            self.record_semantic_def(sym_id, crate::state::SemanticDefKind::Interface, name, idx);
 
             // Track symbols declared inside module augmentation blocks so the checker
             // can redirect self-referential type lookups (e.g., `self: Foo` inside
@@ -911,8 +913,20 @@ impl BinderState {
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
                 self.alias_partners.insert(sym_id, alias_id);
+                self.record_semantic_def(
+                    sym_id,
+                    crate::state::SemanticDefKind::TypeAlias,
+                    name,
+                    idx,
+                );
             } else {
-                self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                self.record_semantic_def(
+                    sym_id,
+                    crate::state::SemanticDefKind::TypeAlias,
+                    name,
+                    idx,
+                );
             }
 
             self.enter_scope(ContainerKind::Block, idx);
@@ -946,6 +960,7 @@ impl BinderState {
             };
 
             let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
+            self.record_semantic_def(enum_sym_id, crate::state::SemanticDefKind::Enum, name, idx);
 
             // Get existing exports (for namespace merging)
             let mut exports = SymbolTable::new();
@@ -2202,6 +2217,57 @@ impl BinderState {
     }
 
     /// Check if the current scope is the global (file-level) scope.
+    /// Record a semantic definition entry for a top-level declaration.
+    ///
+    /// This captures stable identity information at bind time so the checker
+    /// can pre-create solver DefIds during construction rather than inventing
+    /// them on demand in hot paths.
+    ///
+    /// Only records entries for declarations at the source file scope (ScopeId(0))
+    /// to avoid noise from nested declarations that are less likely to be
+    /// cross-file semantic references.
+    pub(crate) fn record_semantic_def(
+        &mut self,
+        sym_id: SymbolId,
+        kind: crate::state::SemanticDefKind,
+        name: &str,
+        declaration: NodeIndex,
+    ) {
+        // Only capture top-level declarations (source file scope or module scope).
+        // Nested declarations (inside function bodies, class bodies, etc.) are not
+        // recorded because they don't participate in cross-file identity.
+        let is_top_level = self.current_scope_id == crate::ScopeId(0)
+            || self
+                .scopes
+                .get(self.current_scope_id.0 as usize)
+                .is_some_and(|scope| {
+                    matches!(
+                        scope.kind,
+                        crate::ContainerKind::SourceFile | crate::ContainerKind::Module
+                    )
+                });
+        if !is_top_level {
+            return;
+        }
+        // Don't overwrite if already recorded (declaration merging case —
+        // keep the first declaration's identity stable).
+        if self.semantic_defs.contains_key(&sym_id) {
+            return;
+        }
+        self.semantic_defs.insert(
+            sym_id,
+            crate::state::SemanticDefEntry {
+                kind,
+                name: name.to_string(),
+                file_id: self
+                    .symbols
+                    .get(sym_id)
+                    .map_or(u32::MAX, |s| s.decl_file_idx),
+                span_start: declaration.0,
+            },
+        );
+    }
+
     fn is_global_scope(&self) -> bool {
         // Global scope is ScopeId(0) in script files
         self.current_scope_id == crate::ScopeId(0)
