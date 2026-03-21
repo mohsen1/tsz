@@ -381,6 +381,22 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.expando_properties.clone()));
 
+    // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
+    let project_env = tsz::checker::context::ProjectEnv {
+        lib_contexts: lib_contexts.to_vec(),
+        all_arenas: Arc::clone(&all_arenas),
+        all_binders: Arc::clone(&all_binders),
+        skeleton_declared_modules: skeleton_declared_modules.clone(),
+        skeleton_expando_index: skeleton_expando_index.clone(),
+        symbol_file_targets: Arc::clone(&symbol_file_targets),
+        resolved_module_paths: Arc::clone(&resolved_module_paths),
+        resolved_module_errors: Arc::clone(&resolved_module_errors),
+        is_external_module_by_file: Arc::clone(&is_external_module_by_file),
+        file_is_esm_map: Arc::clone(&file_is_esm_map),
+        typescript_dom_replacement_globals,
+        has_deprecation_diagnostics,
+    };
+
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
@@ -394,29 +410,7 @@ pub(super) fn collect_diagnostics(
             file.file_name.clone(),
             &options.checker,
         );
-        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-        checker.ctx.set_typescript_dom_replacement_globals(
-            typescript_dom_replacement_globals.0,
-            typescript_dom_replacement_globals.1,
-            typescript_dom_replacement_globals.2,
-        );
-        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-        if let Some(ref dm) = skeleton_declared_modules {
-            checker
-                .ctx
-                .set_declared_modules_from_skeleton(Arc::clone(dm));
-        }
-        if let Some(ref ei) = skeleton_expando_index {
-            checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
-        }
-        checker.ctx.set_all_binders(Arc::clone(&all_binders));
-        {
-            let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
-            for (sym_id, owner_idx) in symbol_file_targets.iter() {
-                targets.insert(*sym_id, *owner_idx);
-            }
-        }
+        project_env.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
 
@@ -493,25 +487,8 @@ pub(super) fn collect_diagnostics(
         let explicit_check_js_false = options.explicit_check_js_false;
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
-        let lib_ctx_for_parallel = lib_contexts.to_vec();
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
-
-        // Build the project-wide shared environment once for all parallel checkers.
-        let project_env = tsz::checker::context::ProjectEnv {
-            lib_contexts: lib_ctx_for_parallel,
-            all_arenas: Arc::clone(&all_arenas),
-            all_binders: Arc::clone(&all_binders),
-            skeleton_declared_modules: skeleton_declared_modules.clone(),
-            skeleton_expando_index: skeleton_expando_index.clone(),
-            symbol_file_targets: Arc::clone(&symbol_file_targets),
-            resolved_module_paths: Arc::clone(&resolved_module_paths),
-            resolved_module_errors: Arc::clone(&resolved_module_errors),
-            is_external_module_by_file: Arc::clone(&is_external_module_by_file),
-            file_is_esm_map: Arc::clone(&file_is_esm_map),
-            typescript_dom_replacement_globals,
-            has_deprecation_diagnostics,
-        };
 
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
@@ -664,41 +641,11 @@ pub(super) fn collect_diagnostics(
                 )
             };
             checker.ctx.report_unresolved_imports = true;
-            if !lib_contexts.is_empty() {
-                checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-                checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-            }
-            checker.ctx.set_typescript_dom_replacement_globals(
-                typescript_dom_replacement_globals.0,
-                typescript_dom_replacement_globals.1,
-                typescript_dom_replacement_globals.2,
-            );
-            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-            if let Some(ref dm) = skeleton_declared_modules {
-                checker
-                    .ctx
-                    .set_declared_modules_from_skeleton(Arc::clone(dm));
-            }
-            if let Some(ref ei) = skeleton_expando_index {
-                checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
-            }
-            checker.ctx.set_all_binders(Arc::clone(&all_binders));
-            {
-                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
-                for (sym_id, owner_idx) in symbol_file_targets.iter() {
-                    targets.insert(*sym_id, *owner_idx);
-                }
-            }
-            checker
-                .ctx
-                .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
-            checker
-                .ctx
-                .set_resolved_module_errors(Arc::clone(&resolved_module_errors));
+            project_env.apply_to(&mut checker.ctx);
+
+            // Per-file state that varies across files:
             checker.ctx.set_current_file_idx(file_idx);
-            checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
-            checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
-            checker.ctx.file_is_esm_map = Some(Arc::clone(&file_is_esm_map));
+            checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
 
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
