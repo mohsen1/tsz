@@ -12,6 +12,7 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use std::path::{Component, Path, PathBuf};
+use tsz_binder::ModuleAugmentation;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1209,18 +1210,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if result.is_empty()
-            && let Some(all_binders) = self.ctx.all_binders.as_ref()
-        {
-            for binder in all_binders.iter() {
+        // Use global module augmentations index for O(1) lookup instead of O(N) binder scan
+        if result.is_empty() {
+            if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
                 for candidate in &candidates {
-                    if let Some(augmentations) = binder.module_augmentations.get(candidate) {
+                    if let Some(entries) = aug_index.get(candidate) {
                         result.extend(
-                            augmentations
+                            entries
                                 .iter()
-                                .filter(|aug| aug.name == interface_name)
-                                .cloned(),
+                                .filter(|(_, aug)| aug.name == interface_name)
+                                .map(|(_, aug)| aug.clone()),
                         );
+                    }
+                }
+            } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                for binder in all_binders.iter() {
+                    for candidate in &candidates {
+                        if let Some(augmentations) = binder.module_augmentations.get(candidate) {
+                            result.extend(
+                                augmentations
+                                    .iter()
+                                    .filter(|aug| aug.name == interface_name)
+                                    .cloned(),
+                            );
+                        }
                     }
                 }
             }
@@ -1232,45 +1245,74 @@ impl<'a> CheckerState<'a> {
         // targeting `./index` should also apply to interfaces from `./eventList`.
         if result.is_empty()
             && let Some(source_idx) = resolved_source_idx
-            && let Some(all_binders) = self.ctx.all_binders.as_ref()
         {
-            for (binder_idx, binder) in all_binders.iter().enumerate() {
-                for (aug_key, augs) in &binder.module_augmentations {
-                    if candidates.iter().any(|c| c == aug_key) {
-                        continue;
+            // Use global module augmentations index when available for O(1) key iteration,
+            // falling back to O(N) binder scan otherwise.
+            let aug_entries: Vec<(String, Vec<(usize, ModuleAugmentation)>)> =
+                if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+                    aug_index
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                    let mut entries: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
+                        FxHashMap::default();
+                    for (file_idx, binder) in all_binders.iter().enumerate() {
+                        for (aug_key, augs) in binder.module_augmentations.iter() {
+                            entries
+                                .entry(aug_key.clone())
+                                .or_default()
+                                .extend(augs.iter().map(|aug| (file_idx, aug.clone())));
+                        }
                     }
-                    if !augs.iter().any(|aug| aug.name == interface_name) {
-                        continue;
-                    }
-                    // Resolve the augmentation target module from the augmenting file
-                    let Some(aug_target_idx) = self
-                        .ctx
-                        .resolve_import_target_from_file(binder_idx, aug_key)
-                    else {
-                        continue;
-                    };
-                    let Some(aug_target_binder) = all_binders.get(aug_target_idx) else {
-                        continue;
-                    };
-                    // Check if the augmentation target re-exports from source
-                    let reexports_from_source =
-                        aug_target_binder
-                            .wildcard_reexports
-                            .values()
-                            .any(|sources| {
-                                sources.iter().any(|src| {
-                                    self.ctx
-                                        .resolve_import_target_from_file(aug_target_idx, src)
-                                        == Some(source_idx)
-                                })
-                            });
-                    if reexports_from_source {
-                        result.extend(
-                            augs.iter()
-                                .filter(|aug| aug.name == interface_name)
-                                .cloned(),
-                        );
-                    }
+                    entries.into_iter().collect()
+                } else {
+                    Vec::new()
+                };
+
+            let all_binders = self.ctx.all_binders.as_ref();
+            for (aug_key, indexed_augs) in &aug_entries {
+                if candidates.iter().any(|c| c == aug_key) {
+                    continue;
+                }
+                if !indexed_augs.iter().any(|(_, aug)| aug.name == interface_name) {
+                    continue;
+                }
+                // Use the first file_idx that has this augmentation for resolution
+                let Some(&(binder_idx, _)) = indexed_augs.first() else {
+                    continue;
+                };
+                // Resolve the augmentation target module from the augmenting file
+                let Some(aug_target_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(binder_idx, aug_key)
+                else {
+                    continue;
+                };
+                let Some(aug_target_binder) =
+                    all_binders.and_then(|binders| binders.get(aug_target_idx))
+                else {
+                    continue;
+                };
+                // Check if the augmentation target re-exports from source
+                let reexports_from_source =
+                    aug_target_binder
+                        .wildcard_reexports
+                        .values()
+                        .any(|sources| {
+                            sources.iter().any(|src| {
+                                self.ctx
+                                    .resolve_import_target_from_file(aug_target_idx, src)
+                                    == Some(source_idx)
+                            })
+                        });
+                if reexports_from_source {
+                    result.extend(
+                        indexed_augs
+                            .iter()
+                            .filter(|(_, aug)| aug.name == interface_name)
+                            .map(|(_, aug)| aug.clone()),
+                    );
                 }
             }
         }
@@ -1820,9 +1862,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check all_binders (cross-file augmentations)
-        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-            // Check all cross-file augmentation binders
+        // Check cross-file augmentations using global index for O(1) lookup
+        if let Some(aug_targets) = self.ctx.global_augmentation_targets_index.as_ref() {
+            if let Some(entries) = aug_targets.get(module_spec) {
+                for &(aug_sym_id, _file_idx) in entries {
+                    if let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
+                        && aug_sym.escaped_name == interface_name
+                        && !matching_sym_ids.contains(&aug_sym_id)
+                    {
+                        matching_sym_ids.push(aug_sym_id);
+                    }
+                }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            // Fallback: O(N) scan when index is not available
             for binder in all_binders.iter() {
                 for (&aug_sym_id, aug_module) in &binder.augmentation_target_modules {
                     if aug_module == module_spec
