@@ -123,8 +123,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if the found scope is at a function-level boundary.
-        // If so, the var hoists to the same level and this is just a
-        // TS2451 duplicate, not a TS2481 initialization conflict.
+        // If so, the var hoists to the same level and this is a
+        // TS2451 duplicate (or handled by check_duplicate_identifiers),
+        // not a TS2481 initialization conflict.
         let names_share_scope = if matches!(
             scope_kind,
             tsz_binder::ContainerKind::SourceFile
@@ -170,9 +171,17 @@ impl<'a> CheckerState<'a> {
         };
 
         if names_share_scope {
-            // The var hoists to the same scope as the let/const — emit TS2451
-            // on both the var declaration and the block-scoped declaration,
-            // matching tsc's behavior for cases like:
+            // When the block-scoped variable is in the same direct scope as
+            // the var (depth == 0), check_duplicate_identifiers handles all
+            // same-scope conflicts. Skip the TS2451 here to avoid duplicates.
+            // Only emit TS2451 when the var is in a nested block (depth > 0)
+            // and hoists into the block-scoped variable's scope.
+            if depth == 0 {
+                return;
+            }
+            // The var hoists from a nested block to the let/const's scope —
+            // emit TS2451 on both the var declaration and the block-scoped
+            // declaration, matching tsc's behavior for cases like:
             //   function f() { let x; { var x; } }
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let msg = crate::diagnostics::format_message(

@@ -9258,9 +9258,9 @@ import { nonExistent } from "./thisModule";
     }
 }
 
-/// When `let` appears BEFORE `var` at the same scope, tsc uses TS2451
-/// ("Cannot redeclare block-scoped variable") because the block-scoped
-/// variable appears first in source order. This is order-dependent behavior.
+/// When `let` appears before `var` in a pure 2-way variable conflict,
+/// tsc emits TS2451 ("Cannot redeclare block-scoped variable") because
+/// tsc's collision check detects the let before processing the var.
 #[test]
 fn test_ts2451_let_before_var_same_scope() {
     let diagnostics = compile_and_get_diagnostics(
@@ -9270,16 +9270,14 @@ var x = 2;
 ",
     );
 
-    // Filter to only duplicate-identifier-family codes (ignore TS2318 from missing libs)
     let codes: Vec<u32> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // let first → TS2451
     assert!(
         codes.iter().all(|&c| c == 2451),
-        "Expected all TS2451 for let-first+var at same scope, got codes: {codes:?}"
+        "Expected all TS2451 for let-before-var, got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,
@@ -9288,11 +9286,11 @@ var x = 2;
     );
 }
 
-/// When `var` appears before `let` at the same scope, tsc emits TS2300
-/// ("Duplicate identifier") because the let re-declares the existing var.
-/// Verified against letDeclarations-scopes-duplicates.ts conformance baseline.
+/// When `var` appears before `let` in a pure 2-way variable conflict,
+/// tsc emits TS2300 ("Duplicate identifier") because tsc's sequential
+/// collision check doesn't see the let yet when processing the var.
 #[test]
-fn test_ts2300_var_before_let_same_scope_emits_duplicate_identifier() {
+fn test_ts2300_var_before_let_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 var x = 1;
@@ -9300,13 +9298,11 @@ let x = 2;
 ",
     );
 
-    // Filter to only duplicate-identifier-family codes (ignore TS2318 from missing libs)
     let codes: Vec<u32> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // var-before-let at same scope → TS2300
     assert!(
         codes.iter().all(|&c| c == 2300),
         "Expected all TS2300 for var-before-let, got codes: {codes:?}"

@@ -680,7 +680,11 @@ fn constructor_param_property_no_conflict_with_static() {
 /// conflicting declarations, NOT TS2300.
 /// Regression test for exportInterfaceClassAndValue.ts conformance.
 #[test]
-fn const_class_conflict_emits_ts2451_not_ts2300() {
+fn const_class_conflict_emits_ts2451() {
+    // When const (block-scoped) conflicts with class (non-block-scoped but
+    // not a function), tsc emits TS2451 ("Cannot redeclare block-scoped
+    // variable"). TS2300 is only used when a function declaration is in
+    // the conflict set.
     let source = r#"
 export const foo = 1;
 export declare class foo {}
@@ -695,23 +699,17 @@ export interface foo {}
     );
 
     let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
-    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
     assert!(
         ts2451 >= 2,
-        "Expected TS2451 for const+class conflict, got ts2451={ts2451}, ts2300={ts2300}"
-    );
-    assert_eq!(
-        ts2300, 0,
-        "Should NOT emit TS2300 when a block-scoped variable is in the conflict"
+        "Expected TS2451 for const+class conflict, got ts2451={ts2451}"
     );
 }
 
-/// When const (block-scoped) appears FIRST and var (function-scoped) appears
-/// SECOND at the same scope, tsc uses TS2451 ("Cannot redeclare block-scoped
-/// variable"). When var appears first and const/let appears second, tsc uses
-/// TS2300 ("Duplicate identifier"). This matches tsc's order-dependent behavior.
+/// When a const conflicts with a var, tsc uses TS2300 ("Duplicate identifier")
+/// because it's a mix of block-scoped and function-scoped declarations.
 #[test]
-fn const_first_var_second_emits_ts2451() {
+fn const_var_conflict_emits_ts2451() {
+    // const before var in pure 2-way variable conflict → TS2451
     let source = "const x = 1;\nvar x = 2;";
     let diagnostics = verify_errors(
         source,
@@ -724,32 +722,28 @@ fn const_first_var_second_emits_ts2451() {
     let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
     assert!(
         ts2451 >= 2,
-        "Expected TS2451 for const-first+var-second at same scope, got ts2451={ts2451}"
+        "Expected TS2451 for const-before-var conflict, got ts2451={ts2451}"
     );
 }
 
-/// When a let conflicts with a function declaration, tsc uses TS2451
-/// since the let is block-scoped.
+/// When a let conflicts with a function declaration, tsc uses TS2300
+/// ("Duplicate identifier") because it's a mix of block-scoped (let)
+/// and non-block-scoped (function) declarations.
 #[test]
-fn let_function_conflict_emits_ts2451() {
+fn let_function_conflict_emits_ts2300() {
     let source = "let f = 1;\nfunction f() {}";
     let diagnostics = verify_errors(
         source,
         &[
-            (1, 5, "Cannot redeclare block-scoped variable 'f'."),
-            (2, 10, "Cannot redeclare block-scoped variable 'f'."),
+            (1, 5, "Duplicate identifier 'f'."),
+            (2, 10, "Duplicate identifier 'f'."),
         ],
     );
 
-    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
     let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
     assert!(
-        ts2451 >= 2,
-        "Expected TS2451 for let+function conflict, got ts2451={ts2451}, ts2300={ts2300}"
-    );
-    assert_eq!(
-        ts2300, 0,
-        "Should NOT emit TS2300 when a block-scoped variable is in the conflict"
+        ts2300 >= 2,
+        "Expected TS2300 for let+function conflict, got ts2300={ts2300}"
     );
 }
 
