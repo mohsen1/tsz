@@ -1394,9 +1394,16 @@ impl<'a> CheckerState<'a> {
                                     .get(arg_idx)
                                     .map(|node| (node.pos, node.end))
                                     .unwrap_or((0, 0));
-                                self.ctx
-                                    .diagnostics
-                                    .retain(|diag| diag.start < start || diag.start >= end);
+                                self.ctx.diagnostics.retain(|diag| {
+                                    diag.start < start
+                                        || diag.start >= end
+                                        // TS2454 (variable used before being assigned) is a
+                                        // semantic fact about the variable, not a speculative
+                                        // inference artifact. Preserve it across round 2
+                                        // re-typing so it isn't silently dropped.
+                                        || diag.code
+                                            == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                });
                                 self.ctx.rebuild_emitted_diagnostics_from_current();
                                 self.compute_single_call_argument_type(
                                     arg_idx,
