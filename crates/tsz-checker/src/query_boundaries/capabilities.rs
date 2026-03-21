@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms, clippy::doc_markdown)]
+
 //! Environment capabilities boundary for lib/config/feature-gate diagnostics.
 //!
 //! This module centralizes all environment and capability queries that determine
@@ -19,7 +21,7 @@ use tsz_common::common::{ModuleKind, ScriptTarget};
 
 /// Feature gates that can be queried against the environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FeatureGate {
+pub enum FeatureGate {
     /// `import ... with { ... }` / `import ... assert { ... }` syntax
     ImportAttributes,
     /// `using` declaration (requires Disposable global)
@@ -42,7 +44,7 @@ pub(crate) enum FeatureGate {
 
 /// The kind of global name that was not found, determining which diagnostic to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MissingGlobalKind {
+pub enum MissingGlobalKind {
     /// Core global type (Array, String, etc.) → TS2318
     CoreGlobalType,
     /// Feature-specific global type (Awaited, Disposable, etc.) → TS2318
@@ -66,7 +68,7 @@ pub(crate) enum MissingGlobalKind {
 /// Built once per checker context from compiler options + loaded libs.
 /// Answers "is feature X available?" without re-examining options each time.
 #[derive(Debug, Clone)]
-pub(crate) struct EnvironmentCapabilities {
+pub struct EnvironmentCapabilities {
     // --- Lib availability ---
     /// Whether any lib files are loaded (not --noLib and actual files present)
     pub has_lib: bool,
