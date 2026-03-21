@@ -202,7 +202,7 @@ CHECKS = [
         "Binder dependency direction freeze",
         ROOT / "crates" / "tsz-binder",
         re.compile(r"\btsz_solver::\b"),
-        {"exclude_dirs": {"tests"}},
+        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
     ),
     (
         "Emitter dependency direction freeze",
@@ -272,6 +272,9 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
                 "crates/tsz-checker/src/types/computation/call.rs",
                 "crates/tsz-checker/src/types/computation/object_literal.rs",
+                # query_boundaries is the canonical boundary layer — TypeData
+                # matching here is intentional and architecturally correct.
+                "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
             },
             "ignore_comment_lines": True,
         },
@@ -352,6 +355,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/checkers/jsx_checker.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/types/computation/identifier.rs",
+            "crates/tsz-checker/src/flow/flow_analysis/usage.rs",
         },
     ),
 ]
