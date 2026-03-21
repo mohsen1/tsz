@@ -164,57 +164,9 @@ impl<'a> CheckerState<'a> {
             let comment_text =
                 &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
 
-            // Check if there's a @typedef or @callback tag in this comment
-            let has_typedef_or_callback = comment_text.contains("@typedef")
-                || comment_text.contains("@callback")
-                || comment_text.contains("@overload");
-
-            if !has_typedef_or_callback {
-                continue;
-            }
-
-            // Find the position of the first @typedef/@callback/@overload
-            let defining_tag_pos = [
-                comment_text.find("@typedef"),
-                comment_text.find("@callback"),
-                comment_text.find("@overload"),
-            ]
-            .into_iter()
-            .flatten()
-            .min();
-
-            let Some(defining_pos) = defining_tag_pos else {
-                continue;
-            };
-
-            // Find all @template tags that appear AFTER the defining tag
-            let after_defining = &comment_text[defining_pos..];
-            let mut search_from = 0;
-            while let Some(idx) = after_defining[search_from..].find("@template") {
-                let abs_idx = search_from + idx;
-                let after_template = abs_idx + "@template".len();
-
-                // Verify it's not a substring of another word
-                if after_template < after_defining.len() {
-                    let next = after_defining.as_bytes()[after_template];
-                    if next.is_ascii_alphanumeric() || next == b'_' {
-                        search_from = after_template;
-                        continue;
-                    }
-                }
-
-                // Emit TS8039 at the @template position
-                let error_pos = comment.pos + defining_pos as u32 + abs_idx as u32;
-                self.ctx.error(
-                    error_pos,
-                    "@template".len() as u32,
-                    diagnostic_messages::A_JSDOC_TEMPLATE_TAG_MAY_NOT_FOLLOW_A_TYPEDEF_CALLBACK_OR_OVERLOAD_TAG
-                        .to_string(),
-                    diagnostic_codes::A_JSDOC_TEMPLATE_TAG_MAY_NOT_FOLLOW_A_TYPEDEF_CALLBACK_OR_OVERLOAD_TAG,
-                );
-
-                search_from = after_template;
-            }
+            // tsc 6.0: @template after @typedef/@callback/@overload in the same
+            // comment is valid — it defines the type parameters for the typedef.
+            // The previous check emitted TS8039 here but tsc 6.0 accepts this pattern.
         }
     }
 
