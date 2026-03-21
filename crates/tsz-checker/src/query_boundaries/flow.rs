@@ -232,6 +232,76 @@ pub(crate) const fn catch_variable_type(
     }
 }
 
+/// Widen null/undefined to `any` when `strict_null_checks` is off.
+///
+/// In non-strict mode, `null` and `undefined` standalone types widen to `any`
+/// for mutable variable bindings.  When `strict_null_checks` is on, the type
+/// passes through unchanged.
+pub(crate) fn widen_null_undefined_to_any(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    strict_null_checks: bool,
+) -> TypeId {
+    if strict_null_checks {
+        return type_id;
+    }
+    // Standalone null or undefined widens to any
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return TypeId::ANY;
+    }
+    // For unions containing null/undefined, remove them (they widen away in non-strict mode)
+    if let Some(tsz_solver::TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id);
+        let has_nullish = members
+            .iter()
+            .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED);
+        if has_nullish {
+            let filtered: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|m| *m != TypeId::NULL && *m != TypeId::UNDEFINED)
+                .collect();
+            if filtered.is_empty() {
+                return TypeId::ANY;
+            }
+            if filtered.len() == 1 {
+                return filtered[0];
+            }
+            return db.union(filtered);
+        }
+    }
+    type_id
+}
+
+/// Apply non-null assertion (`x!`) narrowing through the solver.
+/// Removes `null` and `undefined` from the type.
+pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::remove_nullish(db, type_id)
+}
+
+/// Remove nullish types for iteration contexts (for-in/for-of).
+/// The iterable expression should not be null/undefined.
+pub(crate) fn remove_nullish_for_iteration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::remove_nullish(db, type_id)
+}
+
+/// Add `undefined` to a type for indexed access in destructuring contexts.
+/// When destructuring accesses an element that might not exist, the result
+/// type should include `undefined`.
+pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::ERROR {
+        return type_id;
+    }
+    // Check if already contains undefined
+    if let Some(tsz_solver::TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id);
+        if members.iter().any(|m| *m == TypeId::UNDEFINED) {
+            return type_id;
+        }
+    }
+    db.union(vec![type_id, TypeId::UNDEFINED])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
