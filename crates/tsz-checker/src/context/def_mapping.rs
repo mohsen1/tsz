@@ -438,6 +438,14 @@ impl<'a> CheckerContext<'a> {
                 kind = ?kind,
                 "Pre-populated DefId from binder semantic_defs"
             );
+
+            // Register in the authoritative index so other checker contexts
+            // can find this DefId via lookup_by_symbol() without creating
+            // duplicates. This closes the gap where pre-populated DefIds
+            // were only in the local cache but invisible to the shared store.
+            self.definition_store
+                .register_symbol_mapping(sym_id.0, symbol.decl_file_idx, def_id);
+
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
