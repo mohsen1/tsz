@@ -171,6 +171,7 @@ impl Server {
             file_is_esm_map: Arc::new(FxHashMap::default()),
             typescript_dom_replacement_globals: (false, false, false),
             has_deprecation_diagnostics: false,
+            last_skeleton_fingerprint: None,
         };
         project_env.build_global_indices();
 
@@ -519,6 +520,7 @@ impl Server {
             file_is_esm_map: Arc::new(FxHashMap::default()),
             typescript_dom_replacement_globals: (false, false, false),
             has_deprecation_diagnostics: false,
+            last_skeleton_fingerprint: None,
         };
         project_env.build_global_indices();
 

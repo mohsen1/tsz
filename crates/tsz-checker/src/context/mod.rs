@@ -1070,6 +1070,12 @@ pub struct ProjectEnv {
     pub typescript_dom_replacement_globals: (bool, bool, bool),
     /// Whether TS5107/TS5101 deprecation diagnostics are present.
     pub has_deprecation_diagnostics: bool,
+    /// Skeleton fingerprint from the last `build_global_indices` call.
+    ///
+    /// When set, `build_global_indices_if_changed` can compare the new skeleton
+    /// fingerprint against this value and skip the expensive O(N) binder scan
+    /// when the project topology is unchanged.
+    pub last_skeleton_fingerprint: Option<u64>,
 }
 
 impl ProjectEnv {
@@ -1223,5 +1229,24 @@ impl ProjectEnv {
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
+    }
+
+    /// Build global indices only when the skeleton fingerprint has changed.
+    ///
+    /// Compares `new_fingerprint` against `self.last_skeleton_fingerprint`.
+    /// If they match, the global indices are already valid and the expensive
+    /// O(N) binder scan is skipped entirely. If they differ (or this is the
+    /// first build), delegates to `build_global_indices` and stores the new
+    /// fingerprint for future comparisons.
+    ///
+    /// Returns `true` if indices were rebuilt, `false` if cached.
+    pub fn build_global_indices_if_changed(&mut self, new_fingerprint: u64) -> bool {
+        if self.last_skeleton_fingerprint == Some(new_fingerprint) {
+            // All 4 global indices + skeleton indices are still valid.
+            return false;
+        }
+        self.build_global_indices();
+        self.last_skeleton_fingerprint = Some(new_fingerprint);
+        true
     }
 }
