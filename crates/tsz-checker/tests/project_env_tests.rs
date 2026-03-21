@@ -5,7 +5,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SemanticDefEntry, SemanticDefKind, SymbolId};
 use tsz_checker::context::{GlobalDeclaredModules, ProjectEnv};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::node::NodeArena;
@@ -132,4 +132,86 @@ fn apply_to_sets_deprecation_diagnostics() {
     env.apply_to(&mut checker.ctx);
 
     assert!(checker.ctx.skip_lib_type_resolution);
+}
+
+#[test]
+fn apply_to_pre_populates_cross_file_def_ids() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Create a second binder simulating a cross-file source with a top-level class.
+    let mut other_binder = BinderState::new();
+    let other_sym_id = SymbolId(42);
+    other_binder.semantic_defs.insert(
+        other_sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "MyClass".to_string(),
+            file_id: 1,
+            span_start: 0,
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(other_binder)]);
+    env.apply_to(&mut checker.ctx);
+
+    // The cross-file DefId should now be resolvable via get_existing_def_id
+    // without hitting the O(N) repair path in get_or_create_def_id.
+    let def_id = checker.ctx.get_existing_def_id(other_sym_id);
+    assert!(
+        def_id.is_some(),
+        "Cross-file semantic_defs should be pre-populated by apply_to"
+    );
+}
+
+#[test]
+fn apply_to_pre_populates_multiple_cross_file_binders() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Two cross-file binders with different declarations.
+    let mut binder_a = BinderState::new();
+    binder_a.semantic_defs.insert(
+        SymbolId(10),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Foo".to_string(),
+            file_id: 0,
+            span_start: 0,
+        },
+    );
+    let mut binder_b = BinderState::new();
+    binder_b.semantic_defs.insert(
+        SymbolId(20),
+        SemanticDefEntry {
+            kind: SemanticDefKind::TypeAlias,
+            name: "Bar".to_string(),
+            file_id: 1,
+            span_start: 100,
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
+    env.apply_to(&mut checker.ctx);
+
+    assert!(
+        checker.ctx.get_existing_def_id(SymbolId(10)).is_some(),
+        "Foo from binder_a should be pre-populated"
+    );
+    assert!(
+        checker.ctx.get_existing_def_id(SymbolId(20)).is_some(),
+        "Bar from binder_b should be pre-populated"
+    );
+    // Different symbols should get different DefIds.
+    let def_a = checker.ctx.get_existing_def_id(SymbolId(10)).unwrap();
+    let def_b = checker.ctx.get_existing_def_id(SymbolId(20)).unwrap();
+    assert_ne!(def_a, def_b, "Different symbols must get distinct DefIds");
 }
