@@ -1817,6 +1817,84 @@ impl<'a> Printer<'a> {
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
+        // Computed property name hoisting for targets < ES2022.
+        // tsc hoists non-constant computed property name expressions to temp variables
+        // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
+        // the class body can reference the temp instead of the original expression.
+        //
+        // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
+        // Methods and accessors keep their computed names inline in ES6+.
+        // After the class body, a comma expression joins all assignments and side effects.
+        let needs_computed_prop_hoisting =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        // Each entry: (Option<temp_name>, expr_idx) — None means side-effect only
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
+        if needs_computed_prop_hoisting {
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                // Only property declarations participate in computed property hoisting
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.arena.get(prop.name) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                let Some(expr_node) = self.arena.get(computed.expression) else {
+                    continue;
+                };
+                // Check if expression is a constant that doesn't need hoisting
+                let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
+                    || expr_node.kind == SyntaxKind::NumericLiteral as u16
+                    || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+                if is_constant {
+                    continue;
+                }
+                // Check if this property is erased (type-only, abstract, etc.)
+                let is_erased = if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                {
+                    true
+                } else if self.ctx.options.use_define_for_class_fields {
+                    false
+                } else {
+                    let is_private = self
+                        .arena
+                        .get(prop.name)
+                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                    let has_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    prop.initializer.is_none() && !is_private && !has_accessor
+                };
+                if is_erased {
+                    // Side-effect only: expression is emitted for its effects but no temp.
+                    let is_side_effect_free =
+                        self.is_computed_name_expr_side_effect_free(computed.expression);
+                    if !is_side_effect_free {
+                        computed_prop_entries.push((None, computed.expression));
+                    }
+                } else {
+                    // Allocate a temp variable for this computed property name
+                    let temp = self.make_unique_name_hoisted();
+                    self.computed_prop_temp_map
+                        .insert(computed.expression, temp.clone());
+                    computed_prop_entries.push((Some(temp), computed.expression));
+                }
+            }
+        }
+
         // For class expressions with static field initializers, we need to wrap
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`
         // Pre-detect this case before emitting the class keyword.
@@ -2042,7 +2120,18 @@ impl<'a> Printer<'a> {
                     if !private_fields.is_empty() && is_private_identifier(self.arena, prop.name) {
                         continue;
                     }
-                    let name_emit = self.get_property_name_emit(prop.name);
+                    // If the property has a computed name with a hoisted temp, use the temp
+                    // variable name. This takes priority over get_property_name_emit because
+                    // the temp captures the expression value at class-evaluation time.
+                    let name_emit = if let Some(name_node) = self.arena.get(prop.name)
+                        && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.arena.get_computed_property(name_node)
+                        && let Some(temp) = self.computed_prop_temp_map.get(&computed.expression)
+                    {
+                        Some(PropertyNameEmit::Bracket(temp.clone()))
+                    } else {
+                        self.get_property_name_emit(prop.name)
+                    };
                     let Some(name_emit) = name_emit else {
                         continue;
                     };
@@ -2610,7 +2699,10 @@ impl<'a> Printer<'a> {
                     // Only expressions that might have observable effects are emitted:
                     // property accesses, element accesses, calls, assignments, etc.
                     // Simple identifiers and literals are NOT emitted (no side effects).
-                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    // Skip this when computed property hoisting is active — the comma
+                    // expression already handles side effects.
+                    if !needs_computed_prop_hoisting
+                        && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                         && let Some(p) = self.arena.get_property_decl(member_node)
                         && let Some(name_node) = self.arena.get(p.name)
                         && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -2862,12 +2954,30 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
 
-        // Emit computed property name side-effect statements for erased members.
-        // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
-        for expr_idx in &computed_property_side_effects {
+        // Emit computed property name hoisting comma expression or standalone side effects.
+        if !computed_prop_entries.is_empty() {
+            // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
             self.write_line();
-            self.emit_expression(*expr_idx);
+            for (i, (temp_name, expr_idx)) in computed_prop_entries.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                if let Some(temp) = temp_name {
+                    self.write(temp);
+                    self.write(" = ");
+                }
+                self.emit_expression(*expr_idx);
+            }
             self.write(";");
+        } else {
+            // Emit computed property name side-effect statements for erased members
+            // (when hoisting is not active, e.g., ES2022+ targets).
+            // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
+            for expr_idx in &computed_property_side_effects {
+                self.write_line();
+                self.emit_expression(*expr_idx);
+                self.write(";");
+            }
         }
 
         if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
@@ -3340,6 +3450,9 @@ impl<'a> Printer<'a> {
         self.pending_private_accessor_defs = prev_pending_private_accessor_defs;
         self.private_members_to_skip = prev_private_members_to_skip;
 
+        // Clear computed property temp map to avoid leaking to the next class.
+        self.computed_prop_temp_map.clear();
+
         // Track class name to prevent duplicate var declarations for merged namespaces.
         // When a class and namespace have the same name (declaration merging), the class
         // provides the declaration, so the namespace shouldn't emit `var name;`.
@@ -3375,6 +3488,45 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit deferred static block IIFEs as `(() => { ... })();`.
+    /// Check if a computed property name expression is side-effect-free.
+    /// Looks through type assertions and parenthesized expressions to find
+    /// the core expression, then checks if it's a literal/identifier/keyword.
+    fn is_computed_name_expr_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return true;
+        };
+        let k = expr_node.kind;
+        // Simple side-effect-free expressions
+        if k == SyntaxKind::Identifier as u16
+            || k == SyntaxKind::PrivateIdentifier as u16
+            || k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NumericLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == SyntaxKind::TrueKeyword as u16
+            || k == SyntaxKind::FalseKeyword as u16
+            || k == SyntaxKind::NullKeyword as u16
+            || k == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        // Type assertions: `<T>expr`, `expr as T`, `expr satisfies T` — look through
+        if k == syntax_kind_ext::TYPE_ASSERTION
+            || k == syntax_kind_ext::AS_EXPRESSION
+            || k == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            if let Some(assertion) = self.arena.get_type_assertion(expr_node) {
+                return self.is_computed_name_expr_side_effect_free(assertion.expression);
+            }
+        }
+        // Parenthesized expression: `(expr)` — look through
+        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(expr_node) {
+                return self.is_computed_name_expr_side_effect_free(paren.expression);
+            }
+        }
+        false
+    }
+
     pub(in crate::emitter) fn emit_static_block_iifes(&mut self, blocks: Vec<(NodeIndex, usize)>) {
         for (static_block_idx, saved_comment_idx) in blocks {
             self.write_line();

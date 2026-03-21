@@ -3016,7 +3016,10 @@ fn skeleton_index_single_file() {
         idx.merge_candidates.is_empty(),
         "single file should have no merge candidates"
     );
-    assert!(idx.total_symbol_count > 0, "should have at least one symbol");
+    assert!(
+        idx.total_symbol_count > 0,
+        "should have at least one symbol"
+    );
 }
 
 #[test]
@@ -3053,17 +3056,17 @@ fn skeleton_index_captures_merge_candidates() {
     let program = merge_bind_results(results);
 
     let idx = program.skeleton_index.as_ref().unwrap();
-    let shared = idx
-        .merge_candidates
-        .iter()
-        .find(|c| c.name == "Shared");
+    let shared = idx.merge_candidates.iter().find(|c| c.name == "Shared");
     assert!(
         shared.is_some(),
         "interface 'Shared' should appear as a merge candidate"
     );
     let shared = shared.unwrap();
     assert_eq!(shared.source_files.len(), 2);
-    assert!(shared.is_valid_merge, "interface + interface should be a valid merge");
+    assert!(
+        shared.is_valid_merge,
+        "interface + interface should be a valid merge"
+    );
 }
 
 #[test]
@@ -3084,23 +3087,14 @@ fn skeleton_index_stable_across_rebuilds() {
     assert_eq!(idx1.file_count, idx2.file_count);
     assert_eq!(idx1.total_symbol_count, idx2.total_symbol_count);
     assert_eq!(idx1.merge_candidates.len(), idx2.merge_candidates.len());
-    assert_eq!(
-        idx1.total_reexport_count,
-        idx2.total_reexport_count
-    );
+    assert_eq!(idx1.total_reexport_count, idx2.total_reexport_count);
 }
 
 #[test]
 fn skeleton_index_reexport_counts() {
     let files = vec![
-        (
-            "a.ts".to_string(),
-            "export const foo = 1;".to_string(),
-        ),
-        (
-            "b.ts".to_string(),
-            "export { foo } from './a';".to_string(),
-        ),
+        ("a.ts".to_string(), "export const foo = 1;".to_string()),
+        ("b.ts".to_string(), "export { foo } from './a';".to_string()),
     ];
     let results = parse_and_bind_parallel(files);
     let program = merge_bind_results(results);

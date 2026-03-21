@@ -79,7 +79,7 @@ pub struct ClassES5Emitter<'a> {
 }
 
 impl<'a> ClassES5Emitter<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         ClassES5Emitter {
             arena,
             source_text: None,

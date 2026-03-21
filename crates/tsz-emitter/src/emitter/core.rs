@@ -557,6 +557,12 @@ pub struct Printer<'a> {
     /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
     /// JS files do not undergo import elision since all imports are value imports.
     pub(crate) source_is_js_file: bool,
+
+    /// Mapping from computed property name expression `NodeIndex` to its hoisted temp
+    /// variable name (e.g., `_a`). When target < ES2022 and a class member has a
+    /// computed property name with a non-constant expression, the expression is hoisted
+    /// to a temp variable and the class body uses the temp instead of the expression.
+    pub(crate) computed_prop_temp_map: FxHashMap<NodeIndex, String>,
 }
 
 impl<'a> Printer<'a> {
@@ -708,6 +714,7 @@ impl<'a> Printer<'a> {
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
             source_is_js_file: false,
+            computed_prop_temp_map: FxHashMap::default(),
         }
     }
 
@@ -1502,7 +1509,13 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                 if let Some(computed) = self.arena.get_computed_property(node) {
                     self.write("[");
-                    self.emit(computed.expression);
+                    // If this expression has been hoisted to a temp variable, emit the
+                    // temp name instead of the original expression.
+                    if let Some(temp_name) = self.computed_prop_temp_map.get(&computed.expression) {
+                        self.write(&temp_name.clone());
+                    } else {
+                        self.emit(computed.expression);
+                    }
                     // Map closing `]` to its source position.
                     // The expression's end points past the expression, so `]`
                     // is at the expression's end position (where the expression

@@ -311,10 +311,14 @@ pub struct ES5ClassTransformer<'a> {
     emit_decorator_metadata: bool,
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
+    /// Counter for generating unique temp variable names (_a, _b, _c, ...)
+    temp_var_counter: u32,
+    /// Mapping from computed property name expression NodeIndex to temp variable name.
+    computed_prop_temp_map: std::collections::HashMap<NodeIndex, String>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             class_name: String::new(),
@@ -329,6 +333,52 @@ impl<'a> ES5ClassTransformer<'a> {
             legacy_decorators: false,
             emit_decorator_metadata: false,
             indent_base: 0,
+            temp_var_counter: 0,
+            computed_prop_temp_map: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Check if an expression (possibly wrapped in type assertions) is side-effect-free.
+    fn is_expr_side_effect_free(arena: &NodeArena, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return true;
+        };
+        let k = expr_node.kind;
+        if k == SyntaxKind::Identifier as u16
+            || k == SyntaxKind::PrivateIdentifier as u16
+            || k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NumericLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == SyntaxKind::TrueKeyword as u16
+            || k == SyntaxKind::FalseKeyword as u16
+            || k == SyntaxKind::NullKeyword as u16
+            || k == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        // Look through type assertions
+        if k == syntax_kind_ext::TYPE_ASSERTION || k == syntax_kind_ext::AS_EXPRESSION {
+            if let Some(a) = arena.get_type_assertion(expr_node) {
+                return Self::is_expr_side_effect_free(arena, a.expression);
+            }
+        }
+        // Look through parenthesized expressions
+        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(p) = arena.get_parenthesized(expr_node) {
+                return Self::is_expr_side_effect_free(arena, p.expression);
+            }
+        }
+        false
+    }
+
+    /// Generate a unique temp variable name (_a, _b, ..., _z, _27, _28, ...)
+    fn generate_temp_name(&mut self) -> String {
+        let idx = self.temp_var_counter;
+        self.temp_var_counter += 1;
+        if idx < 26 {
+            format!("_{}", (b'a' + idx as u8) as char)
+        } else {
+            format!("_{}", idx)
         }
     }
 
@@ -1193,6 +1243,76 @@ impl<'a> ES5ClassTransformer<'a> {
             &class_data.heritage_clauses,
         );
 
+        // Scan property declarations for computed names that need hoisting.
+        // This must happen before constructor/member IR emission so that temps
+        // are available when building property assignment IR nodes.
+        self.computed_prop_temp_map.clear();
+        self.temp_var_counter = 0;
+        // Each entry: (Option<temp_name>, expr_idx) for the comma expression
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(prop.name) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                continue;
+            }
+            let Some(computed) = self.arena.get_computed_property(name_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.arena.get(computed.expression) else {
+                continue;
+            };
+            // Skip constant expressions
+            let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
+                || expr_node.kind == SyntaxKind::NumericLiteral as u16
+                || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+            if is_constant {
+                continue;
+            }
+            // Check if this property is erased
+            let is_erased = if self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+            {
+                true
+            } else {
+                // In ES5 mode, useDefineForClassFields is always false
+                let is_private = self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                let has_accessor = self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                prop.initializer.is_none() && !is_private && !has_accessor
+            };
+            if is_erased {
+                // Side-effect only: emit expression for effects but no temp.
+                // Check if the expression (possibly wrapped in type assertions) is
+                // a simple identifier or keyword literal.
+                let is_side_effect_free =
+                    Self::is_expr_side_effect_free(self.arena, computed.expression);
+                if !is_side_effect_free {
+                    computed_prop_entries.push((None, computed.expression));
+                }
+            } else {
+                let temp = self.generate_temp_name();
+                self.computed_prop_temp_map
+                    .insert(computed.expression, temp.clone());
+                computed_prop_entries.push((Some(temp), computed.expression));
+            }
+        }
+
         // Build IIFE body
         let mut body = Vec::new();
 
@@ -1206,6 +1326,48 @@ impl<'a> ES5ClassTransformer<'a> {
         // Constructor function
         if let Some(ctor_ir) = self.emit_constructor_ir(class_idx) {
             body.push(ctor_ir);
+        }
+
+        // Emit computed property temp var declarations and comma expression
+        if !computed_prop_entries.is_empty() {
+            // var _a, _b, _c;
+            let temp_names: Vec<String> = computed_prop_entries
+                .iter()
+                .filter_map(|(temp, _)| temp.clone())
+                .collect();
+            if !temp_names.is_empty() {
+                let var_decls: Vec<IRNode> = temp_names
+                    .iter()
+                    .map(|name| IRNode::VarDecl {
+                        name: name.clone().into(),
+                        initializer: None,
+                    })
+                    .collect();
+                body.push(IRNode::VarDeclList(var_decls));
+            }
+            // _a = expr1, sideEffect, _b = expr2, ...;
+            // Use chained BinaryExpr with comma operator to avoid parenthesization.
+            let mut comma_parts: Vec<IRNode> = Vec::new();
+            for (temp_name, expr_idx) in &computed_prop_entries {
+                let expr_ir = self.convert_expression(*expr_idx);
+                if let Some(temp) = temp_name {
+                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
+                } else {
+                    comma_parts.push(expr_ir);
+                }
+            }
+            if !comma_parts.is_empty() {
+                // Chain parts with comma operator: a, b, c → BinaryExpr(BinaryExpr(a, b), c)
+                let result = comma_parts
+                    .into_iter()
+                    .reduce(|left, right| IRNode::BinaryExpr {
+                        left: Box::new(left),
+                        operator: std::borrow::Cow::Borrowed(","),
+                        right: Box::new(right),
+                    })
+                    .unwrap();
+                body.push(IRNode::ExpressionStatement(Box::new(result)));
+            }
         }
 
         // Prototype methods and static members interleaved in source order
@@ -1957,7 +2119,12 @@ impl<'a> ES5ClassTransformer<'a> {
             PropertyNameIR::StringLiteral(s) => IRNode::elem(receiver, IRNode::string(s)),
             PropertyNameIR::NumericLiteral(n) => IRNode::elem(receiver, IRNode::number(n)),
             PropertyNameIR::Computed(expr_idx) => {
-                IRNode::elem(receiver, self.convert_expression(expr_idx))
+                // If this expression has a hoisted temp variable, use it
+                if let Some(temp) = self.computed_prop_temp_map.get(&expr_idx) {
+                    IRNode::elem(receiver, IRNode::id(temp.clone()))
+                } else {
+                    IRNode::elem(receiver, self.convert_expression(expr_idx))
+                }
             }
         }
     }

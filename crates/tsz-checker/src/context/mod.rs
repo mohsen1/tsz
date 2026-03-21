@@ -829,8 +829,7 @@ pub struct CheckerContext<'a> {
     /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)
     /// into a forward lookup: module -> symbols. Eliminates O(N) scans when finding
     /// augmentation symbols for a given module specifier (interface_type.rs).
-    pub global_augmentation_targets_index:
-        Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
+    pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
