@@ -376,11 +376,10 @@ pub(super) fn collect_diagnostics(
 
     // Pre-compute expando index from skeleton when available.
     // This avoids re-scanning all binders for expando property assignments.
-    let skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>> =
-        program
-            .skeleton_index
-            .as_ref()
-            .map(|skel| Arc::new(skel.expando_properties.clone()));
+    let skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>> = program
+        .skeleton_index
+        .as_ref()
+        .map(|skel| Arc::new(skel.expando_properties.clone()));
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
@@ -409,9 +408,7 @@ pub(super) fn collect_diagnostics(
                 .set_declared_modules_from_skeleton(Arc::clone(dm));
         }
         if let Some(ref ei) = skeleton_expando_index {
-            checker
-                .ctx
-                .set_expando_index_from_skeleton(Arc::clone(ei));
+            checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
         }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         {
@@ -698,9 +695,7 @@ pub(super) fn collect_diagnostics(
                     .set_declared_modules_from_skeleton(Arc::clone(dm));
             }
             if let Some(ref ei) = skeleton_expando_index {
-                checker
-                    .ctx
-                    .set_expando_index_from_skeleton(Arc::clone(ei));
+                checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
             }
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             {
@@ -1115,9 +1110,7 @@ pub(super) fn check_file_for_parallel<'a>(
             .set_declared_modules_from_skeleton(Arc::clone(dm));
     }
     if let Some(ref ei) = skeleton_expando_index {
-        checker
-            .ctx
-            .set_expando_index_from_skeleton(Arc::clone(ei));
+        checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
     }
     checker.ctx.set_all_binders(Arc::clone(all_binders));
     {
