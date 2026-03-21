@@ -2418,9 +2418,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// (i.e., a "scope marker" is needed).  Inside a non-ambient namespace,
     /// `export` is always significant and must be preserved.
     pub(crate) const fn should_emit_export_keyword(&self) -> bool {
-        !self.inside_declare_namespace
-            || self.ambient_module_has_scope_marker
-            || self.inside_non_ambient_namespace
+        !self.inside_declare_namespace || self.ambient_module_has_scope_marker
     }
 
     pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {
