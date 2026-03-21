@@ -330,11 +330,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let candidate_len = candidate.chars().count();
-            let len_diff = if candidate_len > name_len {
-                candidate_len - name_len
-            } else {
-                name_len - candidate_len
-            };
+            let len_diff = candidate_len.abs_diff(name_len);
             if len_diff > maximum_length_difference {
                 continue;
             }

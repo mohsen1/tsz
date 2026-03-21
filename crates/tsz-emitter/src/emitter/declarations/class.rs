@@ -1,3 +1,5 @@
+#![allow(clippy::nonminimal_bool, clippy::type_complexity)]
+
 use super::super::{Printer, ScriptTarget};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{

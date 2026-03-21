@@ -73,6 +73,7 @@ impl<'a> CheckerState<'a> {
 
     /// Alias for `should_skip_weak_union_error_with_outcome` — kept for
     /// architecture contract test compatibility.
+    #[allow(dead_code)]
     pub(crate) fn should_skip_weak_union_error_with_hint(
         &mut self,
         source: TypeId,

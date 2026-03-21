@@ -698,7 +698,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+        if self.should_emit_export_keyword() {
             self.write("export ");
         }
         self.write("interface ");
@@ -759,7 +759,7 @@ impl<'a> DeclarationEmitter<'a> {
         );
 
         self.write_indent();
-        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+        if self.should_emit_export_keyword() {
             self.write("export ");
         }
         if self.should_emit_declare_keyword(true) {
@@ -857,7 +857,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+        if self.should_emit_export_keyword() {
             self.write("export ");
         }
         if self.should_emit_declare_keyword(true) {
@@ -941,7 +941,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+        if self.should_emit_export_keyword() {
             self.write("export ");
         }
         if self
@@ -979,7 +979,7 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
-        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+        if self.should_emit_export_keyword() {
             self.write("export ");
         }
         if self.should_emit_declare_keyword(true) {
@@ -1134,7 +1134,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
                     self.write_indent();
-                    if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
+                    if self.should_emit_export_keyword() {
                         self.write("export ");
                     }
                     if self.should_emit_declare_keyword(true) {
