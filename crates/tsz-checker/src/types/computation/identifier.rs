@@ -1453,7 +1453,22 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Check all_binders (all project files in multi-file mode)
-        if let Some(ref all_binders) = self.ctx.all_binders {
+        // Use global_file_locals_index for O(1) lookup
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        {
+            for &(_file_idx, sym_id) in entries {
+                if let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                    && (sym.flags & symbol_flags::VALUE) != 0
+                    && !sym.is_umd_export
+                {
+                    return true;
+                }
+            }
+        } else if let Some(ref all_binders) = self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if let Some(sym_id) = binder.file_locals.get(name)
                     && let Some(sym) = binder.get_symbol(sym_id)

@@ -89,14 +89,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let all_binders = self.ctx.all_binders.as_ref()?;
-
-        for binder in all_binders.iter() {
+        // Use global_module_exports_index for O(1) lookup instead of O(N) binder scan
+        if let Some(index) = self.ctx.global_module_exports_index.as_ref() {
+            let all_binders = self.ctx.all_binders.as_ref()?;
             for candidate in candidates {
-                if let Some(exports) = binder.module_exports.get(candidate)
-                    && let Some(sym_id) = exports.get("export=")
+                if let Some(entries) =
+                    index.get(&(candidate.to_string(), "export=".to_string()))
                 {
-                    return Some((binder, sym_id));
+                    for &(file_idx, sym_id) in entries {
+                        if let Some(binder) = all_binders.get(file_idx) {
+                            return Some((binder, sym_id));
+                        }
+                    }
+                }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                for candidate in candidates {
+                    if let Some(exports) = binder.module_exports.get(candidate)
+                        && let Some(sym_id) = exports.get("export=")
+                    {
+                        return Some((binder, sym_id));
+                    }
                 }
             }
         }

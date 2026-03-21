@@ -64,6 +64,19 @@ pub struct ResolutionError {
     pub message: String,
 }
 
+/// Pre-built global index of all declared/ambient module names across all binders.
+///
+/// Separates exact module names (O(1) `HashSet` lookup) from wildcard patterns
+/// (small linear scan). Built once in `set_all_binders` and shared via `Arc`.
+#[derive(Debug, Default)]
+pub struct GlobalDeclaredModules {
+    /// Exact module names from `declared_modules`, `shorthand_ambient_modules`,
+    /// and `module_exports` keys (normalized: quotes stripped).
+    pub exact: FxHashSet<String>,
+    /// Wildcard patterns (e.g., `*.css`, `*/theme`) that require glob matching.
+    pub patterns: Vec<String>,
+}
+
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
 pub struct EnclosingClassInfo {
@@ -794,6 +807,11 @@ pub struct CheckerContext<'a> {
     /// Eliminates O(N) scans in `resolve_import_from_ambient_module`.
     pub global_module_exports_index:
         Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
+
+    /// Pre-built global index of all declared/ambient module names across all binders.
+    /// Split into exact names (O(1) lookup) and wildcard patterns (small linear scan).
+    /// Eliminates O(N*M) scans in `any_ambient_module_declared`.
+    pub global_declared_modules: Option<Arc<GlobalDeclaredModules>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.

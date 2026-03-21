@@ -1134,7 +1134,31 @@ impl<'a> CheckerState<'a> {
             let name = &ident.escaped_text;
 
             // Find which file's binder has this identifier as a local
-            if let Some(all_binders) = &self.ctx.all_binders {
+            // Use the pre-built global index for O(1) lookup by name
+            if let Some(entries) = self
+                .ctx
+                .global_file_locals_index
+                .as_ref()
+                .and_then(|idx| idx.get(name.as_str()))
+            {
+                for &(_file_idx, sym_id) in entries {
+                    if let Some(sym) =
+                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    {
+                        if sym.is_type_only {
+                            return if sym.import_module.is_some() {
+                                Some(TypeOnlyKind::ImportType)
+                            } else {
+                                Some(TypeOnlyKind::ExportType)
+                            };
+                        }
+                        if self.alias_resolves_to_type_only(sym_id) {
+                            return Some(self.determine_type_only_kind_from_alias(sym_id));
+                        }
+                    }
+                }
+            } else if let Some(all_binders) = &self.ctx.all_binders {
+                // Fallback when global index not available
                 for file_binder in all_binders.iter() {
                     if let Some(sym_id) = file_binder.file_locals.get(name)
                         && let Some(sym) =
