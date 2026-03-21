@@ -13165,6 +13165,44 @@ class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
     );
 }
 
+/// TS2416 for interface method with type parameters instantiated from the interface level.
+/// After `IFoo<number>`, the method `foo(x: T): T` becomes `foo(x: number): number`.
+/// The class method `foo(x: string): string` is incompatible.
+///
+/// Uses `get_type_of_interface_member_simple` to build proper function types
+/// for interface methods in the implements checker (rather than just the return type).
+#[test]
+fn test_ts2416_implements_interface_method_type_mismatch() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface IFoo<T> {
+    foo(x: T): T;
+}
+class Bad implements IFoo<number> {
+    foo(x: string): string { return "a"; }
+}
+class Good implements IFoo<number> {
+    foo(x: number): number { return 1; }
+}
+        "#,
+    );
+
+    // Bad: foo(x: string): string vs IFoo<number>.foo(x: number): number - should be TS2416
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2416 && msg.contains("Bad")),
+        "Expected TS2416 for Bad.\nActual: {diagnostics:#?}"
+    );
+    // Good should NOT get TS2416
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2416 && msg.contains("Good")),
+        "Good should NOT get TS2416.\nActual: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_ts2345_function_argument_display_widens_unannotated_literal_return() {
     let diagnostics = compile_and_get_diagnostics(

@@ -140,20 +140,34 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let member_type = match self.resolve_property_access_with_env(interface_type, &name)
-                {
-                    PropertyAccessResult::Success {
-                        type_id,
-                        write_type,
-                        ..
-                    } => write_type.unwrap_or(type_id),
-                    _ => {
-                        let member_type = self.get_type_of_interface_member_simple(member_idx);
-                        crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            member_type,
-                            substitution,
-                        )
+                // For method signatures, always build the full function type
+                // (including parameters and method-level type parameters) via
+                // get_type_of_interface_member_simple rather than using the
+                // object-shape property type which only stores the return type.
+                // This ensures proper TS2416 detection when comparing a class
+                // method against a generic interface method signature.
+                let member_type = if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    let member_type = self.get_type_of_interface_member_simple(member_idx);
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        member_type,
+                        substitution,
+                    )
+                } else {
+                    match self.resolve_property_access_with_env(interface_type, &name) {
+                        PropertyAccessResult::Success {
+                            type_id,
+                            write_type,
+                            ..
+                        } => write_type.unwrap_or(type_id),
+                        _ => {
+                            let member_type = self.get_type_of_interface_member_simple(member_idx);
+                            crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                member_type,
+                                substitution,
+                            )
+                        }
                     }
                 };
 
