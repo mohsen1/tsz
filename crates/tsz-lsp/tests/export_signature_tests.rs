@@ -2754,7 +2754,7 @@ fn test_from_input_deterministic() {
             "./mod".to_string(),
             Some("original".to_string()),
         )],
-        wildcard_reexports: vec!["./utils".to_string()],
+        wildcard_reexports: vec![("./utils".to_string(), false)],
         global_augmentations: vec![("Window".to_string(), 1)],
         module_augmentations: vec![("express".to_string(), vec!["Request".to_string()])],
         exported_locals: vec![("bar".to_string(), 0x10, false)],
@@ -2837,4 +2837,46 @@ fn test_from_input_empty_is_consistent() {
     let sig2 = ExportSignature::from_input(&input);
 
     assert_eq!(sig1, sig2, "Empty input should produce consistent hashes");
+}
+
+#[test]
+fn test_from_input_wildcard_type_only_change_different_hash() {
+    // Changing `export * from "x"` to `export type * from "x"` must change the signature,
+    // because type-only wildcard re-exports filter out value exports from the source module.
+    let input_a = ExportSignatureInput {
+        wildcard_reexports: vec![("./utils".to_string(), false)],
+        ..Default::default()
+    };
+    let input_b = ExportSignatureInput {
+        wildcard_reexports: vec![("./utils".to_string(), true)],
+        ..Default::default()
+    };
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Wildcard re-export type_only change must produce different signatures"
+    );
+}
+
+#[test]
+fn test_from_input_wildcard_same_module_same_type_only_same_hash() {
+    let input_a = ExportSignatureInput {
+        wildcard_reexports: vec![("./utils".to_string(), true)],
+        ..Default::default()
+    };
+    let input_b = ExportSignatureInput {
+        wildcard_reexports: vec![("./utils".to_string(), true)],
+        ..Default::default()
+    };
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Same wildcard re-export entries must produce same signature"
+    );
 }
