@@ -3474,3 +3474,153 @@ fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
         "user's semantic_def should not be overwritten by lib merge"
     );
 }
+
+#[test]
+fn semantic_defs_captures_generic_interface() {
+    // Generic interfaces should be captured with the same identity
+    // regardless of type parameter count. The binder only records
+    // kind + name + span; type params are resolved later by the checker.
+    let binder = bind_source("interface Container<T, U> { value: T; key: U }");
+    let sym_id = binder
+        .file_locals
+        .get("Container")
+        .expect("expected Container");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for generic interface Container");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    assert_eq!(entry.name, "Container");
+}
+
+#[test]
+fn semantic_defs_captures_namespace_but_not_its_children() {
+    // A namespace itself gets a semantic def, but types declared
+    // inside it also get captured because they're in a Module scope
+    // (which is allowed by record_semantic_def's is_top_level check).
+    let binder = bind_source(
+        "
+namespace Outer {
+    export interface Inner {}
+    export type Alias = string;
+    export class Klass {}
+    export enum E { A }
+}
+",
+    );
+    // The namespace itself should be captured
+    let ns_sym = binder
+        .file_locals
+        .get("Outer")
+        .expect("expected Outer namespace");
+    let ns_entry = binder
+        .semantic_defs
+        .get(&ns_sym)
+        .expect("expected semantic def for Outer");
+    assert_eq!(ns_entry.kind, super::SemanticDefKind::Namespace);
+}
+
+#[test]
+fn semantic_defs_captures_module_scoped_declarations() {
+    // Declarations inside `declare module "foo" {}` should be captured
+    // because the module body creates a ContainerKind::Module scope.
+    let binder = bind_source(
+        r#"
+declare module "mylib" {
+    export interface Config {}
+    export type Mode = "dark" | "light";
+    export class Client {}
+}
+"#,
+    );
+    // Module-scoped declarations should appear in semantic_defs
+    // (they use the module's scope which is ContainerKind::Module).
+    let has_interface = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Config" && e.kind == super::SemanticDefKind::Interface);
+    let has_alias = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Mode" && e.kind == super::SemanticDefKind::TypeAlias);
+    let has_class = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Client" && e.kind == super::SemanticDefKind::Class);
+    assert!(
+        has_interface,
+        "module-scoped interface Config should be in semantic_defs"
+    );
+    assert!(
+        has_alias,
+        "module-scoped type alias Mode should be in semantic_defs"
+    );
+    assert!(
+        has_class,
+        "module-scoped class Client should be in semantic_defs"
+    );
+}
+
+#[test]
+fn semantic_defs_generic_class_with_constraints() {
+    // Generic classes with constrained type params should still
+    // be captured. Only kind/name/span matters at bind time.
+    let binder =
+        bind_source("class Registry<K extends string, V extends object> { entries: Map<K, V> }");
+    let sym_id = binder
+        .file_locals
+        .get("Registry")
+        .expect("expected Registry");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for generic class Registry");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+    assert_eq!(entry.name, "Registry");
+}
+
+#[test]
+fn merge_lib_contexts_propagates_generic_lib_interfaces() {
+    // Generic lib interfaces like Array<T> must be propagated through
+    // lib merge so pre_populate_def_ids_from_binder covers them.
+    let lib_source = r"
+interface Array<T> {
+    length: number;
+    push(...items: T[]): number;
+}
+interface ReadonlyArray<T> {
+    readonly length: number;
+}
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Required<T> = { [P in keyof T]-?: T[P] };
+";
+    let mut lib_parser = ParserState::new("lib.es5.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    let user_source = "let arr: Array<number> = [1, 2, 3];";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // All generic lib types should be findable via file_locals → semantic_defs
+    for name in &["Array", "ReadonlyArray", "Partial", "Required"] {
+        let sym_id = main_binder
+            .file_locals
+            .get(name)
+            .unwrap_or_else(|| panic!("expected '{name}' in file_locals after lib merge"));
+        assert!(
+            main_binder.semantic_defs.contains_key(&sym_id),
+            "expected semantic_def for generic lib type '{name}' (SymbolId {})",
+            sym_id.0,
+        );
+    }
+}

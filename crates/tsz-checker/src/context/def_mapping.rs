@@ -155,6 +155,29 @@ impl<'a> CheckerContext<'a> {
         def_id
     }
 
+    /// Get or create a `DefId` for a lib symbol.
+    ///
+    /// Lib symbols *should* already have `DefIds` from pre-population
+    /// (`pre_populate_def_ids_from_lib_binders`). This method first checks
+    /// the pre-populated index and only falls back to `get_or_create_def_id`
+    /// as a safety net, logging a trace when the fallback fires.
+    ///
+    /// Use this instead of the manual `get_existing_def_id().unwrap_or_else(||
+    /// get_or_create_def_id())` pattern in lib resolution paths.
+    pub fn get_lib_def_id(&self, sym_id: SymbolId) -> DefId {
+        if let Some(def_id) = self.get_existing_def_id(sym_id) {
+            return def_id;
+        }
+        // Pre-population missed this symbol — create on demand but log it.
+        // If this fires frequently for a specific symbol kind, the binder's
+        // `record_semantic_def` coverage should be extended.
+        trace!(
+            symbol_id = %sym_id.0,
+            "lib symbol not pre-populated, creating DefId on demand"
+        );
+        self.get_or_create_def_id(sym_id)
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the
