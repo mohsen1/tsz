@@ -1528,4 +1528,51 @@ impl<'a> CheckerState<'a> {
         // Suppress TS2347 (e.g., `this.one<T>(...)` in static generic methods).
         true
     }
+
+    /// Check if `callee_expr` is `this.property` where `property` is a known
+    /// class member. Uses `nearest_enclosing_class` to walk the AST parent chain,
+    /// which works even when `enclosing_class` is not set (e.g., static methods
+    /// processed outside class scope).
+    pub(crate) fn is_this_property_access_on_known_class_member(
+        &self,
+        callee_expr: NodeIndex,
+    ) -> bool {
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return false;
+        }
+        let Some(property_name) = self.get_property_name(access.name_or_argument) else {
+            return false;
+        };
+
+        let Some(class_idx) = self.nearest_enclosing_class(callee_expr) else {
+            return false;
+        };
+        if let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_idx.0)
+            && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym)
+        {
+            return class_symbol
+                .exports
+                .as_ref()
+                .and_then(|e| e.get(&property_name))
+                .is_some()
+                || class_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(&property_name))
+                    .is_some();
+        }
+        false
+    }
 }

@@ -301,8 +301,9 @@ impl<'a> CheckerState<'a> {
                 // instead of TS2347 (untyped function calls). The ANY here came from
                 // this_type_stack suppression; check if the property genuinely doesn't
                 // exist and emit TS2339 in that case.
-                let suppressed_ts2347 =
-                    self.try_emit_ts2339_for_missing_this_property(call.expression);
+                let suppressed_ts2347 = self
+                    .try_emit_ts2339_for_missing_this_property(call.expression)
+                    || self.is_this_property_access_on_known_class_member(call.expression);
                 if !suppressed_ts2347 {
                     self.error_at_node(
                         idx,
