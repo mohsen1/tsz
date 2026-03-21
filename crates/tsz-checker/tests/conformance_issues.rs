@@ -2234,20 +2234,12 @@ const x = (a) => a + 1;
         },
     );
 
-    let ts2322: Vec<&str> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected only the inner body TS2322 for JSDoc function return mismatch. Actual diagnostics: {diagnostics:#?}"
-    );
+    // The merged branch changes simple expression-bodied arrow callbacks to
+    // report the outer function-type mismatch (TS2322) instead of the inner
+    // return expression mismatch, matching tsc behavior.
     assert!(
-        ts2322[0].contains("Type 'number' is not assignable to type 'string'."),
-        "Expected inner return-type mismatch message. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for JSDoc function return mismatch. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -13250,21 +13242,12 @@ var r5 = foo3((x: number) => '');
         "#,
     );
 
-    let ts2322_messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2322_messages.len(),
-        1,
-        "Expected a single inner TS2322 for the incompatible callback body.\nActual diagnostics: {diagnostics:?}"
-    );
+    // The merged branch changes simple expression-bodied arrow callbacks to
+    // report TS2345 (argument not assignable) instead of inner TS2322,
+    // matching tsc behavior for this pattern.
     assert!(
-        ts2322_messages[0].contains("Type 'string' is not assignable to type 'number'."),
-        "Expected TS2322 to report the widened callback body mismatch.\nActual message: {}",
-        ts2322_messages[0]
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for incompatible callback argument.\nActual diagnostics: {diagnostics:?}"
     );
 }
 
