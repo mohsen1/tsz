@@ -195,6 +195,21 @@ impl<'a> CheckerContext<'a> {
         })
     }
 
+    /// Get or create a `DefId` for a symbol and register its type parameters in one step.
+    ///
+    /// Consolidates the common two-step pattern of `get_or_create_def_id` +
+    /// `insert_def_type_params` into a single call. Empty params are a no-op
+    /// (just returns the DefId).
+    pub fn get_or_create_def_id_with_params(
+        &self,
+        sym_id: SymbolId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) -> DefId {
+        let def_id = self.get_or_create_def_id(sym_id);
+        self.insert_def_type_params(def_id, params);
+        def_id
+    }
+
     /// Insert type parameters for a `DefId` (Phase 4.2.1: generic type alias support).
     ///
     /// This enables the Solver to expand Application(Lazy(DefId), Args) by providing

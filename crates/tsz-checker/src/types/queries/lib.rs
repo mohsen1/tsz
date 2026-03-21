@@ -155,8 +155,8 @@ impl<'a> CheckerState<'a> {
                             // matches what type reference resolution produces.
                             let file_sym_id =
                                 self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = self.ctx.get_or_create_def_id(file_sym_id);
-                            self.ctx.insert_def_type_params(def_id, params.clone());
+                            self.ctx
+                                .get_or_create_def_id_with_params(file_sym_id, params.clone());
 
                             lib_types.push(ty);
                         } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
@@ -192,8 +192,7 @@ impl<'a> CheckerState<'a> {
                             let (ty, params) = alias_lowering.lower_type_alias_declaration(alias);
                             if ty != TypeId::ERROR {
                                 // Cache type parameters for Application expansion
-                                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                                self.ctx.insert_def_type_params(def_id, params);
+                                self.ctx.get_or_create_def_id_with_params(sym_id, params);
                                 lib_types.push(ty);
                                 break;
                             }

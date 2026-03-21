@@ -69,8 +69,8 @@ impl<'a> CheckerState<'a> {
                         type_params =
                             self.extract_declared_type_params_for_reference_symbol(sym_id, name);
                         if !type_params.is_empty() {
-                            let def_id = self.ctx.get_or_create_def_id(sym_id);
-                            self.ctx.insert_def_type_params(def_id, type_params.clone());
+                            self.ctx
+                                .get_or_create_def_id_with_params(sym_id, type_params.clone());
                         }
                     }
                     // Use AST-level check first to avoid self-referential default
