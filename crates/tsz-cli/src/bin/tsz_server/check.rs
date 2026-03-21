@@ -140,20 +140,19 @@ impl Server {
         let resolved_modules_arc = Arc::new(resolved_modules);
 
         // Build skeleton indices if available
-        let (skeleton_declared_modules, skeleton_expando_index) =
-            if let Some(ref skel) = program.skeleton_index {
-                let (exact, patterns) = skel.build_declared_module_sets();
-                (
-                    Some(Arc::new(
-                        tsz::checker::context::GlobalDeclaredModules::from_skeleton(
-                            exact, patterns,
-                        ),
-                    )),
-                    Some(Arc::new(skel.expando_properties.clone())),
-                )
-            } else {
-                (None, None)
-            };
+        let (skeleton_declared_modules, skeleton_expando_index) = if let Some(ref skel) =
+            program.skeleton_index
+        {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            (
+                Some(Arc::new(
+                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                )),
+                Some(Arc::new(skel.expando_properties.clone())),
+            )
+        } else {
+            (None, None)
+        };
 
         let project_env = ProjectEnv {
             lib_contexts,
