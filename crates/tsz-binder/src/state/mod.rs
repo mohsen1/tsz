@@ -65,7 +65,7 @@ type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 /// Populated by the binder during its AST walk (zero-cost at check time).
 /// The checker queries these to decide whether to emit TS2318 diagnostics
 /// for missing global types like `IterableIterator`, `TypedPropertyDescriptor`, etc.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileFeatures(u8);
 
 impl FileFeatures {
