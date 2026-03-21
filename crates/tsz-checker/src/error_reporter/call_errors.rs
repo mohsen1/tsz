@@ -735,6 +735,25 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::BLOCK => {
                 self.try_elaborate_function_block_returns(func.body, expected_return_type)
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                // Expression-bodied arrow: () => new Animal()
+                // When the new-expression type isn't assignable to the expected
+                // return type (e.g. Animal missing 'woof' required by Dog),
+                // emit the assignability error at the expression position.
+                // This matches tsc which emits TS2741 at `new Animal()` instead
+                // of TS2345 on the whole callback.
+                let body_type = self.get_type_of_node(func.body);
+                if body_type == TypeId::ERROR
+                    || body_type == TypeId::ANY
+                    || expected_return_type == TypeId::ERROR
+                    || expected_return_type == TypeId::ANY
+                    || self.is_assignable_to(body_type, expected_return_type)
+                {
+                    return false;
+                }
+                self.error_type_not_assignable_at(body_type, expected_return_type, func.body);
+                true
+            }
             _ => false,
         }
     }
