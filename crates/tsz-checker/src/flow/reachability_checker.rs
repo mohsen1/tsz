@@ -89,26 +89,30 @@ impl<'a> CheckerState<'a> {
         // full type-checking). The binder resolves property access names in some
         // cases.
         if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&access.name_or_argument.0)
-            && self.symbol_explicitly_returns_never(sym_id) {
-                return true;
-            }
+            && self.symbol_explicitly_returns_never(sym_id)
+        {
+            return true;
+        }
 
         // For `this.method()` calls, try the enclosing class's member table.
         let Some(expr_node) = self.ctx.arena.get(access.expression) else {
             return false;
         };
         if expr_node.kind == SyntaxKind::ThisKeyword as u16
-            && let Some(ref class_info) = self.ctx.enclosing_class.clone() {
-                // Look up the class symbol via the binder's node_symbols map
-                if let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_info.class_idx.0)
-                    && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym) {
-                        // Check instance members
-                        if let Some(ref members) = class_symbol.members
-                            && let Some(member_sym_id) = members.get(property_name) {
-                                return self.symbol_explicitly_returns_never(member_sym_id);
-                            }
-                    }
+            && let Some(ref class_info) = self.ctx.enclosing_class.clone()
+        {
+            // Look up the class symbol via the binder's node_symbols map
+            if let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_info.class_idx.0)
+                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym)
+            {
+                // Check instance members
+                if let Some(ref members) = class_symbol.members
+                    && let Some(member_sym_id) = members.get(property_name)
+                {
+                    return self.symbol_explicitly_returns_never(member_sym_id);
+                }
             }
+        }
 
         // Fallback: resolve the receiver type and check the property.
         // This may produce stale results during early phases, but covers

@@ -810,9 +810,10 @@ impl<'a> CheckerState<'a> {
             // This matches tsc's `removeMissingType` which only strips the implicit part.
             if is_remove_optional
                 && let Some(&(source_optional, raw_type)) = source_prop_map.get(&key_name)
-                    && source_optional {
-                        property_type = raw_type;
-                    }
+                && source_optional
+            {
+                property_type = raw_type;
+            }
 
             let optional = matches!(
                 mapped.optional_modifier,
