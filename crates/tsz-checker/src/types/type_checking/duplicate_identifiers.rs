@@ -1211,7 +1211,82 @@ impl<'a> CheckerState<'a> {
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
                 let use_ts2451 = if has_block_scoped_conflict {
-                    true
+                    // When block-scoped variables (let/const) conflict with
+                    // declarations that include function or class (multi-way
+                    // conflict) AND all are at the same scope, tsc uses TS2300.
+                    // For pure let+var pairs at the same scope, tsc uses TS2451.
+                    // When declarations span different scopes (var hoisted from
+                    // a nested block), tsc also uses TS2451.
+                    // Three-way conflict: let/const + var + function at same
+                    // scope → TS2300. This only applies when BOTH a var AND a
+                    // function/class are in the conflict alongside the let/const.
+                    // Pure let+function or let+class gets TS2451.
+                    let has_var_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                        conflicts.contains(decl_idx)
+                            && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                    });
+                    let has_func_or_class_conflict =
+                        declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                            conflicts.contains(decl_idx)
+                                && (flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                        });
+                    if has_var_conflict && has_func_or_class_conflict {
+                        // Multi-way conflict: check if all at same scope
+                        let conflict_scopes: Vec<Option<tsz_binder::ScopeId>> = declarations
+                            .iter()
+                            .filter(|(decl_idx, _, is_local, _, _)| {
+                                *is_local && conflicts.contains(decl_idx)
+                            })
+                            .map(|(decl_idx, _, _, _, _)| {
+                                let parent_idx = self
+                                    .ctx
+                                    .arena
+                                    .get_extended(*decl_idx)
+                                    .map(|ext| ext.parent)
+                                    .unwrap_or(*decl_idx);
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, parent_idx)
+                            })
+                            .collect();
+                        let first_scope = conflict_scopes.first().copied().flatten();
+                        let all_same_scope = conflict_scopes.iter().all(|s| *s == first_scope);
+                        !all_same_scope // same scope → false (TS2300)
+                    } else {
+                        // Pure var+let pair: tsc uses TS2300 when the var
+                        // declaration appears BEFORE the let/const in source
+                        // order (the let "re-declares" the existing var).
+                        // When let comes first and var comes second, tsc
+                        // uses TS2451 ("cannot redeclare block-scoped").
+                        let first_var_pos = declarations
+                            .iter()
+                            .filter(|(idx, flags, is_local, _, _)| {
+                                *is_local
+                                    && conflicts.contains(idx)
+                                    && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                            })
+                            .map(|(idx, _, _, _, _)| {
+                                self.ctx.arena.get(*idx).map_or(u32::MAX, |n| n.pos)
+                            })
+                            .min();
+                        let first_let_pos = declarations
+                            .iter()
+                            .filter(|(idx, flags, is_local, _, _)| {
+                                *is_local
+                                    && conflicts.contains(idx)
+                                    && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                            })
+                            .map(|(idx, _, _, _, _)| {
+                                self.ctx.arena.get(*idx).map_or(u32::MAX, |n| n.pos)
+                            })
+                            .min();
+                        match (first_var_pos, first_let_pos) {
+                            (Some(var_pos), Some(let_pos)) if var_pos < let_pos => {
+                                false // var first → TS2300
+                            }
+                            _ => true, // let first (or same pos) → TS2451
+                        }
+                    }
                 } else if has_remote_declaration {
                     false
                 } else {

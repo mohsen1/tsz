@@ -170,6 +170,77 @@ impl<'a> CheckerState<'a> {
         };
 
         if names_share_scope {
+            // When the var and let/const are at the SAME textual scope level
+            // (start_scope_id == found_scope_id), they are sibling declarations
+            // and the duplicate identifier checker will emit TS2300. Only emit
+            // TS2451 here when the var is in a NESTED scope (start_scope_id !=
+            // found_scope_id), meaning it hoists up to conflict with the let.
+            // This matches tsc: `let e0; var e0; function e0(){}` → TS2300,
+            // while `let x; { var x; }` → TS2451.
+            // When the var and let/const are at the same scope AND the
+            // merged symbol also has non-var, non-block-scoped declarations
+            // (e.g., function), the duplicate identifier checker will emit
+            // TS2300 for the entire multi-way conflict. Suppress TS2451 here
+            // to avoid double-reporting. For pure let+var pairs, keep TS2451.
+            if start_scope_id == found_scope_id {
+                // Check if the symbol in this scope or any enclosing
+                // function scope also has function/class declarations.
+                // `let x1` may be in the Block scope while `function x1`
+                // is in the parent Function scope. Check both.
+                // Suppress TS2451 when: (a) the merged symbol also has
+                // function/class declarations (multi-way conflict → TS2300),
+                // or (b) the var declaration appears BEFORE the let/const
+                // in source order (tsc treats this as TS2300 "Duplicate
+                // identifier" because the let re-declares the existing var).
+                let should_suppress = {
+                    use tsz_binder::symbol_flags;
+                    // (a) Check for function/class in same scope or parent
+                    let check_scope_for_func = |sid: tsz_binder::ScopeId| -> bool {
+                        self.ctx
+                            .binder
+                            .scopes
+                            .get(sid.0 as usize)
+                            .and_then(|scope| scope.table.get(var_name))
+                            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                            .is_some_and(|sym| {
+                                (sym.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                            })
+                    };
+                    let has_func_or_class = check_scope_for_func(found_scope_id)
+                        || self
+                            .ctx
+                            .binder
+                            .scopes
+                            .get(found_scope_id.0 as usize)
+                            .map(|s| s.parent)
+                            .is_some_and(|parent| {
+                                parent != found_scope_id && check_scope_for_func(parent)
+                            });
+                    if has_func_or_class {
+                        true
+                    } else {
+                        // (b) Check if var comes before let in source
+                        let var_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |n| n.pos);
+                        let let_pos = self
+                            .ctx
+                            .binder
+                            .scopes
+                            .get(found_scope_id.0 as usize)
+                            .and_then(|scope| scope.table.get(var_name))
+                            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                            .and_then(|sym| {
+                                sym.declarations
+                                    .first()
+                                    .and_then(|&d| self.ctx.arena.get(d).map(|n| n.pos))
+                            })
+                            .unwrap_or(0);
+                        var_pos < let_pos
+                    }
+                };
+                if should_suppress {
+                    return;
+                }
+            }
             // The var hoists to the same scope as the let/const — emit TS2451
             // on both the var declaration and the block-scoped declaration,
             // matching tsc's behavior for cases like:
