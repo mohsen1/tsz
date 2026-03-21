@@ -225,6 +225,9 @@ impl<'a> CheckerState<'a> {
     /// Check override members against a type-level base class (when AST resolution fails).
     /// Used for complex heritage expressions: function calls, intersection constructors, etc.
     /// Also checks property type compatibility (TS2416) when `base_instance_type` is provided.
+    ///
+    /// Uses `OwnMemberSummary` to avoid re-extracting member info; all members are
+    /// pre-collected via `build_own_member_summary`.
     fn check_override_members_against_type(
         &mut self,
         class_data: &tsz_parser::parser::node::ClassData,
@@ -234,11 +237,16 @@ impl<'a> CheckerState<'a> {
         no_implicit_override: bool,
         base_instance_type: Option<TypeId>,
     ) {
-        for &member_idx in &class_data.members.nodes {
-            let Some(info) = self.extract_class_member_info(member_idx, false) else {
-                continue;
-            };
+        use crate::query_boundaries::class::build_own_member_summary;
 
+        let own = build_own_member_summary(self, class_data);
+        let all_members: Vec<_> = own
+            .all_instance_members
+            .into_iter()
+            .chain(own.all_static_members)
+            .collect();
+
+        for info in all_members {
             if info.name.starts_with('#') {
                 continue;
             }
@@ -370,6 +378,74 @@ impl<'a> CheckerState<'a> {
             None,
             base_class_name,
             base_member_names,
+            no_implicit_override,
+        );
+    }
+
+    /// Report errors for members with `override` in a class that has no base class.
+    ///
+    /// This consolidates the duplicated "no heritage" / "no resolved base" override
+    /// checking patterns that were previously inlined in multiple places inside
+    /// `check_property_inheritance_compatibility`. The class_data members are
+    /// iterated via pre-built `OwnMemberSummary` when available; otherwise they
+    /// are extracted inline.
+    fn report_overrides_without_base(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        derived_class_name: &str,
+        no_implicit_override: bool,
+    ) {
+        use crate::query_boundaries::class::build_own_member_summary;
+
+        let own = build_own_member_summary(self, class_data);
+
+        // Check class body members
+        let all_members: Vec<_> = own
+            .all_instance_members
+            .iter()
+            .chain(own.all_static_members.iter())
+            .collect();
+
+        for info in &all_members {
+            if !info.has_override {
+                continue;
+            }
+            if info.has_dynamic_name {
+                self.error_at_node(
+                    info.name_idx,
+                    &crate::diagnostics::format_message(
+                        diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                        &[],
+                    ),
+                    diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                );
+                continue;
+            }
+            self.error_at_node(
+                info.name_idx,
+                &crate::diagnostics::format_message(
+                    if info.is_jsdoc_override {
+                        diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                    } else {
+                        diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                    },
+                    &[derived_class_name],
+                ),
+                if info.is_jsdoc_override {
+                    diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                } else {
+                    diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                },
+            );
+        }
+
+        // Also check constructor parameter properties
+        self.check_constructor_parameter_property_overrides(
+            class_data,
+            None,
+            None,
+            derived_class_name,
+            &rustc_hash::FxHashSet::default(),
             no_implicit_override,
         );
     }
@@ -820,48 +896,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     String::from("(Anonymous class)")
                 };
-                for &member_idx in &class_data.members.nodes {
-                    let Some(info) = self.extract_class_member_info(member_idx, false) else {
-                        continue;
-                    };
-                    if !info.has_override {
-                        continue;
-                    }
-                    if info.has_dynamic_name {
-                        self.error_at_node(
-                            info.name_idx,
-                            &crate::diagnostics::format_message(
-                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
-                                &[],
-                            ),
-                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
-                        );
-                        continue;
-                    }
-                    self.error_at_node(
-                        info.name_idx,
-                        &crate::diagnostics::format_message(
-                            if info.is_jsdoc_override {
-                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
-                            } else {
-                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
-                            },
-                            &[&derived_class_name],
-                        ),
-                        if info.is_jsdoc_override {
-                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
-                        } else {
-                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
-                        },
-                    );
-                }
-                // Also check constructor parameter properties
-                self.check_constructor_parameter_property_overrides(
+                self.report_overrides_without_base(
                     class_data,
-                    None,
-                    None,
                     &derived_class_name,
-                    &rustc_hash::FxHashSet::default(),
                     self.ctx.no_implicit_override(),
                 );
                 return;
@@ -1043,51 +1080,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // True fallback: no extends clause resolved at all — emit TS4112
-            for &member_idx in &class_data.members.nodes {
-                let Some(info) = self.extract_class_member_info(member_idx, false) else {
-                    continue;
-                };
-                if !info.has_override {
-                    continue;
-                }
-
-                // Dynamic names are reported with a dedicated diagnostic.
-                if info.has_dynamic_name {
-                    self.error_at_node(
-                        info.name_idx,
-                        &crate::diagnostics::format_message(
-                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
-                            &[],
-                        ),
-                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
-                    );
-                    continue;
-                }
-
-                self.error_at_node(
-                    info.name_idx,
-                    &crate::diagnostics::format_message(
-                        if info.is_jsdoc_override {
-                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
-                        } else {
-                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
-                        },
-                        &[&derived_class_name],
-                    ),
-                    if info.is_jsdoc_override {
-                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
-                    } else {
-                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
-                    },
-                );
-            }
-
-            self.check_constructor_parameter_property_overrides(
+            self.report_overrides_without_base(
                 class_data,
-                None,
-                None,
                 &derived_class_name,
-                &rustc_hash::FxHashSet::default(),
                 no_implicit_override,
             );
 

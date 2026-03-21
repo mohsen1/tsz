@@ -160,10 +160,17 @@ impl<'a> CheckerState<'a> {
     /// Skips all initialization tracking (`property_requires_initialization`,
     /// constructor assignment analysis, field key sets) since chain summaries
     /// only need member info for override/property access checks.
+    ///
+    /// Uses single-pass extraction: each member is extracted once with
+    /// `skip_private=false`, then cloned into the visible collections if
+    /// non-private. This halves the extraction work compared to extracting
+    /// twice per member.
     fn collect_class_members_for_chain(
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> ClassOwnMemberSummary {
+        use crate::class_checker::MemberVisibility;
+
         let mut summary = ClassOwnMemberSummary::default();
 
         for &member_idx in &class.members.nodes {
@@ -171,20 +178,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if let Some(info) = self.extract_class_member_info(member_idx, true) {
-                Self::record_own_member_info(
-                    info,
-                    &mut summary.visible_instance_members,
-                    &mut summary.visible_static_members,
-                    &mut summary.visible_instance_member_display_names,
-                    &mut summary.visible_static_member_display_names,
-                    &mut summary.visible_instance_member_kinds,
-                    &mut summary.visible_static_member_kinds,
-                    self,
-                );
-            }
-
+            // Single-pass: extract once with skip_private=false (all members)
             if let Some(info) = self.extract_class_member_info(member_idx, false) {
+                let is_visible = info.visibility != MemberVisibility::Private;
+
+                // Record into "visible" collections if non-private (clone before moving)
+                if is_visible {
+                    Self::record_own_member_info(
+                        info.clone(),
+                        &mut summary.visible_instance_members,
+                        &mut summary.visible_static_members,
+                        &mut summary.visible_instance_member_display_names,
+                        &mut summary.visible_static_member_display_names,
+                        &mut summary.visible_instance_member_kinds,
+                        &mut summary.visible_static_member_kinds,
+                        self,
+                    );
+                }
+
+                // Record into "all" collections (consumes info)
                 Self::record_own_member_info(
                     info,
                     &mut summary.all_instance_members,
@@ -211,21 +223,22 @@ impl<'a> CheckerState<'a> {
                     if !self.has_parameter_property_modifier(&param.modifiers) {
                         continue;
                     }
-                    if let Some(info) = self.parameter_property_member_info(param_idx, param, true)
-                    {
-                        Self::record_own_member_info(
-                            info,
-                            &mut summary.visible_instance_members,
-                            &mut summary.visible_static_members,
-                            &mut summary.visible_instance_member_display_names,
-                            &mut summary.visible_static_member_display_names,
-                            &mut summary.visible_instance_member_kinds,
-                            &mut summary.visible_static_member_kinds,
-                            self,
-                        );
-                    }
+                    // Single-pass: extract once with skip_private=false
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
                     {
+                        let is_visible = info.visibility != MemberVisibility::Private;
+                        if is_visible {
+                            Self::record_own_member_info(
+                                info.clone(),
+                                &mut summary.visible_instance_members,
+                                &mut summary.visible_static_members,
+                                &mut summary.visible_instance_member_display_names,
+                                &mut summary.visible_static_member_display_names,
+                                &mut summary.visible_instance_member_kinds,
+                                &mut summary.visible_static_member_kinds,
+                                self,
+                            );
+                        }
                         Self::record_own_member_info(
                             info,
                             &mut summary.all_instance_members,
@@ -272,20 +285,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if let Some(info) = self.extract_class_member_info(member_idx, true) {
-                Self::record_own_member_info(
-                    info,
-                    &mut summary.visible_instance_members,
-                    &mut summary.visible_static_members,
-                    &mut summary.visible_instance_member_display_names,
-                    &mut summary.visible_static_member_display_names,
-                    &mut summary.visible_instance_member_kinds,
-                    &mut summary.visible_static_member_kinds,
-                    self,
-                );
-            }
-
+            // Single-pass: extract once with skip_private=false (all members)
             if let Some(info) = self.extract_class_member_info(member_idx, false) {
+                let is_visible = info.visibility != crate::class_checker::MemberVisibility::Private;
+
+                if is_visible {
+                    Self::record_own_member_info(
+                        info.clone(),
+                        &mut summary.visible_instance_members,
+                        &mut summary.visible_static_members,
+                        &mut summary.visible_instance_member_display_names,
+                        &mut summary.visible_static_member_display_names,
+                        &mut summary.visible_instance_member_kinds,
+                        &mut summary.visible_static_member_kinds,
+                        self,
+                    );
+                }
+
                 Self::record_own_member_info(
                     info,
                     &mut summary.all_instance_members,
@@ -322,21 +338,23 @@ impl<'a> CheckerState<'a> {
                     if let Some(name) = self.get_property_name(param.name) {
                         summary.initialization.parameter_property_names.insert(name);
                     }
-                    if let Some(info) = self.parameter_property_member_info(param_idx, param, true)
-                    {
-                        Self::record_own_member_info(
-                            info,
-                            &mut summary.visible_instance_members,
-                            &mut summary.visible_static_members,
-                            &mut summary.visible_instance_member_display_names,
-                            &mut summary.visible_static_member_display_names,
-                            &mut summary.visible_instance_member_kinds,
-                            &mut summary.visible_static_member_kinds,
-                            self,
-                        );
-                    }
+                    // Single-pass: extract once with skip_private=false
                     if let Some(info) = self.parameter_property_member_info(param_idx, param, false)
                     {
+                        let is_visible =
+                            info.visibility != crate::class_checker::MemberVisibility::Private;
+                        if is_visible {
+                            Self::record_own_member_info(
+                                info.clone(),
+                                &mut summary.visible_instance_members,
+                                &mut summary.visible_static_members,
+                                &mut summary.visible_instance_member_display_names,
+                                &mut summary.visible_static_member_display_names,
+                                &mut summary.visible_instance_member_kinds,
+                                &mut summary.visible_static_member_kinds,
+                                self,
+                            );
+                        }
                         Self::record_own_member_info(
                             info,
                             &mut summary.all_instance_members,
@@ -569,7 +587,7 @@ impl<'a> CheckerState<'a> {
         summary
     }
 
-    fn parameter_property_member_info(
+    pub(crate) fn parameter_property_member_info(
         &mut self,
         param_idx: NodeIndex,
         param: &tsz_parser::parser::node::ParameterData,
