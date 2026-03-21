@@ -187,6 +187,13 @@ build_typescript_harness() {
         npm ci --silent 2>/dev/null || npm ci
     fi
 
+    # Ensure type definitions survive TypeScript install (ensure-pinned-typescript
+    # uses npm install --no-save which can remove peer dependencies)
+    if [[ ! -d "node_modules/@types/mocha" ]] || [[ ! -d "node_modules/@types/chai" ]]; then
+        log_info "Restoring type definitions..."
+        npm install --no-save --no-audit --no-fund --ignore-scripts @types/mocha @types/chai 2>/dev/null || true
+    fi
+
     # Check if harness is already built
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
         # Re-apply patches even if already built (idempotent)
