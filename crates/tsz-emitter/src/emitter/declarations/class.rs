@@ -3073,6 +3073,16 @@ impl<'a> Printer<'a> {
             self.write_line();
             let mut first = true;
 
+            // WeakMap inits first (tsc order): _X_field = new WeakMap()
+            let weakmap_inits = self.pending_weakmap_inits.clone();
+            for init in &weakmap_inits {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(init);
+                first = false;
+            }
+
             // WeakSet: _X_instances = new WeakSet()
             if let Some(ref ws_name) = instances_ws {
                 if !first {
@@ -3080,16 +3090,6 @@ impl<'a> Printer<'a> {
                 }
                 self.write(ws_name);
                 self.write(" = new WeakSet()");
-                first = false;
-            }
-
-            // WeakMap inits: _X_field = new WeakMap()
-            let weakmap_inits = self.pending_weakmap_inits.clone();
-            for init in &weakmap_inits {
-                if !first {
-                    self.write(", ");
-                }
-                self.write(init);
                 first = false;
             }
 
