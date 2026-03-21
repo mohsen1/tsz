@@ -258,14 +258,20 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1147: Import declarations in a namespace cannot reference a module.
-            // tsc emits only TS1147 here, not TS2307.
+            // tsc emits only TS1147 for imports inside namespaces — it does NOT
+            // also emit TS2307. Mark the module as already reported so that the
+            // downstream TS2307 path is suppressed.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
                     diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
-                return;
+                if let Some(module_name) = require_module_specifier.as_deref() {
+                    self.ctx
+                        .modules_with_ts2307_emitted
+                        .insert(module_name.to_string());
+                }
             }
 
             // TS2439: Ambient modules cannot use relative imports
