@@ -1698,15 +1698,14 @@ impl<'a> FlowAnalyzer<'a> {
             // Fall back to checking the callee's signature for a `never` return type,
             // first via node_types, then via binder declaration lookup.
             if call_return_type == TypeId::ANY {
-                if let Some(&callee_type) = node_types.get(&call.expression.0) {
-                    if callee_type != TypeId::ANY
+                if let Some(&callee_type) = node_types.get(&call.expression.0)
+                    && callee_type != TypeId::ANY
                         && callee_type != TypeId::ERROR
                         && tsz_solver::type_queries::get_return_type(self.interner, callee_type)
                             == Some(TypeId::NEVER)
                     {
                         return Self::UNREACHABLE_NEVER;
                     }
-                }
                 // When both the call and callee types are stale `any` (common for
                 // `this.method()` during early type env building), resolve the callee
                 // through the binder's symbol table and check its declaration's return
@@ -1840,11 +1839,10 @@ impl<'a> FlowAnalyzer<'a> {
                 };
 
                 // Try binder node_symbols for the property name
-                if let Some(&sym_id) = self.binder.node_symbols.get(&access.name_or_argument.0) {
-                    if self.symbol_declaration_returns_never(sym_id) {
+                if let Some(&sym_id) = self.binder.node_symbols.get(&access.name_or_argument.0)
+                    && self.symbol_declaration_returns_never(sym_id) {
                         return true;
                     }
-                }
 
                 // For `this.method()`, look up via enclosing class member table
                 let Some(expr_node) = self.arena.get(access.expression) else {
@@ -1860,15 +1858,12 @@ impl<'a> FlowAnalyzer<'a> {
                     let property_name = &ident.escaped_text;
 
                     // Walk up to find the enclosing class declaration
-                    if let Some(class_sym) = self.find_enclosing_class_symbol(callee_idx) {
-                        if let Some(class_symbol) = self.binder.get_symbol(class_sym) {
-                            if let Some(ref members) = class_symbol.members {
-                                if let Some(member_sym_id) = members.get(property_name) {
+                    if let Some(class_sym) = self.find_enclosing_class_symbol(callee_idx)
+                        && let Some(class_symbol) = self.binder.get_symbol(class_sym)
+                            && let Some(ref members) = class_symbol.members
+                                && let Some(member_sym_id) = members.get(property_name) {
                                     return self.symbol_declaration_returns_never(member_sym_id);
                                 }
-                            }
-                        }
-                    }
                 }
                 false
             }
@@ -1923,9 +1918,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         // `never` may be parsed as a TypeReference with type_name being a NeverKeyword
         // or an Identifier with text "never"
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            if let Some(type_ref) = self.arena.get_type_ref(type_node) {
-                if let Some(name_node) = self.arena.get(type_ref.type_name) {
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.arena.get_type_ref(type_node)
+                && let Some(name_node) = self.arena.get(type_ref.type_name) {
                     if name_node.kind == SyntaxKind::NeverKeyword as u16 {
                         return true;
                     }
@@ -1933,8 +1928,6 @@ impl<'a> FlowAnalyzer<'a> {
                         return ident.escaped_text == "never";
                     }
                 }
-            }
-        }
 
         false
     }

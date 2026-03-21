@@ -808,13 +808,11 @@ impl<'a> CheckerState<'a> {
             // (from `a?: string` → raw type `string`) and explicit undefined
             // (from `a?: string | undefined` → raw type `string | undefined`).
             // This matches tsc's `removeMissingType` which only strips the implicit part.
-            if is_remove_optional {
-                if let Some(&(source_optional, raw_type)) = source_prop_map.get(&key_name) {
-                    if source_optional {
+            if is_remove_optional
+                && let Some(&(source_optional, raw_type)) = source_prop_map.get(&key_name)
+                    && source_optional {
                         property_type = raw_type;
                     }
-                }
-            }
 
             let optional = matches!(
                 mapped.optional_modifier,
