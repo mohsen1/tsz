@@ -1180,7 +1180,9 @@ pub(super) fn check_file_for_parallel<'a>(
     );
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-    checker.ctx.skip_lib_type_resolution = has_deprecation_diagnostics;
+    checker
+        .ctx
+        .set_has_deprecation_diagnostics(has_deprecation_diagnostics);
 
     if !lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());

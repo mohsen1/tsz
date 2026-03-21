@@ -36,6 +36,8 @@ pub(crate) enum FeatureGate {
     AsyncGenerators,
     /// Experimental decorators (requires `TypedPropertyDescriptor`)
     ExperimentalDecorators,
+    /// Async functions (requires Promise global type)
+    AsyncFunction,
     /// Async functions in ES5 (requires Promise constructor)
     AsyncFunctionEs5,
 }
@@ -94,6 +96,11 @@ pub(crate) struct EnvironmentCapabilities {
     pub experimental_decorators: bool,
     pub ignore_deprecations: bool,
     pub verbatim_module_syntax: bool,
+
+    // --- Deprecation state (set by driver after config parsing) ---
+    /// Whether TS5107/TS5101 deprecation diagnostics were produced during config parsing.
+    /// When true, tsc stops compilation early and skips lib type resolution.
+    pub has_deprecation_diagnostics: bool,
 }
 
 impl EnvironmentCapabilities {
@@ -148,6 +155,7 @@ impl EnvironmentCapabilities {
             experimental_decorators: options.experimental_decorators,
             ignore_deprecations: options.ignore_deprecations,
             verbatim_module_syntax: options.verbatim_module_syntax,
+            has_deprecation_diagnostics: false, // set by driver after config parsing
         }
     }
 
@@ -163,6 +171,7 @@ impl EnvironmentCapabilities {
             | FeatureGate::Generators
             | FeatureGate::AsyncGenerators
             | FeatureGate::ExperimentalDecorators
+            | FeatureGate::AsyncFunction
             | FeatureGate::AsyncFunctionEs5 => {
                 // These require specific global types; lib presence is necessary but
                 // the caller must also check global type availability via has_name_in_lib.
@@ -212,6 +221,27 @@ impl EnvironmentCapabilities {
             FeatureGate::Generators => Some("IterableIterator"),
             FeatureGate::AsyncGenerators => Some("AsyncIterableIterator"),
             FeatureGate::ExperimentalDecorators => Some("TypedPropertyDescriptor"),
+            FeatureGate::AsyncFunction => Some("Promise"),
+            _ => None,
+        }
+    }
+
+    /// Map a feature-specific global type name back to its feature gate.
+    ///
+    /// This is the reverse lookup for `required_global_type()` — given a type
+    /// name like `"Disposable"`, returns the gate that requires it. Used to
+    /// determine whether a missing global type should produce a TS2318
+    /// diagnostic based on file-level feature usage.
+    pub const fn gate_for_required_type(type_name: &str) -> Option<FeatureGate> {
+        // const fn doesn't support &str matching, so use byte comparison
+        match type_name.as_bytes() {
+            b"Disposable" => Some(FeatureGate::UsingDeclaration),
+            b"AsyncDisposable" => Some(FeatureGate::AwaitUsingDeclaration),
+            b"IterableIterator" => Some(FeatureGate::Generators),
+            b"AsyncIterableIterator" => Some(FeatureGate::AsyncGenerators),
+            b"TypedPropertyDescriptor" => Some(FeatureGate::ExperimentalDecorators),
+            b"Promise" => Some(FeatureGate::AsyncFunction),
+            b"Awaited" => Some(FeatureGate::AsyncFunction),
             _ => None,
         }
     }
@@ -577,5 +607,52 @@ mod tests {
             EnvironmentCapabilities::required_global_type(FeatureGate::ImportAttributes),
             None
         );
+        assert_eq!(
+            EnvironmentCapabilities::required_global_type(FeatureGate::AsyncFunction),
+            Some("Promise")
+        );
+    }
+
+    #[test]
+    fn test_gate_for_required_type_reverse_lookup() {
+        // Forward and reverse mappings must be consistent
+        let gates = [
+            FeatureGate::UsingDeclaration,
+            FeatureGate::AwaitUsingDeclaration,
+            FeatureGate::Generators,
+            FeatureGate::AsyncGenerators,
+            FeatureGate::ExperimentalDecorators,
+            FeatureGate::AsyncFunction,
+        ];
+        for gate in gates {
+            if let Some(type_name) = EnvironmentCapabilities::required_global_type(gate) {
+                assert_eq!(
+                    EnvironmentCapabilities::gate_for_required_type(type_name),
+                    Some(gate),
+                    "Reverse lookup for type '{type_name}' (gate {gate:?}) should match"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_async_function_gate_no_lib() {
+        let opts = tsz_common::checker_options::CheckerOptions::default();
+        let caps = EnvironmentCapabilities::from_options(&opts, false);
+        assert!(!caps.feature_available(FeatureGate::AsyncFunction));
+    }
+
+    #[test]
+    fn test_async_function_gate_with_lib() {
+        let opts = tsz_common::checker_options::CheckerOptions::default();
+        let caps = EnvironmentCapabilities::from_options(&opts, true);
+        assert!(caps.feature_available(FeatureGate::AsyncFunction));
+    }
+
+    #[test]
+    fn test_deprecation_diagnostics_default_false() {
+        let opts = tsz_common::checker_options::CheckerOptions::default();
+        let caps = EnvironmentCapabilities::from_options(&opts, true);
+        assert!(!caps.has_deprecation_diagnostics);
     }
 }
