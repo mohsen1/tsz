@@ -23,8 +23,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-deploy
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -82,8 +82,8 @@ jobs:
           sudo dpkg -i hyperfine_1.18.0_amd64.deb
 
       - name: Run benchmarks
-        run: ./scripts/bench/bench-vs-tsgo.sh --json
-        timeout-minutes: 30
+        run: ./scripts/bench/bench-vs-tsgo.sh --quick --json
+        timeout-minutes: 15
 
       - name: Upload benchmark data
         uses: actions/upload-artifact@v4
