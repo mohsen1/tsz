@@ -226,7 +226,12 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        let current_class_idx = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+        let current_class_idx = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|info| info.class_idx)
+            .or_else(|| self.nearest_enclosing_class(error_node));
         let protected_candidates =
             self.protected_access_candidate_classes(current_class_idx, object_expr);
         let mut protected_receiver_mismatch: Option<(NodeIndex, NodeIndex)> = None;
