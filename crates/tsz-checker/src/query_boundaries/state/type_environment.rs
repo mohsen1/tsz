@@ -2,7 +2,8 @@ use crate::state::CheckerState;
 use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
-    is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
+    collect_enum_def_ids, collect_referenced_types, is_generic_type, lazy_def_id,
+    object_shape_for_type as object_shape,
 };
 pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,

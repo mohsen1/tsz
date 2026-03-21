@@ -70,3 +70,7 @@ pub(crate) fn get_intersection_members(
 ) -> Option<Vec<TypeId>> {
     tsz_solver::type_queries::get_intersection_members(db, type_id)
 }
+
+pub(crate) use super::common::{
+    EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
+};

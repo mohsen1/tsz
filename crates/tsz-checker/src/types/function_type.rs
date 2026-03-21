@@ -390,13 +390,13 @@ impl<'a> CheckerState<'a> {
         let mut contextual_signature_type_param_updates = Vec::new();
         let mut has_jsdoc_type_function = false;
         let mut ctx_helper = if let Some(ctx_type) = contextual_type {
-            use tsz_solver::type_queries::{
-                EvaluationNeeded, classify_for_evaluation, get_lazy_def_id, get_type_application,
+            use crate::query_boundaries::type_checking_utilities::{
+                EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
             };
 
-            let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
+            let evaluated_type = if type_application(self.ctx.types, ctx_type).is_some() {
                 self.evaluate_application_type(ctx_type)
-            } else if get_lazy_def_id(self.ctx.types, ctx_type).is_some()
+            } else if lazy_def_id(self.ctx.types, ctx_type).is_some()
                 || matches!(
                     classify_for_evaluation(self.ctx.types, ctx_type),
                     EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
