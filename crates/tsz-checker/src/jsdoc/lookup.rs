@@ -235,25 +235,11 @@ impl<'a> CheckerState<'a> {
             &comments,
             &source_text,
         );
-        // Set the anchor position for typedef scoping so that resolve_jsdoc_type_str
-        // → resolve_jsdoc_type_name → resolve_jsdoc_typedef_type respects function scope.
+        // Set the anchor position for typedef scoping.
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
         self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
-        let result = self.resolve_jsdoc_type_str(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
-                .or_else(|| {
-                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
-                        return Some(resolved);
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                            return Some(resolved);
-                        }
-                    }
-                    None
-                })
-        });
+        // Use the authoritative resolution kernel — no fallback chain needed.
+        let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         result
     }
@@ -389,21 +375,8 @@ impl<'a> CheckerState<'a> {
         let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
-        self.jsdoc_type_from_expression(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
-                .or_else(|| {
-                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
-                        return Some(resolved);
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                            return Some(resolved);
-                        }
-                    }
-                    None
-                })
-        })
+        // Use the authoritative resolution kernel — no fallback chain needed.
+        self.resolve_jsdoc_reference(type_expr)
     }
     /// Extract `@satisfies` annotation and its keyword position.
     pub(crate) fn jsdoc_satisfies_annotation_with_pos(

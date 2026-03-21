@@ -324,6 +324,9 @@ mod jsdoc_cross_file_typedef_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_reference_kernel_tests.rs"]
+mod jsdoc_reference_kernel_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_satisfies_tests.rs"]
 mod jsdoc_satisfies_tests;
 #[cfg(test)]
