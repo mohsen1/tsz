@@ -35,7 +35,10 @@ impl<'a> CheckerContext<'a> {
             }
             let name_atom = self.definition_store.get_name(def_id)?;
             let name = self.types.resolve_atom(name_atom);
-            let cached_ty = self.lib_type_resolution_cache.get(name.as_str())?.as_ref()?;
+            let cached_ty = self
+                .lib_type_resolution_cache
+                .get(name.as_str())?
+                .as_ref()?;
             return (*cached_ty != current_ty).then_some(*cached_ty);
         }
 
