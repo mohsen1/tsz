@@ -386,6 +386,54 @@ pub struct BinderState {
     /// map links it to the ALIAS symbol (for value/namespace resolution).
     /// Populated by `merge_bind_results` in parallel.rs.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+
+    // ===== DefId-First Stable Identity (Phase 1) =====
+    /// Binder-owned semantic definition index for top-level declarations.
+    ///
+    /// Maps `SymbolId` → `SemanticDefEntry` for CLASS, INTERFACE, TYPE_ALIAS, ENUM,
+    /// and NAMESPACE/MODULE symbols declared at the top level. Populated during
+    /// `declare_symbol` so the checker can pre-create solver `DefId`s before type
+    /// checking begins, avoiding on-demand identity creation in hot checker paths.
+    ///
+    /// This is the binder's contribution to stable semantic identity (Phase 1).
+    /// The checker converts these entries to solver `DefId`s during construction.
+    pub semantic_defs: FxHashMap<SymbolId, SemanticDefEntry>,
+}
+
+/// Kind of semantic definition captured at bind time.
+///
+/// Mirrors `tsz_solver::def::DefKind` but lives in the binder crate to avoid
+/// a circular dependency (solver depends on binder). The checker converts these
+/// to solver `DefKind` during `DefId` pre-population.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SemanticDefKind {
+    /// Type alias: `type Foo = number`
+    TypeAlias,
+    /// Interface: `interface Point { x: number }`
+    Interface,
+    /// Class: `class Foo {}`
+    Class,
+    /// Enum: `enum Color { Red, Green }`
+    Enum,
+    /// Namespace or module: `namespace NS {}` or `module M {}`
+    Namespace,
+}
+
+/// Binder-captured semantic identity for a top-level declaration.
+///
+/// Contains exactly the information needed for the checker to create a solver
+/// `DefId` + `DefinitionInfo` without re-examining the AST or symbol table.
+/// This is populated during binding and consumed during checker construction.
+#[derive(Clone, Debug)]
+pub struct SemanticDefEntry {
+    /// What kind of declaration this is.
+    pub kind: SemanticDefKind,
+    /// The escaped name of the declaration.
+    pub name: String,
+    /// File index for this declaration (from `Symbol.decl_file_idx`).
+    pub file_id: u32,
+    /// Start position of the first declaration (for content-addressed stability).
+    pub span_start: u32,
 }
 
 impl BinderState {

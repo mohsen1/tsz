@@ -1566,6 +1566,7 @@ fn test_solver_imports_go_through_query_boundaries() {
         "TypeofKind",
         // Definition system types
         "def::DefId",
+        "def::DefKind",
         "def::DefinitionInfo",
         "def::DefinitionStore",
         // Recursion control

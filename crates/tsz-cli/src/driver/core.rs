@@ -1857,6 +1857,7 @@ fn build_program_with_cache(
                     expando_properties: Default::default(),
                     alias_partners: Default::default(),
                     file_features: Default::default(),
+                    semantic_defs: Default::default(),
                 }
             }
         };
