@@ -297,7 +297,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Handle spread elements: compute rest type instead of single-element type
-                let (target_idx, check_type) = if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                let (target_idx, check_type, is_spread) = if elem_node.kind
+                    == syntax_kind_ext::SPREAD_ELEMENT
                 {
                     let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
                         continue;
@@ -306,13 +307,13 @@ impl<'a> CheckerState<'a> {
                     let Some(rest_type) = rest_type else {
                         continue;
                     };
-                    (spread.expression, rest_type)
+                    (spread.expression, rest_type, true)
                 } else {
                     let elem_type = self.resolve_element_type_for_destructuring(source_type, index);
                     let Some(elem_type) = elem_type else {
                         continue;
                     };
-                    (elem_idx, elem_type)
+                    (elem_idx, elem_type, false)
                 };
 
                 if let Some(target_node) = self.ctx.arena.get(target_idx) {
@@ -328,6 +329,26 @@ impl<'a> CheckerState<'a> {
                             || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                     {
                         self.check_destructuring_property_accessibility(bin.left, check_type);
+                    } else if is_spread {
+                        // For spread elements targeting simple expressions (identifiers,
+                        // property accesses), check that the rest type is assignable to
+                        // the target's declared type. For example:
+                        //   var c = { bogus: 0 };
+                        //   [...c] = ["", 0];  // TS2741: Property 'bogus' is missing
+                        // Use exact anchor to point at the identifier (e.g., `c`), not
+                        // the enclosing array literal.
+                        let target_type = self.get_type_of_assignment_target(target_idx);
+                        if target_type != TypeId::ANY
+                            && target_type != TypeId::ERROR
+                            && check_type != TypeId::ANY
+                        {
+                            self.check_assignable_or_report_at_exact_anchor(
+                                check_type,
+                                target_type,
+                                target_idx,
+                                target_idx,
+                            );
+                        }
                     }
                 }
             }
