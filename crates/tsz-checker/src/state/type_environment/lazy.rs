@@ -4,9 +4,10 @@ use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
-use tsz_solver::visitor::{
-    collect_enum_def_ids, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
-    lazy_def_id,
+use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries, lazy_def_id};
+
+use crate::query_boundaries::state::type_environment::{
+    collect_enum_def_ids, collect_referenced_types,
 };
 
 // Thread-local depth counter for `ensure_application_symbols_resolved` nesting.

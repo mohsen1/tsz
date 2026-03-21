@@ -802,23 +802,23 @@ impl<'a> CheckerState<'a> {
     }
 
     fn first_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
-        use tsz_solver::type_queries::{
-            get_callable_shape, get_function_shape, get_type_application,
+        use crate::query_boundaries::diagnostics::{
+            callable_shape_for_type, function_shape, type_application,
         };
 
         if let (Some(non_nullish), Some(_nullish_cause)) = self.split_nullish_type(ty) {
             return self.first_callable_return_type(non_nullish);
         }
 
-        if let Some(shape) = get_function_shape(self.ctx.types, ty) {
+        if let Some(shape) = function_shape(self.ctx.types, ty) {
             return Some(shape.return_type);
         }
 
-        if let Some(shape) = get_callable_shape(self.ctx.types, ty) {
+        if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {
             return shape.call_signatures.first().map(|sig| sig.return_type);
         }
 
-        if let Some(app) = get_type_application(self.ctx.types, ty) {
+        if let Some(app) = type_application(self.ctx.types, ty) {
             return self.first_callable_return_type(app.base);
         }
 
