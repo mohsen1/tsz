@@ -27,21 +27,22 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .skip_parenthesized_and_assertions(call.expression);
-                if !self.never_returning_callee_is_control_flow_significant(callee) {
-                    return false;
-                }
-
-                self.get_type_of_node(expr_idx).is_never()
+                self.callee_explicitly_returns_never(callee)
             }
             syntax_kind_ext::NEW_EXPRESSION => self.get_type_of_node(expr_idx).is_never(),
             _ => false,
         }
     }
 
-    fn never_returning_callee_is_control_flow_significant(
-        &mut self,
-        callee_idx: NodeIndex,
-    ) -> bool {
+    /// Check if a callee expression explicitly returns `never` based on its
+    /// declaration's return type annotation. This avoids fully type-checking the
+    /// call expression, which would cache a potentially stale result in
+    /// `node_types` during early phases (e.g., type environment building) when
+    /// `this` hasn't been resolved yet.
+    ///
+    /// tsc's `isNeverReturningCall` similarly examines the callee's signature
+    /// rather than evaluating the full call expression.
+    fn callee_explicitly_returns_never(&mut self, callee_idx: NodeIndex) -> bool {
         let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
             return false;
         };
@@ -50,12 +51,90 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::Identifier as u16 => self
                 .resolve_identifier_symbol(callee_idx)
                 .is_some_and(|sym_id| self.symbol_explicitly_returns_never(sym_id)),
-            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => true,
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.property_access_callee_explicitly_returns_never(callee_idx)
+            }
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
                 self.declaration_explicitly_returns_never(callee_idx)
             }
             _ => false,
         }
+    }
+
+    /// Check if a property access callee (e.g., `this.fail`, `obj.bail`)
+    /// explicitly returns `never` by resolving the property's symbol and
+    /// checking its declaration's return type annotation.
+    ///
+    /// For `this.method()` calls, we resolve the method through the enclosing
+    /// class symbol's member table (available from the binder) rather than
+    /// fully type-checking the receiver, which would cache stale types during
+    /// early phases like type environment building.
+    fn property_access_callee_explicitly_returns_never(&mut self, callee_idx: NodeIndex) -> bool {
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let property_name = &ident.escaped_text;
+
+        // For `this.method()` or `obj.method()`, try to resolve the callee's
+        // symbol through the binder's node_symbols (which is available without
+        // full type-checking). The binder resolves property access names in some
+        // cases.
+        if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&access.name_or_argument.0) {
+            if self.symbol_explicitly_returns_never(sym_id) {
+                return true;
+            }
+        }
+
+        // For `this.method()` calls, try the enclosing class's member table.
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            if let Some(ref class_info) = self.ctx.enclosing_class.clone() {
+                // Look up the class symbol via the binder's node_symbols map
+                if let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_info.class_idx.0)
+                {
+                    if let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym) {
+                        // Check instance members
+                        if let Some(ref members) = class_symbol.members {
+                            if let Some(member_sym_id) = members.get(property_name) {
+                                return self.symbol_explicitly_returns_never(member_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: resolve the receiver type and check the property.
+        // This may produce stale results during early phases, but covers
+        // non-`this` receivers like `services.panic()`.
+        let object_type = self.get_type_of_node(access.expression);
+        if object_type == TypeId::ANY || object_type == TypeId::ERROR {
+            return false;
+        }
+        let resolved = self.resolve_type_for_property_access(object_type);
+        // Use the solver's property access to find the method type and check
+        // if it has a never return type.
+        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            self.ctx
+                .types
+                .resolve_property_access(resolved, property_name)
+        {
+            return tsz_solver::type_queries::get_return_type(self.ctx.types, type_id)
+                == Some(TypeId::NEVER);
+        }
+
+        false
     }
 
     fn symbol_explicitly_returns_never(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
@@ -82,6 +161,11 @@ impl<'a> CheckerState<'a> {
         if let Some(func) = self.ctx.arena.get_function(decl_node) {
             return func.type_annotation.is_some()
                 && self.get_type_from_type_node(func.type_annotation) == TypeId::NEVER;
+        }
+
+        if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
+            return method.type_annotation.is_some()
+                && self.get_type_from_type_node(method.type_annotation) == TypeId::NEVER;
         }
 
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
