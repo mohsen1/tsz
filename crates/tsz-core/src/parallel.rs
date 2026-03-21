@@ -1482,6 +1482,60 @@ impl SkeletonIndex {
 
         (exact, patterns)
     }
+
+    /// Validate that skeleton-derived data matches the legacy `MergedProgram` state.
+    ///
+    /// In debug builds, asserts that:
+    /// - `declared_modules` match exactly
+    /// - `shorthand_ambient_modules` match exactly
+    /// - `module_export_specifiers` match the keys of `module_exports`
+    ///   (excluding user file names that the legacy path inserts as module_exports keys)
+    ///
+    /// This proves the skeleton captures all merge-relevant ambient module topology
+    /// without retaining arenas. In release builds, this is a no-op.
+    pub fn validate_against_merged(
+        &self,
+        merged_declared_modules: &FxHashSet<String>,
+        merged_shorthand_ambient_modules: &FxHashSet<String>,
+        merged_module_export_keys: &FxHashSet<String>,
+        user_file_names: &FxHashSet<String>,
+    ) {
+        if cfg!(debug_assertions) {
+            // 1) declared_modules must match exactly.
+            assert_eq!(
+                &self.declared_modules, merged_declared_modules,
+                "skeleton declared_modules differs from legacy merge"
+            );
+
+            // 2) shorthand_ambient_modules must match exactly.
+            assert_eq!(
+                &self.shorthand_ambient_modules, merged_shorthand_ambient_modules,
+                "skeleton shorthand_ambient_modules differs from legacy merge"
+            );
+
+            // 3) module_export_specifiers: both skeleton and legacy include
+            //    binder-produced module_exports keys. The legacy merge also
+            //    inserts user file names (from the per-file export collection).
+            //    The skeleton captures the binder-level keys which may also
+            //    include the file's own name for external modules. Filter user
+            //    file names from both sides before comparing.
+            let legacy_non_file_keys: FxHashSet<String> = merged_module_export_keys
+                .iter()
+                .filter(|k| !user_file_names.contains(k.as_str()))
+                .cloned()
+                .collect();
+            let skeleton_non_file_keys: FxHashSet<String> = self
+                .module_export_specifiers
+                .iter()
+                .filter(|k| !user_file_names.contains(k.as_str()))
+                .cloned()
+                .collect();
+            assert_eq!(
+                &skeleton_non_file_keys, &legacy_non_file_keys,
+                "skeleton module_export_specifiers differs from legacy merge (after filtering user file names)"
+            );
+        }
+    }
 }
 
 /// Estimate the in-memory size of a `FileSkeleton` in bytes.
@@ -1654,6 +1708,12 @@ pub struct MergedProgramResidencyStats {
     pub declaration_arena_bucket_count: usize,
     /// Total number of declaration -> arena edges across all buckets.
     pub declaration_arena_mapping_count: usize,
+    /// Whether the skeleton index was computed alongside the legacy merge.
+    pub has_skeleton_index: bool,
+    /// Number of merge candidates identified by the skeleton (symbols in >1 file).
+    pub skeleton_merge_candidate_count: usize,
+    /// Total top-level symbols tracked by the skeleton (before merge).
+    pub skeleton_total_symbol_count: usize,
 }
 
 impl MergedProgram {
@@ -1674,6 +1734,13 @@ impl MergedProgram {
             }
         }
 
+        let (has_skeleton, skel_merge_count, skel_sym_count) =
+            if let Some(ref idx) = self.skeleton_index {
+                (true, idx.merge_candidates.len(), idx.total_symbol_count)
+            } else {
+                (false, 0, 0)
+            };
+
         MergedProgramResidencyStats {
             file_count: self.files.len(),
             bound_file_arena_count: self.files.len(),
@@ -1685,6 +1752,9 @@ impl MergedProgram {
                 .values()
                 .map(|arenas| arenas.len())
                 .sum(),
+            has_skeleton_index: has_skeleton,
+            skeleton_merge_candidate_count: skel_merge_count,
+            skeleton_total_symbol_count: skel_sym_count,
         }
     }
 }
@@ -2967,6 +3037,21 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     for file in &files {
         let arena_ptr = Arc::as_ptr(&file.arena) as usize;
         cross_file_node_symbols.insert(arena_ptr, Arc::new(file.node_symbols.clone()));
+    }
+
+    // Validate skeleton data against legacy merge state before construction.
+    // This runs only in debug builds and proves skeleton captures all
+    // merge-relevant ambient module topology.
+    {
+        let user_file_names: FxHashSet<String> =
+            files.iter().map(|f| f.file_name.clone()).collect();
+        let module_export_keys: FxHashSet<String> = module_exports.keys().cloned().collect();
+        skeleton_index.validate_against_merged(
+            &declared_modules,
+            &shorthand_ambient_modules,
+            &module_export_keys,
+            &user_file_names,
+        );
     }
 
     MergedProgram {
