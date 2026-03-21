@@ -371,12 +371,11 @@ impl<'a> UsageAnalyzer<'a> {
             return expr_idx;
         };
         // `export default new A()` → track `A`
-        if expr_node.kind == syntax_kind_ext::NEW_EXPRESSION
-            || expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+        if (expr_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::CALL_EXPRESSION)
+            && let Some(call) = self.arena.get_call_expr(expr_node)
         {
-            if let Some(call) = self.arena.get_call_expr(expr_node) {
-                return call.expression;
-            }
+            return call.expression;
         }
         expr_idx
     }
@@ -571,6 +570,9 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         // Walk parameters
+        for &param_idx in &method.parameters.nodes {
+            self.analyze_parameter(param_idx);
+        }
 
         // Walk return type
         if method.type_annotation.is_some() {
@@ -585,11 +587,14 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(ctor_node) = self.arena.get(ctor_idx) else {
             return;
         };
-        let Some(_ctor) = self.arena.get_constructor(ctor_node) else {
+        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
             return;
         };
 
         // Walk parameters
+        for &param_idx in &ctor.parameters.nodes {
+            self.analyze_parameter(param_idx);
+        }
     }
 
     /// Analyze an accessor (getter/setter).
