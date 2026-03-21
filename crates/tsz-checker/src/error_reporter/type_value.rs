@@ -609,7 +609,6 @@ mod tests {
     use crate::test_utils::check_source_diagnostics;
 
     #[test]
-    #[ignore = "TODO: checker does not yet emit TS2693 for type keywords in computed property positions"]
     fn emits_ts2693_for_recovered_computed_type_keyword() {
         let diagnostics = check_source_diagnostics(
             r#"
