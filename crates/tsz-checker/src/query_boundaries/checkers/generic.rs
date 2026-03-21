@@ -231,3 +231,15 @@ pub(crate) fn mapped_type_id(
 ) -> Option<tsz_solver::MappedTypeId> {
     tsz_solver::mapped_type_id(db, type_id)
 }
+
+/// Check if a mapped type's template is callable (has call/construct signatures).
+///
+/// Used for TS2344 constraint checking: when an indexed access into a mapped
+/// type is checked against a callable constraint, the template type determines
+/// whether the indexed value is callable.
+pub(crate) fn is_mapped_template_callable(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> bool {
+    tsz_solver::type_queries::is_mapped_template_callable(db, mapped_id)
+}

@@ -132,6 +132,33 @@ pub(crate) fn expand_mapped_type_to_properties(
     )
 }
 
+/// Re-export identity mapped type info from solver.
+pub(crate) use tsz_solver::type_queries::IdentityMappedInfo;
+
+/// Check if a mapped type is an identity homomorphic mapped type.
+///
+/// Returns info about the source type parameter if the mapped type has the
+/// form `{ [K in keyof T]: T[K] }`. Used by application type evaluation to
+/// decide primitive passthrough behavior.
+pub(crate) fn classify_identity_mapped(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> Option<IdentityMappedInfo> {
+    tsz_solver::type_queries::classify_identity_mapped(db, mapped_id)
+}
+
+/// Get the inner type of a `keyof T` type.
+///
+/// Returns `Some(T)` if the type is `KeyOf(T)`, `None` otherwise.
+pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::keyof_inner_type(db, type_id)
+}
+
+/// Check if a type is an array or tuple type.
+pub(crate) fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }

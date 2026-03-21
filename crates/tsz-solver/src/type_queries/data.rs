@@ -2408,6 +2408,80 @@ pub fn is_identity_name_mapping(db: &dyn TypeDatabase, mapped: &crate::types::Ma
     }
 }
 
+/// Info about an identity homomorphic mapped type `{ [K in keyof T]: T[K] }`.
+///
+/// Returned by [`classify_identity_mapped`] when a mapped type is confirmed to
+/// be an identity mapping — constraint is `keyof T` where `T` is a type param,
+/// and the template is `T[K]` where `K` is the mapped iteration variable.
+#[derive(Clone, Debug)]
+pub struct IdentityMappedInfo {
+    /// Name of the source type parameter `T`.
+    pub source_param_name: Atom,
+    /// Constraint of the source type parameter (if any).
+    pub source_constraint: Option<TypeId>,
+}
+
+/// Check if a mapped type is an identity homomorphic mapped type.
+///
+/// An identity mapped type has the form `{ [K in keyof T]: T[K] }` where
+/// `T` is a type parameter and the template is an indexed access of `T` by `K`.
+/// This is the pattern where `Partial<number>` evaluates to `number`.
+///
+/// Returns [`IdentityMappedInfo`] with the source type parameter's name and
+/// constraint, or `None` if the mapped type is not identity-homomorphic.
+pub fn classify_identity_mapped(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> Option<IdentityMappedInfo> {
+    let mapped = db.mapped_type(mapped_id);
+    let keyof_source = crate::keyof_inner_type(db, mapped.constraint)?;
+    let tp = crate::type_param_info(db, keyof_source)?;
+    let (obj, key) = crate::index_access_parts(db, mapped.template)?;
+    if obj != keyof_source {
+        return None;
+    }
+    let kp = crate::type_param_info(db, key)?;
+    if kp.name != mapped.type_param.name {
+        return None;
+    }
+    Some(IdentityMappedInfo {
+        source_param_name: tp.name,
+        source_constraint: tp.constraint,
+    })
+}
+
+/// Check if a mapped type's template is callable (has call/construct signatures).
+///
+/// This is used for TS2344 constraint checking: when an indexed access into a
+/// mapped type (e.g., `{ [K in keyof T]: () => unknown }[keyof T]`) is checked
+/// against a callable constraint, we need to know if the template type is callable.
+pub fn is_mapped_template_callable(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> bool {
+    let mapped = db.mapped_type(mapped_id);
+    super::is_callable_type(db, mapped.template)
+        || get_callable_shape(db, mapped.template).is_some()
+}
+
+/// Get the inner type of a `keyof T` type, delegated from the visitor layer.
+///
+/// Returns `Some(T)` if the type is `KeyOf(T)`, `None` otherwise.
+/// This is the boundary-safe version of `crate::keyof_inner_type`.
+pub fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    crate::keyof_inner_type(db, type_id)
+}
+
+/// Check if a type is an array or tuple type.
+///
+/// Used for constraint classification in mapped type passthrough decisions:
+/// when a type parameter is constrained to array/tuple, `any` arguments
+/// should pass through identity mapped types rather than expanding.
+pub fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::is_array_type(db, type_id)
+        || crate::visitors::visitor_predicates::is_tuple_type(db, type_id)
+}
+
 /// Compute modifier values for a mapped type property given the source property's
 /// original modifiers and the mapped type's modifier directives.
 ///

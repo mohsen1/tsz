@@ -888,14 +888,9 @@ impl<'a> CheckerState<'a> {
                                 // template is callable, the indexed access is callable.
                                 if let Some((obj, _idx)) = query::index_access_components(db, base)
                                     && let Some(mapped_id) = query::mapped_type_id(db, obj)
+                                    && query::is_mapped_template_callable(db, mapped_id)
                                 {
-                                    let mapped = db.get_mapped(mapped_id);
-                                    if query::is_callable_type(db, mapped.template)
-                                        || query::callable_shape_for_type(db, mapped.template)
-                                            .is_some()
-                                    {
-                                        continue;
-                                    }
+                                    continue;
                                 }
                                 // Try evaluating base further — indexed access through mapped
                                 // types may resolve to a callable template type.

@@ -363,42 +363,33 @@ impl<'a> CheckerState<'a> {
         // For `any` arguments: passthrough only when the type parameter is constrained
         // to array/tuple types. In tsc, `Arrayish<any>` (T extends unknown[]) produces
         // an array, but `Objectish<any>` (T extends unknown) produces `{ [x: string]: any }`.
-        if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type) {
-            let mapped = self.ctx.types.mapped_type(mapped_id);
-            if let Some(keyof_source) =
-                tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
-                && let Some(tp) = tsz_solver::type_param_info(self.ctx.types, keyof_source)
-                && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
-                && idx < args.len()
-                // Verify template is T[K] (identity indexed access)
-                && let Some((obj, key)) =
-                    tsz_solver::index_access_parts(self.ctx.types, mapped.template)
-                && obj == keyof_source
-                && tsz_solver::type_param_info(self.ctx.types, key)
-                    .is_some_and(|kp| kp.name == mapped.type_param.name)
-            {
-                let arg = self.evaluate_type_with_env(args[idx]);
-                if tsz_solver::is_primitive_type(self.ctx.types, arg) {
-                    // For `any`: only passthrough when the type parameter has an
-                    // array/tuple constraint. Otherwise, `any` must flow through
-                    // mapped type expansion to produce { [x: string]: any }.
-                    let should_passthrough = if arg == TypeId::ANY
-                        || arg == TypeId::UNKNOWN
-                        || arg == TypeId::NEVER
-                        || arg == TypeId::ERROR
-                    {
-                        // Check if the type parameter is constrained to array/tuple
-                        tp.constraint.is_some_and(|c| {
-                            let evaluated_constraint = self.evaluate_type_for_assignability(c);
-                            tsz_solver::is_array_type(self.ctx.types, evaluated_constraint)
-                                || tsz_solver::is_tuple_type(self.ctx.types, evaluated_constraint)
-                        })
-                    } else {
-                        true
-                    };
-                    if should_passthrough {
-                        return arg;
-                    }
+        if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type)
+            && let Some(identity_info) = query::classify_identity_mapped(self.ctx.types, mapped_id)
+            && let Some(idx) = type_params
+                .iter()
+                .position(|p| p.name == identity_info.source_param_name)
+            && idx < args.len()
+        {
+            let arg = self.evaluate_type_with_env(args[idx]);
+            if tsz_solver::is_primitive_type(self.ctx.types, arg) {
+                // For `any`: only passthrough when the type parameter has an
+                // array/tuple constraint. Otherwise, `any` must flow through
+                // mapped type expansion to produce { [x: string]: any }.
+                let should_passthrough = if arg == TypeId::ANY
+                    || arg == TypeId::UNKNOWN
+                    || arg == TypeId::NEVER
+                    || arg == TypeId::ERROR
+                {
+                    // Check if the type parameter is constrained to array/tuple
+                    identity_info.source_constraint.is_some_and(|c| {
+                        let evaluated_constraint = self.evaluate_type_for_assignability(c);
+                        query::is_array_or_tuple_type(self.ctx.types, evaluated_constraint)
+                    })
+                } else {
+                    true
+                };
+                if should_passthrough {
+                    return arg;
                 }
             }
         }
@@ -415,9 +406,7 @@ impl<'a> CheckerState<'a> {
         // (which has the full resolver) evaluate it — correctly resolving all types.
         if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type) {
             let mapped = self.ctx.types.mapped_type(mapped_id);
-            if let Some(keyof_source) =
-                tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
-            {
+            if let Some(keyof_source) = query::keyof_inner_type(self.ctx.types, mapped.constraint) {
                 // Evaluate all args first so instantiated `keyof` sources like
                 // `Gen<T>` become `Gen<ABC.A>` before we rebuild the mapped type.
                 let evaluated_args: Vec<TypeId> = args
@@ -775,7 +764,7 @@ impl<'a> CheckerState<'a> {
         // Detect homomorphic source and collect source property info via solver helpers.
         // This centralizes both the homomorphic detection and property collection
         // behind the type-environment boundary instead of inline checker logic.
-        let is_homomorphic_source = tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
+        let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
         let is_homomorphic = is_homomorphic_source.is_some();
 
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
