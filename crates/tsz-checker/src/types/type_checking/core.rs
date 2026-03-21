@@ -841,8 +841,10 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 
-        // Track (member_idx, type_annotation) for TS2717 comparison
-        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex)> =
+        // Track (member_idx, type_annotation, is_syntactic_name) for TS2717 comparison.
+        // `is_syntactic_name` is true when the name was determined from syntax alone
+        // (literal property name), false when it required evaluating a computed expression.
+        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
             rustc_hash::FxHashMap::default();
 
         for &member_idx in members {
@@ -859,32 +861,45 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
-            let Some(name) = self.get_member_name(member_idx) else {
+            // Try syntactic name first; fall back to resolved computed property name.
+            // This handles cases like `[c0]` where c0 is a const variable — the
+            // property name can only be determined by evaluating the expression type.
+            let (name, is_syntactic) = if let Some(n) = self.get_member_name(member_idx) {
+                (n, true)
+            } else if let Some(n) = self.get_property_name_resolved(sig.name) {
+                (n, false)
+            } else {
                 continue;
             };
             let type_ann = sig.type_annotation;
 
-            if let Some(&(prev_idx, prev_type_ann)) = seen.get(&name) {
-                // Report duplicate on the second occurrence
+            if let Some(&(prev_idx, prev_type_ann, prev_syntactic)) = seen.get(&name) {
                 let name_idx = sig.name;
-                self.error_at_node(
-                    name_idx,
-                    &format!("Duplicate identifier '{name}'."),
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                );
-                // Also mark the first occurrence
-                if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
-                    let prev_name_idx =
-                        if let Some(prev_sig) = self.ctx.arena.get_signature(prev_node) {
-                            prev_sig.name
-                        } else {
-                            prev_idx
-                        };
+
+                // TS2300 "Duplicate identifier" only when both declarations use
+                // syntactic (literal) names. Computed property names that resolve
+                // to the same value (e.g., `[c0]` and `[c1]` where c0="1", c1=1)
+                // get only TS2717, matching tsc behavior.
+                if is_syntactic && prev_syntactic {
                     self.error_at_node(
-                        prev_name_idx,
+                        name_idx,
                         &format!("Duplicate identifier '{name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
+                    // Also mark the first occurrence
+                    if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
+                        let prev_name_idx =
+                            if let Some(prev_sig) = self.ctx.arena.get_signature(prev_node) {
+                                prev_sig.name
+                            } else {
+                                prev_idx
+                            };
+                        self.error_at_node(
+                            prev_name_idx,
+                            &format!("Duplicate identifier '{name}'."),
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
                 }
 
                 // TS2717 on the subsequent declaration when types differ.
@@ -916,7 +931,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else {
-                seen.insert(name, (member_idx, type_ann));
+                seen.insert(name, (member_idx, type_ann, is_syntactic));
             }
         }
     }

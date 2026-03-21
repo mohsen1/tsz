@@ -247,9 +247,11 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
-        // Track property names → (member_idx, type_annotation_node) pairs.
+        // Track canonical property names → (member_idx, type_annotation_node, is_syntactic) tuples.
+        // `is_syntactic` is true when the name was determined from syntax alone (literal name),
+        // false when it required evaluating a computed expression (e.g., `[c0]` where c0="1").
         // Methods are allowed to have overloads so they are excluded.
-        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>> =
+        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex, bool)>> =
             FxHashMap::default();
 
         for &member_idx in members {
@@ -259,36 +261,62 @@ impl<'a> CheckerState<'a> {
 
             // Only check property signatures for duplicates
             // Method signatures can have multiple overloads (same name, different types)
-            let name_and_type = match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                    self.ctx.arena.get_signature(member_node).and_then(|sig| {
-                        let name = self.get_member_name_text(sig.name)?;
-                        Some((name, sig.type_annotation))
-                    })
-                }
-                // Method signatures are allowed to have overloads - don't flag as duplicates
-                k if k == syntax_kind_ext::METHOD_SIGNATURE => None,
-                // Call, construct, and index signatures don't have names that can conflict
-                _ => None,
+            if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                continue;
+            }
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                continue;
             };
 
-            if let Some((name, type_ann)) = name_and_type {
-                // tsc does not flag duplicate well-known Symbol properties in interfaces
-                // (e.g., [Symbol.isConcatSpreadable]) because symbols are structurally unique.
-                if name.starts_with("[Symbol.") {
+            // Determine the canonical property name for duplicate detection.
+            // For non-computed names, use the syntactic text directly.
+            // For computed property names (like `[c0]` where c0 is a const),
+            // resolve the expression type to get the actual property name
+            // (e.g., c0="1" → canonical name "1").
+            let is_computed = self
+                .ctx
+                .arena
+                .get(sig.name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let (canonical_name, is_syntactic) = if is_computed {
+                // For computed properties, resolve via type evaluation to get
+                // the actual property name. This handles cases like `[c0]` and
+                // `[c1]` where c0="1" and c1=1 both resolve to property "1".
+                if let Some(name) = self.get_property_name_resolved(sig.name) {
+                    (name, false)
+                } else if let Some(name) = self.get_member_name_text(sig.name) {
+                    // Fall back to syntactic text if resolution fails
+                    (name, true)
+                } else {
                     continue;
                 }
-                seen_properties
-                    .entry(name)
-                    .or_default()
-                    .push((member_idx, type_ann));
+            } else if let Some(name) = self.get_member_name_text(sig.name) {
+                (name, true)
+            } else {
+                continue;
+            };
+
+            // tsc does not flag duplicate well-known Symbol properties in interfaces
+            // (e.g., [Symbol.isConcatSpreadable]) because symbols are structurally unique.
+            if canonical_name.starts_with("[Symbol.") {
+                continue;
             }
+            seen_properties.entry(canonical_name).or_default().push((
+                member_idx,
+                sig.type_annotation,
+                is_syntactic,
+            ));
         }
 
         // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
         // (both first and subsequent), not just the second+.
         for (name, entries) in &seen_properties {
             if entries.len() > 1 {
+                // Check if all entries have syntactic names (for TS2300 decisions).
+                // When computed properties resolve to the same name (e.g., `[c0]` and `[c1]`
+                // where c0="1" and c1=1), tsc emits only TS2717, not TS2300.
+                let all_syntactic = entries.iter().all(|e| e.2);
+
                 // Resolve the first property's type for TS2717 comparison
                 let first_type = if entries[0].1.is_some() {
                     self.get_type_from_type_node(entries[0].1)
@@ -296,14 +324,17 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
 
-                for (i, &(idx, type_ann)) in entries.iter().enumerate() {
-                    // TS2300 on all occurrences
+                for (i, &(idx, type_ann, _is_syntactic)) in entries.iter().enumerate() {
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
-                    self.error_at_node_msg(
-                        error_node,
-                        diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        &[name],
-                    );
+
+                    // TS2300 only when all occurrences have syntactic (literal) names.
+                    if all_syntactic {
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[name],
+                        );
+                    }
 
                     // TS2717 on subsequent declarations when types differ
                     if i > 0 {
@@ -318,12 +349,17 @@ impl<'a> CheckerState<'a> {
                             // TS2717 uses type identity, not assignability.
                             // With interned types, TypeId equality is structural identity.
                             if first_type != this_type {
+                                // Use display text for the property name in diagnostics.
+                                // For computed properties, this preserves the `[expr]` syntax.
+                                let display_name = self
+                                    .get_member_name_display_text(error_node)
+                                    .unwrap_or_else(|| name.clone());
                                 let first_type_str = self.format_type(first_type);
                                 let this_type_str = self.format_type(this_type);
                                 self.error_at_node_msg(
                                     error_node,
                                     diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                    &[name, &first_type_str, &this_type_str],
+                                    &[&display_name, &first_type_str, &this_type_str],
                                 );
                             }
                         }
