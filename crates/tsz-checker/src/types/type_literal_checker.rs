@@ -115,9 +115,8 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             };
-            let _ = self.type_reference_symbol_type(sym_id);
-            // Use Lazy(DefId) instead of Ref(SymbolRef)
-            let base_type = self.ctx.create_lazy_type_ref(sym_id);
+            // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+            let base_type = self.resolve_symbol_as_lazy_type(sym_id);
             if has_type_args {
                 let type_args = type_ref
                     .type_arguments
@@ -145,8 +144,8 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) =
                     self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
             {
-                let _ = self.type_reference_symbol_type(sym_id);
-                let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                let base_type = self.resolve_symbol_as_lazy_type(sym_id);
                 if has_type_args {
                     let type_args = type_ref
                         .type_arguments
@@ -287,9 +286,8 @@ impl<'a> CheckerState<'a> {
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
-                    let _ = self.type_reference_symbol_type(sym_id);
-                    // Use Lazy(DefId) instead of Ref(SymbolRef)
-                    self.ctx.create_lazy_type_ref(sym_id)
+                    // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                    self.resolve_symbol_as_lazy_type(sym_id)
                 } else {
                     TypeId::ERROR
                 };
@@ -311,9 +309,8 @@ impl<'a> CheckerState<'a> {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
-                    let _ = self.type_reference_symbol_type(sym_id);
-                    // Use Lazy(DefId) instead of Ref(SymbolRef)
-                    return self.ctx.create_lazy_type_ref(sym_id);
+                    // Stable-identity helper: resolve symbol body + create Lazy(DefId)
+                    return self.resolve_symbol_as_lazy_type(sym_id);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
@@ -382,6 +379,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
+                // Resolve the symbol's structural body first
                 let _ = self.type_reference_symbol_type(sym_id);
                 // Prime lib type params for lib symbols (e.g., Uint8Array, DataView) so
                 // get_type_params_for_symbol returns their generic params. Without this,
@@ -403,7 +401,7 @@ impl<'a> CheckerState<'a> {
                     let base_type_id = factory.lazy(def_id);
                     return factory.application(base_type_id, default_args);
                 }
-                // Use Lazy(DefId) instead of Ref(SymbolRef)
+                // Stable-identity: create Lazy(DefId) (body already resolved above)
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
 

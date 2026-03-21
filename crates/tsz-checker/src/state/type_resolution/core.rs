@@ -4,11 +4,10 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::def::DefId;
 
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
@@ -129,11 +128,9 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                // Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
-                let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
-                    self.resolve_type_symbol_for_lowering(node_idx)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
-                };
+                // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
+                let def_id_resolver =
+                    |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
@@ -588,11 +585,9 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                // Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
-                let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
-                    self.resolve_type_symbol_for_lowering(node_idx)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
-                };
+                // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
+                let def_id_resolver =
+                    |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
