@@ -69,7 +69,13 @@ impl<'a> CheckerState<'a> {
                         let name = self
                             .entity_name_text(type_name_idx)
                             .unwrap_or_else(|| "<unknown>".to_string());
-                        self.error_value_only_type_at(&name, type_name_idx);
+                        // Route through wrong-meaning boundary: value used as type
+                        use crate::query_boundaries::name_resolution::NameLookupKind;
+                        self.report_wrong_meaning_diagnostic(
+                            &name,
+                            type_name_idx,
+                            NameLookupKind::Value,
+                        );
                         return TypeId::ERROR;
                     }
                     TypeSymbolResolution::NotFound => {
@@ -330,7 +336,13 @@ impl<'a> CheckerState<'a> {
                         Some(sym_id)
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
-                        self.error_value_only_type_at(name, type_name_idx);
+                        // Route through wrong-meaning boundary: value used as type
+                        use crate::query_boundaries::name_resolution::NameLookupKind;
+                        self.report_wrong_meaning_diagnostic(
+                            name,
+                            type_name_idx,
+                            NameLookupKind::Value,
+                        );
                         return TypeId::ERROR;
                     }
                     TypeSymbolResolution::NotFound => None,

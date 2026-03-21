@@ -1812,7 +1812,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if keyword_type_mapping(k).is_some() => {
                 let (name, type_id) = keyword_type_mapping(k).expect("is_some guard checked above");
                 if self.checker.is_keyword_type_used_as_value_position(idx) {
-                    self.checker.error_type_only_value_at(name, idx);
+                    // Route through wrong-meaning boundary: keyword type is type-only
+                    use crate::query_boundaries::name_resolution::NameLookupKind;
+                    self.checker
+                        .report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
                     TypeId::ERROR
                 } else {
                     type_id

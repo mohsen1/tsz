@@ -1078,7 +1078,12 @@ impl<'a> CheckerState<'a> {
                         &[&name_str],
                     );
                 } else {
-                    self.error_cannot_find_name_at(&name_str, name_idx);
+                    // Route through boundary for TS2304/TS2552 with suggestion collection
+                    self.report_not_found_at_boundary(
+                        &name_str,
+                        name_idx,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    );
                 }
             }
         }

@@ -74,7 +74,12 @@ impl<'a> CheckerState<'a> {
         // as a local binding even if the file has an `export default` declaration.
         // TypeScript reports TS2304 "Cannot find name 'default'" in this case.
         if is_identifier && name_text.as_deref() == Some("default") {
-            self.error_cannot_find_name_at("default", type_query.expr_name);
+            // Route through boundary for TS2304/TS2552 with suggestion collection
+            self.report_not_found_at_boundary(
+                "default",
+                type_query.expr_name,
+                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+            );
             return TypeId::ERROR;
         }
 
@@ -299,7 +304,12 @@ impl<'a> CheckerState<'a> {
                     if lib_loader::is_es2015_plus_type(&name) {
                         self.error_cannot_find_global_type(&name, type_query.expr_name);
                     } else {
-                        self.error_cannot_find_name_at(&name, type_query.expr_name);
+                        // Route through boundary for TS2304/TS2552 with suggestion collection
+                        self.report_not_found_at_boundary(
+                            &name,
+                            type_query.expr_name,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                     }
                     return TypeId::ERROR;
                 }
