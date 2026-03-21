@@ -310,15 +310,14 @@ pub(crate) fn is_type_only_module_statement_ext(
                     // For `export declare enum`, the enum IS exported (the wrapper
                     // provides the export modifier). `declare enum` with export
                     // instantiates the namespace for the binding, so NOT type-only.
-                    if inner_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                        if let Some(enum_decl) = arena.get_enum(inner_node) {
+                    if inner_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                        && let Some(enum_decl) = arena.get_enum(inner_node) {
                             let is_declare = arena
                                 .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword);
                             if is_declare {
                                 return false; // exported declare enum → instantiates
                             }
                         }
-                    }
                     return is_type_only_module_statement_ext(
                         arena,
                         inner_node,
