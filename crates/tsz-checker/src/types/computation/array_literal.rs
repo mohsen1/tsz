@@ -578,9 +578,24 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use contextual element type when available for better inference
-        if !request.origin.is_assertion()
-            && let Some(ref helper) = ctx_helper
-            && let Some(context_element_type) = helper.get_array_element_type()
+        let solver_element_type = if !request.origin.is_assertion() {
+            ctx_helper.as_ref().and_then(|h| h.get_array_element_type())
+        } else {
+            None
+        };
+        // Fallback: when the solver can't extract element types (e.g., union members are
+        // Lazy interface types extending Array that haven't been resolved to structural form),
+        // resolve each member via the checker's type environment and check number index
+        // signatures. This handles cases like `type Style = StyleBase | StyleArray` where
+        // `StyleArray extends Array<Style>`.
+        let context_element_type = solver_element_type.or_else(|| {
+            if request.origin.is_assertion() {
+                return None;
+            }
+            let contextual = effective_contextual?;
+            self.resolve_array_element_type_from_union_members(contextual)
+        });
+        if let Some(context_element_type) = context_element_type
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
         {
@@ -660,5 +675,54 @@ impl<'a> CheckerState<'a> {
         }
 
         factory.array(element_type)
+    }
+
+    /// Resolve array element type from union members by checking number index signatures.
+    ///
+    /// When the contextual type is a union like `StyleBase | StyleArray` where `StyleArray`
+    /// is a Lazy interface extending `Array<Style>`, the solver's `get_array_element_type`
+    /// can't extract the element type because Lazy interface types don't evaluate to
+    /// array type data. This method resolves each union member via the checker's type
+    /// environment and checks for number index signatures (which Array types have).
+    fn resolve_array_element_type_from_union_members(
+        &mut self,
+        contextual: TypeId,
+    ) -> Option<TypeId> {
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)?;
+
+        let mut element_types = Vec::new();
+        for &member in &members {
+            if member.is_nullable() {
+                continue;
+            }
+
+            // Already a recognized array/tuple type?
+            if let Some(elem) =
+                tsz_solver::type_queries::get_array_element_type(self.ctx.types, member)
+            {
+                element_types.push(elem);
+                continue;
+            }
+
+            // Resolve Lazy interface types to their structural form via the checker's
+            // type environment, then check for a number index signature.
+            let resolved = self.resolve_lazy_type(member);
+            let resolved = self.evaluate_type_with_env(resolved);
+            let resolved = self.resolve_type_for_property_access(resolved);
+
+            // Check if the resolved type has a number index signature (array-like)
+            let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+            if let Some(elem) = resolver.resolve_number_index(resolved) {
+                element_types.push(elem);
+            }
+        }
+
+        if element_types.is_empty() {
+            None
+        } else if element_types.len() == 1 {
+            Some(element_types[0])
+        } else {
+            Some(self.ctx.types.union(element_types))
+        }
     }
 }
