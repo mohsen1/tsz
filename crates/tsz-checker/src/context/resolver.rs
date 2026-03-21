@@ -19,30 +19,34 @@ impl<'a> CheckerContext<'a> {
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = sym_id?;
 
-        // Check if this is an interface using the DefinitionStore (O(1)) when
-        // available, falling back to the symbol's flags.
-        let symbol = self.binder.symbols.get(sym_id).or_else(|| {
-            self.lib_contexts
-                .iter()
-                .find_map(|lib| lib.binder.symbols.get(sym_id))
-        });
-
-        let is_interface = self
-            .get_existing_def_id(sym_id)
-            .and_then(|def_id| self.definition_store.get_kind(def_id))
-            .map(|kind| kind == tsz_solver::def::DefKind::Interface)
-            .unwrap_or_else(|| {
-                symbol.is_some_and(|s| (s.flags & tsz_binder::symbol_flags::INTERFACE) != 0)
-            });
-        if !is_interface {
-            return None;
+        // Use the DefinitionStore (O(1)) for both the interface check and name
+        // lookup.  This avoids the previous O(N) scan over `lib_contexts` that
+        // was needed only to find the symbol and read its `escaped_name`.
+        //
+        // Lookup strategy:
+        //   1. DefinitionStore (O(1)): get DefKind + name via `get_existing_def_id`.
+        //   2. Primary binder only (O(1)): fallback for symbols not yet in the store.
+        //   No lib_contexts scan is needed — lib symbols always have DefIds in the
+        //   DefinitionStore after lib pre-population.
+        if let Some(def_id) = self.get_existing_def_id(sym_id) {
+            let kind = self.definition_store.get_kind(def_id)?;
+            if kind != tsz_solver::def::DefKind::Interface {
+                return None;
+            }
+            let name_atom = self.definition_store.get_name(def_id)?;
+            let name = self.types.resolve_atom(name_atom);
+            let cached_ty = self.lib_type_resolution_cache.get(name.as_str())?.as_ref()?;
+            return (*cached_ty != current_ty).then_some(*cached_ty);
         }
 
-        let name = symbol?.escaped_name.as_str();
-
+        // Fallback: no DefId yet — use the primary binder (O(1), no lib scan).
+        let symbol = self.binder.symbols.get(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
         let cached_ty = self
             .lib_type_resolution_cache
-            .get(name)?
+            .get(symbol.escaped_name.as_str())?
             .as_ref()?;
         (*cached_ty != current_ty).then_some(*cached_ty)
     }
