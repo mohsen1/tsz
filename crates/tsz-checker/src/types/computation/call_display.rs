@@ -244,7 +244,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let request = TypingRequest::with_contextual_type(ctx_type);
                 let mut recompute = |checker: &mut CheckerState<'a>| {
-                    checker.clear_type_cache_recursive(arg_idx);
+                    checker.invalidate_expression_for_contextual_retry(arg_idx);
                     checker.get_type_of_node_with_request(arg_idx, &request)
                 };
                 replace_arg_span_diagnostics(self, arg_idx, &mut recompute)
@@ -330,7 +330,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let request = TypingRequest::with_contextual_type(ctx_type);
                 let mut recompute = |checker: &mut CheckerState<'a>| {
-                    checker.clear_type_cache_recursive(arg_idx);
+                    checker.invalidate_expression_for_contextual_retry(arg_idx);
                     checker.get_type_of_node_with_request(arg_idx, &request)
                 };
                 replace_arg_span_diagnostics(self, arg_idx, &mut recompute)
