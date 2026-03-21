@@ -170,21 +170,67 @@ impl<'a> CheckerState<'a> {
         };
 
         if names_share_scope {
-            // The var hoists to the same scope as the let/const — emit TS2451
-            // on both the var declaration and the block-scoped declaration,
-            // matching tsc's behavior for cases like:
-            //   function f() { let x; { var x; } }
+            // The var hoists to the same scope as the let/const.
+            // tsc uses TS2300 ("Duplicate identifier") when the var declaration
+            // appears before the block-scoped declaration, and TS2451 ("Cannot
+            // redeclare block-scoped variable") when the block-scoped declaration
+            // comes first.
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            let msg = crate::diagnostics::format_message(
-                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                &[var_name],
-            );
+
+            // Check if any block-scoped declaration appears before this var.
+            // For cross-file conflicts, skip: duplicate_identifiers handles them.
+            let var_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |n| n.pos);
+            let has_local_block_scoped =
+                self.ctx
+                    .binder
+                    .get_symbol(_block_sym_id)
+                    .map_or(false, |block_sym| {
+                        block_sym.declarations.iter().any(|&block_decl_idx| {
+                            block_decl_idx.is_some()
+                                && self.ctx.arena.get(block_decl_idx).is_some()
+                                && block_decl_idx != decl_idx
+                        })
+                    });
+            if !has_local_block_scoped {
+                // All block-scoped declarations are cross-file;
+                // duplicate_identifiers.rs handles this case.
+                return;
+            }
+            let block_scoped_first =
+                self.ctx
+                    .binder
+                    .get_symbol(_block_sym_id)
+                    .map_or(false, |block_sym| {
+                        block_sym.declarations.iter().any(|&block_decl_idx| {
+                            block_decl_idx.is_some()
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get(block_decl_idx)
+                                    .map_or(false, |n| n.pos < var_pos)
+                        })
+                    });
+
+            let (msg, code) = if block_scoped_first {
+                (
+                    crate::diagnostics::format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[var_name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                )
+            } else {
+                (
+                    crate::diagnostics::format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER,
+                        &[var_name],
+                    ),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                )
+            };
+
             // Error on the var declaration name
-            self.error_at_node(
-                var_decl.name,
-                &msg,
-                diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-            );
+            self.error_at_node(var_decl.name, &msg, code);
             // Error on the block-scoped declaration (let/const)
             if let Some(block_sym) = self.ctx.binder.get_symbol(_block_sym_id) {
                 for &block_decl_idx in &block_sym.declarations {
@@ -194,11 +240,7 @@ impl<'a> CheckerState<'a> {
                     let name_node = self
                         .get_declaration_name_node(block_decl_idx)
                         .unwrap_or(block_decl_idx);
-                    self.error_at_node(
-                        name_node,
-                        &msg,
-                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                    );
+                    self.error_at_node(name_node, &msg, code);
                 }
             }
         } else {
