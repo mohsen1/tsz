@@ -629,19 +629,12 @@ fn test_defs_by_file_single_file() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info1 = DefinitionInfo::type_alias(
-        interner.intern_string("Foo"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info1 =
+        DefinitionInfo::type_alias(interner.intern_string("Foo"), vec![], TypeId::NUMBER);
     info1.file_id = Some(10);
     let id1 = store.register(info1);
 
-    let mut info2 = DefinitionInfo::interface(
-        interner.intern_string("Bar"),
-        vec![],
-        vec![],
-    );
+    let mut info2 = DefinitionInfo::interface(interner.intern_string("Bar"), vec![], vec![]);
     info2.file_id = Some(10);
     let id2 = store.register(info2);
 
@@ -657,19 +650,13 @@ fn test_defs_by_file_multiple_files() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info_a = DefinitionInfo::type_alias(
-        interner.intern_string("A"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info_a =
+        DefinitionInfo::type_alias(interner.intern_string("A"), vec![], TypeId::NUMBER);
     info_a.file_id = Some(1);
     let id_a = store.register(info_a);
 
-    let mut info_b = DefinitionInfo::type_alias(
-        interner.intern_string("B"),
-        vec![],
-        TypeId::STRING,
-    );
+    let mut info_b =
+        DefinitionInfo::type_alias(interner.intern_string("B"), vec![], TypeId::STRING);
     info_b.file_id = Some(2);
     let id_b = store.register(info_b);
 
@@ -684,11 +671,7 @@ fn test_defs_by_file_no_file_id() {
     let store = DefinitionStore::new();
 
     // Definitions without file_id should not appear in file index.
-    let info = DefinitionInfo::type_alias(
-        interner.intern_string("Orphan"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let info = DefinitionInfo::type_alias(interner.intern_string("Orphan"), vec![], TypeId::NUMBER);
     store.register(info);
 
     assert_eq!(store.file_count(), 0);
@@ -699,11 +682,8 @@ fn test_invalidate_file_removes_definitions() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info = DefinitionInfo::type_alias(
-        interner.intern_string("Foo"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info =
+        DefinitionInfo::type_alias(interner.intern_string("Foo"), vec![], TypeId::NUMBER);
     info.file_id = Some(5);
     info.symbol_id = Some(100);
     let def_id = store.register(info);
@@ -733,19 +713,11 @@ fn test_invalidate_file_preserves_other_files() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info1 = DefinitionInfo::type_alias(
-        interner.intern_string("A"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info1 = DefinitionInfo::type_alias(interner.intern_string("A"), vec![], TypeId::NUMBER);
     info1.file_id = Some(1);
     let id1 = store.register(info1);
 
-    let mut info2 = DefinitionInfo::type_alias(
-        interner.intern_string("B"),
-        vec![],
-        TypeId::STRING,
-    );
+    let mut info2 = DefinitionInfo::type_alias(interner.intern_string("B"), vec![], TypeId::STRING);
     info2.file_id = Some(2);
     let id2 = store.register(info2);
 
@@ -762,11 +734,8 @@ fn test_invalidate_file_cleans_body_to_alias() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info = DefinitionInfo::type_alias(
-        interner.intern_string("Color"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info =
+        DefinitionInfo::type_alias(interner.intern_string("Color"), vec![], TypeId::NUMBER);
     info.file_id = Some(3);
     store.register(info);
 
@@ -801,11 +770,7 @@ fn test_invalidate_file_cleans_shape_index() {
         symbol: None,
     };
 
-    let mut info = DefinitionInfo::interface(
-        interner.intern_string("Empty"),
-        vec![],
-        vec![],
-    );
+    let mut info = DefinitionInfo::interface(interner.intern_string("Empty"), vec![], vec![]);
     info.file_id = Some(7);
     store.register(info);
 
@@ -821,11 +786,7 @@ fn test_clear_resets_file_index() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info = DefinitionInfo::type_alias(
-        interner.intern_string("X"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info = DefinitionInfo::type_alias(interner.intern_string("X"), vec![], TypeId::NUMBER);
     info.file_id = Some(1);
     store.register(info);
 
