@@ -3580,7 +3580,7 @@ var res: string = method("test");
 }
 
 #[test]
-fn test_generic_callback_return_mismatch_reports_ts2322_on_expression_body() {
+fn test_generic_callback_return_mismatch_reports_ts2345_on_expression_body() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 function someGenerics3<T>(producer: () => T) { }
@@ -3592,13 +3592,11 @@ someGenerics3<number>(() => undefined);
         },
     );
 
+    // tsc reports TS2345 (argument not assignable) at the call site for
+    // simple expression-bodied arrow callbacks, not TS2322 on the return.
     assert!(
-        has_error(&diagnostics, 2322),
-        "Expected TS2322 on the callback return expression. Actual: {diagnostics:#?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 2345),
-        "Did not expect outer TS2345 once callback return elaboration applies. Actual: {diagnostics:#?}"
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 on the callback argument. Actual: {diagnostics:#?}"
     );
 }
 
