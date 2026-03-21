@@ -30,6 +30,13 @@ pub(crate) fn application_info(
     tsz_solver::type_queries::get_application_info(db, type_id)
 }
 
+pub(crate) fn is_application_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(tsz_solver::TypeData::Application(_))
+    )
+}
+
 pub(crate) fn mapped_type_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<MappedTypeId> {
     tsz_solver::type_queries::get_mapped_type_id(db, type_id)
 }
