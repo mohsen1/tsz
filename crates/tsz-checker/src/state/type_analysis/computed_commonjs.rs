@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Start with the surface's typed named exports
-        let mut props = surface.named_exports.clone();
+        let mut props = surface.named_exports;
 
         // Add ANY-typed entries for any deep-scan names not already in the surface
         for name in &export_names {

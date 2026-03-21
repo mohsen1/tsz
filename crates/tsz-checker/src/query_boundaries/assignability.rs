@@ -516,7 +516,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     }
 }
 
-/// Suppress an ExcessProperty failure reason when the target's structure
+/// Suppress an `ExcessProperty` failure reason when the target's structure
 /// makes EPC inapplicable:
 /// 1. Target contains a deferred conditional type → structural mismatch, not EPC.
 /// 2. Target intersection has primitive or type-parameter members → EPC skipped.
@@ -544,13 +544,12 @@ fn suppress_excess_property_failure_if_needed(
     }
 
     // Check for non-EPC intersection members (primitives/type-params).
-    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target) {
-        if members.iter().any(|member| {
+    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
+        && members.iter().any(|member| {
             tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
         }) {
             return None;
         }
-    }
 
     failure
 }
@@ -564,7 +563,7 @@ fn suppress_excess_property_failure_if_needed(
 /// This is the authoritative boundary function for property-level analysis.
 /// It replaces the duplicated property enumeration logic that was previously
 /// spread across `state_checking/property.rs` (excess checking) and
-/// `assignability_diagnostics.rs` (should_skip_weak_union_error).
+/// `assignability_diagnostics.rs` (`should_skip_weak_union_error`).
 ///
 /// Returns `None` when the source or target is not an object type with
 /// extractable properties.

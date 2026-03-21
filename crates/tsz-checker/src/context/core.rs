@@ -215,7 +215,7 @@ impl<'a> CheckerContext<'a> {
     /// When TS5107/TS5101 deprecation diagnostics are present, tsc stops compilation
     /// early and never resolves lib types. This sets both the canonical flag on
     /// `EnvironmentCapabilities` and the `skip_lib_type_resolution` shortcut.
-    pub fn set_has_deprecation_diagnostics(&mut self, has_deprecation: bool) {
+    pub const fn set_has_deprecation_diagnostics(&mut self, has_deprecation: bool) {
         self.capabilities.has_deprecation_diagnostics = has_deprecation;
         self.skip_lib_type_resolution = has_deprecation;
     }

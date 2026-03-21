@@ -386,7 +386,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This consolidates the duplicated "no heritage" / "no resolved base" override
     /// checking patterns that were previously inlined in multiple places inside
-    /// `check_property_inheritance_compatibility`. The class_data members are
+    /// `check_property_inheritance_compatibility`. The `class_data` members are
     /// iterated via pre-built `OwnMemberSummary` when available; otherwise they
     /// are extracted inline.
     fn report_overrides_without_base(

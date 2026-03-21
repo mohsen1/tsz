@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Routes through `FileFeatures` flags set by the binder, and checker-level
     /// state for async depth.
-    pub(crate) fn should_check_feature_gate(
+    pub(crate) const fn should_check_feature_gate(
         &self,
         gate: crate::query_boundaries::capabilities::FeatureGate,
     ) -> bool {
