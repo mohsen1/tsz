@@ -258,6 +258,27 @@ impl<'a> CheckerState<'a> {
                 {
                     return self.symbol_is_namespace_only(target_sym_id);
                 }
+
+                // For module-level imports (`import X = require('...')` or
+                // `import * as X from '...'`), when the alias can't be resolved,
+                // the symbol may represent a module namespace. These have import_module
+                // set but import_name is None because they import the whole module.
+                //
+                // Only flag as namespace-only when the target module IS known in our
+                // exports table (so we know its shape) but doesn't have `export =`.
+                // If the module has `export =`, resolve_alias_symbol would have succeeded
+                // above. If the module isn't in our exports table at all (unresolved
+                // cross-file reference), we can't assume it's namespace-only.
+                if let Some(ref module_name) = symbol.import_module
+                    && symbol.import_name.is_none()
+                    && self
+                        .ctx
+                        .binder
+                        .module_exports
+                        .contains_key(module_name.as_str())
+                {
+                    return true;
+                }
             }
 
             let is_namespace = (symbol.flags
