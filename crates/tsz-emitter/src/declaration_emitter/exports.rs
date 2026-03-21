@@ -1285,7 +1285,9 @@ impl<'a> DeclarationEmitter<'a> {
             if is_exported {
                 self.write("export ");
             }
-            self.write("declare ");
+            if self.should_emit_declare_keyword(is_exported) {
+                self.write("declare ");
+            }
         } else if is_exported && self.ambient_module_has_scope_marker {
             self.write("export ");
         }
