@@ -2982,3 +2982,158 @@ fn semantic_defs_stable_across_repeated_merge() {
         "semantic defs should be identical across rebuilds"
     );
 }
+
+// =============================================================================
+// Skeleton integration into MergedProgram
+// =============================================================================
+
+#[test]
+fn skeleton_index_populated_after_merge() {
+    let files = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    assert!(
+        program.skeleton_index.is_some(),
+        "skeleton_index should be populated after merge"
+    );
+    let idx = program.skeleton_index.as_ref().unwrap();
+    assert_eq!(idx.file_count, 2);
+}
+
+#[test]
+fn skeleton_index_single_file() {
+    let files = vec![("test.ts".to_string(), "let x = 42;".to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    assert_eq!(idx.file_count, 1);
+    assert!(
+        idx.merge_candidates.is_empty(),
+        "single file should have no merge candidates"
+    );
+    assert!(idx.total_symbol_count > 0, "should have at least one symbol");
+}
+
+#[test]
+fn skeleton_index_captures_declared_modules() {
+    let files = vec![(
+        "ambient.d.ts".to_string(),
+        r#"declare module "my-module" { export function hello(): void; }"#.to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    assert!(
+        idx.declared_modules.contains("my-module"),
+        "skeleton index should capture declared module names"
+    );
+}
+
+#[test]
+fn skeleton_index_captures_merge_candidates() {
+    // Two script files (not modules) with the same interface name should produce
+    // a merge candidate.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Shared { x: number; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Shared { y: string; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    let shared = idx
+        .merge_candidates
+        .iter()
+        .find(|c| c.name == "Shared");
+    assert!(
+        shared.is_some(),
+        "interface 'Shared' should appear as a merge candidate"
+    );
+    let shared = shared.unwrap();
+    assert_eq!(shared.source_files.len(), 2);
+    assert!(shared.is_valid_merge, "interface + interface should be a valid merge");
+}
+
+#[test]
+fn skeleton_index_stable_across_rebuilds() {
+    let files = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    let idx1 = program1.skeleton_index.as_ref().unwrap();
+    let idx2 = program2.skeleton_index.as_ref().unwrap();
+
+    assert_eq!(idx1.file_count, idx2.file_count);
+    assert_eq!(idx1.total_symbol_count, idx2.total_symbol_count);
+    assert_eq!(idx1.merge_candidates.len(), idx2.merge_candidates.len());
+    assert_eq!(
+        idx1.total_reexport_count,
+        idx2.total_reexport_count
+    );
+}
+
+#[test]
+fn skeleton_index_reexport_counts() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export const foo = 1;".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export { foo } from './a';".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    // b.ts has a named re-export
+    assert!(
+        idx.total_reexport_count > 0 || idx.total_wildcard_reexport_count > 0,
+        "should track re-export edges in skeleton index"
+    );
+}
+
+#[test]
+fn skeleton_index_external_modules_excluded_from_global_merge() {
+    // External modules (files with import/export) should not contribute to
+    // global merge candidates. Only script files do.
+    let files = vec![
+        (
+            "mod_a.ts".to_string(),
+            "export interface Dup { x: number; }".to_string(),
+        ),
+        (
+            "mod_b.ts".to_string(),
+            "export interface Dup { y: string; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    let dup = idx.merge_candidates.iter().find(|c| c.name == "Dup");
+    assert!(
+        dup.is_none(),
+        "external module symbols should not appear as merge candidates"
+    );
+}
