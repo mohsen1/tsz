@@ -832,3 +832,301 @@ fn test_async_function_no_diagnostic_with_lib() {
     let caps = EnvironmentCapabilities::from_options(&opts, true);
     assert_eq!(caps.check_feature_gate(FeatureGate::AsyncFunction), None);
 }
+
+// =============================================================================
+// Phase 2: Top-level await boundary routing (TS1378 via FeatureGate::TopLevelAwait)
+// =============================================================================
+
+#[test]
+fn test_top_level_await_gate_unsupported_module() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    // CommonJS + ESNext target → TS1378
+    let opts = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ESNext,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    let diag = caps.check_feature_gate(FeatureGate::TopLevelAwait);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::TopLevelAwaitUnsupported),
+        "TopLevelAwait should fire with CommonJS"
+    );
+    assert_eq!(diag.unwrap().code(), 1378);
+}
+
+#[test]
+fn test_top_level_await_gate_unsupported_target() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    // ESNext module + ES5 target → TS1378
+    let opts = CheckerOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::TopLevelAwait),
+        Some(CapabilityDiagnostic::TopLevelAwaitUnsupported),
+    );
+}
+
+#[test]
+fn test_top_level_await_gate_supported() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+
+    for module in [
+        ModuleKind::ES2022,
+        ModuleKind::ESNext,
+        ModuleKind::System,
+        ModuleKind::Node16,
+        ModuleKind::Node18,
+        ModuleKind::Node20,
+        ModuleKind::NodeNext,
+        ModuleKind::Preserve,
+    ] {
+        let opts = CheckerOptions {
+            module,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        };
+        let caps = EnvironmentCapabilities::from_options(&opts, true);
+        assert_eq!(
+            caps.check_feature_gate(FeatureGate::TopLevelAwait),
+            None,
+            "TopLevelAwait should be supported with {module:?}"
+        );
+    }
+}
+
+// =============================================================================
+// Phase 2: Import assert deprecation boundary (TS2880)
+// =============================================================================
+
+#[test]
+fn test_import_assert_deprecated_fires_by_default() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    let diag = caps.check_import_assert_deprecated();
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::ImportAssertDeprecated),
+        "TS2880 should fire when ignore_deprecations is false"
+    );
+    assert_eq!(diag.unwrap().code(), 2880);
+}
+
+#[test]
+fn test_import_assert_deprecated_suppressed_by_ignore_deprecations() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions {
+        ignore_deprecations: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_import_assert_deprecated(),
+        None,
+        "TS2880 should NOT fire when ignore_deprecations is true"
+    );
+}
+
+// =============================================================================
+// Phase 2: Import assert deprecated integration test (checker-level)
+// =============================================================================
+
+#[test]
+fn test_import_assert_deprecated_checker_integration_ts2880() {
+    let diags = check_with_options(
+        r#"import data from './data.json' assert { type: "json" };"#,
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
+    assert!(
+        !ts2880.is_empty(),
+        "Expected TS2880 for 'assert' keyword, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_import_assert_deprecated_suppressed_checker_integration() {
+    let diags = check_with_options(
+        r#"import data from './data.json' assert { type: "json" };"#,
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            ignore_deprecations: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
+    assert!(
+        ts2880.is_empty(),
+        "Expected NO TS2880 with ignore_deprecations=true, got: {ts2880:?}"
+    );
+}
+
+// =============================================================================
+// Phase 2: resolveJsonModule incompatibility extended (TS5071)
+// =============================================================================
+
+#[test]
+fn test_resolve_json_module_incompatible_umd() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::UMD,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    let diags = caps.check_config_compatibility();
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        diags[0],
+        CapabilityDiagnostic::ResolveJsonModuleIncompatible,
+        "resolveJsonModule + UMD should produce TS5071"
+    );
+}
+
+#[test]
+fn test_resolve_json_module_compatible_commonjs() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert!(
+        caps.check_config_compatibility().is_empty(),
+        "resolveJsonModule + CommonJS should be compatible"
+    );
+}
+
+#[test]
+fn test_resolve_json_module_compatible_preserve() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions {
+        module: ModuleKind::Preserve,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert!(
+        caps.check_config_compatibility().is_empty(),
+        "resolveJsonModule + Preserve should be compatible"
+    );
+}
+
+// =============================================================================
+// Phase 2: Deprecation state and skip lib resolution (TS5101/TS5107)
+// =============================================================================
+
+#[test]
+fn test_deprecation_state_propagates_to_skip_lib() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+
+    let opts = CheckerOptions::default();
+    let mut caps = EnvironmentCapabilities::from_options(&opts, true);
+
+    // Default: no deprecation
+    assert!(!caps.has_deprecation_diagnostics);
+    assert!(!caps.should_skip_lib_type_resolution());
+
+    // Set deprecation: should skip lib
+    caps.has_deprecation_diagnostics = true;
+    assert!(caps.should_skip_lib_type_resolution());
+}
+
+#[test]
+fn test_deprecation_diagnostic_code_mapping() {
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    assert_eq!(
+        CapabilityDiagnostic::DeprecatedOption {
+            name: "charset".to_string()
+        }
+        .code(),
+        5101,
+        "DeprecatedOption should map to TS5101"
+    );
+    assert_eq!(
+        CapabilityDiagnostic::DeprecatedOptionValue {
+            name: "target".to_string(),
+            value: "ES3".to_string(),
+        }
+        .code(),
+        5107,
+        "DeprecatedOptionValue should map to TS5107"
+    );
+}
+
+// =============================================================================
+// Phase 2: CapabilityDiagnostic code mapping completeness
+// =============================================================================
+
+#[test]
+fn test_capability_diagnostic_new_variants_code_mapping() {
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    // New variants added in phase 2
+    assert_eq!(
+        CapabilityDiagnostic::TopLevelAwaitUnsupported.code(),
+        1378,
+        "TopLevelAwaitUnsupported should map to TS1378"
+    );
+    assert_eq!(
+        CapabilityDiagnostic::ImportAssertDeprecated.code(),
+        2880,
+        "ImportAssertDeprecated should map to TS2880"
+    );
+}
+
+// =============================================================================
+// Phase 2: Top-level await Node18/Node20 coverage (fixed by boundary routing)
+// =============================================================================
+
+#[test]
+fn test_top_level_await_using_node18_node20_supported() {
+    use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+
+    // Node18 and Node20 were previously missing from the manual match in
+    // core_statement_checks.rs. Routing through the capability boundary fixed this.
+    for module in [ModuleKind::Node18, ModuleKind::Node20] {
+        let opts = CheckerOptions {
+            module,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        };
+        let caps = EnvironmentCapabilities::from_options(&opts, true);
+        assert!(
+            caps.top_level_await_using_supported,
+            "top_level_await_using_supported should be true for {module:?}"
+        );
+        assert_eq!(
+            caps.check_feature_gate(FeatureGate::TopLevelAwaitUsing),
+            None,
+            "TopLevelAwaitUsing gate should not fire for {module:?}"
+        );
+        assert_eq!(
+            caps.check_feature_gate(FeatureGate::TopLevelAwait),
+            None,
+            "TopLevelAwait gate should not fire for {module:?}"
+        );
+    }
+}

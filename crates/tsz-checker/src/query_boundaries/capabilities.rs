@@ -28,6 +28,8 @@ pub enum FeatureGate {
     AwaitUsingDeclaration,
     /// Top-level `await using` (requires specific module + target)
     TopLevelAwaitUsing,
+    /// Top-level `await` expression (requires same module + target as TopLevelAwaitUsing)
+    TopLevelAwait,
     /// `resolveJsonModule` option validity
     ResolveJsonModule,
     /// Generator functions (requires `IterableIterator`)
@@ -163,7 +165,9 @@ impl EnvironmentCapabilities {
     pub const fn feature_available(&self, gate: FeatureGate) -> bool {
         match gate {
             FeatureGate::ImportAttributes => self.import_attributes_supported,
-            FeatureGate::TopLevelAwaitUsing => self.top_level_await_using_supported,
+            FeatureGate::TopLevelAwaitUsing | FeatureGate::TopLevelAwait => {
+                self.top_level_await_using_supported
+            }
             FeatureGate::ResolveJsonModule => self.resolve_json_module_compatible,
             // For these gates, we check lib availability (global type presence is separate)
             FeatureGate::UsingDeclaration
