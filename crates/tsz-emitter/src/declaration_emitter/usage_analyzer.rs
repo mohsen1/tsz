@@ -228,6 +228,9 @@ impl<'a> UsageAnalyzer<'a> {
                         k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                             self.analyze_import_equals_declaration(export.export_clause);
                         }
+                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                            self.analyze_module_declaration(export.export_clause);
+                        }
                         // Named exports: export { x, y as z }
                         // Mark each specifier's local name as used
                         k if k == syntax_kind_ext::NAMED_EXPORTS => {
@@ -1232,6 +1235,17 @@ impl<'a> UsageAnalyzer<'a> {
                     }
                     if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
                         self.mark_symbol_used(sym_id, kind);
+                    }
+                    // Also check namespace/module scope tables, since the
+                    // symbol may live in a parent namespace scope rather than
+                    // file-level locals. This is needed so that non-exported
+                    // namespace members referenced by exported members are
+                    // properly marked as used (and thus emitted + triggering
+                    // `export {};` scope markers).
+                    for scope in &self.binder.scopes {
+                        if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
                     }
                 }
             }
