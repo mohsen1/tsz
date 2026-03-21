@@ -5727,3 +5727,32 @@ export default class Bar {
         "Expected exactly 2 overload signatures (not implementation) in export default class, got {method_count}: {output}"
     );
 }
+
+#[test]
+fn test_namespace_non_exported_type_used_by_export_emits_scope_marker() {
+    // When a non-ambient namespace has a non-exported type alias referenced
+    // by an exported member, tsc emits the type alias and adds `export {};`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace M {
+    type W = string | number;
+    export namespace N {
+        export class Window {}
+        export var p: W;
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("type W = string | number;"),
+        "Expected non-exported type alias 'W' to be emitted (referenced by exported member): {output}"
+    );
+    assert!(
+        output.contains("export namespace N"),
+        "Expected 'export namespace N' to preserve export keyword: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected 'export {{}};' scope marker in namespace with mixed exports: {output}"
+    );
+}
