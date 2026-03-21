@@ -80,6 +80,23 @@ impl<'a> CheckerState<'a> {
         }
         trace!(?narrowed_type, "flow narrowing result");
 
+        // When flow analysis narrows to a type that is NOT assignable to the
+        // declared type, the narrowing came from an invalid assignment (e.g.,
+        // `var x: string; x = 0;` or a duplicate `var` declaration with
+        // incompatible type).  tsc keeps the declared type in this situation.
+        // Mark the node as flow-narrowed so the second narrowing pass in
+        // `get_type_of_node` doesn't re-apply the invalid narrowing.
+        if narrowed_type != declared_type
+            && narrowed_type != TypeId::ERROR
+            && declared_type != TypeId::ANY
+            && declared_type != TypeId::UNKNOWN
+            && !self.is_assignable_to(narrowed_type, declared_type)
+        {
+            trace!("Flow narrowed to incompatible type, keeping declared type");
+            self.ctx.flow_narrowed_nodes.insert(idx.0);
+            return declared_type;
+        }
+
         // Check definite assignment for block-scoped variables without initializers.
         // TS2454 is checked INDEPENDENTLY of narrowing. When a variable is used
         // before assignment, we emit TS2454 and return the declared type (not the
