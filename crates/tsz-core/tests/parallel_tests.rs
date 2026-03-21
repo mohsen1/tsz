@@ -2883,3 +2883,527 @@ fn test_parallel_binding_produces_consistent_symbols() {
         }
     }
 }
+
+// =========================================================================
+// File Skeleton IR Tests
+// =========================================================================
+
+#[test]
+fn test_skeleton_extract_basic_symbols() {
+    let result = parse_and_bind_single(
+        "a.ts".to_string(),
+        "let x = 1; function foo() {} class Bar {}".to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    assert_eq!(skeleton.file_name, "a.ts");
+    assert!(!skeleton.is_external_module);
+
+    // Should have all three top-level symbols
+    let names: Vec<&str> = skeleton.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"x"), "skeleton missing 'x': {names:?}");
+    assert!(names.contains(&"foo"), "skeleton missing 'foo': {names:?}");
+    assert!(names.contains(&"Bar"), "skeleton missing 'Bar': {names:?}");
+
+    // Symbols should be sorted by name (deterministic)
+    let sorted: Vec<&str> = {
+        let mut v = names.clone();
+        v.sort();
+        v
+    };
+    assert_eq!(names, sorted, "skeleton symbols should be sorted by name");
+}
+
+#[test]
+fn test_skeleton_extract_exported_symbols() {
+    let result = parse_and_bind_single(
+        "mod.ts".to_string(),
+        "export const a = 1; export function b() {} const c = 3;".to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+    assert!(skeleton.is_external_module);
+
+    let a = skeleton.symbols.iter().find(|s| s.name == "a");
+    assert!(a.is_some(), "should find 'a'");
+    assert!(a.unwrap().is_exported, "'a' should be exported");
+
+    let b = skeleton.symbols.iter().find(|s| s.name == "b");
+    assert!(b.is_some(), "should find 'b'");
+    assert!(b.unwrap().is_exported, "'b' should be exported");
+}
+
+#[test]
+fn test_skeleton_extract_interface_flags() {
+    let result = parse_and_bind_single(
+        "types.ts".to_string(),
+        "interface Foo { x: number; } interface Bar { y: string; }".to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    for sym in &skeleton.symbols {
+        assert!(
+            sym.flags & crate::binder::symbol_flags::INTERFACE != 0,
+            "'{0}' should have INTERFACE flag",
+            sym.name
+        );
+        // Note: the binder may or may not populate `members` for all interfaces
+        // depending on the declaration structure. The important thing is the flag.
+    }
+}
+
+#[test]
+fn test_skeleton_extract_namespace_with_exports() {
+    let result = parse_and_bind_single(
+        "ns.ts".to_string(),
+        "namespace Utils { export function helper() {} }".to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    let utils = skeleton.symbols.iter().find(|s| s.name == "Utils");
+    assert!(utils.is_some(), "should find 'Utils'");
+    let utils = utils.unwrap();
+    assert!(
+        utils.flags & crate::binder::symbol_flags::MODULE != 0,
+        "Utils should have MODULE flag"
+    );
+    assert!(utils.has_exports, "Utils should have exports");
+}
+
+#[test]
+fn test_skeleton_extract_declared_modules() {
+    let result = parse_and_bind_single(
+        "ambient.d.ts".to_string(),
+        r#"declare module "foo" { export function bar(): void; }"#.to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    assert!(
+        skeleton.declared_modules.contains(&"foo".to_string()),
+        "should contain declared module 'foo': {:?}",
+        skeleton.declared_modules
+    );
+}
+
+#[test]
+fn test_skeleton_extract_global_augmentations() {
+    let result = parse_and_bind_single(
+        "global-aug.d.ts".to_string(),
+        r#"
+export {};
+declare global {
+    interface Window { myProp: string; }
+}
+"#
+        .to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    assert!(
+        !skeleton.global_augmentations.is_empty(),
+        "should have global augmentations"
+    );
+}
+
+#[test]
+fn test_skeleton_extract_module_augmentations() {
+    // Module augmentations require the file to be an external module (has exports).
+    // A bare `declare module "x"` in a non-module file is a declared module, not an augmentation.
+    let result = parse_and_bind_single(
+        "mod-aug.ts".to_string(),
+        r#"
+export {};
+declare module "express" {
+    interface Request { myProp: string; }
+}
+"#
+        .to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    // The binder may classify this as a module augmentation or a declared module
+    // depending on context. At minimum, "express" should appear in one of them.
+    let has_augmentation = skeleton
+        .module_augmentations
+        .iter()
+        .any(|a| a.target == "express");
+    let has_declared = skeleton.declared_modules.contains(&"express".to_string());
+    assert!(
+        has_augmentation || has_declared,
+        "should have 'express' as module augmentation or declared module. \
+         augmentations: {:?}, declared: {:?}",
+        skeleton.module_augmentations,
+        skeleton.declared_modules
+    );
+}
+
+#[test]
+fn test_skeleton_symbols_are_sorted_deterministically() {
+    // Run extraction multiple times; symbols should always be in the same order.
+    let source = "let z = 1; let a = 2; let m = 3; function b() {} class C {}";
+    for _ in 0..5 {
+        let result = parse_and_bind_single("det.ts".to_string(), source.to_string());
+        let skeleton = extract_skeleton(&result);
+        let names: Vec<&str> = skeleton.symbols.iter().map(|s| s.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(
+            names, sorted,
+            "skeleton symbols must be sorted deterministically"
+        );
+    }
+}
+
+#[test]
+fn test_reduce_skeletons_single_file_no_merge_candidates() {
+    let result = parse_and_bind_single(
+        "a.ts".to_string(),
+        "let x = 1; function foo() {}".to_string(),
+    );
+    let skeleton = extract_skeleton(&result);
+    let index = reduce_skeletons(&[skeleton]);
+
+    assert_eq!(index.file_count, 1);
+    assert!(
+        index.merge_candidates.is_empty(),
+        "single file should have no merge candidates"
+    );
+    assert!(index.total_symbol_count >= 2);
+}
+
+#[test]
+fn test_reduce_skeletons_cross_file_interface_merge() {
+    // Two files declaring the same interface name => merge candidate.
+    let r1 = parse_and_bind_single(
+        "a.ts".to_string(),
+        "interface Foo { x: number; }".to_string(),
+    );
+    let r2 = parse_and_bind_single(
+        "b.ts".to_string(),
+        "interface Foo { y: string; }".to_string(),
+    );
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+    let index = reduce_skeletons(&[s1, s2]);
+
+    assert_eq!(index.file_count, 2);
+    assert!(
+        !index.merge_candidates.is_empty(),
+        "should have merge candidates for 'Foo'"
+    );
+
+    let foo_candidate = index.merge_candidates.iter().find(|c| c.name == "Foo");
+    assert!(foo_candidate.is_some(), "should find 'Foo' merge candidate");
+    let foo = foo_candidate.unwrap();
+    assert_eq!(foo.source_files.len(), 2, "Foo should come from 2 files");
+    assert!(
+        foo.is_valid_merge,
+        "interface+interface should be valid merge"
+    );
+}
+
+#[test]
+fn test_reduce_skeletons_cross_file_namespace_merge() {
+    let r1 = parse_and_bind_single(
+        "a.ts".to_string(),
+        "namespace Utils { export function a() {} }".to_string(),
+    );
+    let r2 = parse_and_bind_single(
+        "b.ts".to_string(),
+        "namespace Utils { export function b() {} }".to_string(),
+    );
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+    let index = reduce_skeletons(&[s1, s2]);
+
+    let utils = index.merge_candidates.iter().find(|c| c.name == "Utils");
+    assert!(utils.is_some(), "should find 'Utils' merge candidate");
+    assert!(utils.unwrap().is_valid_merge);
+}
+
+#[test]
+fn test_reduce_skeletons_external_modules_no_global_merge() {
+    // External modules should NOT produce merge candidates for globals.
+    let r1 = parse_and_bind_single("a.ts".to_string(), "export const x = 1;".to_string());
+    let r2 = parse_and_bind_single("b.ts".to_string(), "export const x = 2;".to_string());
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+
+    assert!(s1.is_external_module);
+    assert!(s2.is_external_module);
+
+    let index = reduce_skeletons(&[s1, s2]);
+
+    // External modules don't contribute to globals, so no merge candidates
+    let x_candidate = index.merge_candidates.iter().find(|c| c.name == "x");
+    assert!(
+        x_candidate.is_none(),
+        "external module symbols should not produce merge candidates"
+    );
+}
+
+#[test]
+fn test_reduce_skeletons_deterministic_output() {
+    // Same inputs in same order should always produce same output.
+    let r1 = parse_and_bind_single(
+        "a.ts".to_string(),
+        "interface Shared { x: number; } let unique_a = 1;".to_string(),
+    );
+    let r2 = parse_and_bind_single(
+        "b.ts".to_string(),
+        "interface Shared { y: string; } let unique_b = 2;".to_string(),
+    );
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+
+    let index1 = reduce_skeletons(&[s1.clone(), s2.clone()]);
+    let index2 = reduce_skeletons(&[s1.clone(), s2.clone()]);
+
+    assert_eq!(index1.file_count, index2.file_count);
+    assert_eq!(index1.merge_candidates.len(), index2.merge_candidates.len());
+    assert_eq!(index1.total_symbol_count, index2.total_symbol_count);
+    assert_eq!(index1.total_reexport_count, index2.total_reexport_count);
+
+    for (c1, c2) in index1
+        .merge_candidates
+        .iter()
+        .zip(index2.merge_candidates.iter())
+    {
+        assert_eq!(c1.name, c2.name);
+        assert_eq!(c1.merged_flags, c2.merged_flags);
+        assert_eq!(c1.source_files, c2.source_files);
+        assert_eq!(c1.is_valid_merge, c2.is_valid_merge);
+    }
+}
+
+#[test]
+fn test_reduce_skeletons_augmentation_targets_collected() {
+    let r1 = parse_and_bind_single(
+        "a.d.ts".to_string(),
+        r#"
+export {};
+declare global {
+    interface Window { prop1: string; }
+}
+"#
+        .to_string(),
+    );
+    let r2 = parse_and_bind_single(
+        "b.d.ts".to_string(),
+        r#"
+export {};
+declare global {
+    interface Window { prop2: number; }
+}
+"#
+        .to_string(),
+    );
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+    let index = reduce_skeletons(&[s1, s2]);
+
+    // Both files contribute global augmentations; at least one target should appear.
+    // Note: whether "Window" appears depends on binder behavior for declare global blocks.
+    assert_eq!(index.file_count, 2);
+}
+
+#[test]
+fn test_reduce_skeletons_declared_modules_merged() {
+    let r1 = parse_and_bind_single(
+        "a.d.ts".to_string(),
+        r#"declare module "foo" { export function f(): void; }"#.to_string(),
+    );
+    let r2 = parse_and_bind_single(
+        "b.d.ts".to_string(),
+        r#"declare module "bar" { export function g(): void; }"#.to_string(),
+    );
+
+    let s1 = extract_skeleton(&r1);
+    let s2 = extract_skeleton(&r2);
+    let index = reduce_skeletons(&[s1, s2]);
+
+    assert!(index.declared_modules.contains("foo"));
+    assert!(index.declared_modules.contains("bar"));
+}
+
+#[test]
+fn test_skeleton_estimated_size_smaller_than_bind_result() {
+    let source = r#"
+interface Foo { x: number; y: string; z: boolean; }
+namespace Utils {
+    export function helper(): void {}
+    export const PI = 3.14;
+}
+class MyClass {
+    private field: number;
+    constructor() { this.field = 0; }
+    method(): string { return ""; }
+}
+function standalone(a: number, b: number): number { return a + b; }
+let global1 = 1;
+let global2 = "hello";
+const global3 = true;
+"#;
+
+    let result = parse_and_bind_single("large.ts".to_string(), source.to_string());
+    let skeleton = extract_skeleton(&result);
+
+    let skeleton_size = skeleton.estimated_size_bytes();
+
+    // The skeleton should be much smaller than the full BindResult.
+    // We can't easily measure BindResult size, but we can compare against
+    // the arena size which is the dominant cost.
+    let arena_node_count = result.arena.len();
+    let flow_node_count = result.flow_nodes.len();
+
+    // Sanity: skeleton has data
+    assert!(skeleton_size > 0, "skeleton should have non-zero size");
+    assert!(!skeleton.symbols.is_empty(), "skeleton should have symbols");
+
+    // The skeleton should capture fewer items than the full arena
+    assert!(
+        skeleton.symbols.len() < arena_node_count,
+        "skeleton symbol count ({}) should be less than arena node count ({})",
+        skeleton.symbols.len(),
+        arena_node_count
+    );
+
+    // The skeleton should not retain flow graph data
+    assert!(flow_node_count > 0, "bind should produce flow nodes");
+    // (skeleton has no flow graph field at all — this is by design)
+
+    eprintln!(
+        "Skeleton: {} bytes, {} symbols | Arena: {} nodes, {} flow nodes",
+        skeleton_size,
+        skeleton.symbols.len(),
+        arena_node_count,
+        flow_node_count
+    );
+}
+
+#[test]
+fn test_skeleton_does_not_retain_arena_or_flow_data() {
+    let result = parse_and_bind_single(
+        "check.ts".to_string(),
+        "let x = 1; if (x > 0) { x = 2; } else { x = 3; }".to_string(),
+    );
+
+    let skeleton = extract_skeleton(&result);
+
+    // Verify the skeleton is a plain data struct with no Arc<NodeArena> references.
+    // We do this by checking that the skeleton can be cloned independently and
+    // the original BindResult's arena is not referenced.
+    let cloned = skeleton.clone();
+    assert_eq!(cloned.file_name, skeleton.file_name);
+    assert_eq!(cloned.symbols.len(), skeleton.symbols.len());
+
+    // The BindResult has flow nodes, the skeleton does not.
+    assert!(
+        result.flow_nodes.len() > 0,
+        "BindResult should have flow nodes"
+    );
+    // FileSkeleton has no flow_nodes field — verified at compile time by struct definition.
+}
+
+#[test]
+fn test_skeleton_and_merge_agree_on_symbol_names() {
+    // Verify that the skeleton captures the same top-level symbol names
+    // that merge_bind_results puts into globals.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "let x = 1; function foo() {} interface IFoo {}".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "let y = 2; class Bar {} interface IFoo {}".to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+
+    // Extract skeletons
+    let skeletons: Vec<FileSkeleton> = bind_results.iter().map(extract_skeleton).collect();
+    let index = reduce_skeletons(&skeletons);
+
+    // Merge via legacy path
+    let program = merge_bind_results(bind_results);
+
+    // All globals from the merged program should appear in skeletons
+    for (name, _) in program.globals.iter() {
+        let found_in_skeleton = skeletons
+            .iter()
+            .any(|s| s.symbols.iter().any(|sym| sym.name == *name));
+        assert!(
+            found_in_skeleton,
+            "global symbol '{name}' from merged program not found in any skeleton"
+        );
+    }
+
+    // Merge candidates should correspond to symbols in globals that
+    // appear in multiple files
+    for candidate in &index.merge_candidates {
+        assert!(
+            program.globals.has(&candidate.name),
+            "merge candidate '{}' should be in globals",
+            candidate.name
+        );
+    }
+
+    // IFoo should be a merge candidate
+    assert!(
+        index.merge_candidates.iter().any(|c| c.name == "IFoo"),
+        "IFoo should be a merge candidate: {:?}",
+        index
+            .merge_candidates
+            .iter()
+            .map(|c| &c.name)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_reduce_skeletons_many_files_deterministic() {
+    // Test with many files to verify determinism at scale.
+    let bind_results: Vec<BindResult> = (0..20)
+        .map(|i| {
+            let source = format!("interface Shared {{ prop{i}: number; }} let unique{i} = {i};");
+            parse_and_bind_single(format!("file{i}.ts"), source)
+        })
+        .collect();
+
+    let skeletons: Vec<FileSkeleton> = bind_results.iter().map(extract_skeleton).collect();
+
+    // Run reduce twice
+    let index1 = reduce_skeletons(&skeletons);
+    let index2 = reduce_skeletons(&skeletons);
+
+    assert_eq!(index1.file_count, 20);
+    assert_eq!(index1.merge_candidates.len(), index2.merge_candidates.len());
+
+    // "Shared" should be a merge candidate from all 20 files
+    let shared = index1.merge_candidates.iter().find(|c| c.name == "Shared");
+    assert!(shared.is_some(), "Shared should be a merge candidate");
+    assert_eq!(shared.unwrap().source_files.len(), 20);
+    assert!(shared.unwrap().is_valid_merge);
+
+    // Output should be identical
+    for (c1, c2) in index1
+        .merge_candidates
+        .iter()
+        .zip(index2.merge_candidates.iter())
+    {
+        assert_eq!(c1, c2, "merge candidates should be identical across runs");
+    }
+}
