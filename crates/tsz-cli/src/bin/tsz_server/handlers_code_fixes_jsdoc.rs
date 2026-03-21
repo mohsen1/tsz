@@ -1417,6 +1417,126 @@ impl Server {
             updated[prefix..updated_end].to_string(),
         ))
     }
+
+    /// Find class names defined in the content.
+    fn collect_class_names(content: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let bytes = content.as_bytes();
+        let mut i = 0;
+        while i + 6 <= bytes.len() {
+            if &content[i..i + 6] == "class " {
+                let mut j = i + 6;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let name_start = j;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'$')
+                {
+                    j += 1;
+                }
+                if j > name_start {
+                    let name = &content[name_start..j];
+                    if name != "extends" && name != "implements" {
+                        names.push(name.to_string());
+                    }
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        names
+    }
+
+    /// Apply "add missing new" fix at a specific diagnostic position.
+    pub(super) fn apply_add_missing_new_fallback(
+        content: &str,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<(String, String)> {
+        let class_names = Self::collect_class_names(content);
+        if class_names.is_empty() {
+            return None;
+        }
+        let line_map = tsz::lsp::position::LineMap::build(content);
+        for class_name in &class_names {
+            let pattern = format!("{class_name}(");
+            let mut search_from = 0;
+            while let Some(pos) = content[search_from..].find(&pattern) {
+                let abs_pos = search_from + pos;
+                let prefix = content[..abs_pos].trim_end();
+                if prefix.ends_with("new") {
+                    search_from = abs_pos + 1;
+                    continue;
+                }
+                if abs_pos > 0 {
+                    let prev = content.as_bytes()[abs_pos - 1];
+                    if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$' {
+                        search_from = abs_pos + 1;
+                        continue;
+                    }
+                }
+                if let Some((req_start, req_end)) = request_span {
+                    let call_pos = line_map.offset_to_position(abs_pos as u32, content);
+                    let call_end =
+                        line_map.offset_to_position((abs_pos + class_name.len()) as u32, content);
+                    if call_end.line < req_start.line || call_pos.line > req_end.line {
+                        search_from = abs_pos + 1;
+                        continue;
+                    }
+                }
+                let mut updated = String::with_capacity(content.len() + 4);
+                updated.push_str(&content[..abs_pos]);
+                updated.push_str("new ");
+                updated.push_str(&content[abs_pos..]);
+                return Some((updated, "Add missing 'new' operator to call".to_string()));
+            }
+        }
+        None
+    }
+
+    /// Apply "add missing new" to ALL class constructor calls.
+    pub(super) fn apply_add_missing_new_all_fallback(content: &str) -> Option<String> {
+        let class_names = Self::collect_class_names(content);
+        if class_names.is_empty() {
+            return None;
+        }
+        let mut result = content.to_string();
+        let mut changed = false;
+        loop {
+            let mut found = false;
+            for class_name in &class_names {
+                let pattern = format!("{class_name}(");
+                let mut search_from = 0;
+                while let Some(pos) = result[search_from..].find(&pattern) {
+                    let abs_pos = search_from + pos;
+                    let prefix = result[..abs_pos].trim_end();
+                    if prefix.ends_with("new") {
+                        search_from = abs_pos + 1;
+                        continue;
+                    }
+                    if abs_pos > 0 {
+                        let prev = result.as_bytes()[abs_pos - 1];
+                        if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$' {
+                            search_from = abs_pos + 1;
+                            continue;
+                        }
+                    }
+                    result.insert_str(abs_pos, "new ");
+                    changed = true;
+                    found = true;
+                    break;
+                }
+                if found {
+                    break;
+                }
+            }
+            if !found {
+                break;
+            }
+        }
+        changed.then_some(result)
+    }
 }
 
 #[cfg(test)]
