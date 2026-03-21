@@ -3068,7 +3068,6 @@ fn references_type_annotation_usage() {
 }
 
 #[test]
-#[ignore = "requires type annotation reference tracking"]
 fn references_enum_usage() {
     let mut t = FourslashTest::new(
         "
@@ -3077,7 +3076,8 @@ fn references_enum_usage() {
         function paint(color: /*r2*/Color) {}
     ",
     );
-    t.references("def").expect_found().expect_count(3);
+    // 4 references: definition + 2 type annotations + value reference in Color.Red
+    t.references("def").expect_found().expect_count(4);
 }
 
 #[test]
@@ -3119,7 +3119,6 @@ fn references_from_middle_usage() {
 }
 
 #[test]
-#[ignore = "requires heritage clause reference tracking"]
 fn references_class_with_heritage() {
     let mut t = FourslashTest::new(
         "
@@ -3129,7 +3128,8 @@ fn references_class_with_heritage() {
         const b: /*r2*/Base = new Base();
     ",
     );
-    t.references("def").expect_found().expect_count(3);
+    // 4 references: definition + heritage clause + type annotation + constructor call
+    t.references("def").expect_found().expect_count(4);
 }
 
 // =============================================================================
