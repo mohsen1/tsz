@@ -1013,10 +1013,9 @@ fn test_match_type_param_in_source_adds_upper_bound() {
 // =============================================================================
 
 #[test]
-#[ignore = "merge behavior change"]
 fn test_match_multiple_sources_same_param() {
     // Two inferences into T: T = string and T = number
-    // With NakedTypeVariable priority, getSingleCommonSupertype picks first candidate
+    // tsc unions candidates with same priority: result is string | number
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
@@ -1030,8 +1029,9 @@ fn test_match_multiple_sources_same_param() {
 
     let var_t = ctx.find_type_param(t_name).unwrap();
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // First candidate (string) wins with NakedTypeVariable priority
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions multiple candidates at the same priority level
+    let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected_union);
 }
 
 // =============================================================================

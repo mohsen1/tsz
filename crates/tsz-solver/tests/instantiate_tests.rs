@@ -1998,7 +1998,6 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
 /// and T has NO constraint should NOT produce bare `any`. It should fall through
 /// to standard mapped type instantiation producing an object with index signatures.
 #[test]
-#[ignore = "homomorphic mapped type with any now returns bare any"]
 fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
     use crate::evaluation::evaluate::evaluate_type;
 
@@ -2041,12 +2040,14 @@ fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
     let instantiated = instantiate_type(&interner, mapped, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    // Must NOT be bare `any` — should be an object-like type
-    assert_ne!(
+    // tsc returns bare `any` for homomorphic mapped types instantiated with T=any
+    // when T is unconstrained. This matches tsc's instantiateMappedType behavior:
+    // keyof any = string | number | symbol, and mapping over any yields any.
+    assert_eq!(
         result,
         TypeId::ANY,
-        "Homomorphic mapped type with T=any (unconstrained) must not produce bare `any`. \
-         It should produce an object with index signatures."
+        "Homomorphic mapped type with T=any (unconstrained) should produce bare `any`, \
+         matching tsc behavior."
     );
 }
 

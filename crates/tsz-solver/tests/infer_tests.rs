@@ -265,7 +265,6 @@ fn test_resolve_keeps_any_candidate_with_unknown_upper_bound() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_resolve_multiple_lower_bounds_union() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
@@ -280,11 +279,11 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // With NakedTypeVariable priority, tsc's getSingleCommonSupertype picks the
-    // first non-superseded candidate. "hello" widens to string, 42 widens to number.
-    // Since string and number have no common supertype, the first candidate (string) wins.
+    // tsc unions multiple lower bounds: "hello" widens to string, 42 widens to number,
+    // result is string | number.
     let result = ctx.resolve_with_constraints(var).unwrap();
-    assert_eq!(result, TypeId::STRING);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -304,7 +303,6 @@ fn test_resolve_lower_bounds_ignores_never() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
@@ -313,10 +311,8 @@ fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
     let bar = interner.intern_string("bar");
     let baz = interner.intern_string("baz");
 
-    // Candidates are inserted out of source order (string then number), and names indicate
-    // original property order so name-based fallback should prefer `bar: number`.
-    // With the new getSingleCommonSupertype algorithm, the first inserted candidate
-    // (string) wins since neither is a subtype of the other and frequencies are equal.
+    // Candidates are inserted out of source order (string at index 1, number at index 0).
+    // Resolution now sorts by source index, so NUMBER (index 0) is the first candidate.
     ctx.add_property_candidate_with_index(
         var,
         TypeId::STRING,
@@ -335,7 +331,8 @@ fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
     );
 
     let result = ctx.resolve_with_constraints(var).unwrap();
-    assert_eq!(result, TypeId::STRING);
+    // Source-order resolution picks number (index 0) first
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]
@@ -5724,7 +5721,6 @@ fn test_circular_extends_unify_propagates() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_circular_extends_conflicting_lower_bounds() {
     // Test: <T extends U, U extends T> with T: string and U: number
     // Cycle propagation causes both to get union of all lower bounds
@@ -5760,11 +5756,10 @@ fn test_circular_extends_conflicting_lower_bounds() {
     let results = ctx.resolve_all_with_constraints().unwrap();
 
     assert_eq!(results.len(), 2);
-    // With getSingleCommonSupertype, conflicting lower bounds (string vs number)
-    // resolve to the first non-superseded candidate. After SCC unification merges
-    // bounds from both vars, the first candidate in the merged list wins (number).
-    assert_eq!(results[0], (t_name, TypeId::NUMBER));
-    assert_eq!(results[1], (u_name, TypeId::NUMBER));
+    // After SCC unification, both lower bounds are merged into a union.
+    let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(results[0], (t_name, expected_union));
+    assert_eq!(results[1], (u_name, expected_union));
 }
 
 #[test]
@@ -6056,7 +6051,6 @@ fn test_circular_extends_chain_with_endpoint_bound() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_circular_extends_multiple_lower_bounds_same_param() {
     // Test: <T extends U, U extends T> with T having multiple lower bounds
     let interner = TypeInterner::new();
@@ -6092,11 +6086,11 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
     let results = ctx.resolve_all_with_constraints().unwrap();
 
     assert_eq!(results.len(), 2);
-    // With getSingleCommonSupertype, conflicting lower bounds resolve to the
-    // first non-superseded candidate. STRING is first in the candidate list.
-    assert_eq!(results[0], (t_name, TypeId::STRING));
+    // Multiple lower bounds are unioned: string | number | boolean
+    let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    assert_eq!(results[0], (t_name, expected_union));
     // U gets the same result through SCC propagation
-    assert_eq!(results[1], (u_name, TypeId::STRING));
+    assert_eq!(results[1], (u_name, expected_union));
 }
 
 // =============================================================================
@@ -6144,7 +6138,6 @@ fn test_context_sensitive_return_type_from_usage() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_context_sensitive_multiple_usage_sites() {
     // Test: Multiple usage sites provide constraints that must be unified
     // e.g., function used in two places with different argument types
@@ -6160,9 +6153,9 @@ fn test_context_sensitive_multiple_usage_sites() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, getSingleCommonSupertype picks the first
-    // non-superseded candidate (string), not a union.
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions multiple lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -6225,9 +6218,8 @@ fn test_context_sensitive_array_element_inference() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_context_sensitive_conditional_branch_types() {
-    // Test: Type from conditional branches with NakedTypeVariable priority
+    // Test: Type from conditional branches — both branches contribute lower bounds
     // e.g., condition ? stringValue : numberValue
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
@@ -6241,8 +6233,9 @@ fn test_context_sensitive_conditional_branch_types() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions both branch types: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -6491,7 +6484,6 @@ fn test_constraint_propagation_upper_to_lower() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_constraint_propagation_through_unification() {
     // Test: Unifying two vars propagates constraints from both
     let interner = TypeInterner::new();
@@ -6511,9 +6503,9 @@ fn test_constraint_propagation_through_unification() {
     ctx.unify_vars(var_t, var_u).unwrap();
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, getSingleCommonSupertype picks the first
-    // non-superseded candidate from the merged candidate list (string).
-    assert_eq!(result, TypeId::STRING);
+    // After unification, both lower bounds are merged into a union
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -6559,9 +6551,8 @@ fn test_constraint_propagation_multiple_upper_bounds() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_constraint_propagation_lower_bounds_union() {
-    // Test: Multiple lower bounds with NakedTypeVariable priority
+    // Test: Multiple lower bounds produce a union
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -6574,9 +6565,9 @@ fn test_constraint_propagation_lower_bounds_union() {
     ctx.add_lower_bound(var_t, TypeId::BOOLEAN);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, getSingleCommonSupertype picks the first
-    // non-superseded candidate (string), not a union.
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions multiple lower bounds: string | number | boolean
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -8782,7 +8773,6 @@ fn test_callback_param_inferred_from_call_site() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_callback_param_inferred_from_multiple_calls() {
     // Test: Callback called with different values
     // e.g., function callBoth<T>(fn: (x: T) => void) { fn("a"); fn(1); }
@@ -8798,8 +8788,9 @@ fn test_callback_param_inferred_from_multiple_calls() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions the lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -9229,9 +9220,8 @@ fn test_promise_all_tuple_inference() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_promise_race_union_inference() {
-    // Test: Promise.race([p1, p2]) with NakedTypeVariable priority
+    // Test: Promise.race([p1, p2]) — both element types contribute
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -9243,8 +9233,9 @@ fn test_promise_race_union_inference() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions both: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 // -----------------------------------------------------------------------------
@@ -9418,7 +9409,6 @@ fn test_generic_arg_bidirectional_inference() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_generic_arg_inferred_from_spread() {
     // Test: function concat<T>(...arrays: T[][]): T[]
     let interner = TypeInterner::new();
@@ -9432,8 +9422,9 @@ fn test_generic_arg_inferred_from_spread() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -10182,7 +10173,6 @@ fn test_chain_branching() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_chain_merge() {
     // Test: Chain.merge(chain1, chain2) merges types
     let interner = TypeInterner::new();
@@ -10196,8 +10186,9 @@ fn test_chain_merge() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 // -----------------------------------------------------------------------------
@@ -11007,7 +10998,6 @@ fn test_constraint_satisfaction_widens_to_bound() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_constraint_satisfaction_multiple_candidates() {
     // Test: Multiple lower bounds that satisfy constraint
     let interner = TypeInterner::new();
@@ -11027,9 +11017,9 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, getSingleCommonSupertype picks the first
-    // non-superseded candidate. "hello" widens to string, which wins.
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions the widened lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -13586,7 +13576,6 @@ fn test_inference_from_method_chain() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_inference_from_spread_in_array() {
     // Test: [...arr1, ...arr2] infers common element type
     let interner = TypeInterner::new();
@@ -13600,8 +13589,9 @@ fn test_inference_from_spread_in_array() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -14147,7 +14137,6 @@ fn test_inference_generic_class_constructor() {
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_inference_spread_in_array() {
     // [...arr1, ...arr2] - infer element type from both
     let interner = TypeInterner::new();
@@ -14161,8 +14150,9 @@ fn test_inference_spread_in_array() {
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // With NakedTypeVariable priority, first candidate (string) wins
-    assert_eq!(result, TypeId::STRING);
+    // tsc unions lower bounds: string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
