@@ -191,6 +191,12 @@ impl BinderState {
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
                 module_symbol_id = self.declare_symbol(&name, flags, idx, is_exported);
+                self.record_semantic_def(
+                    module_symbol_id,
+                    crate::state::SemanticDefKind::Namespace,
+                    &name,
+                    idx,
+                );
 
                 // `declare global { namespace X { ... } }` makes X visible at the global
                 // scope level.  declare_symbol placed it in the current (module) scope, but

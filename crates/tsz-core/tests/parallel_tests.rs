@@ -2883,3 +2883,102 @@ fn test_parallel_binding_produces_consistent_symbols() {
         }
     }
 }
+
+// =============================================================================
+// Phase 1 DefId-First Stable Identity Tests (Parallel Pipeline)
+// =============================================================================
+
+#[test]
+fn semantic_defs_survive_single_file_bind() {
+    let result = parse_and_bind_single(
+        "test.ts".to_string(),
+        "class A {} interface B {} type C = number; enum D { X } namespace E {}".to_string(),
+    );
+    assert_eq!(
+        result.semantic_defs.len(),
+        5,
+        "expected 5 semantic defs, got {}",
+        result.semantic_defs.len()
+    );
+}
+
+#[test]
+fn semantic_defs_survive_merge_with_remapped_symbol_ids() {
+    let files = vec![
+        ("a.ts".to_string(), "export class Foo {}".to_string()),
+        (
+            "b.ts".to_string(),
+            "export interface Bar { x: number }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Both Foo and Bar should be in the merged semantic_defs
+    let names: std::collections::HashSet<_> = program
+        .semantic_defs
+        .values()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(
+        names.contains("Foo"),
+        "Foo should be in merged semantic_defs"
+    );
+    assert!(
+        names.contains("Bar"),
+        "Bar should be in merged semantic_defs"
+    );
+}
+
+#[test]
+fn semantic_defs_file_id_is_correct_after_merge() {
+    let files = vec![
+        ("file0.ts".to_string(), "export class Alpha {}".to_string()),
+        (
+            "file1.ts".to_string(),
+            "export type Beta = string".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    for (_, entry) in &program.semantic_defs {
+        match entry.name.as_str() {
+            "Alpha" => assert_eq!(entry.file_id, 0, "Alpha should be in file 0"),
+            "Beta" => assert_eq!(entry.file_id, 1, "Beta should be in file 1"),
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn semantic_defs_stable_across_repeated_merge() {
+    let files = vec![(
+        "a.ts".to_string(),
+        "export class C {} export interface I {} export type T = number; export enum E { X }"
+            .to_string(),
+    )];
+
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    assert_eq!(program1.semantic_defs.len(), program2.semantic_defs.len());
+
+    // Same names and kinds should appear
+    let defs1: std::collections::HashMap<_, _> = program1
+        .semantic_defs
+        .values()
+        .map(|e| (e.name.clone(), e.kind))
+        .collect();
+    let defs2: std::collections::HashMap<_, _> = program2
+        .semantic_defs
+        .values()
+        .map(|e| (e.name.clone(), e.kind))
+        .collect();
+    assert_eq!(
+        defs1, defs2,
+        "semantic defs should be identical across rebuilds"
+    );
+}
