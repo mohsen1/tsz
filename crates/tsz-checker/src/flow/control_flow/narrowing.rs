@@ -938,9 +938,26 @@ impl<'a> FlowAnalyzer<'a> {
         let base_expr = access.expression;
         let member_name_node = access.name_or_argument;
 
-        // Get the member name
-        let member_ident = self.arena.get_identifier_at(member_name_node)?;
-        let member_name = &member_ident.escaped_text;
+        // Get the member name — identifier for En.B, string literal for En["B"]
+        let member_name_owned: String;
+        if let Some(member_ident) = self.arena.get_identifier_at(member_name_node) {
+            member_name_owned = member_ident.escaped_text.clone();
+        } else if let Some(member_node) = self.arena.get(member_name_node) {
+            if (member_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || member_node.kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            {
+                if let Some(lit) = self.arena.get_literal(member_node) {
+                    member_name_owned = lit.text.clone();
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+        let member_name = &member_name_owned;
 
         // Resolve the base expression to the enum symbol
         let base_sym_id = self
