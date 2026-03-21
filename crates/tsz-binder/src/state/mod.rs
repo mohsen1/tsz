@@ -390,7 +390,7 @@ pub struct BinderState {
     // ===== DefId-First Stable Identity (Phase 1) =====
     /// Binder-owned semantic definition index for top-level declarations.
     ///
-    /// Maps `SymbolId` → `SemanticDefEntry` for CLASS, INTERFACE, TYPE_ALIAS, ENUM,
+    /// Maps `SymbolId` → `SemanticDefEntry` for CLASS, INTERFACE, `TYPE_ALIAS`, ENUM,
     /// and NAMESPACE/MODULE symbols declared at the top level. Populated during
     /// `declare_symbol` so the checker can pre-create solver `DefId`s before type
     /// checking begins, avoiding on-demand identity creation in hot checker paths.
