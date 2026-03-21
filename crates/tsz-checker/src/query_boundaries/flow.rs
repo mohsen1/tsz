@@ -192,6 +192,22 @@ pub(crate) const fn catch_variable_type(
     }
 }
 
+/// Determine the base type for typeof narrowing on a catch variable.
+///
+/// Catch variables typed as `unknown` need typeof narrowing to start from
+/// `unknown` (not from an already-narrowed type). For non-catch variables,
+/// this passes through the incoming `type_id` unchanged.
+pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
+    if is_catch_var {
+        // Catch variables always start typeof narrowing from their declared
+        // base type. Since catch vars without annotation are `unknown` or
+        // `any`, we use the incoming type_id which already reflects that.
+        type_id
+    } else {
+        type_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

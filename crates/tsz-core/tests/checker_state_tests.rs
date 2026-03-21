@@ -13208,7 +13208,6 @@ let missing: Alias.Missing;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_member_value_error() {
     use crate::parser::ParserState;
 
@@ -13239,9 +13238,10 @@ const bad = NS.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    // tsc emits TS2708 ("Cannot use namespace 'NS' as a value") for this pattern
     assert!(
-        codes.contains(&2693),
-        "Expected error 2693 for type-only namespace member used as value, got: {codes:?}"
+        codes.contains(&2708),
+        "Expected error 2708 for type-only namespace member used as value, got: {codes:?}"
     );
 }
 
@@ -13363,7 +13363,6 @@ const bad = Alias;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_member_via_alias_value_error() {
     use crate::parser::ParserState;
 
@@ -13395,10 +13394,11 @@ const bad = Alias.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let count = codes.iter().filter(|&&code| code == 2693).count();
+    // tsc emits TS2708 ("Cannot use namespace as a value") for this pattern
+    let count = codes.iter().filter(|&&code| code == 2708).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for type-only namespace member via alias, got: {codes:?}"
+        "Expected one 2708 error for type-only namespace member via alias, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
