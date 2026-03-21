@@ -90,14 +90,40 @@ pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: Ty
     widen_type_cached(db, type_id, &mut cache, true, false)
 }
 
-/// Deep-widen a type including function/callable return types.
+/// Deep-widen a type including inside function/callable signatures.
 ///
-/// Unlike `widen_type` (which skips functions in the fast path), this function
-/// widens literal types inside function return types and parameter types.
-/// Used for TS2403 redeclaration checking where `var fn = (s: string) => 3`
-/// should produce widened type `(s: string) => number` for identity comparison.
+/// Unlike `widen_type` which skips Function/Callable types for performance
+/// and correctness in the general case, this variant recurses into function
+/// return types and parameter types. Used for TS2403 redeclaration checking
+/// where `var fn = (s: string) => 3` should compare as `(s: string) => number`
+/// against `var fn: (s: string) => number`.
 pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
-    // Skip the fast path that excludes functions by going directly to widen_type_cached
+    // Fast path: intrinsics (except boolean literals)
+    if type_id.is_intrinsic()
+        && type_id != crate::types::TypeId::BOOLEAN_TRUE
+        && type_id != crate::types::TypeId::BOOLEAN_FALSE
+    {
+        return type_id;
+    }
+    // Skip types that never contain widenable data, but NOT Function/Callable
+    if matches!(
+        db.lookup(type_id),
+        Some(
+            crate::types::TypeData::TypeParameter(_)
+                | crate::types::TypeData::Enum(_, _)
+                | crate::types::TypeData::Mapped(_)
+                | crate::types::TypeData::Conditional(_)
+                | crate::types::TypeData::Application(_)
+                | crate::types::TypeData::Lazy(_)
+                | crate::types::TypeData::IndexAccess(_, _)
+                | crate::types::TypeData::KeyOf(_)
+                | crate::types::TypeData::TemplateLiteral(_)
+                | crate::types::TypeData::ThisType
+                | crate::types::TypeData::Error
+        )
+    ) {
+        return type_id;
+    }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, true)
