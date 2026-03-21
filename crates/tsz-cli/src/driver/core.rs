@@ -15,7 +15,7 @@ use crate::config::{
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
-use tsz::binder::{SymbolId, SymbolTable, symbol_flags};
+use tsz::binder::{SymbolId, SymbolTable};
 use tsz::checker::TypeCache;
 use tsz::checker::context::LibContext;
 use tsz::checker::diagnostics::{
@@ -44,10 +44,10 @@ use std::cell::RefCell;
 use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParseDiagnostic;
-use tsz::parser::node::{NodeAccess, NodeArena};
+use tsz::parser::node::NodeArena;
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
-use tsz_solver::{QueryCache, TypeFormatter, TypeId};
+use tsz_solver::QueryCache;
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]

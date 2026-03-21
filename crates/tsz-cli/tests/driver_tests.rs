@@ -2330,8 +2330,11 @@ fn compile_with_cache_skips_dependents_when_exports_unchanged() {
 
 #[test]
 fn compile_with_cache_rechecks_dependents_on_export_change() {
-    // Tests that cache properly invalidates dependents when exports change.
-    // Note: Avoids cross-file type checking due to known named import resolution limitations.
+    // Tests that cache properly invalidates dependents when the export *surface* changes.
+    // A body-only edit (changing the value of an existing export) should NOT invalidate
+    // dependents — this matches the unified binder-level ExportSignature semantics
+    // shared between CLI and LSP. Only structural changes (adding/removing exports,
+    // changing export names/kinds) trigger dependent invalidation.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -2364,7 +2367,11 @@ fn compile_with_cache_rechecks_dependents_on_export_change() {
         result.diagnostics
     );
 
-    write_file(&util_path, "export const value = \"changed\";");
+    // Add a new export — this changes the export surface and must invalidate dependents.
+    write_file(
+        &util_path,
+        "export const value = 1;\nexport function helper() {}",
+    );
 
     let util_output = std::fs::canonicalize(base.join("dist/src/util.js"))
         .unwrap_or_else(|_| base.join("dist/src/util.js"));
@@ -2377,6 +2384,58 @@ fn compile_with_cache_rechecks_dependents_on_export_change() {
     // Assert dependent recompilation - both files should be re-emitted
     assert!(result.emitted_files.contains(&util_output));
     assert!(result.emitted_files.contains(&index_output));
+}
+
+#[test]
+fn compile_with_cache_body_only_edit_skips_dependents() {
+    // Changing the value of an existing export (body-only edit) should NOT
+    // invalidate dependents — the unified ExportSignature only tracks names,
+    // flags, and structural relationships, not inferred types.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist"
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+
+    let index_path = base.join("src/index.ts");
+    let util_path = base.join("src/util.ts");
+    write_file(
+        &index_path,
+        "import * as util from './util'; export { util };",
+    );
+    write_file(&util_path, "export const value = 1;");
+
+    let mut cache = CompilationCache::default();
+    let args = default_args();
+
+    let result = compile_with_cache(&args, base, &mut cache).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "initial diagnostics: {:#?}",
+        result.diagnostics
+    );
+
+    // Body-only edit: change the value but not the export surface.
+    write_file(&util_path, "export const value = \"changed\";");
+
+    let index_output = std::fs::canonicalize(base.join("dist/src/index.js"))
+        .unwrap_or_else(|_| base.join("dist/src/index.js"));
+    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path);
+
+    let result = compile_with_cache_and_changes(&args, base, &mut cache, &[canonical])
+        .expect("compile should succeed");
+    // Dependent should NOT be re-emitted — export signature is unchanged.
+    assert!(
+        !result.emitted_files.contains(&index_output),
+        "Body-only edit should not re-emit dependents"
+    );
 }
 
 #[test]
