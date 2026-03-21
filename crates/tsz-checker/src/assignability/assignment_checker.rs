@@ -201,9 +201,20 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    // Property assignment: { name: target }
+                    // Property assignment: { name: target } or { name: target = default }
                     if let Some(name) = self.get_property_name_resolved(prop.name) {
-                        self.check_destructuring_property_exists(&name, source_type, prop.name);
+                        // When a default value is present (e.g., `{ a: x = 1 }`),
+                        // the property need not exist on the source object.
+                        let has_default_value =
+                            self.ctx.arena.get(prop.initializer).is_some_and(|v| {
+                                v.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                    && self.ctx.arena.get_binary_expr(v).is_some_and(|b| {
+                                        b.operator_token == SyntaxKind::EqualsToken as u16
+                                    })
+                            });
+                        if !has_default_value {
+                            self.check_destructuring_property_exists(&name, source_type, prop.name);
+                        }
                         self.check_property_accessibility(
                             NodeIndex::NONE,
                             &name,
