@@ -3005,7 +3005,6 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
 }
 
 #[test]
-#[ignore = "requires lib files not available in CI"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type() {
     // Overload resolution for lib typed arrays is now fixed.
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
@@ -3030,7 +3029,6 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 }
 
 #[test]
-#[ignore = "requires lib files not available in CI"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     // Overload resolution for lib typed arrays is now fixed (merged lib contexts variant).
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
@@ -12494,7 +12492,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_ts2344_reports_for_recursive_shared_constraint_in_component_enhancer() {
     if !lib_files_available() {
         return;
@@ -12587,7 +12584,6 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_ts2344_reports_for_recursive_shared_constraint_in_exported_component_enhancer() {
     if !lib_files_available() {
         return;
@@ -14659,7 +14655,6 @@ f2(
 }
 
 #[test]
-#[ignore = "TODO: AsyncGenerator lib resolution producing TS2583/TS2504 errors after behavior change"]
 fn test_async_generator_type_references_preserve_all_type_params() {
     if !lib_files_available() {
         return;
@@ -15858,7 +15853,6 @@ let t: UseQueryOptions<X, "role.user.role">;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_function_intrinsic_satisfies_structural_length_constraint() {
     if !lib_files_available() {
         return;
@@ -15883,7 +15877,6 @@ let x: { length: number } = f;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_promise_chaining_function_constraint_only_reports_final_ts2322() {
     if !lib_files_available() {
         return;
