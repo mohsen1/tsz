@@ -1021,6 +1021,37 @@ impl<'a> CheckerState<'a> {
         !crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
     }
 
+    /// Like `is_assignable_to`, but skips weak type checks (TS2559).
+    ///
+    /// This matches tsc's `isTypeAssignableTo` behavior, which does NOT
+    /// include the weak type check. Used by the flow narrowing guard to
+    /// avoid rejecting valid type-guard narrowing (e.g., instanceof).
+    pub fn is_assignable_to_no_weak_checks(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
+        let target = self.substitute_this_type_if_needed(target);
+
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let overrides = CheckerOverrideProvider::new(self, None);
+        crate::query_boundaries::assignability::is_assignable_no_weak_checks(
+            &AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags: self.ctx.pack_relation_flags(),
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            },
+            &overrides,
+        )
+    }
+
     /// Like `is_assignable_to`, but forces the strict-function-types relation flag.
     pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         if source == target {

@@ -204,6 +204,11 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     exact_optional_property_types: bool,
     /// When true, enables additional strict subtype checking rules for lib.d.ts
     strict_subtype_checking: bool,
+    /// When true, skip weak type checks (TS2559) during assignability.
+    /// This matches tsc's `isTypeAssignableTo` behavior which does not
+    /// include the weak type check. The weak type check is only applied
+    /// at specific diagnostic sites in tsc.
+    skip_weak_type_checks: bool,
     cache: FxHashMap<(TypeId, TypeId), bool>,
 }
 
@@ -223,6 +228,7 @@ impl<'a> CompatChecker<'a, NoopResolver> {
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
             strict_subtype_checking: false,
+            skip_weak_type_checks: false,
             cache: FxHashMap::default(),
         }
     }
@@ -464,6 +470,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
             strict_subtype_checking: false,
+            skip_weak_type_checks: false,
             cache: FxHashMap::default(),
         }
     }
@@ -534,6 +541,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_assume_related_on_cycle(&mut self, assume: bool) {
         if self.subtype.assume_related_on_cycle != assume {
             self.subtype.assume_related_on_cycle = assume;
+            self.cache.clear();
+        }
+    }
+
+    /// Skip weak type checks (TS2559) during assignability.
+    ///
+    /// In tsc, `isTypeAssignableTo` does not include the weak type check.
+    /// The weak type check is only applied at specific diagnostic sites.
+    /// This flag matches tsc's `isTypeAssignableTo` behavior.
+    pub fn set_skip_weak_type_checks(&mut self, skip: bool) {
+        if self.skip_weak_type_checks != skip {
+            self.skip_weak_type_checks = skip;
             self.cache.clear();
         }
     }
@@ -925,12 +944,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return result;
         }
 
-        // Weak type checks
-        if self.violates_weak_union(source, target) {
-            return false;
-        }
-        if self.violates_weak_type(source, target) {
-            return false;
+        // Weak type checks (TS2559)
+        // Skipped when skip_weak_type_checks is set, matching tsc's
+        // isTypeAssignableTo which does not include weak type detection.
+        if !self.skip_weak_type_checks {
+            if self.violates_weak_union(source, target) {
+                return false;
+            }
+            if self.violates_weak_type(source, target) {
+                return false;
+            }
         }
 
         // Excess property checking (TS2353) - Lawyer layer
