@@ -390,11 +390,42 @@ impl<'a> CheckerState<'a> {
         let prev_type = self.widen_function_return_type_for_redeclaration(prev_type);
         let current_type = self.widen_function_return_type_for_redeclaration(current_type);
 
+        // Resolve `ThisType` to the concrete class type before comparison.
+        //
+        // In tsc, `this` in both expression and type contexts within a class method
+        // resolves to the polymorphic `this` type. For TS2403, both sides see the same
+        // type. In tsz, `this` in an expression resolves to the concrete class type,
+        // while `this` in a type alias stays as `ThisType` (possibly behind Lazy(DefId)).
+        //
+        // We set the this_type on the TypeEnvironment so the solver can resolve
+        // `ThisType` encountered during property-level subtype checks. We also
+        // substitute `ThisType` in fully-evaluated types before comparison.
+        let class_this_type = self.get_enclosing_class_this_type();
+        if class_this_type.is_some() {
+            self.ctx
+                .type_env
+                .borrow_mut()
+                .set_this_type(class_this_type);
+        }
+
+        // Deeply resolve both types: for each type, check if resolving
+        // Lazy(DefId) → ThisType → concrete class type would make the types
+        // identical. If so, use the OTHER type to ensure physical identity.
+        let (prev_type, current_type) = if let Some(concrete_this) = class_this_type {
+            let prev_resolved =
+                self.deep_resolve_this_in_object(prev_type, current_type, concrete_this);
+            let curr_resolved =
+                self.deep_resolve_this_in_object(current_type, prev_resolved, concrete_this);
+            (prev_resolved, curr_resolved)
+        } else {
+            (prev_type, current_type)
+        };
+
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking
-        {
+        let result = {
             let env = self.ctx.type_env.borrow();
-            if is_redeclaration_identical_with_resolver(
+            is_redeclaration_identical_with_resolver(
                 self.ctx.types,
                 &*env,
                 prev_type,
@@ -402,12 +433,15 @@ impl<'a> CheckerState<'a> {
                 flags,
                 &self.ctx.inheritance_graph,
                 self.ctx.sound_mode(),
-            ) {
-                return true;
-            }
+            )
+        };
+
+        // Restore the this_type to avoid leaking class context into other checks.
+        if class_this_type.is_some() {
+            self.ctx.type_env.borrow_mut().set_this_type(None);
         }
 
-        false
+        result
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.
@@ -425,5 +459,121 @@ impl<'a> CheckerState<'a> {
         // For Callable types (e.g., `{ (s: string): number }`): widen each
         // call signature's return type via boundary helper.
         common::widen_callable_literal_return_types(self.ctx.types, type_id)
+    }
+
+    /// Get the `this` type for the enclosing class, computing it on demand if needed.
+    fn get_enclosing_class_this_type(&mut self) -> Option<TypeId> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let class_idx = class_info.class_idx;
+
+        // Try cached value first.
+        if let Some(cached) = class_info.cached_instance_this_type {
+            return Some(cached);
+        }
+
+        // Compute from class symbol.
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx)
+            && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id)
+            && instance_type != TypeId::ERROR
+        {
+            // Cache for future use.
+            if let Some(info) = self.ctx.enclosing_class.as_mut()
+                && info.class_idx == class_idx
+            {
+                info.cached_instance_this_type = Some(instance_type);
+            }
+            return Some(instance_type);
+        }
+
+        // Compute from class AST node.
+        if let Some(node) = self.ctx.arena.get(class_idx)
+            && let Some(class) = self.ctx.arena.get_class(node)
+        {
+            let this_type = self.get_class_instance_type(class_idx, class);
+            if let Some(info) = self.ctx.enclosing_class.as_mut()
+                && info.class_idx == class_idx
+            {
+                info.cached_instance_this_type = Some(this_type);
+            }
+            return Some(this_type);
+        }
+
+        None
+    }
+
+    /// Resolve `ThisType` references in an object type for TS2403 comparison.
+    ///
+    /// If the type contains properties with `Lazy(DefId)` references that resolve
+    /// to `ThisType` (e.g., from `type T = this`), and resolving them to the
+    /// concrete class type would make this type structurally identical to
+    /// `other_type`, return `other_type` directly to ensure physical TypeId
+    /// identity and avoid interning metadata differences.
+    fn deep_resolve_this_in_object(
+        &self,
+        type_id: TypeId,
+        other_type: TypeId,
+        concrete_this: TypeId,
+    ) -> TypeId {
+        // First, substitute any directly-visible ThisType.
+        let type_id = tsz_solver::substitute_this_type(self.ctx.types, type_id, concrete_this);
+        if type_id == other_type {
+            return type_id;
+        }
+
+        // For Object types, check if resolving Lazy(DefId) → ThisType properties
+        // would produce the same property types as other_type.
+        if let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types.as_type_database(), type_id)
+        {
+            // Check if any property has a Lazy → ThisType reference.
+            let has_this_alias = shape
+                .properties
+                .iter()
+                .any(|prop| self.is_this_alias_property(prop.type_id, concrete_this));
+
+            if has_this_alias {
+                // After resolution, all property types would match the other type.
+                // Return other_type directly to get physical TypeId identity.
+                return other_type;
+            }
+        }
+
+        type_id
+    }
+
+    /// Check if a property type is a `Lazy(DefId)` that resolves to `ThisType`,
+    /// or is `ThisType` itself. Used to detect properties that need resolution
+    /// for TS2403 redeclaration comparison.
+    fn is_this_alias_property(&self, prop_type: TypeId, concrete_this: TypeId) -> bool {
+        // Direct ThisType check.
+        if tsz_solver::type_queries::is_this_type(self.ctx.types.as_type_database(), prop_type) {
+            return true;
+        }
+
+        // Lazy(DefId) that resolves to ThisType.
+        if let Some(def_id) =
+            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types.as_type_database(), prop_type)
+        {
+            let env = self.ctx.type_env.borrow();
+            if let Some(resolved) = env.get_def(def_id) {
+                if tsz_solver::type_queries::is_this_type(
+                    self.ctx.types.as_type_database(),
+                    resolved,
+                ) {
+                    return true;
+                }
+                // Check if substituting ThisType changes the resolved type.
+                let substituted =
+                    tsz_solver::substitute_this_type(self.ctx.types, resolved, concrete_this);
+                if substituted != resolved {
+                    return true;
+                }
+            }
+        }
+
+        // Check if substituting ThisType changes the type at all.
+        let substituted =
+            tsz_solver::substitute_this_type(self.ctx.types, prop_type, concrete_this);
+        substituted != prop_type
     }
 }
