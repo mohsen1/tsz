@@ -760,7 +760,6 @@ impl<'a> CheckerState<'a> {
         };
 
         let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
-        self.ctx.spelling_suggestions_emitted += 1;
 
         // Suppress spelling suggestions in files with parse errors.
         // When the AST is malformed, symbols may not be properly bound and
@@ -925,12 +924,24 @@ impl<'a> CheckerState<'a> {
 
     /// Report error 2304/2552: Cannot find name 'X' with suggestions.
     /// Provides a list of similar names that might be what the user intended.
+    /// tsc limits spelling suggestions to 10 per file; after that, emits TS2304 only.
     pub fn error_cannot_find_name_with_suggestions(
         &mut self,
         name: &str,
         suggestions: &[String],
         idx: NodeIndex,
     ) {
+        // tsc caps spelling suggestions at 10 per file.
+        if self.ctx.spelling_suggestions_emitted >= 10 {
+            self.error_at_node(
+                idx,
+                &format!("Cannot find name '{name}'."),
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+            return;
+        }
+        self.ctx.spelling_suggestions_emitted += 1;
+
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.
         let is_obviously_invalid = name.len() == 1
