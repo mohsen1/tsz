@@ -1487,7 +1487,30 @@ impl<'a> CheckerState<'a> {
         };
 
         let this_type = self.get_type_of_node(access.expression);
+
+        // When `this` resolves to ANY (common in static methods where the constructor
+        // type isn't fully resolved), fall back to checking the class symbol's member
+        // table directly via the binder. If the property exists as a class member,
+        // suppress TS2347 — the call target is typed, not genuinely untyped.
         if this_type == TypeId::ANY || this_type == TypeId::ERROR {
+            if let Some(ref class_info) = self.ctx.enclosing_class.clone()
+                && let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_info.class_idx.0)
+                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym)
+            {
+                let found_in_exports = class_symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|e| e.get(&property_name))
+                    .is_some();
+                let found_in_members = class_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(&property_name))
+                    .is_some();
+                if found_in_exports || found_in_members {
+                    return true; // suppress TS2347
+                }
+            }
             return false;
         }
 
@@ -1500,6 +1523,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        false
+        // Property exists on a concrete `this` type — the callee resolved to ANY
+        // due to generic instantiation limitations, not because it's genuinely untyped.
+        // Suppress TS2347 (e.g., `this.one<T>(...)` in static generic methods).
+        true
     }
 }

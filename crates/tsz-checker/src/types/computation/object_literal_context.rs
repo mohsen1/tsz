@@ -1155,11 +1155,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(lit_type) = self
                     .shorthand_const_literal_type(shorthand.name)
                     .or_else(|| self.literal_type_from_initializer(shorthand.name))
-                {
-                    if tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type) {
+                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type) {
                         unit_discriminants.push((name, lit_type));
                     }
-                }
             }
         }
 
