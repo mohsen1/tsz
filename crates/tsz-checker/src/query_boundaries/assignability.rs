@@ -842,26 +842,6 @@ fn is_global_object_or_function_shape(
     })
 }
 
-/// Boolean query: does the source have excess properties relative to the target?
-///
-/// This is the canonical boundary function replacing the checker-local
-/// `source_has_excess_properties`. Uses the same property classification
-/// logic as `classify_object_properties` but returns only a boolean.
-pub(crate) fn source_has_excess_properties_boundary(
-    db: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-) -> bool {
-    if !tsz_solver::relations::freshness::is_fresh_object_type(db, source) {
-        return false;
-    }
-
-    match classify_object_properties(db, source, target) {
-        Some(classification) => !classification.excess_properties.is_empty(),
-        None => false,
-    }
-}
-
 pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeResolver>(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
