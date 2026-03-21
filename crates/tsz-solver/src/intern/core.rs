@@ -417,6 +417,13 @@ impl TypeInterner {
         self.union_too_complex.swap(false, Ordering::Relaxed)
     }
 
+    /// Mark that a union construction was aborted due to complexity.
+    /// Called from `reduce_union_subtypes` when pairwise comparisons would exceed 1M.
+    #[inline]
+    pub(crate) fn set_union_too_complex(&self) {
+        self.union_too_complex.store(true, Ordering::Relaxed);
+    }
+
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
     ///
     /// The `TypeId` uses `RwLock` so each file checker can overwrite the prime
