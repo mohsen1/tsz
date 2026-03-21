@@ -2,6 +2,155 @@ use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
+// ---------------------------------------------------------------------------
+// RelationRequest: unified policy descriptor for relation queries
+// ---------------------------------------------------------------------------
+
+/// The kind of relation being checked. Different kinds imply different
+/// default policies for freshness, excess properties, and diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelationKind {
+    /// Variable/parameter assignment: `const x: T = expr`
+    Assign,
+    /// Function call argument: `fn(expr)` where param expects T
+    CallArg,
+    /// Return statement: `return expr` where function returns T
+    Return,
+    /// JSX props: `<Comp prop={expr} />`
+    JsxProps,
+    /// Destructuring: `const { a, b } = expr`
+    Destructuring,
+    /// Satisfies expression: `expr satisfies T`
+    Satisfies,
+}
+
+/// How excess properties (properties in source not in target) are handled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExcessPropertyMode {
+    /// Skip excess property checking entirely (default for non-fresh sources).
+    Skip,
+    /// Check and report excess properties (for fresh object literals).
+    Check,
+    /// Check only explicitly-written properties (for spread expressions).
+    CheckExplicitOnly,
+}
+
+/// How missing properties (properties in target not in source) are classified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MissingPropertyMode {
+    /// Report missing required properties (default).
+    Report,
+    /// Suppress missing property errors (e.g., for Partial<T> patterns).
+    Suppress,
+}
+
+/// A structured request for a type relation check.
+///
+/// Encodes all the policy dimensions that affect how the checker interprets
+/// a relation result. The checker builds a request, invokes the boundary,
+/// and uses the result + failure info for diagnostics.
+#[derive(Debug, Clone)]
+pub(crate) struct RelationRequest {
+    pub source: TypeId,
+    pub target: TypeId,
+    pub kind: RelationKind,
+    pub excess_property_mode: ExcessPropertyMode,
+    pub missing_property_mode: MissingPropertyMode,
+    /// Whether the source is a fresh object literal.
+    pub source_is_fresh: bool,
+}
+
+impl RelationRequest {
+    /// Create an assignment relation request (default: no EPC, report missing).
+    pub(crate) fn assign(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            kind: RelationKind::Assign,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
+    /// Create a call-argument relation request.
+    pub(crate) fn call_arg(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            kind: RelationKind::CallArg,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
+    /// Create a return-statement relation request.
+    pub(crate) fn return_stmt(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            kind: RelationKind::Return,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
+    /// Create a satisfies expression relation request.
+    pub(crate) fn satisfies(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            kind: RelationKind::Satisfies,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
+    /// Create a destructuring relation request.
+    pub(crate) fn destructuring(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            kind: RelationKind::Destructuring,
+            excess_property_mode: ExcessPropertyMode::Skip,
+            missing_property_mode: MissingPropertyMode::Report,
+            source_is_fresh: false,
+        }
+    }
+
+    /// Mark the source as a fresh object literal, enabling EPC.
+    pub(crate) fn with_fresh_source(mut self) -> Self {
+        self.source_is_fresh = true;
+        self.excess_property_mode = ExcessPropertyMode::Check;
+        self
+    }
+
+    /// Mark the source as a spread expression, enabling explicit-only EPC.
+    pub(crate) fn with_spread_source(mut self) -> Self {
+        self.excess_property_mode = ExcessPropertyMode::CheckExplicitOnly;
+        self
+    }
+
+    /// Override excess property mode.
+    pub(crate) fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self {
+        self.excess_property_mode = mode;
+        self
+    }
+
+    /// Override missing property mode.
+    pub(crate) fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self {
+        self.missing_property_mode = mode;
+        self
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Existing boundary helpers
+// ---------------------------------------------------------------------------
+
 /// Boundary-safe flag constants for relation cache keys.
 ///
 /// Wraps the flag constants from `tsz_solver::RelationCacheKey` without exposing

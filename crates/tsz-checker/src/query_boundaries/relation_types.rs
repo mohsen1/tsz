@@ -1,0 +1,238 @@
+//! Checker-facing structured failure types for relation queries.
+//!
+//! Wraps solver's `SubtypeFailureReason` with additional checker context
+//! so diagnostic rendering has everything it needs without re-running
+//! the relation.
+
+use tsz_common::interner::Atom;
+use tsz_solver::{SubtypeFailureReason, TypeId};
+
+/// Checker-facing classification of a relation failure.
+///
+/// Groups solver-level details into the categories the checker's diagnostic
+/// renderer needs.  Not a 1:1 copy of `SubtypeFailureReason`.
+#[derive(Debug, Clone)]
+pub(crate) enum RelationFailure {
+    /// A required property is missing from the source type.
+    MissingProperty {
+        property_name: Atom,
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Multiple required properties are missing.
+    MissingProperties {
+        property_names: Vec<Atom>,
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Source has a property not declared in target (excess property).
+    ExcessProperty {
+        property_name: Atom,
+        target_type: TypeId,
+    },
+    /// A property exists in both but types are incompatible.
+    IncompatiblePropertyValue {
+        property_name: Atom,
+        source_property_type: TypeId,
+        target_property_type: TypeId,
+        nested: Option<Box<RelationFailure>>,
+    },
+    /// No applicable call/construct signature matched.
+    NoApplicableSignature {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Tuple arity mismatch.
+    TupleArityMismatch {
+        source_count: usize,
+        target_count: usize,
+    },
+    /// Return type incompatibility.
+    ReturnTypeMismatch {
+        source_return: TypeId,
+        target_return: TypeId,
+        nested: Option<Box<RelationFailure>>,
+    },
+    /// Parameter type incompatibility.
+    ParameterTypeMismatch {
+        param_index: usize,
+        source_param: TypeId,
+        target_param: TypeId,
+    },
+    /// Weak union violation (no common properties).
+    WeakUnionViolation {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// General type mismatch (catch-all for solver reasons we don't
+    /// need to classify further at the checker level).
+    TypeMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+}
+
+impl RelationFailure {
+    /// Convert a solver `SubtypeFailureReason` into checker-facing `RelationFailure`.
+    pub(crate) fn from_solver_reason(reason: SubtypeFailureReason) -> Self {
+        match reason {
+            SubtypeFailureReason::MissingProperty {
+                property_name,
+                source_type,
+                target_type,
+            } => Self::MissingProperty {
+                property_name,
+                source_type,
+                target_type,
+            },
+            SubtypeFailureReason::MissingProperties {
+                property_names,
+                source_type,
+                target_type,
+            } => Self::MissingProperties {
+                property_names,
+                source_type,
+                target_type,
+            },
+            SubtypeFailureReason::ExcessProperty {
+                property_name,
+                target_type,
+            } => Self::ExcessProperty {
+                property_name,
+                target_type,
+            },
+            SubtypeFailureReason::PropertyTypeMismatch {
+                property_name,
+                source_property_type,
+                target_property_type,
+                nested_reason,
+            } => Self::IncompatiblePropertyValue {
+                property_name,
+                source_property_type,
+                target_property_type,
+                nested: nested_reason.map(|r| Box::new(Self::from_solver_reason(*r))),
+            },
+            SubtypeFailureReason::TupleElementMismatch {
+                source_count,
+                target_count,
+            } => Self::TupleArityMismatch {
+                source_count,
+                target_count,
+            },
+            SubtypeFailureReason::ReturnTypeMismatch {
+                source_return,
+                target_return,
+                nested_reason,
+            } => Self::ReturnTypeMismatch {
+                source_return,
+                target_return,
+                nested: nested_reason.map(|r| Box::new(Self::from_solver_reason(*r))),
+            },
+            SubtypeFailureReason::ParameterTypeMismatch {
+                param_index,
+                source_param,
+                target_param,
+            } => Self::ParameterTypeMismatch {
+                param_index,
+                source_param,
+                target_param,
+            },
+            SubtypeFailureReason::NoCommonProperties {
+                source_type,
+                target_type,
+            } => Self::WeakUnionViolation {
+                source_type,
+                target_type,
+            },
+            SubtypeFailureReason::NoUnionMemberMatches { source_type, .. } => Self::TypeMismatch {
+                source_type,
+                target_type: TypeId::ERROR,
+            },
+            SubtypeFailureReason::TypeMismatch {
+                source_type,
+                target_type,
+            }
+            | SubtypeFailureReason::IntrinsicTypeMismatch {
+                source_type,
+                target_type,
+            }
+            | SubtypeFailureReason::LiteralTypeMismatch {
+                source_type,
+                target_type,
+            }
+            | SubtypeFailureReason::ErrorType {
+                source_type,
+                target_type,
+            }
+            | SubtypeFailureReason::ReadonlyToMutableAssignment {
+                source_type,
+                target_type,
+            }
+            | SubtypeFailureReason::NoIntersectionMemberMatches {
+                source_type,
+                target_type,
+            } => Self::TypeMismatch {
+                source_type,
+                target_type,
+            },
+            SubtypeFailureReason::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => Self::TypeMismatch {
+                source_type: source_element,
+                target_type: target_element,
+            },
+            SubtypeFailureReason::IndexSignatureMismatch {
+                source_value_type,
+                target_value_type,
+                ..
+            } => Self::TypeMismatch {
+                source_type: source_value_type,
+                target_type: target_value_type,
+            },
+            SubtypeFailureReason::TooManyParameters {
+                source_count,
+                target_count,
+            }
+            | SubtypeFailureReason::ParameterCountMismatch {
+                source_count,
+                target_count,
+            } => Self::ParameterTypeMismatch {
+                param_index: target_count,
+                source_param: TypeId::ERROR,
+                target_param: TypeId::ERROR,
+            },
+            SubtypeFailureReason::OptionalPropertyRequired { property_name }
+            | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
+            | SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                Self::IncompatiblePropertyValue {
+                    property_name,
+                    source_property_type: TypeId::ERROR,
+                    target_property_type: TypeId::ERROR,
+                    nested: None,
+                }
+            }
+            SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
+                Self::IncompatiblePropertyValue {
+                    property_name,
+                    source_property_type: TypeId::ERROR,
+                    target_property_type: TypeId::ERROR,
+                    nested: None,
+                }
+            }
+            SubtypeFailureReason::TupleElementTypeMismatch {
+                source_element,
+                target_element,
+                ..
+            } => Self::TypeMismatch {
+                source_type: source_element,
+                target_type: target_element,
+            },
+            SubtypeFailureReason::MissingIndexSignature { .. }
+            | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
+                source_type: TypeId::ERROR,
+                target_type: TypeId::ERROR,
+            },
+        }
+    }
+}
