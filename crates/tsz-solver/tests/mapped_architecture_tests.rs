@@ -15,8 +15,7 @@ use crate::type_queries::{
     compute_mapped_modifiers, expand_mapped_type_to_properties, is_identity_name_mapping,
 };
 use crate::types::{
-    MappedModifier, MappedType, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeParamInfo,
-    Visibility,
+    MappedModifier, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo, Visibility,
 };
 use rustc_hash::FxHashMap;
 
@@ -585,12 +584,10 @@ fn mapped_type_over_type_param_with_array_constraint() {
     let mapped_id = interner.mapped(mapped);
     let result = evaluate_type(&interner, mapped_id);
 
-    // For type param constrained to array, the solver should produce an array type
-    match interner.lookup(result) {
-        Some(TypeData::Array(_)) => {} // correct: mapped over array-constrained T → Array
-        _ => {
-            // Also acceptable: deferred mapped type (since T is a type parameter)
-            // The key thing is it should NOT produce a plain Object.
-        }
+    // For type param constrained to array, the solver should produce an array type.
+    // Also acceptable: deferred mapped type (since T is a type parameter).
+    // The key thing is it should NOT produce a plain Object.
+    if let Some(TypeData::Object(_)) = interner.lookup(result) {
+        panic!("Expected array or deferred mapped type, got plain Object");
     }
 }

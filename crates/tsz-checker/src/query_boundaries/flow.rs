@@ -210,9 +210,9 @@ pub(crate) fn widen_null_undefined_to_any(
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
         return TypeId::ANY;
     }
-    // For unions containing null/undefined, remove them (they widen away in non-strict mode)
-    if let Some(tsz_solver::TypeData::Union(list_id)) = db.lookup(type_id) {
-        let members = db.type_list(list_id);
+    // For unions containing null/undefined, remove them (they widen away in non-strict mode).
+    // Use solver query API (get_union_members) instead of TypeData inspection.
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
         let has_nullish = members
             .iter()
             .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED);
@@ -253,12 +253,12 @@ pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: T
     if type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::ERROR {
         return type_id;
     }
-    // Check if already contains undefined
-    if let Some(tsz_solver::TypeData::Union(list_id)) = db.lookup(type_id) {
-        let members = db.type_list(list_id);
-        if members.contains(&TypeId::UNDEFINED) {
-            return type_id;
-        }
+    // Check if already contains undefined.
+    // Use solver query API (get_union_members) instead of TypeData inspection.
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id)
+        && members.contains(&TypeId::UNDEFINED)
+    {
+        return type_id;
     }
     db.union(vec![type_id, TypeId::UNDEFINED])
 }

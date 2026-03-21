@@ -821,6 +821,8 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         // Type parameters represent unknown types whose index signatures are deferred —
         // tsc creates T[K] types rather than reporting TS7053.
         // Treat both as having string and number index signatures.
+        // The checker handles constraint-aware TS7053 checks separately in
+        // should_report_no_index_signature by resolving type param constraints.
         Some(TypeData::Enum(_, _)) | Some(TypeData::TypeParameter(_)) => {
             ElementIndexableKind::ObjectWithIndex {
                 has_string: true,
