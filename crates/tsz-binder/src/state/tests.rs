@@ -3328,3 +3328,31 @@ namespace MyNS {}
     assert!(kinds.contains(&super::SemanticDefKind::Enum));
     assert!(kinds.contains(&super::SemanticDefKind::Namespace));
 }
+
+#[test]
+fn semantic_defs_file_id_matches_symbol_decl_file_idx() {
+    // SemanticDefEntry.file_id must match the symbol's decl_file_idx.
+    // pre_populate_def_ids_from_binder relies on this instead of
+    // looking up the symbol table, so a mismatch would break DefId
+    // registration in the DefinitionStore's composite key index.
+    let binder = bind_source(
+        "
+class A {}
+interface B {}
+type C = number;
+enum D { X }
+namespace E {}
+",
+    );
+    for (&sym_id, entry) in &binder.semantic_defs {
+        let symbol = binder
+            .symbols
+            .get(sym_id)
+            .unwrap_or_else(|| panic!("symbol {} not found for {}", sym_id.0, entry.name));
+        assert_eq!(
+            entry.file_id, symbol.decl_file_idx,
+            "file_id mismatch for {} (sym_id {}): entry.file_id={}, symbol.decl_file_idx={}",
+            entry.name, sym_id.0, entry.file_id, symbol.decl_file_idx
+        );
+    }
+}
