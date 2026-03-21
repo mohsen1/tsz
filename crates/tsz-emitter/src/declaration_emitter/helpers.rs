@@ -3344,15 +3344,18 @@ impl<'a> DeclarationEmitter<'a> {
             return true; // conservative: preserve when we can't resolve
         };
 
-        // Resolve the rightmost identifier in the qualified name (a.b.c -> c)
+        // Try node_symbols on the full module specifier and rightmost name.
+        // The binder may map these nodes to the resolved target symbol.
         let rightmost_idx = self.get_rightmost_name(module_spec_idx);
-
-        // Try node_symbols first
-        if let Some(&sym_id) = binder.node_symbols.get(&rightmost_idx.0) {
-            return self.symbol_has_type_flags(binder, sym_id);
+        for &idx in &[module_spec_idx, rightmost_idx] {
+            if let Some(&sym_id) = binder.node_symbols.get(&idx.0) {
+                if let Some(symbol) = binder.symbols.get(sym_id) {
+                    return !self.symbol_is_value_only(symbol);
+                }
+            }
         }
 
-        // Fall back to name-based lookup
+        // Fall back to name-based lookup on the rightmost identifier.
         let Some(name_node) = self.arena.get(rightmost_idx) else {
             return true; // conservative
         };
@@ -3361,17 +3364,29 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let name = &name_ident.escaped_text;
 
-        // Check all resolution paths for the symbol
-        if let Some(sym_id) = binder.file_locals.get(name) {
-            return self.symbol_has_type_flags(binder, sym_id);
-        }
+        // Search all resolution paths for a non-ALIAS symbol.
+        // The import's own ALIAS symbol shares the same name, so skip it
+        // to find the actual target entity.
         for scope in &binder.scopes {
             if let Some(sym_id) = scope.table.get(name) {
-                return self.symbol_has_type_flags(binder, sym_id);
+                if let Some(symbol) = binder.symbols.get(sym_id) {
+                    if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                        return !self.symbol_is_value_only(symbol);
+                    }
+                }
+            }
+        }
+        if let Some(sym_id) = binder.file_locals.get(name) {
+            if let Some(symbol) = binder.symbols.get(sym_id) {
+                if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                    return !self.symbol_is_value_only(symbol);
+                }
             }
         }
 
-        true // conservative: preserve when we can't resolve
+        // All symbols found were aliases — can't determine target.
+        // Preserve conservatively.
+        true
     }
 
     /// Get the rightmost identifier from a qualified name or property access.
@@ -3388,25 +3403,23 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
-    /// Check if a symbol has type-level flags (class, interface, enum, namespace, type alias,
-    /// or function). These are entities whose names may appear in emitted type annotations.
-    fn symbol_has_type_flags(
-        &self,
-        binder: &tsz_binder::BinderState,
-        sym_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return true; // conservative
-        };
-        // Type-level entities: their alias names may appear in emitted type annotations
-        const TYPE_ENTITY_FLAGS: u32 = tsz_binder::symbol_flags::CLASS
+    /// Check if a symbol is value-only (plain variable, no type/namespace/class flags).
+    /// Value-only entities resolve to primitive types in .d.ts and don't need aliases.
+    fn symbol_is_value_only(&self, symbol: &tsz_binder::Symbol) -> bool {
+        const VALUE_ONLY_FLAGS: u32 = tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+            | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
+            | tsz_binder::symbol_flags::PROPERTY;
+        const NON_VALUE_ONLY_FLAGS: u32 = tsz_binder::symbol_flags::CLASS
             | tsz_binder::symbol_flags::INTERFACE
             | tsz_binder::symbol_flags::ENUM
             | tsz_binder::symbol_flags::TYPE_ALIAS
             | tsz_binder::symbol_flags::VALUE_MODULE
             | tsz_binder::symbol_flags::NAMESPACE_MODULE
-            | tsz_binder::symbol_flags::FUNCTION;
-        symbol.has_any_flags(TYPE_ENTITY_FLAGS)
+            | tsz_binder::symbol_flags::FUNCTION
+            | tsz_binder::symbol_flags::METHOD
+            | tsz_binder::symbol_flags::ENUM_MEMBER;
+        let flags = symbol.flags;
+        (flags & VALUE_ONLY_FLAGS) != 0 && (flags & NON_VALUE_ONLY_FLAGS) == 0
     }
 
     /// Get the function/method name as a string for overload tracking
@@ -8186,7 +8199,10 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> String {
         match lit {
             tsz_solver::types::LiteralValue::String(atom) => {
-                format!("\"{}\"", escape_string_for_double_quote(&interner.resolve_atom(*atom)))
+                format!(
+                    "\"{}\"",
+                    escape_string_for_double_quote(&interner.resolve_atom(*atom))
+                )
             }
             tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
