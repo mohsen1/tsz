@@ -425,7 +425,16 @@ impl<'a> CheckerState<'a> {
                 {
                     return mapped_type_id;
                 }
-                return self.evaluate_mapped_type_with_resolution(mapped_type_id);
+                // Route through the solver's TypeEvaluator which handles
+                // mapped type expansion with full resolver context.
+                let evaluated = self.evaluate_type_with_env(mapped_type_id);
+                return if evaluated != mapped_type_id {
+                    evaluated
+                } else {
+                    // Fall back to checker-side expansion if the solver couldn't
+                    // evaluate it (e.g., deferred mapped types with type params).
+                    self.evaluate_mapped_type_with_resolution(mapped_type_id)
+                };
             }
         }
 
