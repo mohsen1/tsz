@@ -17,6 +17,7 @@ impl<'a> Printer<'a> {
         // Also handles `#field in obj` → `__classPrivateFieldIn(_C_field, obj)`
         if !self.private_field_weakmaps.is_empty() {
             // Handle `#field in obj` → `__classPrivateFieldIn(_C_field, obj)`
+            // For methods/accessors, use the state_var (WeakSet/class alias) instead of the fn var.
             if binary.operator_token == SyntaxKind::InKeyword as u16
                 && let Some(left_node) = self.arena.get(binary.left)
                 && left_node.kind == SyntaxKind::PrivateIdentifier as u16
@@ -24,11 +25,15 @@ impl<'a> Printer<'a> {
             {
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
                 if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
-                    // TODO: wire through lowering pass
-                    // self.ctx.helpers.class_private_field_in = true;
                     self.write_helper("__classPrivateFieldIn");
                     self.write("(");
-                    self.write(&weakmap_name);
+                    // For methods/accessors, use state_var (WeakSet or class alias)
+                    let in_var = self
+                        .private_member_info
+                        .get(clean_name)
+                        .and_then(|info| info.state_var.clone())
+                        .unwrap_or(weakmap_name);
+                    self.write(&in_var);
                     self.write(", ");
                     self.emit(binary.right);
                     self.write(")");
