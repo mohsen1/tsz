@@ -17242,3 +17242,29 @@ fn test_chain_summary_deep_hierarchy_property_access() {
          \nActual: {diagnostics:#?}"
     );
 }
+
+/// TS2423: Base class defines instance member function, derived class defines it as accessor.
+#[test]
+fn test_ts2423_method_overridden_by_accessor() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class A {
+    m() {}
+}
+class B extends A {
+    get m() { return () => {} }
+}
+        "#,
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2423),
+        "Should emit TS2423 when derived accessor overrides base method.\nActual errors: {relevant_diagnostics:#?}"
+    );
+}

@@ -1545,6 +1545,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // TS2423: Base has method, derived has accessor
+                if is_accessor && base_info.is_method {
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "Class '{base_class_name}' defines instance member function '{member_name}', but extended class '{derived_class_name}' defines it as instance member accessor."
+                        ),
+                        diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_FUNCTION_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
+                    );
+                    continue;
+                }
+
                 // TS2426: Base has accessor, derived has method
                 // Note: do NOT `continue` here — tsc also emits TS2416 for type incompatibility
                 // alongside the kind mismatch error, so the type check below must still run.
