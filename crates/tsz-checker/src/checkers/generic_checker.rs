@@ -810,13 +810,44 @@ impl<'a> CheckerState<'a> {
                                 // For `Extract<T, C>` (= `T extends C ? T : never`),
                                 // the result is always a subtype of C, so if C satisfies
                                 // the constraint, skip. If C does NOT satisfy, emit TS2344.
-                                if let Some((cond_extends, cond_false)) =
-                                    query::conditional_type_components(
+                                //
+                                // IMPORTANT: Only apply the eager extends-type check when
+                                // the conditional is truly Extract-like (true_type ==
+                                // check_type). For general conditionals like
+                                // `T extends object ? { [K in keyof T]: T[K] } : never`,
+                                // the true branch is a different type from the check type,
+                                // so the extends type is NOT a reliable proxy for the
+                                // result. Defer those to instantiation time.
+                                if let Some((cond_check, cond_extends, cond_true, cond_false)) =
+                                    query::full_conditional_type_components(
                                         self.ctx.types.as_type_database(),
                                         base,
                                     )
                                 {
                                     if cond_false == TypeId::NEVER {
+                                        // Determine if this conditional is "Extract-like":
+                                        // the extends type can serve as a proxy for the result.
+                                        //
+                                        // Extract-like cases (check extends type vs constraint):
+                                        // - `T extends C ? T : never` (true == check, classic Extract)
+                                        // - `C extends X<infer P> ? P : never` (true is bare type param,
+                                        //   opaque — no structural guarantee, e.g. GetProps<C>)
+                                        //
+                                        // Non-Extract cases (defer to instantiation):
+                                        // - `S extends object ? { [K in keyof S]: S[K] } : never`
+                                        //   (true branch structurally derived from check type)
+                                        let is_extract_like = cond_true == cond_check
+                                            || query::is_bare_type_parameter(
+                                                self.ctx.types.as_type_database(),
+                                                cond_true,
+                                            );
+                                        if !is_extract_like {
+                                            // True branch is a structural type derived from the
+                                            // check type (e.g., mapped type). Constraint satisfaction
+                                            // depends on the structure, not the extends type.
+                                            // Defer to instantiation time.
+                                            continue;
+                                        }
                                         let ext_resolved = self.resolve_lazy_type(cond_extends);
                                         let ext_evaluated =
                                             self.evaluate_type_for_assignability(ext_resolved);
@@ -826,7 +857,7 @@ impl<'a> CheckerState<'a> {
                                         {
                                             continue;
                                         }
-                                        // Extract-like pattern (? TrueType : never) but the
+                                        // Extract-like pattern (? T : never) but the
                                         // extends type does NOT satisfy the constraint. tsc
                                         // reports TS2344 in this case. Instantiate constraint
                                         // with type args for accurate error messages.
