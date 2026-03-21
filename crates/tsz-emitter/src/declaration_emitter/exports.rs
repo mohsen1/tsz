@@ -1870,7 +1870,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
         };
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            || expr_node.kind == SyntaxKind::NullKeyword as u16
+        {
             return true;
         }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
