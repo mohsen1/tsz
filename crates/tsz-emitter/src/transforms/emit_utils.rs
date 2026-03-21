@@ -307,6 +307,18 @@ pub(crate) fn is_type_only_module_statement_ext(
                         // Unknown/unresolved — conservatively treat as instantiating.
                         return false;
                     }
+                    // For `export declare enum`, the enum IS exported (the wrapper
+                    // provides the export modifier). `declare enum` with export
+                    // instantiates the namespace for the binding, so NOT type-only.
+                    if inner_node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                        if let Some(enum_decl) = arena.get_enum(inner_node) {
+                            let is_declare = arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword);
+                            if is_declare {
+                                return false; // exported declare enum → instantiates
+                            }
+                        }
+                    }
                     return is_type_only_module_statement_ext(
                         arena,
                         inner_node,
@@ -318,9 +330,19 @@ pub(crate) fn is_type_only_module_statement_ext(
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(node) {
-                return arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || (arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
-                        && !preserve_const_enums);
+                let is_declare =
+                    arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword);
+                let is_const = arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
+                // `declare enum` is type-only UNLESS exported. When exported inside
+                // a namespace, `export declare enum E` forces the namespace IIFE to
+                // be emitted (for the `ns.E` binding), even though the enum body is
+                // empty. tsc emits: `(function (Decl) { })(Decl || (Decl = {}));`
+                if is_declare {
+                    let is_exported =
+                        arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword);
+                    return !is_exported;
+                }
+                return is_const && !preserve_const_enums;
             }
             false
         }
