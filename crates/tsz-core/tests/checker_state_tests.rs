@@ -35087,3 +35087,50 @@ abstract class A {
         "Should NOT emit TS1244 for abstract constructor, got: {codes:?}"
     );
 }
+
+#[test]
+fn test_generic_interface_implements_ts2416() {
+    // Test: genericSpecializations1.ts
+    // Interface method has its own type param <T> shadowing the interface's T.
+    // Non-generic implementations are NOT assignable to the generic method.
+    let source = r#"
+interface IFoo<T> {
+    foo<T>(x: T): T;
+}
+class IntFooBad implements IFoo<number> {
+    foo(x: string): string { return null; }
+}
+class StringFoo2 implements IFoo<string> {
+    foo(x: string): string { return null; }
+}
+class StringFoo3 implements IFoo<string> {
+    foo<T>(x: T): T { return null; }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2416 = codes.iter().filter(|&&c| c == 2416).count();
+    assert!(
+        count_2416 == 2,
+        "Expected exactly 2 TS2416 errors (IntFooBad and StringFoo2), got {count_2416}: {codes:?}"
+    );
+}

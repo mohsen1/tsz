@@ -1465,7 +1465,9 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
 
     // Non-generic source should be assignable to generic target
     // because T gets erased to its constraint { value: number }
+    // This requires erase_generics=true (used for base type structural checks).
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_function_types = false;
+    checker.erase_generics = true;
     assert!(checker.check_subtype(source, target).is_true());
 }
