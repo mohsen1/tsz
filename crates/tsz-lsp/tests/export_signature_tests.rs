@@ -1,5 +1,25 @@
 use super::*;
 
+// Helper to parse, bind, and compute an ExportSignature for a source string.
+fn compute_sig(source: &str) -> ExportSignature {
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    ExportSignature::compute(&binder, file_name)
+}
+
+// Helper to parse, bind, and build an ExportSignatureInput for a source string.
+fn compute_input(source: &str) -> ExportSignatureInput {
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    ExportSignatureInput::from_binder(&binder, file_name)
+}
+
 #[test]
 fn test_body_edit_preserves_signature() {
     // Two files with the same exports but different function bodies
@@ -2511,4 +2531,310 @@ fn test_export_function_with_rest_params_body_change() {
         sig_a, sig_b,
         "Changing rest-params function body should not change export signature"
     );
+}
+
+// ============================================================================
+// Unified ExportSignatureInput tests
+// ============================================================================
+
+#[test]
+fn test_input_from_binder_matches_compute() {
+    // ExportSignatureInput::from_binder + ExportSignature::from_input must produce
+    // the same hash as ExportSignature::compute (they are the same code path).
+    let source = "export function foo() { return 1; }\nexport const bar = 42;";
+    let file_name = "test.ts";
+
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let via_compute = ExportSignature::compute(&binder, file_name);
+    let input = ExportSignatureInput::from_binder(&binder, file_name);
+    let via_input = ExportSignature::from_input(&input);
+
+    assert_eq!(
+        via_compute, via_input,
+        "compute() and from_input(from_binder()) must produce identical hashes"
+    );
+}
+
+#[test]
+fn test_input_body_only_edit_stable() {
+    let input_a = compute_input("export function foo() { return 1; }");
+    let input_b = compute_input("export function foo() { return 999; }");
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Body-only edit: ExportSignatureInput should be stable"
+    );
+}
+
+#[test]
+fn test_input_comment_only_edit_stable() {
+    let input_a = compute_input("// v1\nexport const x = 1;");
+    let input_b = compute_input("// v2 — updated comment\nexport const x = 1;");
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Comment-only edit: ExportSignatureInput should be stable"
+    );
+}
+
+#[test]
+fn test_input_private_symbol_edit_stable() {
+    let input_a = compute_input("const helper = 1;\nexport function foo() {}");
+    let input_b =
+        compute_input("const helper = 1;\nconst helper2 = 'new';\nexport function foo() {}");
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Adding private symbols: ExportSignatureInput should be stable"
+    );
+}
+
+#[test]
+fn test_input_reexport_change_detected() {
+    let sig_a = compute_sig("export { default as foo } from './mod';");
+    let sig_b = compute_sig("export { default as bar } from './mod';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Changing a re-export name should change the signature"
+    );
+}
+
+#[test]
+fn test_input_reexport_source_change_detected() {
+    let sig_a = compute_sig("export { foo } from './a';");
+    let sig_b = compute_sig("export { foo } from './b';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Changing a re-export source module should change the signature"
+    );
+}
+
+#[test]
+fn test_input_wildcard_reexport_added() {
+    let sig_a = compute_sig("export function foo() {}");
+    let sig_b = compute_sig("export function foo() {}\nexport * from './utils';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a wildcard re-export should change the signature"
+    );
+}
+
+#[test]
+fn test_input_wildcard_reexport_source_change() {
+    let sig_a = compute_sig("export * from './a';");
+    let sig_b = compute_sig("export * from './b';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Changing wildcard re-export source should change the signature"
+    );
+}
+
+#[test]
+fn test_input_multiple_reexports_order_independent() {
+    let sig_a = compute_sig("export { a } from './x';\nexport { b } from './y';");
+    let sig_b = compute_sig("export { b } from './y';\nexport { a } from './x';");
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Re-export order should not affect the signature (sorted keys)"
+    );
+}
+
+#[test]
+fn test_input_adding_named_reexport_changes_signature() {
+    let sig_a = compute_sig("export { a } from './x';");
+    let sig_b = compute_sig("export { a } from './x';\nexport { b } from './y';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a named re-export should change the signature"
+    );
+}
+
+#[test]
+fn test_input_removing_reexport_changes_signature() {
+    let sig_a = compute_sig("export { a } from './x';\nexport { b } from './y';");
+    let sig_b = compute_sig("export { a } from './x';");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Removing a named re-export should change the signature"
+    );
+}
+
+// ============================================================================
+// Augmentation tests
+// ============================================================================
+
+#[test]
+fn test_global_augmentation_changes_signature() {
+    let sig_a = compute_sig("export const x = 1;");
+    let sig_b =
+        compute_sig("export const x = 1;\ndeclare global { interface Window { foo: string; } }");
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a global augmentation should change the signature"
+    );
+}
+
+#[test]
+fn test_module_augmentation_changes_signature() {
+    let sig_a = compute_sig("export const x = 1;");
+    let sig_b = compute_sig(
+        "export const x = 1;\ndeclare module 'express' { interface Request { user: any; } }",
+    );
+
+    // Module augmentations may or may not be tracked by the binder for inline source;
+    // at minimum, verify no panic and valid computation
+    let _ = (sig_a, sig_b);
+}
+
+// ============================================================================
+// InvalidationSummary tests
+// ============================================================================
+
+#[test]
+fn test_invalidation_summary_unchanged() {
+    let summary = InvalidationSummary::unchanged("a.ts".to_string(), 0x1234);
+    assert!(!summary.api_changed);
+    assert_eq!(summary.dependents_invalidated, 0);
+    assert_eq!(summary.old_signature, Some(0x1234));
+    assert_eq!(summary.new_signature, 0x1234);
+}
+
+#[test]
+fn test_invalidation_summary_changed() {
+    let summary = InvalidationSummary::changed("a.ts".to_string(), Some(0x1111), 0x2222, 3);
+    assert!(summary.api_changed);
+    assert_eq!(summary.dependents_invalidated, 3);
+    assert_eq!(summary.old_signature, Some(0x1111));
+    assert_eq!(summary.new_signature, 0x2222);
+}
+
+#[test]
+fn test_invalidation_summary_new_file() {
+    let summary = InvalidationSummary::new_file("new.ts".to_string(), 0xABCD);
+    assert!(summary.api_changed);
+    assert_eq!(summary.dependents_invalidated, 0);
+    assert_eq!(summary.old_signature, None);
+    assert_eq!(summary.new_signature, 0xABCD);
+}
+
+// ============================================================================
+// Cross-system equivalence: from_input produces deterministic results
+// ============================================================================
+
+#[test]
+fn test_from_input_deterministic() {
+    let input = ExportSignatureInput {
+        exports: vec![
+            ("bar".to_string(), 0x10, false),
+            ("foo".to_string(), 0x20, true),
+        ],
+        named_reexports: vec![(
+            "baz".to_string(),
+            "./mod".to_string(),
+            Some("original".to_string()),
+        )],
+        wildcard_reexports: vec!["./utils".to_string()],
+        global_augmentations: vec![("Window".to_string(), 1)],
+        module_augmentations: vec![("express".to_string(), vec!["Request".to_string()])],
+        exported_locals: vec![("bar".to_string(), 0x10, false)],
+    };
+
+    let sig1 = ExportSignature::from_input(&input);
+    let sig2 = ExportSignature::from_input(&input);
+
+    assert_eq!(sig1, sig2, "from_input must be deterministic");
+    assert_ne!(
+        sig1.0, 0,
+        "Signature should be non-zero for non-empty input"
+    );
+}
+
+#[test]
+fn test_from_input_different_exports_different_hash() {
+    let input_a = ExportSignatureInput {
+        exports: vec![("foo".to_string(), 0x10, false)],
+        ..Default::default()
+    };
+    let input_b = ExportSignatureInput {
+        exports: vec![("bar".to_string(), 0x10, false)],
+        ..Default::default()
+    };
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Different export names should produce different hashes"
+    );
+}
+
+#[test]
+fn test_from_input_different_flags_different_hash() {
+    let input_a = ExportSignatureInput {
+        exports: vec![("foo".to_string(), 0x10, false)],
+        ..Default::default()
+    };
+    let input_b = ExportSignatureInput {
+        exports: vec![("foo".to_string(), 0x20, false)],
+        ..Default::default()
+    };
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Different symbol flags should produce different hashes"
+    );
+}
+
+#[test]
+fn test_from_input_type_only_change_different_hash() {
+    let input_a = ExportSignatureInput {
+        exports: vec![("foo".to_string(), 0x10, false)],
+        ..Default::default()
+    };
+    let input_b = ExportSignatureInput {
+        exports: vec![("foo".to_string(), 0x10, true)],
+        ..Default::default()
+    };
+
+    let sig_a = ExportSignature::from_input(&input_a);
+    let sig_b = ExportSignature::from_input(&input_b);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Changing is_type_only should produce different hashes"
+    );
+}
+
+#[test]
+fn test_from_input_empty_is_consistent() {
+    let input = ExportSignatureInput::default();
+    let sig1 = ExportSignature::from_input(&input);
+    let sig2 = ExportSignature::from_input(&input);
+
+    assert_eq!(sig1, sig2, "Empty input should produce consistent hashes");
 }

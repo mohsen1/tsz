@@ -10,7 +10,7 @@ use crate::code_actions::ImportCandidateKind;
 use crate::completions::{CompletionItem, Completions};
 use crate::dependency_graph::DependencyGraph;
 use crate::diagnostics::{LspDiagnostic, convert_diagnostic};
-use crate::export_signature::ExportSignature;
+use crate::export_signature::{ExportSignature, InvalidationSummary};
 use crate::hover::{HoverInfo, HoverProvider};
 use crate::rename::TextEdit;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1445,9 +1445,17 @@ impl Project {
     /// Uses export signature comparison to avoid unnecessary cache invalidation:
     /// if the file's public API (exports, re-exports, augmentations) didn't change,
     /// dependent files keep their cached diagnostics.
-    pub fn update_file(&mut self, file_name: &str, edits: &[TextEdit]) -> Option<()> {
+    ///
+    /// Returns an `InvalidationSummary` describing what changed and how many
+    /// dependents were invalidated. Useful for perf analysis.
+    pub fn update_file(
+        &mut self,
+        file_name: &str,
+        edits: &[TextEdit],
+    ) -> Option<InvalidationSummary> {
         if edits.is_empty() {
-            return Some(());
+            let sig = self.files.get(file_name)?.export_signature.0;
+            return Some(InvalidationSummary::unchanged(file_name.to_string(), sig));
         }
 
         let (updated_source, unchanged) = {
@@ -1459,7 +1467,8 @@ impl Project {
         };
 
         if unchanged {
-            return Some(());
+            let sig = self.files.get(file_name)?.export_signature.0;
+            return Some(InvalidationSummary::unchanged(file_name.to_string(), sig));
         }
 
         // Capture old export signature before updating
@@ -1479,14 +1488,25 @@ impl Project {
         let new_signature = file.export_signature;
         if old_signature != new_signature {
             let affected_files = self.dependency_graph.get_affected_files(file_name);
+            let mut invalidated_count = 0;
             for affected_file in affected_files {
                 if let Some(dep_file) = self.files.get_mut(&affected_file) {
                     dep_file.invalidate_caches();
+                    invalidated_count += 1;
                 }
             }
+            Some(InvalidationSummary::changed(
+                file_name.to_string(),
+                Some(old_signature.0),
+                new_signature.0,
+                invalidated_count,
+            ))
+        } else {
+            Some(InvalidationSummary::unchanged(
+                file_name.to_string(),
+                new_signature.0,
+            ))
         }
-
-        Some(())
     }
 
     /// Remove a file from the project.
