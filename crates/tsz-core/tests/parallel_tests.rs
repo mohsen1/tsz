@@ -3402,3 +3402,77 @@ fn skeleton_validate_mixed_ambient_and_user_files() {
         "should have exact declared module 'my-globals'"
     );
 }
+
+#[test]
+fn skeleton_index_captures_expando_properties() {
+    // Expando property assignments (X.prop = value) should be captured in the
+    // skeleton and merged across files in the SkeletonIndex.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "function foo() {} foo.bar = 1; foo.baz = 'hello';".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "function foo() {} foo.qux = true;".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    // The merged expando index should contain "foo" with properties from both files.
+    assert!(
+        idx.expando_properties.contains_key("foo"),
+        "skeleton index should capture expando properties for 'foo', got: {:?}",
+        idx.expando_properties
+    );
+    let foo_props = &idx.expando_properties["foo"];
+    assert!(
+        foo_props.contains("bar"),
+        "expando properties for 'foo' should contain 'bar'"
+    );
+    assert!(
+        foo_props.contains("baz"),
+        "expando properties for 'foo' should contain 'baz'"
+    );
+    assert!(
+        foo_props.contains("qux"),
+        "expando properties for 'foo' should contain 'qux' (from second file)"
+    );
+}
+
+#[test]
+fn skeleton_expando_matches_binder_built() {
+    // Verify that the skeleton-derived expando index produces the same result
+    // as the binder-scanning loop in set_all_binders.
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    let files = vec![(
+        "expando.ts".to_string(),
+        "function myFunc() {} myFunc.x = 1; myFunc.y = 'str';".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Build from skeleton
+    let idx = program.skeleton_index.as_ref().unwrap();
+    let skeleton_expando = &idx.expando_properties;
+
+    // Build from binders (the old way)
+    let mut binder_expando: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+    for file in &program.files {
+        let binder = crate::parallel::create_binder_from_bound_file(file, &program, 0);
+        for (obj_key, props) in binder.expando_properties.iter() {
+            binder_expando
+                .entry(obj_key.clone())
+                .or_default()
+                .extend(props.iter().cloned());
+        }
+    }
+
+    assert_eq!(
+        skeleton_expando, &binder_expando,
+        "skeleton expando index should match binder-built expando index"
+    );
+}

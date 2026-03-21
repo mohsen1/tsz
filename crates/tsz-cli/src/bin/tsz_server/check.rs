@@ -172,6 +172,9 @@ impl Server {
                 checker.ctx.set_declared_modules_from_skeleton(Arc::new(
                     tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
                 ));
+                checker
+                    .ctx
+                    .set_expando_index_from_skeleton(Arc::new(skel.expando_properties.clone()));
             }
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker
