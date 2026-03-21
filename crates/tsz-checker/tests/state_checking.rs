@@ -53,7 +53,10 @@ fn exposes_state_checking_boundary_queries() {
         Some(vec![TypeId::STRING, TypeId::NUMBER])
     );
     assert!(is_type_parameter_like(&types, type_param));
-    assert!(is_only_null_or_undefined(&types, null_or_undefined));
+    assert!(tsz_solver::type_queries::is_only_null_or_undefined(
+        &types,
+        null_or_undefined
+    ));
     let found = find_property_in_object_by_str(&types, object_with_optional, "foo")
         .expect("expected property in object_with_optional");
     assert_eq!(found.type_id, TypeId::STRING);
