@@ -456,3 +456,159 @@ fn test_find_type_alias_by_body_cleared() {
 
     assert_eq!(store.find_type_alias_by_body(body), None);
 }
+
+// =============================================================================
+// Shape-to-def index tests (find_def_by_shape O(1))
+// =============================================================================
+
+#[test]
+fn test_find_def_by_shape_via_register() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Point");
+    let x_name = interner.intern_string("x");
+    let y_name = interner.intern_string("y");
+
+    let props = vec![
+        PropertyInfo {
+            name: x_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: y_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+    ];
+
+    let info = DefinitionInfo::interface(name, vec![], props.clone());
+    let def_id = store.register(info);
+
+    // Build the same shape for lookup.
+    let lookup_shape = ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: props,
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    };
+
+    // O(1) lookup should find it.
+    assert_eq!(store.find_def_by_shape(&lookup_shape), Some(def_id));
+}
+
+#[test]
+fn test_find_def_by_shape_no_match() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Foo");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    store.register(info);
+
+    // Type aliases have no instance_shape, so lookup should return None.
+    let empty_shape = ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    };
+    assert_eq!(store.find_def_by_shape(&empty_shape), None);
+}
+
+#[test]
+fn test_find_def_by_shape_via_set_instance_shape() {
+    use std::sync::Arc;
+
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Iface");
+    // Register with no instance shape.
+    let info = DefinitionInfo {
+        kind: DefKind::Interface,
+        name,
+        type_params: vec![],
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: None,
+        span: None,
+        symbol_id: None,
+    };
+    let def_id = store.register(info);
+
+    let z_name = interner.intern_string("z");
+    let shape = ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![PropertyInfo {
+            name: z_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    };
+
+    // No shape yet.
+    assert_eq!(store.find_def_by_shape(&shape), None);
+
+    // Set instance shape.
+    store.set_instance_shape(def_id, Arc::new(shape.clone()));
+
+    // Now O(1) lookup should find it.
+    assert_eq!(store.find_def_by_shape(&shape), Some(def_id));
+}
+
+#[test]
+fn test_find_def_by_shape_cleared() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("A");
+    let info = DefinitionInfo::interface(name, vec![], vec![]);
+    store.register(info);
+
+    let empty_shape = ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    };
+
+    assert!(store.find_def_by_shape(&empty_shape).is_some());
+
+    store.clear();
+
+    assert_eq!(store.find_def_by_shape(&empty_shape), None);
+}
