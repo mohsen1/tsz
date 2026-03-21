@@ -1069,6 +1069,12 @@ impl<'a> Printer<'a> {
         export_assignment_node: &Node,
         statements: &NodeList,
     ) -> bool {
+        // With --verbatimModuleSyntax, type-only exports are NOT elided.
+        // tsc preserves `export = I` → `module.exports = I;` even for interfaces.
+        if self.ctx.options.verbatim_module_syntax {
+            return false;
+        }
+
         let Some(export_assign) = self.arena.get_export_assignment(export_assignment_node) else {
             return false;
         };
