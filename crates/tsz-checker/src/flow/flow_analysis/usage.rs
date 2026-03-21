@@ -346,10 +346,8 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node::NodeAccess;
 
-        // TS2454 is only emitted under strictNullChecks (matches tsc behavior)
-        if !self.ctx.strict_null_checks() {
-            return false;
-        }
+        // tsc 6.0: TS2454 fires regardless of strictNullChecks for variables
+        // with type annotations used before assignment.
 
         // Skip definite assignment check for identifiers in type-query position
         // (e.g., `typeof x` in `let b: typeof x`). typeof in type position is a
