@@ -28,6 +28,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
+use tsz_solver::def::DefinitionStore;
 
 pub(crate) enum ImportKind {
     Named(String),
@@ -1126,6 +1127,17 @@ pub struct Project {
     pub(crate) workspace_roots: Vec<String>,
     /// Parsed tsconfig.json settings per workspace root.
     pub(crate) tsconfig_settings: FxHashMap<String, TsConfigSettings>,
+    /// Shared definition store for cross-file `DefId` consistency.
+    ///
+    /// When present, all `CheckerState` instances created for files in this project
+    /// share the same `DefinitionStore`, ensuring that `DefId`s are globally unique
+    /// and cross-file type references resolve correctly. The store is wrapped in
+    /// `Arc` for thread-safe sharing.
+    ///
+    /// Currently populated but not yet wired into per-file checker creation paths.
+    /// Future iterations will pass this to `CheckerState::with_cache_and_shared_def_store`
+    /// once the `TypeInterner` is also shared at the project level.
+    pub(crate) definition_store: std::sync::Arc<DefinitionStore>,
 }
 
 /// Parsed settings from tsconfig.json relevant to LSP operation.
@@ -1174,6 +1186,7 @@ impl Project {
             auto_imports_allowed_without_tsconfig: true,
             workspace_roots: Vec::new(),
             tsconfig_settings: FxHashMap::default(),
+            definition_store: std::sync::Arc::new(DefinitionStore::new()),
         }
     }
 
@@ -1193,6 +1206,7 @@ impl Project {
             auto_imports_allowed_without_tsconfig: true,
             workspace_roots: Vec::new(),
             tsconfig_settings: FxHashMap::default(),
+            definition_store: std::sync::Arc::new(DefinitionStore::new()),
         }
     }
 
@@ -1217,6 +1231,15 @@ impl Project {
     /// Get tsconfig settings for a workspace root.
     pub fn tsconfig_for_root(&self, root: &str) -> Option<&TsConfigSettings> {
         self.tsconfig_settings.get(root)
+    }
+
+    /// Get the shared definition store for this project.
+    ///
+    /// Returns a clone of the `Arc`, allowing callers to share the store
+    /// with checker instances or other components that need cross-file
+    /// `DefId` consistency.
+    pub fn definition_store(&self) -> std::sync::Arc<DefinitionStore> {
+        std::sync::Arc::clone(&self.definition_store)
     }
 
     /// Load and parse a tsconfig.json file, storing settings for the workspace root.

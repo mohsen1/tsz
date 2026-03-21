@@ -3074,3 +3074,66 @@ fn test_property_rs_no_duplicate_proto_lists() {
         "property.rs must NOT define FUNCTION_PROTO — it must use the boundary"
     );
 }
+
+/// Verify that `CheckerState::with_cache_and_shared_def_store` propagates
+/// the shared `DefinitionStore` to the checker context.
+#[test]
+fn test_shared_def_store_propagated_through_cache_constructor() {
+    use std::sync::Arc;
+    use tsz_solver::def::DefinitionStore;
+
+    let shared_store = Arc::new(DefinitionStore::new());
+
+    // Register a definition in the shared store so we can verify identity.
+    let info = tsz_solver::def::DefinitionInfo::type_alias(
+        tsz_common::interner::Atom(42),
+        vec![],
+        TypeId::STRING,
+    );
+    let def_id = shared_store.register(info);
+
+    let interner = TypeInterner::new();
+    let query_cache = tsz_solver::QueryCache::new(&interner);
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), "let x = 1;".to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let options = CheckerOptions {
+        strict: false,
+        ..Default::default()
+    };
+
+    // Create an empty TypeCache.
+    let cache = crate::TypeCache {
+        symbol_types: Default::default(),
+        symbol_instance_types: Default::default(),
+        node_types: Default::default(),
+        symbol_dependencies: Default::default(),
+        def_to_symbol: Default::default(),
+        flow_analysis_cache: Default::default(),
+        class_instance_type_to_decl: Default::default(),
+        class_instance_type_cache: Default::default(),
+        class_constructor_type_cache: Default::default(),
+        type_only_nodes: Default::default(),
+        namespace_module_names: Default::default(),
+    };
+
+    // Create checker with cache + shared def store.
+    let checker = crate::state::CheckerState::with_cache_and_shared_def_store(
+        arena,
+        &binder,
+        &query_cache,
+        "test.ts".to_string(),
+        cache,
+        options,
+        Arc::clone(&shared_store),
+    );
+
+    // The checker's definition store should be the same Arc instance.
+    assert!(
+        checker.ctx.definition_store.contains(def_id),
+        "Checker should see definitions from the shared store"
+    );
+}

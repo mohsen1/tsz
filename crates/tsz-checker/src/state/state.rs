@@ -599,6 +599,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Create a new `CheckerState` with a persistent cache and a shared `DefinitionStore`.
+    ///
+    /// This combines cache restoration (for reusing type checking results across edits)
+    /// with a shared definition store (for cross-file `DefId` consistency). This is the
+    /// constructor the LSP uses for incremental re-checking with project-wide definitions.
+    pub fn with_cache_and_shared_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        cache: crate::TypeCache,
+        compiler_options: CheckerOptions,
+        definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
+    ) -> Self {
+        CheckerState {
+            ctx: CheckerContext::with_cache_and_shared_def_store(
+                arena,
+                binder,
+                types,
+                file_name,
+                cache,
+                compiler_options,
+                definition_store,
+            ),
+        }
+    }
+
     /// Extract the persistent cache from this checker.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> crate::TypeCache {

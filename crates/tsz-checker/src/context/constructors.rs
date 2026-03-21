@@ -409,6 +409,39 @@ impl<'a> CheckerContext<'a> {
         ctx
     }
 
+    /// Create a new `CheckerContext` with a persistent cache and a shared `DefinitionStore`.
+    ///
+    /// Combines cache restoration with shared definition store, which is needed
+    /// by the LSP to reuse type checking results across edits while keeping all
+    /// files' definitions in a single `DefId` namespace.
+    pub fn with_cache_and_shared_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        cache: TypeCache,
+        compiler_options: CheckerOptions,
+        definition_store: Arc<DefinitionStore>,
+    ) -> Self {
+        let compiler_options = compiler_options.apply_strict_defaults();
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
+        let mut ctx = Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        );
+        ctx.definition_store = definition_store;
+        ctx.apply_cache(cache);
+        ctx
+    }
+
     /// Create a child `CheckerContext` for temporary cross-file checks.
     ///
     /// Important: only caches keyed by globally stable ids (e.g. `TypeId`, `RelationCacheKey`)
