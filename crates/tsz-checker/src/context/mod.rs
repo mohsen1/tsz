@@ -700,6 +700,11 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
+    /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
+    /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
+    /// delegation without implicit global state.
+    pub eval_session: Rc<tsz_solver::EvaluationSession>,
+
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
     pub recursion_depth: RefCell<tsz_solver::recursion::DepthCounter>,
