@@ -237,8 +237,13 @@ impl<'a> CheckerState<'a> {
         };
 
         // token stores the SyntaxKind of the keyword used (AssertKeyword vs WithKeyword)
+        // Route through the capability boundary to check ignore_deprecations.
         if attrs_data.token == tsz_scanner::SyntaxKind::AssertKeyword as u16
-            && !self.ctx.compiler_options.ignore_deprecations
+            && self
+                .ctx
+                .capabilities
+                .check_import_assert_deprecated()
+                .is_some()
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             // Error spans the `assert` keyword (6 characters), positioned at the node start

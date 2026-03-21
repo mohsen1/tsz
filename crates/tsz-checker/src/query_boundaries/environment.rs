@@ -65,6 +65,12 @@ pub(crate) enum CapabilityDiagnostic {
     /// TS2854: Top-level 'await using' not supported with current module/target.
     TopLevelAwaitUsingUnsupported,
 
+    /// TS1378: Top-level 'await' expression not supported with current module/target.
+    TopLevelAwaitUnsupported,
+
+    /// TS2880: Import assertions deprecated (use 'with' instead of 'assert').
+    ImportAssertDeprecated,
+
     /// TS5071: resolveJsonModule incompatible with current module option.
     ResolveJsonModuleIncompatible,
 
@@ -97,6 +103,8 @@ impl CapabilityDiagnostic {
             Self::MissingBunGlobal { .. } => 2868,
             Self::ImportAttributesUnsupported => 2823,
             Self::TopLevelAwaitUsingUnsupported => 2854,
+            Self::TopLevelAwaitUnsupported => 1378,
+            Self::ImportAssertDeprecated => 2880,
             Self::ResolveJsonModuleIncompatible => 5071,
             Self::FeatureRequiresGlobalType { .. } => 2318,
             Self::DeprecatedOption { .. } => 5101,
@@ -122,6 +130,13 @@ impl EnvironmentCapabilities {
             FeatureGate::TopLevelAwaitUsing => {
                 if !self.top_level_await_using_supported {
                     Some(CapabilityDiagnostic::TopLevelAwaitUsingUnsupported)
+                } else {
+                    None
+                }
+            }
+            FeatureGate::TopLevelAwait => {
+                if !self.top_level_await_using_supported {
+                    Some(CapabilityDiagnostic::TopLevelAwaitUnsupported)
                 } else {
                     None
                 }
@@ -210,6 +225,19 @@ impl EnvironmentCapabilities {
     /// previously passed as `skip_lib_type_resolution` from the driver.
     pub fn should_skip_lib_type_resolution(&self) -> bool {
         self.has_deprecation_diagnostics
+    }
+
+    /// Check whether the deprecated `assert` keyword for import attributes
+    /// should produce a diagnostic (TS2880).
+    ///
+    /// Returns `Some(ImportAssertDeprecated)` when `ignore_deprecations` is false
+    /// (meaning the deprecation is not suppressed by the user's config).
+    pub fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
+        if !self.ignore_deprecations {
+            Some(CapabilityDiagnostic::ImportAssertDeprecated)
+        } else {
+            None
+        }
     }
 
     /// Check config compatibility and return any diagnostics.
