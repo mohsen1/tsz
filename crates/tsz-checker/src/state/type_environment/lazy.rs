@@ -329,12 +329,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
-        // Skip pruning when already deep in type resolution to prevent
-        // infinite mutual recursion: evaluate → prune → evaluate members → prune → ...
-        // Pruning is a speculative optimization; skipping it is always safe.
-        if self.ctx.type_resolution_visiting.len() > 8 {
+        // Guard against infinite mutual recursion: evaluate → prune → evaluate members → prune.
+        // Pruning calls evaluate_type_with_resolution on each union member, which can resolve
+        // to new unions that get pruned again. Since pruning is a speculative optimization
+        // (removing provably-impossible union members), skipping nested calls is always safe.
+        if self.ctx.pruning_union_members {
             return type_id;
         }
+        self.ctx.pruning_union_members = true;
+        let result = self.prune_impossible_object_union_members_inner(type_id);
+        self.ctx.pruning_union_members = false;
+        result
+    }
+
+    fn prune_impossible_object_union_members_inner(&mut self, type_id: TypeId) -> TypeId {
         let Some(members) =
             crate::query_boundaries::state::checking::union_members(self.ctx.types, type_id)
         else {
