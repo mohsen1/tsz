@@ -1118,6 +1118,45 @@ impl<'a> UsageAnalyzer<'a> {
                 || k == SyntaxKind::TrueKeyword as u16
                 || k == SyntaxKind::FalseKeyword as u16 => {}
 
+            // Constructor type: new (...) => T
+            k if k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func) = self.arena.get_function_type(type_node) {
+                    if let Some(ref type_params) = func.type_parameters {
+                        for &param_idx in &type_params.nodes {
+                            self.analyze_type_parameter(param_idx);
+                        }
+                    }
+                    for &param_idx in &func.parameters.nodes {
+                        self.analyze_parameter(param_idx);
+                    }
+                    self.analyze_type_node(func.type_annotation);
+                }
+            }
+
+            // Optional type: T? (in tuples)
+            k if k == syntax_kind_ext::OPTIONAL_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    self.analyze_type_node(wrapped.type_node);
+                }
+            }
+
+            // Rest type: ...T (in tuples)
+            k if k == syntax_kind_ext::REST_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    self.analyze_type_node(wrapped.type_node);
+                }
+            }
+
+            // Named tuple member: name: T
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                if let Some(named) = self.arena.get_named_tuple_member(type_node) {
+                    self.analyze_type_node(named.type_node);
+                }
+            }
+
+            // Import type: import("mod").T — handled by walk_inferred_type
+            k if k == syntax_kind_ext::IMPORT_TYPE => {}
+
             _ => {}
         }
 
