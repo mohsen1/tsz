@@ -1774,7 +1774,8 @@ impl<'a> CheckerState<'a> {
                     return (result, Vec::new());
                 }
 
-                if let Some(result) = self.resolve_direct_commonjs_assignment_export_type(
+                // Use the unified JS export surface for CommonJS named export lookup.
+                if let Some(result) = self.resolve_js_export_named_type(
                     module_name,
                     export_name,
                     Some(self.ctx.current_file_idx),

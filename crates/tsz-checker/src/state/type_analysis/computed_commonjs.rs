@@ -832,44 +832,6 @@ impl<'a> CheckerState<'a> {
         Some(binary.right)
     }
 
-    pub(crate) fn resolve_direct_commonjs_module_export_type(
-        &mut self,
-        module_name: &str,
-        source_file_idx: Option<usize>,
-    ) -> Option<TypeId> {
-        let target_file_idx = source_file_idx
-            .and_then(|file_idx| {
-                self.ctx
-                    .resolve_import_target_from_file(file_idx, module_name)
-            })
-            .or_else(|| self.ctx.resolve_import_target(module_name))?;
-
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let source_file = target_arena.source_files.first()?;
-        let mut rhs_expr = None;
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = target_arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            if let Some(found_rhs) =
-                self.direct_commonjs_module_export_assignment_rhs(target_arena, stmt.expression)
-            {
-                rhs_expr = Some(found_rhs);
-            }
-        }
-
-        let rhs_expr = rhs_expr?;
-        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
-        (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
-    }
-
     /// Extract the body statements of an IIFE (Immediately Invoked Function Expression).
     /// Recognizes patterns like `(function() { ... })()` and `(function() { ... }.call(this))`.
     fn get_iife_body_statements(
@@ -969,49 +931,6 @@ impl<'a> CheckerState<'a> {
                 declaration_order: props.len() as u32,
             });
         }
-    }
-
-    pub(crate) fn resolve_direct_commonjs_assignment_export_type(
-        &mut self,
-        module_name: &str,
-        export_name: &str,
-        source_file_idx: Option<usize>,
-    ) -> Option<TypeId> {
-        let target_file_idx = source_file_idx
-            .and_then(|file_idx| {
-                self.ctx
-                    .resolve_import_target_from_file(file_idx, module_name)
-            })
-            .or_else(|| self.ctx.resolve_import_target(module_name))?;
-
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let source_file = target_arena.source_files.first()?;
-        let export_aliases = Self::collect_commonjs_export_aliases_in_arena(target_arena);
-        let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
-        let mut ordered_names: Vec<String> = Vec::new();
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = target_arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            self.collect_direct_commonjs_assignment_exports(
-                target_arena,
-                stmt.expression,
-                &mut pending_props,
-                &mut ordered_names,
-                &export_aliases,
-            );
-        }
-
-        let rhs_expr = pending_props.get(export_name).copied()?;
-        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
-        (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
     pub(super) fn resolve_define_property_descriptor_object_literal(
@@ -1234,38 +1153,6 @@ impl<'a> CheckerState<'a> {
             Some(target_file_idx),
             props,
         );
-    }
-
-    pub(crate) fn commonjs_namespace_type_for_file(
-        &mut self,
-        target_file_idx: usize,
-    ) -> Option<TypeId> {
-        let mut props = Vec::new();
-        self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
-        if props.is_empty() {
-            return None;
-        }
-        let namespace_type = self.ctx.types.factory().object(props);
-        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
-            self.ctx
-                .namespace_module_names
-                .insert(namespace_type, specifier.clone());
-        }
-        Some(namespace_type)
-    }
-
-    pub(crate) fn commonjs_define_property_namespace_type(
-        &mut self,
-        module_name: &str,
-        source_file_idx: Option<usize>,
-    ) -> Option<TypeId> {
-        let target_file_idx = source_file_idx
-            .and_then(|file_idx| {
-                self.ctx
-                    .resolve_import_target_from_file(file_idx, module_name)
-            })
-            .or_else(|| self.ctx.resolve_import_target(module_name))?;
-        self.commonjs_namespace_type_for_file(target_file_idx)
     }
 
     pub(crate) fn commonjs_module_value_type(
