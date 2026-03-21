@@ -18,17 +18,31 @@ impl<'a> CheckerContext<'a> {
         current_ty: tsz_solver::TypeId,
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = sym_id?;
+
+        // Check if this is an interface using the DefinitionStore (O(1)) when
+        // available, falling back to the symbol's flags.
         let symbol = self.binder.symbols.get(sym_id).or_else(|| {
             self.lib_contexts
                 .iter()
                 .find_map(|lib| lib.binder.symbols.get(sym_id))
-        })?;
-        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+        });
+
+        let is_interface = self
+            .get_existing_def_id(sym_id)
+            .and_then(|def_id| self.definition_store.get_kind(def_id))
+            .map(|kind| kind == tsz_solver::def::DefKind::Interface)
+            .unwrap_or_else(|| {
+                symbol.is_some_and(|s| (s.flags & tsz_binder::symbol_flags::INTERFACE) != 0)
+            });
+        if !is_interface {
             return None;
         }
+
+        let name = symbol?.escaped_name.as_str();
+
         let cached_ty = self
             .lib_type_resolution_cache
-            .get(symbol.escaped_name.as_str())?
+            .get(name)?
             .as_ref()?;
         (*cached_ty != current_ty).then_some(*cached_ty)
     }
@@ -80,17 +94,17 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
             // where N is the raw SymbolId value. The DefId(N) doesn't exist in the
             // definition store. Try using N as a SymbolId and redirect.
+            //
+            // Use the DefinitionStore to check if this raw SymbolId has a proper
+            // DefId, avoiding O(N) scans through all binders. If the store has a
+            // mapping, the symbol exists; if not, fall back to the primary binder
+            // as a lightweight check.
             let candidate = tsz_binder::SymbolId(def_id.0);
-            let found = self.binder.symbols.get(candidate).is_some()
-                || self
-                    .lib_contexts
-                    .iter()
-                    .any(|lib| lib.binder.symbols.get(candidate).is_some())
-                || self.all_binders.as_ref().is_some_and(|binders| {
-                    binders
-                        .iter()
-                        .any(|binder| binder.symbols.get(candidate).is_some())
-                });
+            let found = self
+                .definition_store
+                .find_def_by_symbol(candidate.0)
+                .is_some()
+                || self.binder.symbols.get(candidate).is_some();
             found.then_some(candidate)
         });
         if let Some(sym_id) = sym_id {
@@ -103,29 +117,42 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 return self.resolve_lazy(real_def_id, _interner);
             }
 
-            // For classes, check if we should return instance type instead of constructor type.
-            // Check both main binder and lib binders for the symbol.
-            let symbol = self.binder.symbols.get(sym_id).or_else(|| {
-                self.lib_contexts
-                    .iter()
-                    .find_map(|lib| lib.binder.symbols.get(sym_id))
+            // For classes/interfaces/type aliases, check if we should return
+            // instance type instead of constructor type. Use the DefinitionStore's
+            // DefKind (O(1)) to determine symbol kind, avoiding O(N) lib binder scans.
+            // Fall back to symbol flags only when DefKind is unavailable.
+            let def_kind = self.definition_store.get_kind(def_id).or_else(|| {
+                // If this is a zombie DefId (from interner.reference), try the
+                // real DefId's kind instead.
+                self.get_existing_def_id(sym_id)
+                    .and_then(|real_id| self.definition_store.get_kind(real_id))
             });
-            if let Some(symbol) = symbol
-                && (symbol.flags & symbol_flags::CLASS) != 0
-                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
-            {
-                return Some(*instance_type);
-            } else if let Some(symbol) = symbol
-                && (symbol.flags & symbol_flags::INTERFACE) != 0
-                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
-            {
-                return Some(*instance_type);
-            } else if let Some(symbol) = symbol
-                && (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
-                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
-            {
-                // Type alias merged with namespace: return the alias body, not Lazy(DefId)
-                return Some(*instance_type);
+
+            if let Some(instance_type) = self.symbol_instance_types.get(&sym_id) {
+                if let Some(kind) = def_kind {
+                    if matches!(
+                        kind,
+                        tsz_solver::def::DefKind::Class
+                            | tsz_solver::def::DefKind::Interface
+                            | tsz_solver::def::DefKind::TypeAlias
+                    ) {
+                        return Some(*instance_type);
+                    }
+                } else {
+                    // Fallback: look up symbol flags from binder (primary binder only,
+                    // no O(N) lib scan — if the symbol is from a lib, its DefKind should
+                    // be in the DefinitionStore).
+                    let symbol = self.binder.symbols.get(sym_id);
+                    if let Some(symbol) = symbol
+                        && (symbol.flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::TYPE_ALIAS))
+                            != 0
+                    {
+                        return Some(*instance_type);
+                    }
+                }
             }
 
             // For type parameters, look up in type_parameter_scope by name.
@@ -136,7 +163,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // When the type parameter is in the current scope, return its TypeParameter
             // TypeId directly. When out of scope (e.g., a generic alias's own T),
             // fall through to symbol_types which handles already-instantiated contexts.
-            if let Some(symbol) = symbol
+            //
+            // Type parameters are always local symbols (never from lib binders), so
+            // only check the primary binder.
+            if let Some(symbol) = self.binder.symbols.get(sym_id)
                 && (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
                 && let Some(&tp_type) = self.type_parameter_scope.get(symbol.escaped_name.as_str())
             {
