@@ -117,6 +117,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         is_external_module: binder.is_external_module,
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
+        file_features: binder.file_features,
     }
 }
 
@@ -325,6 +326,7 @@ pub struct BindResult {
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    pub file_features: crate::binder::FileFeatures,
 }
 
 /// Parse and bind multiple files in parallel
@@ -393,6 +395,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 is_external_module: binder.is_external_module,
                 expando_properties: std::mem::take(&mut binder.expando_properties),
                 alias_partners: binder.alias_partners,
+                file_features: binder.file_features,
             }
         })
         .collect()
@@ -445,6 +448,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         is_external_module: binder.is_external_module,
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
+        file_features: binder.file_features,
     }
 }
 
@@ -908,6 +912,7 @@ fn bind_file_with_libs(
         is_external_module: binder.is_external_module,
         expando_properties: std::mem::take(&mut binder.expando_properties),
         alias_partners: binder.alias_partners,
+        file_features: binder.file_features,
     }
 }
 
@@ -950,6 +955,7 @@ pub struct BoundFile {
     pub is_external_module: bool,
     /// Expando property assignments detected during binding
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    pub file_features: crate::binder::FileFeatures,
 }
 
 use tsz_solver::TypeInterner;
@@ -2304,6 +2310,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             switch_clause_to_switch: result.switch_clause_to_switch.clone(),
             is_external_module: result.is_external_module,
             expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
+            file_features: result.file_features,
         });
     }
 
@@ -2821,6 +2828,7 @@ pub fn create_binder_from_bound_file(
     );
 
     binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = crate::binder::ScopeId(0);

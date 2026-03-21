@@ -2351,6 +2351,26 @@ async function* asyncGen() {
     );
 }
 
+#[test]
+fn using_declaration_sets_feature_flag() {
+    let (binder, _parser) = parse_and_bind("using d = undefined;");
+    assert!(
+        binder.file_features.has(crate::state::FileFeatures::USING),
+        "using declaration should set USING feature flag"
+    );
+}
+
+#[test]
+fn await_using_declaration_sets_feature_flag() {
+    let (binder, _parser) = parse_and_bind("await using e = undefined;");
+    assert!(
+        binder
+            .file_features
+            .has(crate::state::FileFeatures::AWAIT_USING),
+        "await using declaration should set AWAIT_USING feature flag"
+    );
+}
+
 // =============================================================================
 // 13. RESET AND REUSE
 // =============================================================================
