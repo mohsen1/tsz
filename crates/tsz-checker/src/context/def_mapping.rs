@@ -445,6 +445,35 @@ impl<'a> CheckerContext<'a> {
         total
     }
 
+    /// Pre-populate `symbol_to_def` and `def_to_symbol` from all cross-file
+    /// binders' `semantic_defs` indices (multi-file stable identity).
+    ///
+    /// In multi-file compilation, each file has its own binder with its own
+    /// `semantic_defs`. Without this, cross-file type references (e.g.,
+    /// importing a class from another file) hit the O(N) `all_binders` scan
+    /// in `get_or_create_def_id` Step 3 and create DefIds on demand.
+    ///
+    /// By pre-populating here, those SymbolIds are already registered in the
+    /// `DefinitionStore`'s `symbol_only_index`, so `get_or_create_def_id`
+    /// Step 2 finds them in O(1) without the repair path.
+    ///
+    /// Called from `ProjectEnv::apply_to` after `set_all_binders`.
+    /// Safe to overlap with `pre_populate_def_ids_from_binder` (the current
+    /// file's binder may also appear in `all_binders`); the dedup check in
+    /// `populate_def_ids_from_semantic_defs` skips already-registered entries.
+    ///
+    /// Returns the total number of new `DefIds` pre-populated.
+    pub fn pre_populate_def_ids_from_all_binders(&self) -> usize {
+        let Some(ref binders) = self.all_binders else {
+            return 0;
+        };
+        let mut total = 0;
+        for binder in binders.iter() {
+            total += self.populate_def_ids_from_semantic_defs(&binder.semantic_defs);
+        }
+        total
+    }
+
     /// Core helper: populate DefId mappings from a `semantic_defs` map.
     ///
     /// Used by both `pre_populate_def_ids_from_binder` (primary binder) and
