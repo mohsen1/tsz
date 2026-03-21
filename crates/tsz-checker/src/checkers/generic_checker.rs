@@ -882,6 +882,22 @@ impl<'a> CheckerState<'a> {
                                     // Base is callable even with type params — satisfied.
                                     continue;
                                 }
+                                // When the base is an indexed access into a mapped type
+                                // (e.g., `{ [K in keyof T]: () => unknown }[keyof T]`),
+                                // the template type gives the actual value type. If the
+                                // template is callable, the indexed access is callable.
+                                if let Some((obj, _idx)) = query::index_access_components(db, base)
+                                {
+                                    if let Some(mapped_id) = query::mapped_type_id(db, obj) {
+                                        let mapped = db.get_mapped(mapped_id);
+                                        if query::is_callable_type(db, mapped.template)
+                                            || query::callable_shape_for_type(db, mapped.template)
+                                                .is_some()
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                }
                                 // Try evaluating base further — indexed access through mapped
                                 // types may resolve to a callable template type.
                                 let base_evaluated = self.evaluate_type_for_assignability(base);
@@ -1432,6 +1448,7 @@ impl<'a> CheckerState<'a> {
         query::is_boxed_function_def(db, type_id)
     }
 
+    /// Check if a type is a generic indexed access (`T[M]`) where the object
     /// Check if a type is a "generic indexed access" — an `IndexAccess(A, B)` where
     /// the object part `A` contains free type parameters.
     ///

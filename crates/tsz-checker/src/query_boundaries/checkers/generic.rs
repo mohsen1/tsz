@@ -218,3 +218,16 @@ pub(crate) fn get_object_shape(
 pub(crate) fn has_property_by_name(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, name).is_some()
 }
+
+/// Extract the `MappedTypeId` if this type is a mapped type.
+///
+/// Used for TS2344 constraint checking: when the object part of an indexed
+/// access resolves to a mapped type, the template type gives the value type
+/// of the indexing operation (e.g., `{ [K in keyof T]: () => unknown }[M]`
+/// yields `() => unknown`).
+pub(crate) fn mapped_type_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::MappedTypeId> {
+    tsz_solver::mapped_type_id(db, type_id)
+}
