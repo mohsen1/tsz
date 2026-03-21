@@ -252,10 +252,7 @@ impl InvalidationSummary {
 /// fingerprint infrastructure and the invalidation coordinator.
 ///
 /// Both maps use `file_id` as the key and `fingerprint` as the value.
-pub fn diff_fingerprints(
-    old: &[(u32, u64)],
-    new: &[(u32, u64)],
-) -> FileChangeSet {
+pub fn diff_fingerprints(old: &[(u32, u64)], new: &[(u32, u64)]) -> FileChangeSet {
     use rustc_hash::FxHashMap;
 
     let old_map: FxHashMap<u32, u64> = old.iter().copied().collect();
@@ -303,20 +300,13 @@ mod tests {
         let store = DefinitionStore::new();
         let mut ids = Vec::new();
 
-        let mut info = DefinitionInfo::type_alias(
-            Atom(file_id * 1000),
-            vec![],
-            TypeId::NUMBER,
-        );
+        let mut info = DefinitionInfo::type_alias(Atom(file_id * 1000), vec![], TypeId::NUMBER);
         info.file_id = Some(file_id);
         info.symbol_id = Some(100 + file_id);
         ids.push(store.register(info));
 
-        let mut info2 = DefinitionInfo::type_alias(
-            Atom(file_id * 1000 + 1),
-            vec![],
-            TypeId::STRING,
-        );
+        let mut info2 =
+            DefinitionInfo::type_alias(Atom(file_id * 1000 + 1), vec![], TypeId::STRING);
         info2.file_id = Some(file_id);
         info2.symbol_id = Some(200 + file_id);
         ids.push(store.register(info2));
@@ -420,28 +410,16 @@ mod tests {
         let store = DefinitionStore::new();
 
         // File 1: 2 defs
-        let mut info1a = DefinitionInfo::type_alias(
-            Atom(100),
-            vec![],
-            TypeId::NUMBER,
-        );
+        let mut info1a = DefinitionInfo::type_alias(Atom(100), vec![], TypeId::NUMBER);
         info1a.file_id = Some(1);
         store.register(info1a);
 
-        let mut info1b = DefinitionInfo::type_alias(
-            Atom(101),
-            vec![],
-            TypeId::STRING,
-        );
+        let mut info1b = DefinitionInfo::type_alias(Atom(101), vec![], TypeId::STRING);
         info1b.file_id = Some(1);
         store.register(info1b);
 
         // File 2: 1 def
-        let mut info2 = DefinitionInfo::type_alias(
-            Atom(200),
-            vec![],
-            TypeId::BOOLEAN,
-        );
+        let mut info2 = DefinitionInfo::type_alias(Atom(200), vec![], TypeId::BOOLEAN);
         info2.file_id = Some(2);
         let id_c = store.register(info2);
 

@@ -514,7 +514,7 @@ fn build_export_signature_input(
             .map(|(i, module)| {
                 let is_type_only = type_only_entries
                     .and_then(|v| v.get(i))
-                    .map_or(false, |(_, to)| *to);
+                    .is_some_and(|(_, to)| *to);
                 (module.clone(), is_type_only)
             })
             .collect();

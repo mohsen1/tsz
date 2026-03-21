@@ -512,10 +512,7 @@ impl DefinitionStore {
 
         // Populate file_to_defs index for per-file lookups.
         if let Some(file_id) = info.file_id {
-            self.file_to_defs
-                .entry(file_id)
-                .or_default()
-                .push(id);
+            self.file_to_defs.entry(file_id).or_default().push(id);
         }
 
         self.definitions.insert(id, info);
@@ -763,10 +760,11 @@ impl DefinitionStore {
                     }
                     // Only remove from symbol_only_index if it points to this DefId.
                     if let Some(entry) = self.symbol_only_index.get(&sym_id)
-                        && *entry == *def_id {
-                            drop(entry);
-                            self.symbol_only_index.remove(&sym_id);
-                        }
+                        && *entry == *def_id
+                    {
+                        drop(entry);
+                        self.symbol_only_index.remove(&sym_id);
+                    }
                 }
 
                 // Clean up type_to_def (reverse scan is expensive, but invalidation
@@ -778,19 +776,21 @@ impl DefinitionStore {
                     && info.type_params.is_empty()
                     && let Some(body) = info.body
                     && let Some(entry) = self.body_to_alias.get(&body)
-                        && *entry == *def_id {
-                            drop(entry);
-                            self.body_to_alias.remove(&body);
-                        }
+                    && *entry == *def_id
+                {
+                    drop(entry);
+                    self.body_to_alias.remove(&body);
+                }
 
                 // Clean up shape_to_def.
                 if let Some(ref shape) = info.instance_shape {
                     let hash = Self::hash_shape(shape);
                     if let Some(entry) = self.shape_to_def.get(&hash)
-                        && *entry == *def_id {
-                            drop(entry);
-                            self.shape_to_def.remove(&hash);
-                        }
+                        && *entry == *def_id
+                    {
+                        drop(entry);
+                        self.shape_to_def.remove(&hash);
+                    }
                 }
             }
         }

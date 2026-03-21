@@ -26,6 +26,7 @@ pub struct PreparedTest {
     pub temp_dir: tempfile::TempDir,
 }
 
+#[allow(dead_code)]
 fn header_comment_lines(text: &str) -> impl Iterator<Item = &str> {
     text.lines().take(32).map(str::trim).take_while(|trimmed| {
         trimmed.is_empty()
@@ -35,10 +36,12 @@ fn header_comment_lines(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+#[allow(dead_code)]
 fn has_test_option_pragma(text: &str, key: &str) -> bool {
     header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
 }
 
+#[allow(dead_code)]
 fn has_source_strictness_pragmas_without_strict(text: &str) -> bool {
     const STRICTNESS_PRAGMAS: &[&str] = &[
         "@noimplicitany",
