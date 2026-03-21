@@ -75,6 +75,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 128,
@@ -283,6 +284,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 128,
@@ -482,6 +484,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 128,
@@ -688,6 +691,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             narrowable_identifier_cache: RefCell::new(FxHashMap::default()),
@@ -884,6 +888,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             narrowable_identifier_cache: RefCell::new(FxHashMap::default()),
@@ -1099,6 +1104,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             type_resolution_visiting: FxHashSet::default(),
+            pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
             flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(

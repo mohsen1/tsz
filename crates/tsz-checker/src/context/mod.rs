@@ -316,6 +316,9 @@ pub struct CheckerContext<'a> {
     /// → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution`
     /// on recursive type aliases.
     pub type_resolution_visiting: FxHashSet<TypeId>,
+    /// Reentrancy guard for `prune_impossible_object_union_members_with_env`.
+    /// Prevents infinite mutual recursion: evaluate → prune → evaluate → prune.
+    pub pruning_union_members: bool,
 
     /// Recursion guard for `resolve_jsdoc_typedef_type`.
     /// Prevents infinite recursion when a JSDoc `@typedef` references itself
