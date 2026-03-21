@@ -291,6 +291,24 @@ impl<'a> Printer<'a> {
         callee: NodeIndex,
         args: &Option<tsz_parser::parser::NodeList>,
     ) {
+        // Check if the callee is a type-asserted method call like `(foo.m as T)?.()`.
+        // After unwrapping paren/type-assertion, if the underlying expression is a
+        // property/element access, we need `.call(receiver)` for correct `this` binding.
+        let unwrapped = self.unwrap_paren_and_type_assertion(callee);
+        if let Some(unwrapped_node) = self.arena.get(unwrapped)
+            && (unwrapped_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || unwrapped_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        {
+            // Route through method call path with `.call()` for `this` preservation
+            self.emit_optional_method_call_expression(
+                unwrapped_node,
+                node,
+                args,
+                true, // has_optional_call_token — the `?.()` is on the call
+            );
+            return;
+        }
+
         let needs_parens = self.ctx.flags.optional_chain_needs_parens;
         if needs_parens {
             self.write("(");
@@ -624,5 +642,35 @@ impl<'a> Printer<'a> {
             return (start + offset) as u32;
         }
         start_pos
+    }
+
+    /// Unwrap parenthesized expressions and type assertions/satisfies to find
+    /// the underlying runtime expression. Used by optional call lowering to
+    /// detect property access through type assertion wrappers like
+    /// `(foo.m as any)?.()`.
+    fn unwrap_paren_and_type_assertion(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.arena.get_parenthesized(node) else {
+                        return idx;
+                    };
+                    idx = paren.expression;
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    let Some(assert) = self.arena.get_type_assertion(node) else {
+                        return idx;
+                    };
+                    idx = assert.expression;
+                }
+                _ => return idx,
+            }
+        }
     }
 }
