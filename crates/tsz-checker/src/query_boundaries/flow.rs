@@ -168,6 +168,14 @@ pub(crate) fn narrow_optional_chain(db: &dyn TypeDatabase, base_type: TypeId) ->
     tsz_solver::remove_nullish(db, base_type)
 }
 
+/// Apply non-null assertion (`!` postfix operator) narrowing through the solver.
+/// Strips null and undefined from the type.  Semantically equivalent to
+/// optional-chain narrowing but kept as a distinct entry-point so callers
+/// express the observation kind that triggered the narrowing.
+pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
+    tsz_solver::remove_nullish(db, base_type)
+}
+
 /// Resolve catch variable type through the boundary.
 pub(crate) const fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     if use_unknown {
