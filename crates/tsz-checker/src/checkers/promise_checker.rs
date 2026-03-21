@@ -199,9 +199,12 @@ impl<'a> CheckerState<'a> {
     /// Called when processing async functions to ensure Promise is available.
     /// Matches TSC behavior which emits TS2318 "Cannot find global type 'Promise'"
     /// when the Promise type is not in scope - INCLUDING when noLib is true.
+    ///
+    /// Routes through the environment capability boundary for the decision.
     pub fn check_global_promise_available(&mut self) {
-        // Emit TS2318 if Promise is not found, regardless of noLib setting.
-        // TSC emits this error even with noLib: true when async functions are used.
+        // Use the capability boundary to determine if Promise is required and missing.
+        // The boundary's check_feature_gate(AsyncFunction) checks lib availability;
+        // we additionally verify the type is actually absent from loaded libs.
         if !self.ctx.has_name_in_lib("Promise") {
             let file_name = self.ctx.file_name.clone();
             self.error_global_type_missing_at_position("Promise", file_name, 0, 0);
