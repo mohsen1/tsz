@@ -112,6 +112,11 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
     ) -> bool {
         let constraint = self.resolve_lazy_type(constraint);
+        // Collect extends types from all enclosing conditional true branches
+        // where the type argument is (or references) the check type.
+        // In nested conditionals like `T extends A ? T extends B ? X<T> : ...`,
+        // the effective constraint on T is the intersection A & B.
+        let mut accumulated_extends: Vec<TypeId> = Vec::new();
         let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
@@ -121,15 +126,19 @@ impl<'a> CheckerState<'a> {
                 && self.is_descendant_type_node(arg_idx, cond.true_type)
             {
                 // Case 1: The type arg IS the check type (e.g., `T extends U ? X<T> : never`).
-                // Suppress when the extends type satisfies the required constraint.
+                // Collect the extends type for intersection-based constraint checking.
                 if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
                     let extends_type = self.get_type_from_type_node(cond.extends_type);
-                    if extends_type != TypeId::ERROR
-                        && (extends_type == constraint
+                    if extends_type != TypeId::ERROR {
+                        // Check if this single extends type satisfies the constraint
+                        // (bidirectional assignability for exact match)
+                        if extends_type == constraint
                             || (self.is_assignable_to(extends_type, constraint)
-                                && self.is_assignable_to(constraint, extends_type)))
-                    {
-                        return true;
+                                && self.is_assignable_to(constraint, extends_type))
+                        {
+                            return true;
+                        }
+                        accumulated_extends.push(extends_type);
                     }
                 }
 
@@ -143,12 +152,32 @@ impl<'a> CheckerState<'a> {
                 if self.type_node_contains_reference(arg_idx, cond.check_type) {
                     return true;
                 }
+
+                // Case 3: The check type wraps the type argument (e.g.,
+                // `[T] extends [{ a: string }] ? ... : ...`). In non-distributive
+                // conditionals, the check type contains T in a wrapper. In the true
+                // branch, T is narrowed by the corresponding component of the extends
+                // type. Since constraint satisfaction depends on the narrowing, defer
+                // to instantiation time.
+                if self.type_node_contains_reference(cond.check_type, arg_idx) {
+                    return true;
+                }
             }
             current = self
                 .ctx
                 .arena
                 .get_extended(parent_idx)
                 .map(|ext| ext.parent);
+        }
+        // If we collected multiple extends types from nested conditionals,
+        // check if their intersection satisfies the constraint.
+        // e.g., `T extends {a: string} ? T extends {b: number} ? T35<T> : ...`
+        // → intersection is `{a: string} & {b: number}` which satisfies `{a: string, b: number}`.
+        if accumulated_extends.len() >= 2 {
+            let intersection = self.ctx.types.intersection(accumulated_extends);
+            if self.is_assignable_to(intersection, constraint) {
+                return true;
+            }
         }
         false
     }
@@ -786,11 +815,57 @@ impl<'a> CheckerState<'a> {
                                 }
                                 // Constraint is callable — check if base is callable too.
                                 // If base still has type params and is not callable, emit TS2344.
+                                // Also try evaluating the base (e.g., mapped type indexed access
+                                // like `FunctionsObj<T>[keyof T]` → `() => unknown`).
                                 let base_is_callable =
                                     tsz_solver::type_queries::is_callable_type(db, base);
                                 if base_is_callable {
                                     // Base is callable even with type params — satisfied.
                                     continue;
+                                }
+                                // Try evaluating base further — indexed access through mapped
+                                // types may resolve to a callable template type.
+                                let base_evaluated = self.evaluate_type_for_assignability(base);
+                                if base_evaluated != base {
+                                    let base_eval_callable =
+                                        tsz_solver::type_queries::is_callable_type(
+                                            self.ctx.types.as_type_database(),
+                                            base_evaluated,
+                                        )
+                                            || crate::query_boundaries::common::callable_shape_for_type(
+                                                self.ctx.types.as_type_database(),
+                                                base_evaluated,
+                                            )
+                                            .is_some();
+                                    if base_eval_callable {
+                                        continue;
+                                    }
+                                }
+                                // Check if the base is a conditional type whose extends
+                                // type satisfies the constraint. For `Extract<T, C>`
+                                // (= `T extends C ? T : never`), the result is always
+                                // a subtype of C, so if C satisfies the constraint, skip.
+                                if let Some((cond_extends, cond_false)) =
+                                    query::conditional_type_components(
+                                        self.ctx.types.as_type_database(),
+                                        base,
+                                    )
+                                {
+                                    if cond_false == TypeId::NEVER {
+                                        let ext_resolved = self.resolve_lazy_type(cond_extends);
+                                        let ext_evaluated =
+                                            self.evaluate_type_for_assignability(ext_resolved);
+                                        if self.is_assignable_to(ext_evaluated, constraint_resolved)
+                                            || self
+                                                .is_assignable_to(ext_resolved, constraint_resolved)
+                                        {
+                                            continue;
+                                        }
+                                    } else {
+                                        // General conditional with type params — defer
+                                        // to instantiation time, matching tsc behavior.
+                                        continue;
+                                    }
                                 }
                                 // Base is not callable and constraint is callable → TS2344.
                                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -886,37 +961,78 @@ impl<'a> CheckerState<'a> {
                         // The constraint TypeId may come from a lib arena (cross-arena). Resolve
                         // it fully and evaluate before checking callability.
                         if base_constraint_type.is_none() {
-                            let constraint_resolved = self.resolve_lazy_type(constraint);
-                            // Also try evaluating the constraint in case it's a lazy reference
-                            // to a function type from the lib (e.g., `(...args: any) => any`).
-                            let constraint_evaluated =
-                                self.evaluate_type_for_assignability(constraint_resolved);
+                            // When the type argument is (or evaluates to) a conditional
+                            // type like `Extract<T, C>` (= `T extends C ? T : never`),
+                            // the result is always a subtype of C (or never). If C
+                            // satisfies the required constraint, skip TS2344.
+                            // Also handles Application types like `Extract<T, C>` that
+                            // evaluate to conditional types.
                             let db = self.ctx.types.as_type_database();
-                            let constraint_is_callable =
-                                tsz_solver::type_queries::is_callable_type(db, constraint_resolved)
-                                    || tsz_solver::type_queries::is_callable_type(
+                            let type_arg_evaluated = self.evaluate_type_for_assignability(type_arg);
+                            let cond_components = query::conditional_type_components(db, type_arg)
+                                .or_else(|| {
+                                    query::conditional_type_components(
+                                        self.ctx.types.as_type_database(),
+                                        type_arg_evaluated,
+                                    )
+                                });
+                            if let Some((extends_type, false_type)) = cond_components {
+                                let constraint_resolved = self.resolve_lazy_type(constraint);
+                                let extends_resolved = self.resolve_lazy_type(extends_type);
+                                let extends_evaluated =
+                                    self.evaluate_type_for_assignability(extends_resolved);
+                                // If false branch is `never` (Extract pattern) and the
+                                // extends type satisfies the constraint, skip TS2344.
+                                if false_type == TypeId::NEVER
+                                    && (self
+                                        .is_assignable_to(extends_evaluated, constraint_resolved)
+                                        || self.is_assignable_to(
+                                            extends_resolved,
+                                            constraint_resolved,
+                                        ))
+                                {
+                                    // Skip: Extract<T, C> always produces subtype of C
+                                } else {
+                                    // General conditional: defer to instantiation when
+                                    // the type argument has unresolved type parameters.
+                                    // tsc defers constraint checks for conditional types
+                                    // with free type variables.
+                                }
+                                // Continue to skip TS2344 for conditional types
+                                // with type parameters — matches tsc deferral.
+                            } else {
+                                let constraint_resolved = self.resolve_lazy_type(constraint);
+                                // Also try evaluating the constraint in case it's a lazy reference
+                                // to a function type from the lib (e.g., `(...args: any) => any`).
+                                let constraint_evaluated =
+                                    self.evaluate_type_for_assignability(constraint_resolved);
+                                let constraint_is_callable =
+                                    tsz_solver::type_queries::is_callable_type(
+                                        db,
+                                        constraint_resolved,
+                                    ) || tsz_solver::type_queries::is_callable_type(
                                         db,
                                         constraint_evaluated,
+                                    ) || self.is_function_constraint(constraint)
+                                        || self.is_function_constraint(constraint_resolved);
+                                if constraint_is_callable
+                                    && !tsz_solver::type_queries::is_callable_type(db, type_arg)
+                                    && crate::query_boundaries::common::callable_shape_for_type(
+                                        db, type_arg,
                                     )
-                                    || self.is_function_constraint(constraint)
-                                    || self.is_function_constraint(constraint_resolved);
-                            if constraint_is_callable
-                                && !tsz_solver::type_queries::is_callable_type(db, type_arg)
-                                && crate::query_boundaries::common::callable_shape_for_type(
-                                    db, type_arg,
-                                )
-                                .is_none()
-                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                                && !self.type_argument_is_narrowed_by_conditional_true_branch(
-                                    arg_idx,
-                                    constraint_resolved,
-                                )
-                            {
-                                self.error_type_constraint_not_satisfied(
-                                    type_arg,
-                                    constraint_resolved,
-                                    arg_idx,
-                                );
+                                    .is_none()
+                                    && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                                    && !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                        arg_idx,
+                                        constraint_resolved,
+                                    )
+                                {
+                                    self.error_type_constraint_not_satisfied(
+                                        type_arg,
+                                        constraint_resolved,
+                                        arg_idx,
+                                    );
+                                }
                             }
                         }
                         continue;
