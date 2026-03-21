@@ -354,6 +354,53 @@ pub fn get_string_literal_value(
     }
 }
 
+/// Convert a literal type to its JavaScript string representation.
+///
+/// This mirrors how TypeScript stringifies values in template literal evaluation:
+/// - String literals → their value
+/// - Number literals → their string form (e.g., `0` → `"0"`, `1.5` → `"1.5"`)
+/// - BigInt literals → their string form (e.g., `100n` → `"100"`)
+/// - Boolean literals → `"true"` or `"false"`
+/// - `null` → `"null"`, `undefined`/`void` → `"undefined"`
+///
+/// Returns `None` for non-literal types (objects, unions, `string`, `number`, etc.).
+pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    // Handle well-known intrinsic singletons
+    if type_id == TypeId::NULL {
+        return Some("null".to_string());
+    }
+    if type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
+        return Some("undefined".to_string());
+    }
+    if type_id == TypeId::BOOLEAN_TRUE {
+        return Some("true".to_string());
+    }
+    if type_id == TypeId::BOOLEAN_FALSE {
+        return Some("false".to_string());
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
+            Some(db.resolve_atom_ref(atom).to_string())
+        }
+        Some(TypeData::Literal(crate::types::LiteralValue::Boolean(b))) => Some(b.to_string()),
+        Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => Some(format!("{}", n.0)),
+        Some(TypeData::Literal(crate::types::LiteralValue::BigInt(atom))) => {
+            Some(db.resolve_atom_ref(atom).to_string())
+        }
+        Some(TypeData::Enum(_, structural_type)) => match db.lookup(structural_type) {
+            Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
+                Some(db.resolve_atom_ref(atom).to_string())
+            }
+            Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => {
+                Some(format!("{}", n.0))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Extract string, numeric, enum, or unique symbol property name from a type.
 pub fn get_literal_property_name(
     db: &dyn TypeDatabase,
