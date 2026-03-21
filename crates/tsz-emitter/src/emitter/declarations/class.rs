@@ -2,7 +2,7 @@ use super::super::{Printer, ScriptTarget};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
-    collect_private_fields, collect_private_methods, get_private_field_name,
+    collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
 };
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -1573,6 +1573,14 @@ impl<'a> Printer<'a> {
             std::mem::take(&mut self.pending_static_private_inits);
         let prev_pending_private_class_alias = self.pending_private_class_alias.take();
         let prev_private_member_info = std::mem::take(&mut self.private_member_info);
+        let prev_pending_private_field_constructor_inits =
+            std::mem::take(&mut self.pending_private_field_constructor_inits);
+        let prev_pending_instances_weakset_add = self.pending_instances_weakset_add.take();
+        let prev_pending_private_method_defs =
+            std::mem::take(&mut self.pending_private_method_defs);
+        let prev_pending_private_accessor_defs =
+            std::mem::take(&mut self.pending_private_accessor_defs);
+        let prev_private_members_to_skip = std::mem::take(&mut self.private_members_to_skip);
 
         let has_any_private_lowering = !private_fields.is_empty()
             || !private_methods.is_empty()
@@ -1725,6 +1733,70 @@ impl<'a> Printer<'a> {
             {
                 self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
             }
+
+            // Prepare private field constructor inits (WeakMap.set calls)
+            self.pending_private_field_constructor_inits = private_fields
+                .iter()
+                .filter(|f| !f.is_static)
+                .map(|f| (f.weakmap_name.clone(), f.has_initializer, f.initializer))
+                .collect();
+
+            // Prepare WeakSet instances.add(this) for constructor
+            if let Some(ref ws_name) = instances_weakset_name {
+                self.pending_instances_weakset_add = Some(ws_name.clone());
+            }
+
+            // Prepare private method function defs for after the class body
+            for method in &private_methods {
+                if !method.is_static {
+                    if let Some(body_idx) = method.body {
+                        self.pending_private_method_defs
+                            .push((method.fn_var_name.clone(), body_idx));
+                    }
+                }
+            }
+
+            // Prepare private accessor function defs for after the class body
+            for accessor in &private_accessors {
+                if !accessor.is_static {
+                    if let Some(body_idx) = accessor.getter_body {
+                        if let Some(ref var_name) = accessor.get_var_name {
+                            self.pending_private_accessor_defs.push(
+                                crate::emitter::core::PrivateAccessorDef {
+                                    var_name: var_name.clone(),
+                                    body: body_idx,
+                                    param: None,
+                                    is_async: false,
+                                },
+                            );
+                        }
+                    }
+                    if let Some(body_idx) = accessor.setter_body {
+                        if let Some(ref var_name) = accessor.set_var_name {
+                            self.pending_private_accessor_defs.push(
+                                crate::emitter::core::PrivateAccessorDef {
+                                    var_name: var_name.clone(),
+                                    body: body_idx,
+                                    param: accessor.setter_param,
+                                    is_async: false,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Mark private methods and accessors to skip from class body
+            for method in &private_methods {
+                if !method.is_static {
+                    self.private_members_to_skip.insert(method.name.clone());
+                }
+            }
+            for accessor in &private_accessors {
+                if !accessor.is_static {
+                    self.private_members_to_skip.insert(accessor.name.clone());
+                }
+            }
         }
 
         // For class expressions with static field initializers, we need to wrap
@@ -1874,21 +1946,9 @@ impl<'a> Printer<'a> {
             self.pending_auto_accessor_inits = auto_accessor_instance_inits.clone();
         }
 
-        // Add private field WeakMap.set inits to auto_accessor_inits for constructor emission.
-        // Private fields use the same `_name.set(this, value)` pattern as auto accessors.
-        if !private_fields.is_empty() {
-            for field in &private_fields {
-                if !field.is_static {
-                    let init = if field.has_initializer {
-                        Some(field.initializer)
-                    } else {
-                        None // will emit `void 0`
-                    };
-                    self.pending_auto_accessor_inits
-                        .push((field.weakmap_name.clone(), init));
-                }
-            }
-        }
+        // Private field WeakMap.set inits are handled via pending_private_field_constructor_inits
+        // which is emitted in emit_constructor_prologue and the synthesized constructor path.
+        if !private_fields.is_empty() {}
 
         // Check if we need to lower class fields to constructor.
         // This is needed when target < ES2022 OR when useDefineForClassFields is false
@@ -1930,6 +1990,11 @@ impl<'a> Printer<'a> {
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
                     {
+                        continue;
+                    }
+                    // Skip private fields when they're being lowered to WeakMap pattern.
+                    // They're handled separately via pending_private_field_constructor_inits.
+                    if !private_fields.is_empty() && is_private_identifier(self.arena, prop.name) {
                         continue;
                     }
                     let name_emit = self.get_property_name_emit(prop.name);
@@ -2056,10 +2121,12 @@ impl<'a> Printer<'a> {
 
         // If no constructor but we have field inits, synthesize one
         let has_private_field_inits = private_fields.iter().any(|f| !f.is_static);
+        let has_instances_weakset = self.pending_instances_weakset_add.is_some();
         let synthesize_constructor = !has_constructor
             && (!field_inits.is_empty()
                 || (lower_auto_accessors_to_weakmap && !auto_accessor_instance_inits.is_empty())
-                || has_private_field_inits);
+                || has_private_field_inits
+                || has_instances_weakset);
 
         if synthesize_constructor {
             // Increment function_scope_depth so async arrow functions inside
@@ -2076,6 +2143,12 @@ impl<'a> Printer<'a> {
                 self.write("constructor() {");
                 self.write_line();
                 self.increase_indent();
+            }
+            // Emit _X_instances.add(this) for private methods/accessors
+            if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
+                self.write(ws_name);
+                self.write(".add(this);");
+                self.write_line();
             }
             // Private field WeakMap.set inits first (before non-private field inits)
             for field in &private_fields {
@@ -2224,6 +2297,45 @@ impl<'a> Printer<'a> {
                     }
                 }
                 continue;
+            }
+            // Skip private methods and accessors that are extracted as standalone functions
+            if !self.private_members_to_skip.is_empty()
+                && let Some(member_node) = self.arena.get(member_idx)
+            {
+                let should_skip = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|m| get_private_field_name(self.arena, m.name))
+                        .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
+                        .is_some_and(|n| self.private_members_to_skip.contains(&n)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|a| get_private_field_name(self.arena, a.name))
+                            .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
+                            .is_some_and(|n| self.private_members_to_skip.contains(&n))
+                    }
+                    _ => false,
+                };
+                if should_skip {
+                    if let Some(mn) = self.arena.get(member_idx) {
+                        let skip_end = class
+                            .members
+                            .nodes
+                            .get(member_i + 1)
+                            .and_then(|&next_idx| self.arena.get(next_idx))
+                            .map_or(mn.end, |next| next.pos);
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= skip_end
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                    }
+                    continue;
+                }
             }
             // Skip property declarations that were lowered
             if needs_class_field_lowering
@@ -2946,9 +3058,79 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
 
-        if has_weakmap_inits {
+        // Emit combined initialization line after class body.
+        // tsc joins WeakSet init, WeakMap inits, and private method/accessor defs
+        // with commas on a single line, e.g.:
+        // _A_instances = new WeakSet(), _A_foo = new WeakMap(), _A_m = function _A_m() { };
+        let instances_ws = self.pending_instances_weakset_add.clone();
+        let method_defs = std::mem::take(&mut self.pending_private_method_defs);
+        let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
+        let has_post_class_inits = has_weakmap_inits
+            || instances_ws.is_some()
+            || !method_defs.is_empty()
+            || !accessor_defs.is_empty();
+        if has_post_class_inits {
             self.write_line();
-            self.write(&self.pending_weakmap_inits.join(", "));
+            let mut first = true;
+
+            // WeakSet: _X_instances = new WeakSet()
+            if let Some(ref ws_name) = instances_ws {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(ws_name);
+                self.write(" = new WeakSet()");
+                first = false;
+            }
+
+            // WeakMap inits: _X_field = new WeakMap()
+            let weakmap_inits = self.pending_weakmap_inits.clone();
+            for init in &weakmap_inits {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(init);
+                first = false;
+            }
+
+            // Private method function definitions:
+            // _C_method = function _C_method() { ... }
+            for (var_name, body_idx) in &method_defs {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(var_name);
+                self.write(" = function ");
+                self.write(var_name);
+                self.write("() ");
+                self.emit_single_line_block(*body_idx);
+                first = false;
+            }
+
+            // Private accessor function definitions:
+            // _C_prop_get = function _C_prop_get() { ... }
+            // _C_prop_set = function _C_prop_set(param) { ... }
+            for def in &accessor_defs {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(&def.var_name);
+                self.write(" = function ");
+                self.write(&def.var_name);
+                self.write("(");
+                if let Some(param_idx) = def.param {
+                    // Emit setter parameter name
+                    if let Some(param_node) = self.arena.get(param_idx) {
+                        if let Some(param_data) = self.arena.get_parameter(param_node) {
+                            self.emit(param_data.name);
+                        }
+                    }
+                }
+                self.write(") ");
+                self.emit_single_line_block(def.body);
+                first = false;
+            }
+
             self.write(";");
         }
 
@@ -2981,6 +3163,11 @@ impl<'a> Printer<'a> {
         self.pending_static_private_inits = prev_pending_static_private_inits;
         self.pending_private_class_alias = prev_pending_private_class_alias;
         self.private_member_info = prev_private_member_info;
+        self.pending_private_field_constructor_inits = prev_pending_private_field_constructor_inits;
+        self.pending_instances_weakset_add = prev_pending_instances_weakset_add;
+        self.pending_private_method_defs = prev_pending_private_method_defs;
+        self.pending_private_accessor_defs = prev_pending_private_accessor_defs;
+        self.private_members_to_skip = prev_private_members_to_skip;
 
         // Track class name to prevent duplicate var declarations for merged namespaces.
         // When a class and namespace have the same name (declaration merging), the class

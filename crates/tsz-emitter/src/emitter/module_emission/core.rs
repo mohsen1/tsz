@@ -904,6 +904,19 @@ impl<'a> Printer<'a> {
                 let text = self.arena.get_literal_text(idx)?;
                 Some(PropertyNameEmit::BracketNumeric(text.to_string()))
             }
+            k if k == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                let computed = self.arena.get_computed_property(node)?;
+                // Recursively resolve the inner expression
+                let inner_emit = self.get_property_name_emit(computed.expression)?;
+                // Wrap in brackets: Dot("foo") -> Bracket("foo"), Bracket(x) -> Bracket(x)
+                match inner_emit {
+                    PropertyNameEmit::Dot(s) => Some(PropertyNameEmit::Bracket(format!("\"{s}\""))),
+                    PropertyNameEmit::Bracket(s) => Some(PropertyNameEmit::Bracket(s)),
+                    PropertyNameEmit::BracketNumeric(s) => {
+                        Some(PropertyNameEmit::BracketNumeric(s))
+                    }
+                }
+            }
             _ => None,
         }
     }

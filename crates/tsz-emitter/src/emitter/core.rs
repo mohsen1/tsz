@@ -47,6 +47,19 @@ pub(crate) struct PrivateMemberInfo {
     pub state_var: Option<String>,
 }
 
+/// Info about a private accessor function to emit after the class body.
+#[derive(Debug, Clone)]
+pub(crate) struct PrivateAccessorDef {
+    /// The variable name (e.g., `_C_prop_get`).
+    pub var_name: String,
+    /// The body node index.
+    pub body: NodeIndex,
+    /// Optional setter parameter node index.
+    pub param: Option<NodeIndex>,
+    /// Whether this is an async accessor.
+    pub is_async: bool,
+}
+
 /// How a class property name should be emitted in `ClassName.name = ...` assignments.
 #[derive(Clone)]
 pub(crate) enum PropertyNameEmit {
@@ -510,6 +523,27 @@ pub struct Printer<'a> {
     /// Emitted as `_a = ClassName;` after the class body.
     pub(crate) pending_private_class_alias: Option<(String, String)>,
 
+    /// Private field constructor inits: (weakmap_name, has_initializer, initializer_idx).
+    /// Emitted as `_C_field.set(this, <init>)` at the start of the constructor.
+    pub(crate) pending_private_field_constructor_inits: Vec<(String, bool, NodeIndex)>,
+
+    /// WeakSet instance name for `_X_instances.add(this)` in the constructor.
+    /// Set when the class has private instance methods or accessors.
+    pub(crate) pending_instances_weakset_add: Option<String>,
+
+    /// Private method/accessor function definitions to emit after the class body.
+    /// Each entry is a string like `_C_method = function _C_method() { ... }`.
+    /// These are joined with the WeakMap/WeakSet inits using comma separation.
+    pub(crate) pending_private_method_defs: Vec<(String, NodeIndex)>,
+
+    /// Private accessor function definitions to emit after the class body.
+    /// Each entry is (var_name, body_idx) for `_C_prop_get = function _C_prop_get() { ... }`.
+    pub(crate) pending_private_accessor_defs: Vec<PrivateAccessorDef>,
+
+    /// Set of private method/accessor names (without #) that should be skipped
+    /// from the class body because they're extracted as standalone functions.
+    pub(crate) private_members_to_skip: FxHashSet<String>,
+
     /// When true, class emitter defers static block IIFEs.
     pub(crate) defer_class_static_blocks: bool,
 
@@ -665,6 +699,11 @@ impl<'a> Printer<'a> {
             pending_weakmap_inits: Vec::new(),
             pending_static_private_inits: Vec::new(),
             pending_private_class_alias: None,
+            pending_private_field_constructor_inits: Vec::new(),
+            pending_instances_weakset_add: None,
+            pending_private_method_defs: Vec::new(),
+            pending_private_accessor_defs: Vec::new(),
+            private_members_to_skip: FxHashSet::default(),
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
