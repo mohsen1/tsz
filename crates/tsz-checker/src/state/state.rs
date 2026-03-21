@@ -1852,7 +1852,10 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(spread.expression);
                 }
             }
-            k if k == syntax_kind_ext::AS_EXPRESSION => {
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
                 if let Some(as_expr) = self.ctx.arena.get_type_assertion(node) {
                     self.clear_type_cache_recursive(as_expr.expression);
                 }
