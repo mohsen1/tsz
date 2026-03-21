@@ -231,7 +231,9 @@ impl<'a> Printer<'a> {
 
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
-            async_emitter.set_indent_level(self.writer.indent_level() + 1);
+            // Use current indent level since __generator is placed on the same line
+            // as `function () {` in the inline __awaiter format (matching tsc).
+            async_emitter.set_indent_level(self.writer.indent_level());
             if let Some(text) = self.source_text_for_map() {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
             }
@@ -312,11 +314,28 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            self.write(", void 0, void 0, function () {");
-            self.write_line();
-            self.increase_indent();
-            // Emit hoisted var declarations before return __generator(...)
-            if !hoisted_vars.is_empty() {
+            if hoisted_vars.is_empty() {
+                // Inline format (matches tsc): put __generator on same line as function () {
+                // e.g., return __awaiter(this, void 0, void 0, function () { return __generator(this, function (_a) {
+                //     ...
+                // }); });
+                self.write(", void 0, void 0, function () { ");
+                if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                    self.writer.write("");
+                    let base_line = self.writer.current_line();
+                    let base_column = self.writer.current_column();
+                    self.writer
+                        .add_offset_mappings(base_line, base_column, &generator_mappings);
+                    self.writer.write(&generator_body);
+                } else {
+                    self.write(&generator_body);
+                }
+                self.write(" });");
+            } else {
+                // Multi-line format with hoisted vars
+                self.write(", void 0, void 0, function () {");
+                self.write_line();
+                self.increase_indent();
                 self.write("var ");
                 for (i, var_name) in hoisted_vars.iter().enumerate() {
                     if i > 0 {
@@ -326,20 +345,20 @@ impl<'a> Printer<'a> {
                 }
                 self.write(";");
                 self.write_line();
+                if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                    self.writer.write("");
+                    let base_line = self.writer.current_line();
+                    let base_column = self.writer.current_column();
+                    self.writer
+                        .add_offset_mappings(base_line, base_column, &generator_mappings);
+                    self.writer.write(&generator_body);
+                } else {
+                    self.write(&generator_body);
+                }
+                self.decrease_indent();
+                self.write_line();
+                self.write("});");
             }
-            if !generator_mappings.is_empty() && self.writer.has_source_map() {
-                self.writer.write("");
-                let base_line = self.writer.current_line();
-                let base_column = self.writer.current_column();
-                self.writer
-                    .add_offset_mappings(base_line, base_column, &generator_mappings);
-                self.writer.write(&generator_body);
-            } else {
-                self.write(&generator_body);
-            }
-            self.decrease_indent();
-            self.write_line();
-            self.write("});");
             self.write_line();
             self.decrease_indent();
             self.write("}");
