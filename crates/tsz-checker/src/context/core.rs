@@ -1217,4 +1217,3 @@ mod index_tests {
         assert!(targets_index.is_empty());
     }
 }
-
