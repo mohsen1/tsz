@@ -879,12 +879,37 @@ impl<'a> Printer<'a> {
             self.write(");");
             self.write_line();
         }
+        // When useDefineForClassFields is true and fields are being lowered to
+        // the constructor (target < ES2022), parameter properties should use
+        // Object.defineProperty to match tsc's emit semantics.
+        // When target >= ES2022 (native class fields), use simple assignment.
+        let use_define_for_param_props = self.ctx.options.use_define_for_class_fields
+            && (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         for name in param_props {
-            self.write("this.");
-            self.write(name);
-            self.write(" = ");
-            self.write(name);
-            self.write(";");
+            if use_define_for_param_props {
+                self.write("Object.defineProperty(this, \"");
+                self.write(name);
+                self.write("\", {");
+                self.write_line();
+                self.increase_indent();
+                self.write("enumerable: true,");
+                self.write_line();
+                self.write("configurable: true,");
+                self.write_line();
+                self.write("writable: true,");
+                self.write_line();
+                self.write("value: ");
+                self.write(name);
+                self.write_line();
+                self.decrease_indent();
+                self.write("});");
+            } else {
+                self.write("this.");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
+            }
             self.write_line();
         }
         for (name, init_idx, init_end, leading_comments, trailing_comments) in field_inits {

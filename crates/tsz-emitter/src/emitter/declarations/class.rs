@@ -2225,11 +2225,18 @@ impl<'a> Printer<'a> {
             None
         };
 
-        // Check if class has an explicit constructor
+        // Check if class has an explicit constructor with a body.
+        // A constructor without a body (e.g., broken syntax `constructor` with no
+        // parens/braces) should not prevent synthesis of a constructor for field
+        // initialization (matches tsc error-recovery behavior).
         let has_constructor = class.members.nodes.iter().any(|&idx| {
-            self.arena
-                .get(idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
+            self.arena.get(idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::CONSTRUCTOR
+                    && self
+                        .arena
+                        .get_constructor(n)
+                        .is_some_and(|ctor| ctor.body.is_some())
+            })
         });
 
         // Check if class has extends clause and whether it extends null
@@ -2361,11 +2368,15 @@ impl<'a> Printer<'a> {
             self.function_scope_depth -= 1;
         }
 
-        // When useDefineForClassFields is true, emit parameter property field
-        // declarations (e.g. `foo;`) at the beginning of the class body.
-        // TSC emits these before any other class members.
+        // When useDefineForClassFields is true AND target >= ES2022 (native class fields),
+        // emit parameter property field declarations (e.g. `foo;`) at the beginning of
+        // the class body. TSC emits these before any other class members.
+        // When target < ES2022, fields are lowered to the constructor body, so no
+        // class-body declaration is needed.
         let mut emitted_any_member = false;
-        if self.ctx.options.use_define_for_class_fields {
+        let target_supports_native_fields =
+            (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        if self.ctx.options.use_define_for_class_fields && target_supports_native_fields {
             // Find the constructor and collect its parameter properties
             for &member_idx in &class.members.nodes {
                 if let Some(member_node) = self.arena.get(member_idx)
