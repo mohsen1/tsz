@@ -845,7 +845,10 @@ impl<'a> CheckerState<'a> {
             // tsc emits TS2571 ("Object is of type 'unknown'") before TS2488 when
             // the array binding pattern has elements (e.g. `const [a, b] = f()`).
             // For empty patterns (`const [] = f()`), only TS2488 is emitted.
-            if let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
+            // For catch clause destructuring, tsc does NOT emit TS2571 — only TS2488.
+            let is_catch_clause = self.is_binding_pattern_in_catch_clause(pattern_idx);
+            if !is_catch_clause
+                && let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
                 && let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
                 && !binding_pattern.elements.nodes.is_empty()
                 && let Some((start, end)) = self.get_node_span(pattern_idx)
@@ -935,6 +938,26 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Shared Diagnostic Helpers
     // =========================================================================
+
+    /// Check if a binding pattern is the direct child of a catch clause variable declaration.
+    ///
+    /// Used to suppress TS2571 for catch clause array destructuring: tsc only emits
+    /// TS2488 (not iterable) for `catch ([ x ]) {}`, not TS2571 (is of type 'unknown').
+    fn is_binding_pattern_in_catch_clause(&self, pattern_idx: NodeIndex) -> bool {
+        // binding pattern → variable declaration → catch clause
+        let Some(pattern_ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let var_decl_idx = pattern_ext.parent;
+        let Some(var_decl_ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let catch_idx = var_decl_ext.parent;
+        let Some(catch_node) = self.ctx.arena.get(catch_idx) else {
+            return false;
+        };
+        catch_node.kind == tsz_parser::parser::syntax_kind_ext::CATCH_CLAUSE
+    }
 
     /// Emit TS2488: "Type '...' must have a '[Symbol.iterator]()' method that returns an iterator."
     ///
