@@ -1109,6 +1109,43 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // TS2559: Weak type detection for implements clauses.
+                    // When the interface is a "weak type" (all properties optional,
+                    // at least one property, no index signatures) and the class has
+                    // no properties in common with the interface, tsc emits TS2559
+                    // instead of silently passing. We detect this by checking
+                    // assignability through the solver, which includes weak type
+                    // detection via the compat layer.
+                    if missing_members.is_empty() && incompatible_members.is_empty() {
+                        // Check if the interface is a weak type: all properties optional
+                        let is_weak = !interface_properties.is_empty()
+                            && interface_properties.iter().all(|p| p.optional)
+                            && !interface_has_index_signature;
+
+                        if is_weak {
+                            let class_instance_type =
+                                self.get_class_instance_type(class_idx, class_data);
+                            let analysis = self
+                                .analyze_assignability_failure(class_instance_type, interface_type);
+                            if matches!(
+                                analysis.failure_reason,
+                                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+                            ) {
+                                let class_str = self.format_type(class_instance_type);
+                                let iface_str = self.format_type(interface_type);
+                                let message = crate::diagnostics::format_message(
+                                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                                    &[&class_str, &iface_str],
+                                );
+                                self.error_at_node(
+                                    class_error_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                                );
+                            }
+                        }
+                    }
+
                     // Check index signature compatibility (TS2420).
                     // When an interface has an index signature that the class
                     // doesn't satisfy, tsc emits TS2420.  We perform a full
