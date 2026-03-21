@@ -3369,10 +3369,7 @@ fn semantic_defs_captures_top_level_variable_const() {
 #[test]
 fn semantic_defs_captures_top_level_variable_let() {
     let binder = bind_source("let counter = 0;");
-    let sym_id = binder
-        .file_locals
-        .get("counter")
-        .expect("expected counter");
+    let sym_id = binder.file_locals.get("counter").expect("expected counter");
     let entry = binder
         .semantic_defs
         .get(&sym_id)
@@ -3384,10 +3381,7 @@ fn semantic_defs_captures_top_level_variable_let() {
 #[test]
 fn semantic_defs_captures_top_level_variable_var() {
     let binder = bind_source("var legacy = true;");
-    let sym_id = binder
-        .file_locals
-        .get("legacy")
-        .expect("expected legacy");
+    let sym_id = binder.file_locals.get("legacy").expect("expected legacy");
     let entry = binder
         .semantic_defs
         .get(&sym_id)
@@ -3430,14 +3424,8 @@ function outer() {
     let has_outer = binder.semantic_defs.values().any(|e| e.name == "outer");
     assert!(has_outer, "top-level function 'outer' should be captured");
     let has_inner = binder.semantic_defs.values().any(|e| e.name == "inner");
-    assert!(
-        !has_inner,
-        "nested function 'inner' should not be captured"
-    );
-    let has_local_var = binder
-        .semantic_defs
-        .values()
-        .any(|e| e.name == "localVar");
+    assert!(!has_inner, "nested function 'inner' should not be captured");
+    let has_local_var = binder.semantic_defs.values().any(|e| e.name == "localVar");
     assert!(
         !has_local_var,
         "nested variable 'localVar' should not be captured"
