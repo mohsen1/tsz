@@ -232,6 +232,16 @@ pub(crate) fn mapped_type_id(
     tsz_solver::mapped_type_id(db, type_id)
 }
 
+/// Extract the template TypeId of a mapped type.
+///
+/// For `{ [K in keyof T]: SomeTemplate }`, returns `SomeTemplate`.
+/// Used for TS2344 constraint checking where indexed access into
+/// a mapped type yields the template type.
+pub(crate) fn mapped_type_template(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let mapped_id = tsz_solver::mapped_type_id(db, type_id)?;
+    Some(db.mapped_type(mapped_id).template)
+}
+
 /// Check if a mapped type's template is callable (has call/construct signatures).
 ///
 /// Used for TS2344 constraint checking: when an indexed access into a mapped
