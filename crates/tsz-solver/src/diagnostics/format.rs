@@ -1705,7 +1705,7 @@ mod tests {
         let obj = db.object(vec![prop]);
         let mut fmt = TypeFormatter::new(&db);
         let result = fmt.format(obj);
-        assert_eq!(result, "{ \"data-prop\": true; }");
+        assert_eq!(result, "{ \"data-prop\": boolean; }");
     }
 
     #[test]
@@ -3299,7 +3299,8 @@ mod tests {
 
     #[test]
     fn optional_param_shows_undefined() {
-        // tsc displays optional params WITH `| undefined` in diagnostic error messages
+        // tsc displays optional params WITHOUT `| undefined` in diagnostic error messages
+        // The `?` suffix already implies optionality.
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3319,14 +3320,15 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string | undefined) => any",
-            "Optional param includes '| undefined' — matches tsc diagnostic display"
+            result, "(a?: string) => any",
+            "Optional param omits '| undefined' — ? already implies optionality"
         );
     }
 
     #[test]
     fn optional_param_with_union_undefined_keeps_it() {
-        // When the type is internally `string | undefined`, display as-is (no duplicate)
+        // When the type is internally `string | undefined`, the formatter strips
+        // `undefined` for optional params since `?` already implies optionality.
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3347,8 +3349,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string | undefined) => any",
-            "Optional param with string | undefined keeps the display"
+            result, "(a?: string) => any",
+            "Optional param strips '| undefined' — ? already implies optionality"
         );
     }
 

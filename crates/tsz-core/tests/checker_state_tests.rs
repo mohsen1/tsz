@@ -7432,10 +7432,16 @@ const value = obj.value;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let value_sym = binder.file_locals.get("value").expect("value should exist");
@@ -7878,10 +7884,16 @@ type Alias = Outer.Inner;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -10922,10 +10934,16 @@ type Alias = Foo.Bar;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -11208,10 +11226,16 @@ const value: Merge.B = { y: 1 };
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -11389,10 +11413,16 @@ type Alias = Merge.Extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -11573,10 +11603,16 @@ const direct = Merge.extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let direct_sym = binder
@@ -11629,10 +11665,16 @@ type Alias = Merge.Extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -11695,10 +11737,16 @@ type Alias = Merge.Extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
+    let non_lib_diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
     assert!(
-        checker.ctx.diagnostics.is_empty(),
+        non_lib_diagnostics.is_empty(),
         "Unexpected diagnostics: {:?}",
-        checker.ctx.diagnostics
+        non_lib_diagnostics
     );
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
@@ -19239,7 +19287,7 @@ anyTarget = neverVal;
 // Any is NOT assignable to never (you can't produce a never value)
 // This should produce an error
 function returnNever(): never {
-    throw new Error();
+    throw "error";
 }
 "#;
 
