@@ -614,8 +614,12 @@ impl<'a> Printer<'a> {
             if can_strip {
                 // Before stripping parens, check if there are comments between
                 // the `(` and the inner expression. tsc preserves parens when a
-                // comment exists inside them, e.g.:
-                //   `(/* TODO */ expr as T)` -> `(/* TODO */ expr)` (parens kept)
+                // comment exists inside them for SOME cases, but NOT when the
+                // inner expression is a type assertion/as/satisfies that will be
+                // erased. In the erasure case, tsc strips both parens and type
+                // syntax, hoisting the comment before the expression:
+                //   `(/* TODO */ expr as T)` → `/* TODO */ expr`
+                //   `(/* TODO */ expr satisfies T)` → `/* TODO */ expr`
                 let actual_inner_start = self.skip_trivia_forward(inner.pos, inner.pos + 2048);
                 let has_inner_comment = if actual_inner_start > node.pos {
                     self.all_comments
@@ -628,7 +632,18 @@ impl<'a> Printer<'a> {
                     self.emit(paren.expression);
                     return;
                 }
-                // Fall through to emit with parens preserved
+                // When there IS a comment but the inner expression is a type
+                // assertion/as/satisfies that will be erased, still strip the
+                // parens. The comment system will emit the comment before the
+                // unwrapped expression naturally.
+                if inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                    || inner.kind == syntax_kind_ext::AS_EXPRESSION
+                    || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                {
+                    self.emit(paren.expression);
+                    return;
+                }
+                // Fall through to emit with parens preserved (non-type-erasure case)
             }
 
             // Check if the unwrapped expression is already parenthesized
