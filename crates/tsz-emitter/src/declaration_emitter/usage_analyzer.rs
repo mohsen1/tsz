@@ -627,6 +627,15 @@ impl<'a> UsageAnalyzer<'a> {
         // Track symbols referenced in computed property names
         self.analyze_computed_property_name(accessor.name);
 
+        // Private accessors emit without types — skip type deps
+        if self
+            .arena
+            .has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword)
+            || self.member_has_private_identifier_name(accessor.name)
+        {
+            return;
+        }
+
         // Walk parameters (setter parameter types)
         for &param_idx in &accessor.parameters.nodes {
             self.analyze_parameter(param_idx);
