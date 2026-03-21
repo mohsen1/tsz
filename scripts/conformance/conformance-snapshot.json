@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-21T19:20:02Z",
-  "git_sha": "1d84167c59b516d053ca4a20d8093df9d82ed1e7",
+  "timestamp": "2026-03-21T19:40:22Z",
+  "git_sha": "03c57d35ec94f5d528896ae7775d08b0c7bc0a88",
   "summary": {
     "total_tests": 12581,
     "passed": 11121,
@@ -1160,11 +1160,11 @@
       "count": 2
     },
     {
-      "code": "TS17014",
+      "code": "TS17008",
       "count": 2
     },
     {
-      "code": "TS17008",
+      "code": "TS17014",
       "count": 2
     },
     {
@@ -1422,10 +1422,6 @@
       "count": 1
     },
     {
-      "code": "TS2820",
-      "count": 1
-    },
-    {
       "code": "TS2556",
       "count": 1
     },
@@ -1443,6 +1439,10 @@
     },
     {
       "code": "TS2591",
+      "count": 1
+    },
+    {
+      "code": "TS2352",
       "count": 1
     }
   ],
@@ -1741,7 +1741,7 @@
     },
     {
       "code": "TS2345",
-      "count": 53
+      "count": 54
     },
     {
       "code": "TS1005",
@@ -1864,10 +1864,6 @@
       "count": 4
     },
     {
-      "code": "TS2353",
-      "count": 4
-    },
-    {
       "code": "TS2684",
       "count": 4
     },
@@ -1890,13 +1886,17 @@
     {
       "code": "TS2554",
       "count": 3
+    },
+    {
+      "code": "TS2416",
+      "count": 3
     }
   ],
   "categories": {
     "false_positive": 118,
     "all_missing": 187,
-    "wrong_code": 497,
-    "fingerprint_only": 621,
-    "close_to_passing": 355
+    "wrong_code": 496,
+    "fingerprint_only": 622,
+    "close_to_passing": 354
   }
 }
