@@ -346,7 +346,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx
                                 .implicit_any_checked_closures
                                 .remove(&prop.initializer);
-                            self.clear_type_cache_recursive(prop.initializer);
+                            self.invalidate_initializer_for_context_change(prop.initializer);
                         }
                         // For function expression property initializers (not arrow functions),
                         // push a synthetic `this` type so that `this` inside the function body

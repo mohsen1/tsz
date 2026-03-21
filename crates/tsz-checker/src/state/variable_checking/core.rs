@@ -134,7 +134,7 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::CLASS_EXPRESSION
             )
         {
-            self.clear_type_cache_recursive(initializer_idx);
+            self.invalidate_initializer_for_context_change(initializer_idx);
         }
     }
 
@@ -774,7 +774,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .implicit_any_checked_closures
                             .remove(&var_decl.initializer);
-                        checker.clear_type_cache_recursive(var_decl.initializer);
+                        checker.invalidate_initializer_for_context_change(var_decl.initializer);
                     }
                     let conditional_branch_ranges = checker
                         .ctx

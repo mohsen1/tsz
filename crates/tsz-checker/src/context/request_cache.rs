@@ -40,6 +40,10 @@ pub struct RequestCacheCounters {
     pub clear_type_cache_recursive_calls: u64,
     pub property_access_request_cache_hits: u64,
     pub property_access_request_cache_lookups: u64,
+    /// Calls to targeted (non-recursive) invalidation helpers.
+    pub targeted_invalidation_calls: u64,
+    /// Individual nodes invalidated by targeted helpers.
+    pub targeted_nodes_invalidated: u64,
 }
 
 impl RequestCacheCounters {
@@ -50,5 +54,7 @@ impl RequestCacheCounters {
         self.clear_type_cache_recursive_calls += other.clear_type_cache_recursive_calls;
         self.property_access_request_cache_hits += other.property_access_request_cache_hits;
         self.property_access_request_cache_lookups += other.property_access_request_cache_lookups;
+        self.targeted_invalidation_calls += other.targeted_invalidation_calls;
+        self.targeted_nodes_invalidated += other.targeted_nodes_invalidated;
     }
 }

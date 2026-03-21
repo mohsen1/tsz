@@ -116,10 +116,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     expected_type
                 };
-                // Clear cached type to force recomputation with contextual type
-                // This is necessary because the expression might have been previously typed
-                // without contextual information (e.g., during function body analysis)
-                self.clear_type_cache_recursive(return_data.expression);
+                // Targeted invalidation: the return expression will be re-evaluated
+                // with a non-empty request (contextual return type), which bypasses
+                // node_types for non-audited types and uses request_node_types for
+                // audited types.  Only the expression node and its contextually-
+                // sensitive immediate subtree need clearing.
+                self.invalidate_expression_for_contextual_retry(return_data.expression);
                 TypingRequest::with_contextual_type(ctx_type)
             } else {
                 TypingRequest::NONE

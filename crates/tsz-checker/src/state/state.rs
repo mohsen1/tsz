@@ -1711,6 +1711,252 @@ impl<'a> CheckerState<'a> {
             .clear();
     }
 
+    // -----------------------------------------------------------------------
+    // Targeted invalidation helpers
+    //
+    // These replace blanket `clear_type_cache_recursive` in hot paths where
+    // the subsequent re-evaluation uses `get_type_of_node_with_request` with
+    // a non-empty request.  A non-empty request bypasses `node_types` for
+    // non-audited node kinds and uses `request_node_types` for audited kinds,
+    // so deep recursive clearing of children is unnecessary — only the
+    // top-level node and context-sensitive bookkeeping need updating.
+    // -----------------------------------------------------------------------
+
+    /// Invalidate a single node's cached type entries without recursion.
+    ///
+    /// Removes the node from both `node_types` (empty-request cache) and
+    /// `request_node_types` (request-aware cache).  Does **not** touch
+    /// children, symbol types, or implicit-any tracking.
+    pub(crate) fn invalidate_node_type_cache(&mut self, idx: NodeIndex) {
+        if idx.is_none() {
+            return;
+        }
+        self.ctx.request_cache_counters.targeted_nodes_invalidated += 1;
+        self.ctx.node_types.remove(&idx.0);
+        if !self.ctx.request_node_types.is_empty() {
+            self.ctx
+                .request_node_types
+                .retain(|(node_idx, _), _| *node_idx != idx.0);
+        }
+    }
+
+    /// Update implicit-any closure tracking for a node being invalidated.
+    ///
+    /// Mirrors the bookkeeping in `clear_type_cache_recursive` but for a
+    /// single node only.
+    fn invalidate_implicit_any_tracking(&mut self, idx: NodeIndex) {
+        if self.ctx.implicit_any_contextual_closures.contains(&idx) {
+            self.ctx.implicit_any_checked_closures.insert(idx);
+        } else {
+            self.ctx.implicit_any_checked_closures.remove(&idx);
+        }
+    }
+
+    /// Invalidate parameter symbol types for a single parameter node.
+    ///
+    /// Clears the parameter's symbol(s) from `symbol_types` so they will be
+    /// re-inferred from the new contextual signature.  Also invalidates the
+    /// parameter default initializer node (if any).
+    fn invalidate_function_param_symbols(&mut self, param_idx: NodeIndex) {
+        if let Some(param_node) = self.ctx.arena.get(param_idx)
+            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+        {
+            for sym_id in self
+                .parameter_symbol_ids(param_idx, param.name)
+                .into_iter()
+                .flatten()
+            {
+                self.ctx.symbol_types.remove(&sym_id);
+            }
+            if param.initializer.is_some() {
+                self.invalidate_node_type_cache(param.initializer);
+            }
+        }
+    }
+
+    /// Invalidate a call argument expression for contextual retry.
+    ///
+    /// This is the targeted replacement for `clear_type_cache_recursive` in
+    /// call argument refresh paths.  It leverages the fact that
+    /// `get_type_of_node_with_request` with a non-empty request bypasses
+    /// `node_types` for non-audited node kinds, so only the top-level node
+    /// and context-sensitive bookkeeping need clearing.
+    ///
+    /// For contextually-sensitive forms (function expressions, object/array
+    /// literals), this also clears the immediate subtree that depends on the
+    /// contextual parameter type — but does NOT perform a deep recursive walk.
+    pub(crate) fn invalidate_expression_for_contextual_retry(&mut self, idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if idx.is_none() {
+            return;
+        }
+
+        self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            self.invalidate_node_type_cache(idx);
+            return;
+        };
+
+        match node.kind {
+            // ---- Context-sensitive forms that need deeper clearing ----
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                // Function expressions need full body clearing because cached
+                // expressions inside the body reference parameter types (via
+                // symbol_types) that change when contextual parameter types
+                // are applied.  Clear params + body recursively.
+                self.invalidate_node_type_cache(idx);
+                self.invalidate_implicit_any_tracking(idx);
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    for &param_idx in &func.parameters.nodes {
+                        self.invalidate_function_param_symbols(param_idx);
+                    }
+                    self.clear_type_cache_recursive(func.body);
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                // Clear the object literal node and each property.  For
+                // property initializers that are function expressions, those
+                // need recursive body clearing (same reason as above).
+                // Simple initializers get only a node-level clear.
+                self.invalidate_node_type_cache(idx);
+                self.invalidate_implicit_any_tracking(idx);
+                if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
+                    for &prop_idx in &obj.elements.nodes {
+                        self.invalidate_node_type_cache(prop_idx);
+                        if let Some(prop_node) = self.ctx.arena.get(prop_idx)
+                            && let Some(prop) = self.ctx.arena.get_property_assignment(prop_node)
+                        {
+                            // Recurse into the initializer — if it's a function,
+                            // the function branch handles deep clearing.
+                            self.invalidate_expression_for_contextual_retry(prop.initializer);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                // Clear the array and each element.  Function-expression
+                // elements get recursive body clearing via recursion.
+                self.invalidate_node_type_cache(idx);
+                self.invalidate_implicit_any_tracking(idx);
+                if let Some(array) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in &array.elements.nodes {
+                        self.invalidate_expression_for_contextual_retry(elem_idx);
+                    }
+                }
+            }
+            // ---- Wrapper expressions: recurse into inner ----
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.invalidate_expression_for_contextual_retry(paren.expression);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    // Condition doesn't depend on contextual type, skip it.
+                    self.invalidate_expression_for_contextual_retry(cond.when_true);
+                    self.invalidate_expression_for_contextual_retry(cond.when_false);
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(spread) = self.ctx.arena.get_unary_expr_ex(node) {
+                    self.invalidate_expression_for_contextual_retry(spread.expression);
+                }
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.invalidate_node_type_cache(idx);
+                if let Some(as_expr) = self.ctx.arena.get_type_assertion(node) {
+                    self.invalidate_expression_for_contextual_retry(as_expr.expression);
+                }
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                self.invalidate_node_type_cache(idx);
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    self.invalidate_expression_for_contextual_retry(unary.expression);
+                }
+            }
+            // ---- Simple expressions: node-level clear only ----
+            _ => {
+                // For simple expressions (identifier, binary, call, access,
+                // literals, etc.), the node-level clear is sufficient.  These
+                // evaluate the same regardless of contextual type — the request
+                // path bypasses node_types for non-audited kinds, and children
+                // that don't depend on context correctly hit node_types.
+                self.invalidate_node_type_cache(idx);
+            }
+        }
+    }
+
+    /// Invalidate a function body for contextual parameter retyping.
+    ///
+    /// Recursively clears the body cache so expressions that reference
+    /// parameters get recomputed with the new parameter types.  This is
+    /// narrower than a blanket `clear_type_cache_recursive` on the entire
+    /// function expression because it targets the body only — the function
+    /// node itself and parameter symbol types are managed externally by
+    /// `cache_parameter_types` (which must be called BEFORE this helper).
+    pub(crate) fn invalidate_function_body_for_param_retyping(&mut self, body: NodeIndex) {
+        self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
+
+        // Body needs recursive clearing because cached expressions inside
+        // reference parameter types (via symbol_types) that have changed.
+        self.clear_type_cache_recursive(body);
+    }
+
+    /// Invalidate an initializer expression for a context change.
+    ///
+    /// Used in variable-checking paths when the contextual type changes
+    /// (e.g., JSDoc blocks callable context) or when the checked pass needs
+    /// to revisit a previously-cached initializer.  For function-like
+    /// initializers, clears parameter symbol types and recursively clears
+    /// the body.  For other forms, clears the initializer node only.
+    pub(crate) fn invalidate_initializer_for_context_change(&mut self, idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if idx.is_none() {
+            return;
+        }
+
+        self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
+
+        self.invalidate_node_type_cache(idx);
+        self.invalidate_implicit_any_tracking(idx);
+
+        if let Some(init_node) = self.ctx.arena.get(idx) {
+            match init_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    if let Some(func) = self.ctx.arena.get_function(init_node) {
+                        for &param_idx in &func.parameters.nodes {
+                            self.invalidate_function_param_symbols(param_idx);
+                        }
+                        // Body needs recursive clearing because cached
+                        // expressions reference parameter symbol types that
+                        // have changed (or will change during re-evaluation).
+                        self.clear_type_cache_recursive(func.body);
+                    }
+                }
+                k if k == syntax_kind_ext::NEW_EXPRESSION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    // These are re-checked in maybe_clear_checked_initializer_type_cache;
+                    // the node-level clear is sufficient here.
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Clear type cache for a node and all its children recursively.
     ///
     /// This is used when we need to recompute types with different contextual information,
