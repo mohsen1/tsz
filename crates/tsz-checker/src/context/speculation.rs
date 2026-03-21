@@ -37,6 +37,8 @@ pub(crate) struct DiagnosticSnapshot {
     pub diagnostics_len: usize,
     /// Clone of `ctx.emitted_diagnostics` for dedup restoration.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Length of `ctx.deferred_ts2454_errors` at snapshot time.
+    pub deferred_ts2454_len: usize,
 }
 
 /// Extended snapshot that also captures TS2454/TS2307/implicit-any/cache state.
@@ -85,6 +87,7 @@ impl CheckerContext<'_> {
         DiagnosticSnapshot {
             diagnostics_len: self.diagnostics.len(),
             emitted_diagnostics: self.emitted_diagnostics.clone(),
+            deferred_ts2454_len: self.deferred_ts2454_errors.len(),
         }
     }
 
@@ -140,6 +143,8 @@ impl CheckerContext<'_> {
         self.diagnostics.truncate(snap.diagnostics_len);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
+        self.deferred_ts2454_errors
+            .truncate(snap.deferred_ts2454_len);
     }
 
     /// Roll back to a full snapshot, discarding speculative diagnostics and

@@ -269,6 +269,13 @@ impl<'a> CheckerState<'a> {
             &format!("Variable '{name}' is used before being assigned."),
             2454, // TS2454
         );
+
+        // Also buffer for deferred re-emission. check_flow_usage can run inside
+        // speculative call-checker contexts (generic inference, overload probing)
+        // that truncate diagnostics on rollback. The deferred buffer survives
+        // rollback; at the end of check_source_file we re-emit any TS2454 that
+        // was lost.
+        self.ctx.deferred_ts2454_errors.push((idx, sym_id));
     }
 
     /// Check if a node is within a parameter's default value initializer.
@@ -395,6 +402,12 @@ impl<'a> CheckerState<'a> {
 
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            if std::env::var_os("TSZ_DAA_DEBUG").is_some() {
+                eprintln!(
+                    "[DAA] should_check_definite_assignment: no symbol for {:?}",
+                    sym_id
+                );
+            }
             return false;
         };
 

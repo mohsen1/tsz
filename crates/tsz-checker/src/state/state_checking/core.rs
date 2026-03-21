@@ -445,6 +445,28 @@ impl<'a> CheckerState<'a> {
                     &[&runtime_path],
                 );
             }
+
+            // Re-emit TS2454 diagnostics that were lost to speculative rollback.
+            // check_flow_usage runs during type computation, which can happen
+            // inside speculative call-checker contexts that truncate diagnostics
+            // on rollback. The deferred buffer survives rollback. We only re-emit
+            // if the diagnostic is not already present (dedup by error_at_node).
+            let deferred_ts2454 = std::mem::take(&mut self.ctx.deferred_ts2454_errors);
+            for (node_idx, sym_id) in deferred_ts2454 {
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+                // error_at_node -> error() has built-in dedup by (start, code).
+                // If the diagnostic survived speculation, this is a no-op.
+                // If it was lost, this re-emits it.
+                self.error_at_node(
+                    node_idx,
+                    &format!("Variable '{name}' is used before being assigned."),
+                    2454,
+                );
+            }
         }
     }
 
