@@ -42,7 +42,7 @@ use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{QueryDatabase, TypeEnvironment, TypeId};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
-use tsz_binder::BinderState;
+use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
@@ -817,6 +817,20 @@ pub struct CheckerContext<'a> {
     /// `expando_properties`. Eliminates O(N) scans when checking whether an expando
     /// property exists across any file (property_access_helpers, access computation).
     pub global_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
+
+    /// Pre-built global index: module_specifier -> Vec<(file_idx, ModuleAugmentation)>.
+    /// Merges all binders' `module_augmentations` into a single lookup table.
+    /// Eliminates O(N) scans when resolving module augmentations for interface
+    /// declaration merging (interface_type.rs, computed.rs).
+    pub global_module_augmentations_index:
+        Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
+
+    /// Pre-built global index: module_specifier -> Vec<(SymbolId, file_idx)>.
+    /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)
+    /// into a forward lookup: module -> symbols. Eliminates O(N) scans when finding
+    /// augmentation symbols for a given module specifier (interface_type.rs).
+    pub global_augmentation_targets_index:
+        Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.

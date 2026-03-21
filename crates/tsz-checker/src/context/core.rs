@@ -233,10 +233,33 @@ impl<'a> CheckerContext<'a> {
         declared_modules.patterns.sort();
         declared_modules.patterns.dedup();
 
+        // Build the global module augmentations index: module_specifier -> Vec<(file_idx, ModuleAugmentation)>
+        let mut module_augs_index: FxHashMap<String, Vec<(usize, tsz_binder::ModuleAugmentation)>> =
+            FxHashMap::default();
+        // Build the global augmentation targets index: module_specifier -> Vec<(SymbolId, file_idx)>
+        let mut aug_targets_index: FxHashMap<String, Vec<(tsz_binder::SymbolId, usize)>> =
+            FxHashMap::default();
+        for (file_idx, binder) in binders.iter().enumerate() {
+            for (module_spec, augmentations) in binder.module_augmentations.iter() {
+                module_augs_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .extend(augmentations.iter().map(|aug| (file_idx, aug.clone())));
+            }
+            for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
+                aug_targets_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push((sym_id, file_idx));
+            }
+        }
+
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.global_declared_modules = Some(Arc::new(declared_modules));
         self.global_expando_index = Some(Arc::new(expando_index));
+        self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
+        self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
         self.all_binders = Some(binders);
     }
 
@@ -961,5 +984,129 @@ mod tests {
         assert!(cache.class_instance_type_cache.is_empty());
         assert!(cache.class_constructor_type_cache.is_empty());
         assert!(cache.class_instance_type_to_decl.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use std::sync::Arc;
+    use tsz_binder::{BinderState, ModuleAugmentation, SymbolId};
+    use tsz_parser::parser::NodeIndex;
+
+    /// Build the global module augmentation indices from a list of binders
+    /// (same logic as `set_all_binders` but isolated for testing).
+    fn build_module_augmentation_indices(
+        binders: &[Arc<BinderState>],
+    ) -> (
+        rustc_hash::FxHashMap<String, Vec<(usize, ModuleAugmentation)>>,
+        rustc_hash::FxHashMap<String, Vec<(SymbolId, usize)>>,
+    ) {
+        use rustc_hash::FxHashMap;
+        let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
+            FxHashMap::default();
+        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> =
+            FxHashMap::default();
+        for (file_idx, binder) in binders.iter().enumerate() {
+            for (module_spec, augmentations) in binder.module_augmentations.iter() {
+                module_augs_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .extend(augmentations.iter().map(|aug| (file_idx, aug.clone())));
+            }
+            for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
+                aug_targets_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push((sym_id, file_idx));
+            }
+        }
+        (module_augs_index, aug_targets_index)
+    }
+
+    #[test]
+    fn global_module_augmentations_index_merges_across_binders() {
+        let mut binder1 = BinderState::new();
+        binder1.module_augmentations.insert(
+            "./module-a".to_string(),
+            vec![ModuleAugmentation::new(
+                "MyInterface".to_string(),
+                NodeIndex(10),
+            )],
+        );
+        let mut binder2 = BinderState::new();
+        binder2.module_augmentations.insert(
+            "./module-a".to_string(),
+            vec![ModuleAugmentation::new(
+                "MyOtherInterface".to_string(),
+                NodeIndex(20),
+            )],
+        );
+
+        let binders = vec![Arc::new(binder1), Arc::new(binder2)];
+        let (aug_index, _) = build_module_augmentation_indices(&binders);
+
+        let entries = aug_index.get("./module-a").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, 0); // file_idx 0
+        assert_eq!(entries[0].1.name, "MyInterface");
+        assert_eq!(entries[1].0, 1); // file_idx 1
+        assert_eq!(entries[1].1.name, "MyOtherInterface");
+    }
+
+    #[test]
+    fn global_module_augmentations_index_separates_module_specifiers() {
+        let mut binder = BinderState::new();
+        binder.module_augmentations.insert(
+            "./module-a".to_string(),
+            vec![ModuleAugmentation::new("Foo".to_string(), NodeIndex(10))],
+        );
+        binder.module_augmentations.insert(
+            "./module-b".to_string(),
+            vec![ModuleAugmentation::new("Bar".to_string(), NodeIndex(20))],
+        );
+
+        let binders = vec![Arc::new(binder)];
+        let (aug_index, _) = build_module_augmentation_indices(&binders);
+
+        assert!(aug_index.contains_key("./module-a"));
+        assert!(aug_index.contains_key("./module-b"));
+        assert!(!aug_index.contains_key("./module-c"));
+    }
+
+    #[test]
+    fn global_augmentation_targets_index_maps_module_to_symbols() {
+        let mut binder1 = BinderState::new();
+        binder1
+            .augmentation_target_modules
+            .insert(SymbolId(100), "./target".to_string());
+        let mut binder2 = BinderState::new();
+        binder2
+            .augmentation_target_modules
+            .insert(SymbolId(200), "./target".to_string());
+        binder2
+            .augmentation_target_modules
+            .insert(SymbolId(201), "./other".to_string());
+
+        let binders = vec![Arc::new(binder1), Arc::new(binder2)];
+        let (_, targets_index) = build_module_augmentation_indices(&binders);
+
+        let target_entries = targets_index.get("./target").unwrap();
+        assert_eq!(target_entries.len(), 2);
+        assert_eq!(target_entries[0], (SymbolId(100), 0));
+        assert_eq!(target_entries[1], (SymbolId(200), 1));
+
+        let other_entries = targets_index.get("./other").unwrap();
+        assert_eq!(other_entries.len(), 1);
+        assert_eq!(other_entries[0], (SymbolId(201), 1));
+    }
+
+    #[test]
+    fn global_augmentation_indices_empty_for_no_augmentations() {
+        let binder = BinderState::new();
+        let binders = vec![Arc::new(binder)];
+        let (aug_index, targets_index) = build_module_augmentation_indices(&binders);
+
+        assert!(aug_index.is_empty());
+        assert!(targets_index.is_empty());
     }
 }
