@@ -4,7 +4,9 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, RelatedInformationPolicy};
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+};
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
@@ -1214,49 +1216,48 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
-            return;
-        };
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
-        let arg_end = anchor.start.saturating_add(anchor.length);
-        if self.ctx.diagnostics.iter().any(|diag| {
-            diag.code
-                == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
-                && diag.start >= anchor.start
-                && diag.start < arg_end
-        }) {
-            return;
+        if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
+            let arg_end = anchor.start.saturating_add(anchor.length);
+            if self.ctx.diagnostics.iter().any(|diag| {
+                diag.code
+                    == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                    && diag.start >= anchor.start
+                    && diag.start < arg_end
+            }) {
+                return;
+            }
         }
+
         let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
         let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
             &[&arg_str, &param_str],
         );
-        let mut diag = Diagnostic::error(
-            self.ctx.file_name.clone(),
-            anchor.start,
-            anchor.length,
-            message,
-            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-        );
 
         // Run failure analysis to produce elaboration as related information,
         // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
         // related diagnostics under the primary TS2345.
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
-        if let Some(ref reason) = analysis.failure_reason
-            && let Some(related) =
-                self.related_from_failure_reason(reason, arg_type, param_type, anchor.node_idx)
-        {
-            diag.related_information.extend(related);
-            diag.related_information = self.normalize_related_information(
-                std::mem::take(&mut diag.related_information),
-                RelatedInformationPolicy::ELABORATION,
-            );
-        }
+        let request = if let Some(reason) = analysis.failure_reason {
+            DiagnosticRenderRequest::with_failure_reason(
+                DiagnosticAnchorKind::Exact,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                message,
+                reason,
+                arg_type,
+                param_type,
+            )
+        } else {
+            DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::Exact,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                message,
+            )
+        };
 
-        self.ctx.push_diagnostic(diag);
+        self.emit_render_request(idx, request);
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
@@ -1430,18 +1431,17 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
-        let related = self
-            .normalize_related_information(related, RelatedInformationPolicy::OVERLOAD_FAILURES);
 
-        self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
-            category: DiagnosticCategory::Error,
-            message_text: diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
-            file: self.ctx.file_name.clone(),
-            start: anchor.start,
-            length: anchor.length,
-            related_information: related,
-        });
+        self.emit_render_request_at_anchor(
+            anchor,
+            DiagnosticRenderRequest::with_related(
+                anchor_kind,
+                diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
+                diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
+                related,
+                RelatedInformationPolicy::OVERLOAD_FAILURES,
+            ),
+        );
     }
 
     fn first_call_argument_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {

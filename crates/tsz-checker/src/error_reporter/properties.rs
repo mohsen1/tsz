@@ -1,7 +1,7 @@
 //! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
-use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -556,18 +556,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(anchor) =
-            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
-        {
-            let (code, message) = self.excess_property_diagnostic_message(prop_name, target, idx);
-            self.ctx.push_diagnostic(Diagnostic::error(
-                &self.ctx.file_name,
-                anchor.start,
-                anchor.length,
-                message,
-                code,
-            ));
-        }
+        let (code, message) = self.excess_property_diagnostic_message(prop_name, target, idx);
+        self.emit_render_request(
+            idx,
+            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::PropertyToken, code, message),
+        );
     }
 
     /// Report a "Cannot assign to readonly property" error using solver diagnostics with source tracking.
