@@ -632,6 +632,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if block.statements.nodes.is_empty() {
+            self.write("{ }");
+            return;
+        }
+
         self.write("{ ");
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i > 0 {

@@ -272,7 +272,9 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
-    /// Get the body node index of a class member (method, constructor, accessor).
+    /// Get the body/initializer node index of a class member.
+    /// For methods/constructors/accessors, returns the body.
+    /// For property declarations, returns the initializer expression.
     fn get_member_body(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
         match member_node.kind {
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -291,6 +293,12 @@ impl<'a> LoweringPass<'a> {
                 self.arena.get_accessor(member_node).and_then(|a| {
                     let body = a.body;
                     if body.0 != 0 { Some(body) } else { None }
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(member_node).and_then(|p| {
+                    let init = p.initializer;
+                    if init.is_some() { Some(init) } else { None }
                 })
             }
             _ => None,

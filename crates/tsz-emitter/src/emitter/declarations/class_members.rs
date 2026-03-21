@@ -659,8 +659,11 @@ impl<'a> Printer<'a> {
             || !self.hoisted_assignment_value_temps.is_empty()
             || !self.hoisted_for_of_temps.is_empty();
 
-        let has_prologue =
-            !param_props.is_empty() || !field_inits.is_empty() || !auto_accessor_inits.is_empty();
+        let has_prologue = !param_props.is_empty()
+            || !field_inits.is_empty()
+            || !auto_accessor_inits.is_empty()
+            || !self.pending_private_field_constructor_inits.is_empty()
+            || self.pending_instances_weakset_add.is_some();
 
         // Empty constructor with no prologue: check source format
         if block.statements.nodes.is_empty() && !has_prologue && !has_function_temps {
@@ -857,6 +860,25 @@ impl<'a> Printer<'a> {
         field_inits: &[crate::emitter::core::FieldInit],
         auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
+        // Emit `_X_instances.add(this)` for private methods/accessors
+        if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
+            self.write(ws_name);
+            self.write(".add(this);");
+            self.write_line();
+        }
+        // Emit private field WeakMap.set inits
+        let private_inits = self.pending_private_field_constructor_inits.clone();
+        for (weakmap_name, has_initializer, initializer) in &private_inits {
+            self.write(weakmap_name);
+            self.write(".set(this, ");
+            if *has_initializer {
+                self.emit_expression(*initializer);
+            } else {
+                self.write("void 0");
+            }
+            self.write(");");
+            self.write_line();
+        }
         for name in param_props {
             self.write("this.");
             self.write(name);
