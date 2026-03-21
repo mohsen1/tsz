@@ -56,7 +56,130 @@ use tsz_scanner::SyntaxKind;
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
 
+/// Validate JSON syntax and return parse diagnostics for violations.
+///
+/// TypeScript's JSON parser enforces strict JSON rules when parsing `.json` files.
+/// This validates property names must be double-quoted string literals (TS1327).
+/// Violations include single-quoted strings, computed property names (`[expr]`),
+/// and unquoted identifiers used as property names.
+fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
+    let mut diagnostics = Vec::new();
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    // Track whether we're inside an object and expecting a property name.
+    // JSON property names must be double-quoted strings per the JSON spec.
+    // We use a simple state machine: after `{` or `,` inside an object,
+    // the next non-whitespace token must be `"` (property name) or `}` (end).
+    let mut object_depth: i32 = 0;
+    let mut array_depth: i32 = 0;
+    let mut expecting_property_name = false;
+
+    while i < len {
+        let b = bytes[i];
+
+        // Skip whitespace
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            i += 1;
+            continue;
+        }
+
+        if b == b'{' {
+            object_depth += 1;
+            expecting_property_name = true;
+            i += 1;
+            continue;
+        }
+
+        if b == b'}' {
+            object_depth -= 1;
+            expecting_property_name = false;
+            i += 1;
+            continue;
+        }
+
+        if b == b'[' && !expecting_property_name {
+            array_depth += 1;
+            i += 1;
+            continue;
+        }
+
+        if b == b']' && array_depth > 0 {
+            array_depth -= 1;
+            i += 1;
+            continue;
+        }
+
+        if b == b',' {
+            // After a comma inside an object (not array), expect a property name
+            if object_depth > array_depth {
+                expecting_property_name = true;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b':' {
+            expecting_property_name = false;
+            i += 1;
+            continue;
+        }
+
+        // When expecting a property name, check what we got
+        if expecting_property_name && object_depth > 0 {
+            if b == b'"' {
+                // Valid double-quoted property name - skip past the string
+                expecting_property_name = false;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        i += 2; // skip escape sequence
+                    } else if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+
+            // Not a double-quoted string in property name position → TS1327
+            diagnostics.push(ParseDiagnostic {
+                start: i as u32,
+                length: 1,
+                message: tsz_common::diagnostics::diagnostic_messages::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED.to_string(),
+                code: tsz_common::diagnostics::diagnostic_codes::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED,
+            });
+            expecting_property_name = false;
+        }
+
+        // Skip over strings (both single and double quoted) to avoid false matches
+        if b == b'"' || b == b'\'' {
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                } else if bytes[i] == b {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    diagnostics
+}
+
 fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindResult {
+    let parse_diagnostics = validate_json_syntax(&source_text);
+
     let mut arena = NodeArena::new();
     let end_pos = source_text.len() as u32;
     let eof_token = arena.add_token(SyntaxKind::EndOfFileToken as u16, end_pos, end_pos);
@@ -99,7 +222,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         declaration_arenas: binder.declaration_arenas,
         scopes: binder.scopes,
         node_scope_ids: binder.node_scope_ids,
-        parse_diagnostics: Vec::new(),
+        parse_diagnostics,
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
         module_augmentations: binder.module_augmentations,
