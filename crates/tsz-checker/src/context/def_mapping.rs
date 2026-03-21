@@ -51,9 +51,7 @@ impl<'a> CheckerContext<'a> {
             })
             .or_else(|| {
                 self.all_binders.as_ref().and_then(|binders| {
-                    binders
-                        .iter()
-                        .find_map(|binder| binder.symbols.get(sym_id))
+                    binders.iter().find_map(|binder| binder.symbols.get(sym_id))
                 })
             });
 

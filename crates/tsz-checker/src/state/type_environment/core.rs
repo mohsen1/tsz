@@ -89,8 +89,7 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                let Some(member_def_id) = self.ctx.get_existing_def_id(member_sym_id)
-                else {
+                let Some(member_def_id) = self.ctx.get_existing_def_id(member_sym_id) else {
                     continue;
                 };
                 let literal_type = self.enum_member_type_from_decl(member_idx);
