@@ -370,6 +370,34 @@ impl<'a> TypePrinter<'a> {
                 if !parent_sym.escaped_name.starts_with('"')
                     && !parent_sym.escaped_name.starts_with("__")
                 {
+                    // If the current name is not a valid identifier, use indexed access
+                    // notation: (typeof Parent)["member"] instead of Parent.member
+                    if !Self::is_valid_identifier(&qualified_name) {
+                        qualified_name = format!(
+                            "(typeof {})[\"{}\"]",
+                            parent_sym.escaped_name, qualified_name
+                        );
+                        // Skip further parent traversal since we already have full reference
+                        current_parent = parent_sym.parent;
+                        while current_parent != SymbolId::NONE {
+                            if enclosing_ancestors.contains(&current_parent) {
+                                break;
+                            }
+                            if let Some(ps) = arena.get(current_parent) {
+                                if !ps.escaped_name.starts_with('"')
+                                    && !ps.escaped_name.starts_with("__")
+                                {
+                                    // Wrap in more typeof for nested namespaces
+                                    qualified_name =
+                                        format!("(typeof {}).{}", ps.escaped_name, qualified_name);
+                                }
+                                current_parent = ps.parent;
+                            } else {
+                                break;
+                            }
+                        }
+                        return Some(qualified_name);
+                    }
                     qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
                 }
                 current_parent = parent_sym.parent;
@@ -1206,6 +1234,20 @@ impl<'a> TypePrinter<'a> {
             Some(tsz_solver::types::LiteralValue::BigInt(_)) => TypeId::BIGINT,
             None => type_id,
         }
+    }
+
+    /// Check if a name is a valid JavaScript/TypeScript identifier
+    /// (can be used in dot-access notation).
+    fn is_valid_identifier(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let mut chars = name.chars();
+        let first = chars.next().unwrap();
+        if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+            return false;
+        }
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
     }
 
     fn print_property_as_accessors(
