@@ -226,7 +226,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Routes through the environment capability boundary — the module + target
     /// requirements for top-level `await` are identical to top-level `await using`.
-    fn supports_top_level_await(&self) -> bool {
+    const fn supports_top_level_await(&self) -> bool {
         self.ctx.capabilities.top_level_await_using_supported
     }
 

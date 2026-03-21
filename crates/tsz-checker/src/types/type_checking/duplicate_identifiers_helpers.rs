@@ -394,7 +394,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Scan a `declare global { ... }` block body for variable declarations
-    /// with the given name. Uses `get_variable` for VariableStatement access
+    /// with the given name. Uses `get_variable` for `VariableStatement` access
     /// and `get_variable_declaration` for individual declarations.
     #[allow(dead_code)]
     fn scan_global_block_for_variable(

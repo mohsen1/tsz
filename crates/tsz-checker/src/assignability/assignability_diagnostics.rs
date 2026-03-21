@@ -122,8 +122,8 @@ impl<'a> CheckerState<'a> {
         // to decide if the failure is caused ONLY by excess properties.
         // This replaces the previous checker-local property enumeration and
         // per-property assignability re-checking.
-        if let Some(outcome) = outcome {
-            if let Some(ref cls) = outcome.property_classification {
+        if let Some(outcome) = outcome
+            && let Some(ref cls) = outcome.property_classification {
                 // No excess properties → don't skip
                 if cls.excess_properties.is_empty() {
                     return false;
@@ -136,7 +136,6 @@ impl<'a> CheckerState<'a> {
                 // Has incompatible matching properties → don't skip
                 return false;
             }
-        }
 
         // Fallback: no outcome available, use legacy path.
         // Check if there are excess properties.

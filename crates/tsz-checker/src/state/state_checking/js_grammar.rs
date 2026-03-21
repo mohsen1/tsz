@@ -1,4 +1,4 @@
-//! JS grammar checking (TS8xxx errors).
+//! JS grammar checking (`TS8xxx` errors).
 //!
 //! Emits errors for TypeScript-only syntax used in JavaScript files.
 

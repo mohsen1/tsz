@@ -47,7 +47,7 @@ pub(crate) struct NameResolutionRequest<'n> {
 
 impl<'n> NameResolutionRequest<'n> {
     /// Convenience: create a value-position lookup.
-    pub fn value(name: &'n str, idx: NodeIndex) -> Self {
+    pub const fn value(name: &'n str, idx: NodeIndex) -> Self {
         Self {
             name,
             idx,
@@ -58,7 +58,7 @@ impl<'n> NameResolutionRequest<'n> {
     }
 
     /// Convenience: create a type-position lookup.
-    pub fn type_ref(name: &'n str, idx: NodeIndex) -> Self {
+    pub const fn type_ref(name: &'n str, idx: NodeIndex) -> Self {
         Self {
             name,
             idx,
@@ -69,7 +69,7 @@ impl<'n> NameResolutionRequest<'n> {
     }
 
     /// Convenience: create a namespace-position lookup.
-    pub fn namespace(name: &'n str, idx: NodeIndex) -> Self {
+    pub const fn namespace(name: &'n str, idx: NodeIndex) -> Self {
         Self {
             name,
             idx,
@@ -80,7 +80,7 @@ impl<'n> NameResolutionRequest<'n> {
     }
 
     /// Convenience: create an exported-member lookup.
-    pub fn exported_member(
+    pub const fn exported_member(
         name: &'n str,
         idx: NodeIndex,
         parent_symbol: SymbolId,
@@ -149,7 +149,7 @@ pub(crate) struct ResolutionFailure {
 
 impl ResolutionFailure {
     /// Create a simple "not found" failure with no suggestions.
-    pub fn not_found() -> Self {
+    pub const fn not_found() -> Self {
         Self {
             kind: ResolutionFailureKind::NotFound,
             suggestions: Vec::new(),
@@ -157,7 +157,7 @@ impl ResolutionFailure {
     }
 
     /// Create a "not found" failure with spelling suggestions.
-    pub fn not_found_with_suggestions(suggestions: Vec<String>) -> Self {
+    pub const fn not_found_with_suggestions(suggestions: Vec<String>) -> Self {
         Self {
             kind: ResolutionFailureKind::NotFound,
             suggestions,
@@ -165,7 +165,7 @@ impl ResolutionFailure {
     }
 
     /// Create a "wrong meaning" failure.
-    pub fn wrong_meaning(found_symbol: SymbolId, actual_meaning: NameLookupKind) -> Self {
+    pub const fn wrong_meaning(found_symbol: SymbolId, actual_meaning: NameLookupKind) -> Self {
         Self {
             kind: ResolutionFailureKind::WrongMeaning {
                 found_symbol,
@@ -176,7 +176,7 @@ impl ResolutionFailure {
     }
 
     /// Create an "exported member missing" failure.
-    pub fn exported_member_missing(parent_symbol: SymbolId, parent_name: String) -> Self {
+    pub const fn exported_member_missing(parent_symbol: SymbolId, parent_name: String) -> Self {
         Self {
             kind: ResolutionFailureKind::ExportedMemberMissing {
                 parent_symbol,
@@ -187,7 +187,7 @@ impl ResolutionFailure {
     }
 
     /// Create an "exported member missing" failure with spelling suggestions.
-    pub fn exported_member_missing_with_suggestions(
+    pub const fn exported_member_missing_with_suggestions(
         parent_symbol: SymbolId,
         parent_name: String,
         suggestions: Vec<String>,
@@ -202,7 +202,7 @@ impl ResolutionFailure {
     }
 
     /// Whether this failure has spelling suggestions.
-    pub fn has_suggestions(&self) -> bool {
+    pub const fn has_suggestions(&self) -> bool {
         !self.suggestions.is_empty()
     }
 }
