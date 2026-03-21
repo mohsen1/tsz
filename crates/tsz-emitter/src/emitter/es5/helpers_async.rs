@@ -140,7 +140,18 @@ impl<'a> Printer<'a> {
             .iter()
             .copied()
             .any(|p| self.param_initializer_has_top_level_await(p));
-        let move_params_to_generator = use_native_generators && params_have_top_level_await;
+        // For ES2015+, tsc moves ALL parameters with default initializers
+        // into the generator function and forwards `arguments`. This ensures
+        // default parameter evaluation happens inside the generator context.
+        let any_param_has_default = use_native_generators
+            && params.iter().copied().any(|p| {
+                self.arena
+                    .get(p)
+                    .and_then(|n| self.arena.get_parameter(n))
+                    .is_some_and(|param| param.initializer.is_some())
+            });
+        let move_params_to_generator =
+            use_native_generators && (params_have_top_level_await || any_param_has_default);
         let es5_await_param_recovery = !use_native_generators
             && params_have_top_level_await
             && emit_utils::block_is_empty(self.arena, body)
