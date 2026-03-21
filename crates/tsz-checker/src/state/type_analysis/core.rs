@@ -445,10 +445,24 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
-                            self.error_cannot_find_namespace_with_suggestion(
+                            // Route through boundary for TS2503/TS2552 with suggestions
+                            let req = crate::query_boundaries::name_resolution::NameResolutionRequest::namespace(
                                 left_name.as_str(),
                                 qn.left,
                             );
+                            match self.resolve_name_structured(&req) {
+                                Err(_failure) => {
+                                    // Emit TS2503 (cannot find namespace) with suggestions
+                                    self.error_cannot_find_namespace_with_suggestion(
+                                        left_name.as_str(),
+                                        qn.left,
+                                    );
+                                }
+                                Ok(_) => {
+                                    // Shouldn't happen since resolve_qualified_symbol_in_type_position
+                                    // already failed, but avoid false diagnostic
+                                }
+                            }
                         }
                         TypeId::ERROR
                     } else {
@@ -547,7 +561,13 @@ impl<'a> CheckerState<'a> {
                 let full_name = self
                     .entity_name_text(idx)
                     .unwrap_or_else(|| right_name.clone());
-                self.error_value_only_type_at(&full_name, idx);
+                self.report_wrong_meaning(
+                    &full_name,
+                    idx,
+                    member_sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return TypeId::ERROR;
             }
             let mut member_type = self.type_reference_symbol_type(member_sym_id);
@@ -655,7 +675,13 @@ impl<'a> CheckerState<'a> {
                         let full_name = self
                             .entity_name_text(idx)
                             .unwrap_or_else(|| right_name.clone());
-                        self.error_value_only_type_at(&full_name, idx);
+                        self.report_wrong_meaning(
+                            &full_name,
+                            idx,
+                            member_sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
                         return TypeId::ERROR;
                     }
                 }

@@ -438,7 +438,8 @@ impl<'a> CheckerState<'a> {
                     if self.is_unresolved_import_symbol(type_name_idx) {
                         return TypeId::ANY;
                     }
-                    self.error_cannot_find_name_at(name, type_name_idx);
+                    // Route through boundary for TS2304/TS2552 with spelling suggestions
+                    let _ = self.resolve_type_name_or_report(name, type_name_idx);
                     return TypeId::ERROR;
                 }
                 if !is_builtin_array
