@@ -1891,7 +1891,7 @@ impl<'a> CheckerState<'a> {
             .collect();
         let refresh_all_args = |this: &mut Self| {
             for &arg_idx in args {
-                this.clear_type_cache_recursive(arg_idx);
+                this.invalidate_expression_for_contextual_retry(arg_idx);
                 this.ctx.daa_error_nodes.remove(&arg_idx.0);
                 this.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
             }
@@ -1913,7 +1913,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types = Default::default();
         for &arg_idx in &contextual_refresh_args {
             self.clear_contextual_resolution_cache();
-            self.clear_type_cache_recursive(arg_idx);
+            self.invalidate_expression_for_contextual_retry(arg_idx);
         }
         let union_callable_ctx = CallableContext::new(union_contextual);
         // Preserve literal types during overload argument collection so that
