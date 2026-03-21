@@ -3384,3 +3384,155 @@ fn skeleton_validate_mixed_ambient_and_user_files() {
         "should have exact declared module 'my-globals'"
     );
 }
+
+// =============================================================================
+// Skeleton Fingerprinting Tests
+// =============================================================================
+
+#[test]
+fn skeleton_fingerprint_deterministic_across_rebuilds() {
+    let source = "let x = 1; export function foo(): number { return 42; }";
+    let files1 = vec![("a.ts".to_string(), source.to_string())];
+    let files2 = vec![("a.ts".to_string(), source.to_string())];
+
+    let results1 = parse_and_bind_parallel(files1);
+    let results2 = parse_and_bind_parallel(files2);
+
+    let skel1 = extract_skeleton(&results1[0]);
+    let skel2 = extract_skeleton(&results2[0]);
+
+    assert_eq!(
+        skel1.fingerprint, skel2.fingerprint,
+        "identical source should produce identical skeleton fingerprints"
+    );
+    assert_ne!(
+        skel1.fingerprint, 0,
+        "fingerprint should not be zero for non-trivial files"
+    );
+}
+
+#[test]
+fn skeleton_fingerprint_changes_on_symbol_add() {
+    let files_v1 = vec![("a.ts".to_string(), "let x = 1;".to_string())];
+    let files_v2 = vec![(
+        "a.ts".to_string(),
+        "let x = 1; let y = 2;".to_string(),
+    )];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skel_v1 = extract_skeleton(&results_v1[0]);
+    let skel_v2 = extract_skeleton(&results_v2[0]);
+
+    assert_ne!(
+        skel_v1.fingerprint, skel_v2.fingerprint,
+        "adding a symbol should change the skeleton fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_fingerprint_stable_when_body_changes() {
+    // Changing a function body should NOT change the skeleton fingerprint,
+    // since the skeleton only captures top-level symbol topology.
+    let files_v1 = vec![(
+        "a.ts".to_string(),
+        "function foo(): number { return 1; }".to_string(),
+    )];
+    let files_v2 = vec![(
+        "a.ts".to_string(),
+        "function foo(): number { return 42; }".to_string(),
+    )];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skel_v1 = extract_skeleton(&results_v1[0]);
+    let skel_v2 = extract_skeleton(&results_v2[0]);
+
+    assert_eq!(
+        skel_v1.fingerprint, skel_v2.fingerprint,
+        "changing a function body should not change the skeleton fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_fingerprint_changes_on_export_toggle() {
+    // Adding `export` to a declaration changes the skeleton
+    // (is_exported flag flips).
+    let files_v1 = vec![("a.ts".to_string(), "let x = 1;".to_string())];
+    let files_v2 = vec![("a.ts".to_string(), "export let x = 1;".to_string())];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skel_v1 = extract_skeleton(&results_v1[0]);
+    let skel_v2 = extract_skeleton(&results_v2[0]);
+
+    assert_ne!(
+        skel_v1.fingerprint, skel_v2.fingerprint,
+        "toggling export should change the skeleton fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_fingerprint_independent_of_file_name() {
+    // Script files (no import/export) with the same source under different
+    // file names should produce identical fingerprints.
+    // Note: external modules (with export/import) include the file name in
+    // `module_export_specifiers`, so their fingerprints legitimately differ.
+    let source = "let x = 1;";
+    let files_a = vec![("a.ts".to_string(), source.to_string())];
+    let files_b = vec![("b.ts".to_string(), source.to_string())];
+
+    let results_a = parse_and_bind_parallel(files_a);
+    let results_b = parse_and_bind_parallel(files_b);
+
+    let skel_a = extract_skeleton(&results_a[0]);
+    let skel_b = extract_skeleton(&results_b[0]);
+
+    assert_eq!(
+        skel_a.fingerprint, skel_b.fingerprint,
+        "fingerprint should be independent of file name for script files"
+    );
+    assert_ne!(skel_a.file_name, skel_b.file_name);
+}
+
+#[test]
+fn skeleton_fingerprint_changes_on_declared_module() {
+    let files_v1 = vec![("a.d.ts".to_string(), "declare const x: number;".to_string())];
+    let files_v2 = vec![(
+        "a.d.ts".to_string(),
+        r#"declare const x: number; declare module "foo" { export const y: string; }"#
+            .to_string(),
+    )];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skel_v1 = extract_skeleton(&results_v1[0]);
+    let skel_v2 = extract_skeleton(&results_v2[0]);
+
+    assert_ne!(
+        skel_v1.fingerprint, skel_v2.fingerprint,
+        "adding a declared module should change the fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_compute_fingerprint_matches_stored() {
+    // Verify that recomputing the fingerprint yields the same value
+    // as the one stored at extraction time.
+    let files = vec![(
+        "a.ts".to_string(),
+        "export interface Foo { x: number; }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let skel = extract_skeleton(&results[0]);
+
+    assert_eq!(
+        skel.fingerprint,
+        skel.compute_fingerprint(),
+        "stored fingerprint must match recomputed fingerprint"
+    );
+}

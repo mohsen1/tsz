@@ -1065,7 +1065,7 @@ fn bind_file_with_libs(
 ///
 /// This contains only the merge-relevant fields from `Symbol`, not the full
 /// declaration list or member/export sub-tables (which require arena access).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SkeletonSymbol {
     /// The escaped name (same semantics as `Symbol::escaped_name`).
     pub name: String,
@@ -1088,7 +1088,7 @@ pub struct SkeletonSymbol {
 }
 
 /// Augmentation candidate as seen from the skeleton layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SkeletonAugmentation {
     /// Target name (interface name for global augmentations, module specifier for module augmentations).
     pub target: String,
@@ -1097,7 +1097,7 @@ pub struct SkeletonAugmentation {
 }
 
 /// Re-export edge as seen from the skeleton layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SkeletonReexport {
     /// The exported name (as visible to importers).
     pub exported_name: String,
@@ -1108,7 +1108,7 @@ pub struct SkeletonReexport {
 }
 
 /// Wildcard re-export edge (`export * from 'module'`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SkeletonWildcardReexport {
     /// Source module specifier.
     pub source_module: String,
@@ -1156,6 +1156,38 @@ pub struct FileSkeleton {
     pub expando_properties: Vec<(String, Vec<String>)>,
     /// Binder-detected file features (generators, decorators, etc.).
     pub file_features: crate::binder::FileFeatures,
+    /// Content fingerprint of all merge-relevant skeleton data.
+    ///
+    /// Two skeletons with equal fingerprints have identical merge-relevant topology.
+    /// Incremental drivers can compare fingerprints to skip re-merging unchanged files.
+    /// Computed deterministically at extraction time from sorted, canonical data.
+    pub fingerprint: u64,
+}
+
+impl FileSkeleton {
+    /// Compute a deterministic fingerprint from all merge-relevant skeleton fields.
+    ///
+    /// Uses `std::hash::Hash` on each field in a canonical order to produce a
+    /// stable `u64`. The skeleton's fields are already sorted deterministically
+    /// by `extract_skeleton`, so identical source topologies always yield
+    /// identical fingerprints.
+    pub fn compute_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        // Hash all merge-relevant fields (excluding file_name, which is identity not content).
+        self.is_external_module.hash(&mut hasher);
+        self.symbols.hash(&mut hasher);
+        self.global_augmentations.hash(&mut hasher);
+        self.module_augmentations.hash(&mut hasher);
+        self.reexports.hash(&mut hasher);
+        self.wildcard_reexports.hash(&mut hasher);
+        self.declared_modules.hash(&mut hasher);
+        self.shorthand_ambient_modules.hash(&mut hasher);
+        self.module_export_specifiers.hash(&mut hasher);
+        self.expando_properties.hash(&mut hasher);
+        self.file_features.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// Extract a `FileSkeleton` from a `BindResult` without consuming it.
@@ -1295,7 +1327,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         .collect();
     expando_properties.sort_by(|a, b| a.0.cmp(&b.0));
 
-    FileSkeleton {
+    let mut skeleton = FileSkeleton {
         file_name: result.file_name.clone(),
         is_external_module: result.is_external_module,
         symbols,
@@ -1308,7 +1340,10 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         module_export_specifiers,
         expando_properties,
         file_features: result.file_features,
-    }
+        fingerprint: 0, // computed below
+    };
+    skeleton.fingerprint = skeleton.compute_fingerprint();
+    skeleton
 }
 
 /// A merge candidate discovered during skeleton reduction.
