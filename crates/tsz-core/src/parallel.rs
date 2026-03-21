@@ -1147,6 +1147,10 @@ pub struct FileSkeleton {
     pub declared_modules: Vec<String>,
     /// Shorthand ambient modules (`declare module "foo"` without body).
     pub shorthand_ambient_modules: Vec<String>,
+    /// Module export specifiers — keys from `module_exports` map.
+    /// These represent module specifiers that have explicit export declarations
+    /// (e.g., from `declare module "xxx" { export ... }`).
+    pub module_export_specifiers: Vec<String>,
     /// Binder-detected file features (generators, decorators, etc.).
     pub file_features: crate::binder::FileFeatures,
 }
@@ -1272,6 +1276,11 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         result.shorthand_ambient_modules.iter().cloned().collect();
     shorthand_ambient_modules.sort();
 
+    // Module export specifiers (keys from module_exports map)
+    let mut module_export_specifiers: Vec<String> =
+        result.module_exports.keys().cloned().collect();
+    module_export_specifiers.sort();
+
     FileSkeleton {
         file_name: result.file_name.clone(),
         is_external_module: result.is_external_module,
@@ -1282,6 +1291,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         wildcard_reexports,
         declared_modules,
         shorthand_ambient_modules,
+        module_export_specifiers,
         file_features: result.file_features,
     }
 }
@@ -1320,6 +1330,8 @@ pub struct SkeletonIndex {
     pub declared_modules: FxHashSet<String>,
     /// All shorthand ambient modules across all files.
     pub shorthand_ambient_modules: FxHashSet<String>,
+    /// All module export specifiers across all files (keys from `module_exports`).
+    pub module_export_specifiers: FxHashSet<String>,
     /// Total number of top-level symbols across all files (before merge).
     pub total_symbol_count: usize,
     /// Total number of re-export edges across all files.
@@ -1341,6 +1353,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
     let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
+    let mut module_export_specifiers = FxHashSet::default();
     let mut total_symbol_count = 0usize;
     let mut total_reexport_count = 0usize;
     let mut total_wildcard_reexport_count = 0usize;
@@ -1380,6 +1393,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
 
         declared_modules.extend(skeleton.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
+        module_export_specifiers.extend(skeleton.module_export_specifiers.iter().cloned());
 
         total_reexport_count += skeleton.reexports.len();
         total_wildcard_reexport_count += skeleton.wildcard_reexports.len();
@@ -1425,9 +1439,49 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         module_augmentation_targets,
         declared_modules,
         shorthand_ambient_modules,
+        module_export_specifiers,
         total_symbol_count,
         total_reexport_count,
         total_wildcard_reexport_count,
+    }
+}
+
+impl SkeletonIndex {
+    /// Build the set of all known declared/ambient module names from the skeleton data.
+    ///
+    /// This produces the same result as the `set_all_binders` loop in the checker
+    /// that scans `module_exports` keys, `declared_modules`, and
+    /// `shorthand_ambient_modules` — but reads from pre-reduced skeleton data
+    /// instead of scanning full binders.
+    ///
+    /// Returns `(exact_names, wildcard_patterns)` where exact names are normalized
+    /// (quotes stripped) module names and wildcard patterns contain `*`.
+    #[must_use]
+    pub fn build_declared_module_sets(&self) -> (FxHashSet<String>, Vec<String>) {
+        let mut exact = FxHashSet::default();
+        let mut patterns = Vec::new();
+
+        // Collect from all three sources, normalizing the same way set_all_binders does.
+        let all_sources = self
+            .declared_modules
+            .iter()
+            .chain(self.shorthand_ambient_modules.iter())
+            .chain(self.module_export_specifiers.iter());
+
+        for name in all_sources {
+            let normalized = name.trim_matches('"').trim_matches('\'');
+            if normalized.contains('*') {
+                patterns.push(normalized.to_string());
+            } else {
+                exact.insert(normalized.to_string());
+            }
+        }
+
+        // Deduplicate and sort patterns for determinism.
+        patterns.sort();
+        patterns.dedup();
+
+        (exact, patterns)
     }
 }
 
@@ -1472,6 +1526,9 @@ impl FileSkeleton {
         }
         for sm in &self.shorthand_ambient_modules {
             size += sm.capacity();
+        }
+        for ms in &self.module_export_specifiers {
+            size += ms.capacity();
         }
         size
     }
@@ -3282,6 +3339,17 @@ pub fn check_files_parallel(
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
+
+            // Validate skeleton-derived declared modules match binder-built ones.
+            // In debug builds this asserts exact equality, proving the skeleton
+            // captures all data needed for the global_declared_modules index.
+            if let Some(ref skel) = program.skeleton_index {
+                let (exact, patterns) = skel.build_declared_module_sets();
+                checker
+                    .ctx
+                    .validate_skeleton_declared_modules(&exact, &patterns);
+            }
+
             {
                 let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
                 for (sym_id, owner_idx) in &symbol_file_targets {
