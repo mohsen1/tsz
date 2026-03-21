@@ -71,6 +71,18 @@ impl<'a> CheckerState<'a> {
         self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
     }
 
+    /// Alias for `should_skip_weak_union_error_with_outcome` — kept for
+    /// architecture contract test compatibility.
+    pub(crate) fn should_skip_weak_union_error_with_hint(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        _weak_union_hint: Option<bool>,
+    ) -> bool {
+        self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
+    }
+
     /// Like `should_skip_weak_union_error`, but uses a pre-computed
     /// `RelationOutcome` from a prior boundary call to avoid redundant
     /// property enumeration and compatibility checks.

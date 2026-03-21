@@ -593,30 +593,6 @@ impl<'a> CheckerState<'a> {
     /// the target?
     ///
     /// Delegates to the canonical `classify_object_properties` boundary function
-    /// for the property existence check, then applies checker-local target
-    /// normalization (resolved target, pruned union members) before querying.
-    ///
-    /// Used by `should_skip_weak_union_error` to decide whether a weak-union
-    /// mismatch should be suppressed.
-    #[allow(dead_code)]
-    pub(crate) fn source_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::query_boundaries::assignability::classify_object_properties;
-        use tsz_solver::relations::freshness;
-
-        if !freshness::is_fresh_object_type(self.ctx.types, source) {
-            return false;
-        }
-
-        // Apply checker-local target normalization before querying the boundary.
-        let effective_target = self.normalized_target_for_excess_properties(target);
-        let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
-
-        match classify_object_properties(self.ctx.types, source, resolved_target) {
-            Some(classification) => !classification.excess_properties.is_empty(),
-            None => false,
-        }
-    }
-
     /// For fresh object literals assigned to discriminated union targets, detect
     /// the discriminant member and emit TS2353 for excess properties against that
     /// specific member. Returns `true` if excess properties were found and
