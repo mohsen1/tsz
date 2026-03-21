@@ -505,11 +505,21 @@ fn build_export_signature_input(
         }
     }
 
-    // 3. Wildcard re-exports
+    // 3. Wildcard re-exports (with type_only provenance)
     if let Some(wildcards) = program.wildcard_reexports.get(file_name) {
-        let mut sorted = wildcards.clone();
-        sorted.sort();
-        input.wildcard_reexports = sorted;
+        let type_only_entries = program.wildcard_reexports_type_only.get(file_name);
+        let mut entries: Vec<(String, bool)> = wildcards
+            .iter()
+            .enumerate()
+            .map(|(i, module)| {
+                let is_type_only = type_only_entries
+                    .and_then(|v| v.get(i))
+                    .map_or(false, |(_, to)| *to);
+                (module.clone(), is_type_only)
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        input.wildcard_reexports = entries;
     }
 
     // 4. Global augmentations (per-file)

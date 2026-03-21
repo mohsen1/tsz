@@ -49,8 +49,8 @@ pub struct ExportSignatureInput {
     pub exports: Vec<(String, u32, bool)>,
     /// `(export_name, source_module, original_name)` for named re-exports, sorted by `export_name`.
     pub named_reexports: Vec<(String, String, Option<String>)>,
-    /// Wildcard re-export source module paths, sorted.
-    pub wildcard_reexports: Vec<String>,
+    /// `(source_module, is_type_only)` for wildcard re-exports, sorted by `source_module`.
+    pub wildcard_reexports: Vec<(String, bool)>,
     /// `(augmented_name, declaration_count)` for global augmentations, sorted by name.
     pub global_augmentations: Vec<(String, usize)>,
     /// `(module_name, sorted_augmentation_names)` for module augmentations, sorted by `module_name`.
@@ -152,11 +152,21 @@ impl ExportSignatureInput {
             }
         }
 
-        // 3. Wildcard re-exports
+        // 3. Wildcard re-exports (with type_only provenance)
         if let Some(wildcards) = binder.wildcard_reexports.get(file_name) {
-            let mut sorted = wildcards.clone();
-            sorted.sort();
-            input.wildcard_reexports = sorted;
+            let type_only_entries = binder.wildcard_reexports_type_only.get(file_name);
+            let mut entries: Vec<(String, bool)> = wildcards
+                .iter()
+                .enumerate()
+                .map(|(i, module)| {
+                    let is_type_only = type_only_entries
+                        .and_then(|v| v.get(i))
+                        .map_or(false, |(_, to)| *to);
+                    (module.clone(), is_type_only)
+                })
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            input.wildcard_reexports = entries;
         }
 
         // 4. Global augmentations
@@ -236,8 +246,9 @@ impl ExportSignature {
 
         // Section 2: Wildcard re-exports
         2u8.hash(&mut hasher);
-        for module in &input.wildcard_reexports {
+        for (module, is_type_only) in &input.wildcard_reexports {
             module.hash(&mut hasher);
+            is_type_only.hash(&mut hasher);
         }
 
         // Section 3: Global augmentations
