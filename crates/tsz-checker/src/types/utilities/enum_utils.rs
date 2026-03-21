@@ -421,8 +421,20 @@ impl<'a> CheckerState<'a> {
             return self.compute_auto_increment_value(current_sym_id, member_decl);
         }
 
-        // Recursively evaluate the initializer expression.
-        self.evaluate_constant_expression(member_data.initializer)
+        // Guard against self-referencing enum initializers (e.g., `B = E.B`).
+        // Without this, the recursive evaluate_constant_expression call creates
+        // infinite recursion → stack overflow.
+        thread_local! {
+            static EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<tsz_parser::parser::NodeIndex>>
+                = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+        }
+        let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
+        if already_visiting {
+            return None; // Circular — treat as non-constant
+        }
+        let result = self.evaluate_constant_expression(member_data.initializer);
+        EVAL_VISITED.with(|v| { v.borrow_mut().remove(&member_decl); });
+        result
     }
 
     /// Collect the identifier chain from a property/element access expression.
