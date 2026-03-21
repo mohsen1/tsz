@@ -1,8 +1,8 @@
 //! Tests for lib-resolution stable identity path.
 //!
 //! These tests verify that lib type lowering uses the stable DefId identity
-//! path (via `resolve_lib_node_in_arenas` + `get_or_create_def_id`) instead
-//! of local per-call caches. They cover:
+//! path (via `resolve_lib_node_in_arenas` + pre-populated `get_existing_def_id`)
+//! instead of on-demand DefId creation. They cover:
 //!
 //! - Promise and generic lib references resolve correctly with lib loaded.
 //! - Generic lib types (Array, Map, Set) retain type parameters via stable DefId.
@@ -204,6 +204,73 @@ fn test_lib_pre_population_creates_def_ids_for_lib_symbols() {
         lib_count > 0,
         "pre_populate_def_ids_from_lib_binders should create DefIds. \
          Primary: {primary_count}, Lib: {lib_count}"
+    );
+}
+
+#[test]
+fn test_lib_symbols_have_existing_def_ids_after_pre_population() {
+    // After pre-population, get_existing_def_id should succeed for all lib
+    // symbols that were merged into the main binder's file_locals. This proves
+    // that lib-resolution closures can use get_existing_def_id instead of
+    // get_or_create_def_id (no on-demand DefId creation needed).
+    if !lib_files_available() {
+        return;
+    }
+
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), "const x: number = 1;".to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts: Vec<CheckerLibContext> = lib_files
+        .iter()
+        .map(|lib| {
+            let binder_ctx = BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            };
+            binder.merge_lib_contexts_into_binder(&[binder_ctx]);
+            CheckerLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            }
+        })
+        .collect();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+    // Pre-populate (same as checker construction does)
+    checker.ctx.pre_populate_def_ids_from_binder();
+    checker.ctx.pre_populate_def_ids_from_lib_binders();
+
+    // Key lib symbols that should have pre-existing DefIds
+    let expected_symbols = [
+        "Array", "String", "Number", "Boolean", "Object", "Function", "Error",
+    ];
+    let mut missing = Vec::new();
+    for name in &expected_symbols {
+        if let Some(sym_id) = binder.file_locals.get(*name) {
+            if checker.ctx.get_existing_def_id(sym_id).is_none() {
+                missing.push(*name);
+            }
+        }
+        // Symbol might not be in file_locals if lib files don't include it
+    }
+    assert!(
+        missing.is_empty(),
+        "These lib symbols should have pre-existing DefIds but don't: {missing:?}. \
+         This means lib-resolution closures cannot safely use get_existing_def_id."
     );
 }
 
