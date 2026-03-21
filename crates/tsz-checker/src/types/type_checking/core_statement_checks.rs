@@ -224,29 +224,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check if current compiler options support top-level await.
     ///
-    /// Top-level await is supported when:
-    /// - module is ES2022, `ESNext`, System, Node16, `NodeNext`, or Preserve
-    /// - target is ES2017 or higher
-    const fn supports_top_level_await(&self) -> bool {
-        use tsz_common::common::{ModuleKind, ScriptTarget};
-
-        // Check module kind supports top-level await
-        let module_ok = matches!(
-            self.ctx.compiler_options.module,
-            ModuleKind::ES2022
-                | ModuleKind::ESNext
-                | ModuleKind::System
-                | ModuleKind::Node16
-                | ModuleKind::Node18
-                | ModuleKind::Node20
-                | ModuleKind::NodeNext
-                | ModuleKind::Preserve
-        );
-
-        // Check target is ES2017 or higher
-        let target_ok = self.ctx.compiler_options.target as u32 >= ScriptTarget::ES2017 as u32;
-
-        module_ok && target_ok
+    /// Routes through the environment capability boundary — the module + target
+    /// requirements for top-level `await` are identical to top-level `await using`.
+    fn supports_top_level_await(&self) -> bool {
+        self.ctx.capabilities.top_level_await_using_supported
     }
 
     /// Check an await expression for async context.
