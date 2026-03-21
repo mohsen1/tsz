@@ -1986,7 +1986,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // in the reverse mapping (just with an uninformative type), preventing
                 // fallback to the reverse-keyof `{ key: any }` path.
                 let min_params = template_fn.params.len().min(source_fn.params.len());
-                let mut any_param_matched_placeholder = false;
+                let mut _any_param_matched_placeholder = false;
                 for i in 0..min_params {
                     if source_fn.params[i].type_id == TypeId::ANY {
                         // Check if the template param references the target placeholder.
@@ -1996,7 +1996,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.interner.lookup(template_fn.params[i].type_id)
                             && self.is_placeholder_match(obj, target_placeholder)
                         {
-                            any_param_matched_placeholder = true;
+                            _any_param_matched_placeholder = true;
                         }
                         continue;
                     }
