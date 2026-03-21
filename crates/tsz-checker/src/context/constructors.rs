@@ -39,6 +39,12 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
     ) -> Self {
         let compiler_options = Self::normalize_options(types, compiler_options, true);
+        // Precompute environment capabilities (has_lib=false initially; updated when libs load)
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -48,6 +54,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
@@ -248,6 +255,12 @@ impl<'a> CheckerContext<'a> {
         definition_store: Arc<DefinitionStore>,
     ) -> Self {
         let compiler_options = Self::normalize_options(types, compiler_options, true);
+        // Precompute environment capabilities (has_lib=false initially; updated when libs load)
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -257,6 +270,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
@@ -448,6 +462,11 @@ impl<'a> CheckerContext<'a> {
         compiler_options: &CheckerOptions,
     ) -> Self {
         let compiler_options = Self::normalize_options(types, compiler_options.clone(), true);
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -457,6 +476,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
@@ -656,6 +676,11 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
     ) -> Self {
         let compiler_options = compiler_options.apply_strict_defaults();
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -665,6 +690,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
@@ -853,6 +879,11 @@ impl<'a> CheckerContext<'a> {
         compiler_options: &CheckerOptions,
     ) -> Self {
         let compiler_options = compiler_options.clone().apply_strict_defaults();
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -862,6 +893,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
@@ -1054,6 +1086,11 @@ impl<'a> CheckerContext<'a> {
         parent: &Self,
     ) -> Self {
         let compiler_options = compiler_options.apply_strict_defaults();
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                parent.capabilities.has_lib,
+            );
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
         // Share selected caches that are safe across arenas.
@@ -1066,6 +1103,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
+            capabilities,
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,

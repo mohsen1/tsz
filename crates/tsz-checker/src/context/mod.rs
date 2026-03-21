@@ -222,6 +222,10 @@ pub struct CheckerContext<'a> {
     /// Compiler options for type checking.
     pub compiler_options: CheckerOptions,
 
+    /// Precomputed environment capabilities matrix.
+    /// Centralizes lib/config/feature-gate queries for diagnostic routing.
+    pub capabilities: crate::query_boundaries::capabilities::EnvironmentCapabilities,
+
     /// Whether `noImplicitOverride` diagnostics are enabled for this source file.
     pub no_implicit_override: bool,
 
