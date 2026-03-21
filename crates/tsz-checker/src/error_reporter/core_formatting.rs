@@ -317,42 +317,40 @@ impl<'a> CheckerState<'a> {
                 vec![]
             };
 
-        // Find the closest match using Levenshtein distance.
-        // Only return a suggestion when there is a UNIQUE closest candidate;
-        // if two or more candidates tie for the best distance we emit nothing,
-        // matching tsc behaviour (avoids spurious suggestions for very short
-        // strings where many members fall within the threshold).
-        let mut best: Option<(usize, String)> = None;
-        let mut best_is_ambiguous = false;
+        // Use tsc's getSpellingSuggestion algorithm with weighted Levenshtein.
+        // tsc uses substitution cost 2.0 (0.1 for case-only diffs), which means
+        // short strings like "baz" vs "bar" won't trigger a suggestion.
+        let name_len = source_str.chars().count();
+        let maximum_length_difference = 2usize.max((name_len as f64 * 0.34).floor() as usize);
+        let mut best_distance = (name_len as f64 * 0.4).floor() + 1.0;
+        let mut best_candidate: Option<String> = None;
+
         for candidate in &target_literals {
             if candidate == &source_str {
-                return None;
-            } // exact match, no suggestion
-            let dist = levenshtein_distance(&source_str, candidate);
-            // tsc uses distance <= source.len() / 3 + 1 as the threshold
-            let threshold = source_str.len() / 3 + 1;
-            if dist <= threshold {
-                match &best {
-                    None => {
-                        best = Some((dist, candidate.clone()));
-                        best_is_ambiguous = false;
-                    }
-                    Some((best_dist, _)) if dist < *best_dist => {
-                        best = Some((dist, candidate.clone()));
-                        best_is_ambiguous = false;
-                    }
-                    Some((best_dist, _)) if dist == *best_dist => {
-                        best_is_ambiguous = true;
-                    }
-                    _ => {}
-                }
+                continue;
+            }
+            let candidate_len = candidate.chars().count();
+            let len_diff = if candidate_len > name_len {
+                candidate_len - name_len
+            } else {
+                name_len - candidate_len
+            };
+            if len_diff > maximum_length_difference {
+                continue;
+            }
+            // Skip short candidates unless they match by case
+            if candidate_len < 3 && candidate.to_lowercase() != source_str.to_lowercase() {
+                continue;
+            }
+            if let Some(distance) =
+                Self::levenshtein_with_max(&source_str, candidate, best_distance - 0.1)
+            {
+                best_distance = distance;
+                best_candidate = Some(candidate.clone());
             }
         }
-        if best_is_ambiguous {
-            None
-        } else {
-            best.map(|(_, s)| s)
-        }
+
+        best_candidate
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
@@ -601,26 +599,4 @@ impl<'a> CheckerState<'a> {
 
         Some(missing_required_props[0].name)
     }
-}
-
-/// Simple Levenshtein distance for string literal spelling suggestions.
-fn levenshtein_distance(a: &str, b: &str) -> usize {
-    let m = a.len();
-    let n = b.len();
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
-        row[0] = i;
-    }
-    for (j, val) in dp[0].iter_mut().enumerate().take(n + 1) {
-        *val = j;
-    }
-    for (i, ca) in a.chars().enumerate() {
-        for (j, cb) in b.chars().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            dp[i + 1][j + 1] = (dp[i][j + 1] + 1)
-                .min(dp[i + 1][j] + 1)
-                .min(dp[i][j] + cost);
-        }
-    }
-    dp[m][n]
 }

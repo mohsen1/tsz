@@ -373,7 +373,7 @@ impl<'a> CheckerState<'a> {
 
     /// Levenshtein distance with threshold pruning, matching tsc's behavior.
     /// Case-only substitutions are cheaper than other substitutions.
-    fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
+    pub(crate) fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
         let s1_chars: Vec<char> = s1.chars().collect();
         let s2_chars: Vec<char> = s2.chars().collect();
 
