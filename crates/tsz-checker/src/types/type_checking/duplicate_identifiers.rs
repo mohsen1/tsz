@@ -97,6 +97,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let umd_global_aug_declarations =
+                self.umd_global_augmentation_conflict_declarations(&symbol.escaped_name, sym_id);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -112,6 +114,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && umd_global_aug_declarations.is_empty()
                 {
                     continue;
                 }
@@ -155,7 +158,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty() || !script_scope_declarations.is_empty()
+            if !module_augmentation_declarations.is_empty()
+                || !script_scope_declarations.is_empty()
+                || !umd_global_aug_declarations.is_empty()
             {
                 has_remote = true;
             }
@@ -205,6 +210,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let umd_global_aug_declarations =
+                self.umd_global_augmentation_conflict_declarations(&symbol.escaped_name, sym_id);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -226,6 +233,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && umd_global_aug_declarations.is_empty()
                 {
                     continue;
                 }
@@ -316,6 +324,7 @@ impl<'a> CheckerState<'a> {
                 declarations.extend(script_scope_declarations);
             }
             declarations.extend(module_augmentation_declarations);
+            declarations.extend(umd_global_aug_declarations);
 
             if declarations.len() <= 1 {
                 continue;
@@ -938,6 +947,20 @@ impl<'a> CheckerState<'a> {
                     if (decl_is_namespace && other_is_variable)
                         || (decl_is_variable && other_is_namespace)
                     {
+                        // UMD exports (`export as namespace Foo`) are treated as
+                        // block-scoped variables for TS2451 purposes, but they can
+                        // merge with namespace declarations without conflict.
+                        let variable_idx = if decl_is_variable {
+                            decl_idx
+                        } else {
+                            other_idx
+                        };
+                        let variable_is_umd_export = self
+                            .resolve_to_namespace_export_declaration(variable_idx)
+                            .is_some();
+                        if variable_is_umd_export {
+                            continue;
+                        }
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
