@@ -592,11 +592,9 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(def_store) = self.def_store
                     && let Some(def) = def_store.get(*def_id)
                     && let Some(sym_raw) = def.symbol_id
-                {
-                    if let Some(name) = self.format_symbol_name(SymbolId(sym_raw)) {
+                    && let Some(name) = self.format_symbol_name(SymbolId(sym_raw)) {
                         return name.into();
                     }
-                }
                 // Fallback: try raw def_id as symbol_id (legacy path)
                 if let Some(name) = self.format_raw_def_id_symbol_fallback(*def_id) {
                     return name.into();
