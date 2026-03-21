@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
                 // exist and emit TS2339 in that case.
                 let suppressed_ts2347 = self
                     .try_emit_ts2339_for_missing_this_property(call.expression)
-                    || self.is_this_property_access_on_known_class_member(call.expression);
+                    || self.is_this_property_access_in_class_context(call.expression);
                 if !suppressed_ts2347 {
                     self.error_at_node(
                         idx,
