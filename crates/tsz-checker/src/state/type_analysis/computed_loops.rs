@@ -1,3 +1,4 @@
+use crate::query_boundaries::flow as flow_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -63,7 +64,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
-        let non_nullable = tsz_solver::remove_nullish(self.ctx.types, expr_type);
+        // Route nullish removal through the flow observation boundary.
+        let non_nullable = flow_boundary::remove_nullish_for_iteration(self.ctx.types, expr_type);
 
         // For concrete (non-generic) types, always return `string`.
         // Same fix as FlowAnalyzer::for_in_variable_type: computing keyof
