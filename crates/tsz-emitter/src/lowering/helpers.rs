@@ -220,12 +220,16 @@ impl<'a> LoweringPass<'a> {
             // Compute which helpers are actually needed before taking the mutable borrow.
             let needs_get = has_auto_accessors || self.class_has_private_field_reads(class_data);
             let needs_set = has_auto_accessors || self.class_has_private_field_writes(class_data);
+            let needs_in = self.class_has_private_in_expression(class_data);
             let helpers = self.transforms.helpers_mut();
             if needs_get {
                 helpers.class_private_field_get = true;
             }
             if needs_set {
                 helpers.class_private_field_set = true;
+            }
+            if needs_in {
+                helpers.class_private_field_in = true;
             }
         }
     }
@@ -402,6 +406,61 @@ impl<'a> LoweringPass<'a> {
                 && self.subtree_has_private_field_write(body)
             {
                 return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a class has any `#field in obj` expressions.
+    pub(super) fn class_has_private_in_expression(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                if self.subtree_has_private_in_expression(member_idx) {
+                    return true;
+                }
+                continue;
+            }
+            if let Some(body) = self.get_member_body(member_node)
+                && self.subtree_has_private_in_expression(body)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Scan a subtree for `#field in obj` expressions.
+    fn subtree_has_private_in_expression(&self, idx: NodeIndex) -> bool {
+        let Some(root) = self.arena.get(idx) else {
+            return false;
+        };
+        let start = root.pos;
+        let end = root.end;
+
+        for i in 0..self.arena.len() {
+            let nidx = NodeIndex(i as u32);
+            let Some(n) = self.arena.get(nidx) else {
+                continue;
+            };
+            if n.pos < start || n.end > end {
+                continue;
+            }
+            if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                if let Some(bin) = self.arena.get_binary_expr(n)
+                    && bin.operator_token == SyntaxKind::InKeyword as u16
+                    && self
+                        .arena
+                        .get(bin.left)
+                        .is_some_and(|l| l.kind == SyntaxKind::PrivateIdentifier as u16)
+                {
+                    return true;
+                }
             }
         }
         false
