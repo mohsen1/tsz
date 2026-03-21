@@ -496,13 +496,17 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         None => (false, None),
     };
 
-    // Populate property classification for fresh object-literal sources.
+    // Always populate property classification when the relation fails.
+    // This provides the canonical property-level analysis that callers like
+    // `should_skip_weak_union_error` need without re-enumerating properties.
     let property_classification =
-        if request.source_is_fresh || request.excess_property_mode != ExcessPropertyMode::Skip {
-            classify_object_properties(db.as_type_database(), request.source, request.target)
-        } else {
-            None
-        };
+        classify_object_properties(db.as_type_database(), request.source, request.target);
+
+    // Suppress ExcessProperty failure when the target has structural features
+    // that make EPC inapplicable. This centralizes the policy that was previously
+    // duplicated in `analyze_assignability_failure`.
+    let failure =
+        suppress_excess_property_failure_if_needed(failure, db.as_type_database(), request.target);
 
     RelationOutcome {
         related: false,
@@ -510,6 +514,45 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         weak_union_violation,
         property_classification,
     }
+}
+
+/// Suppress an ExcessProperty failure reason when the target's structure
+/// makes EPC inapplicable:
+/// 1. Target contains a deferred conditional type → structural mismatch, not EPC.
+/// 2. Target intersection has primitive or type-parameter members → EPC skipped.
+///
+/// This is the canonical boundary-level policy, replacing the checker-local
+/// re-analysis that was in `analyze_assignability_failure`.
+fn suppress_excess_property_failure_if_needed(
+    failure: Option<super::relation_types::RelationFailure>,
+    db: &dyn TypeDatabase,
+    target: TypeId,
+) -> Option<super::relation_types::RelationFailure> {
+    use super::common::is_type_parameter_like;
+
+    let is_excess = matches!(
+        &failure,
+        Some(super::relation_types::RelationFailure::ExcessProperty { .. })
+    );
+    if !is_excess {
+        return failure;
+    }
+
+    // Check for deferred conditional members.
+    if tsz_solver::has_deferred_conditional_member(db, target) {
+        return None;
+    }
+
+    // Check for non-EPC intersection members (primitives/type-params).
+    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target) {
+        if members.iter().any(|member| {
+            tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
+        }) {
+            return None;
+        }
+    }
+
+    failure
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +598,7 @@ pub(crate) fn classify_object_properties(
 
     let mut classification = PropertyClassification::default();
 
-    // Check for index signatures and empty object targets.
+    // Check for index signatures, empty object targets, and special shapes.
     if let Some(target_shape) = object_shape_for_type(db, target) {
         if target_shape.string_index.is_some() {
             classification.target_has_index_signature = true;
@@ -568,8 +611,8 @@ pub(crate) fn classify_object_properties(
         }
         if target_shape.number_index.is_some() {
             classification.target_has_index_signature = true;
+            classification.target_has_number_index = true;
         }
-        // Detect global Object/Function shapes.
         if is_global_object_or_function_shape(db, &target_shape) {
             classification.target_is_global_object_or_function = true;
         }
@@ -586,6 +629,9 @@ pub(crate) fn classify_object_properties(
                 {
                     classification.target_is_empty_object = true;
                 }
+                if shape.number_index.is_some() {
+                    classification.target_has_number_index = true;
+                }
                 if is_global_object_or_function_shape(db, &shape) {
                     classification.target_is_global_object_or_function = true;
                 }
@@ -599,21 +645,44 @@ pub(crate) fn classify_object_properties(
             if is_type_parameter_like(db, member) {
                 classification.target_is_type_parameter = true;
             }
-            if let Some(shape) = object_shape_for_type(db, member)
-                && (shape.string_index.is_some() || shape.number_index.is_some())
-            {
-                classification.target_has_index_signature = true;
+            if let Some(shape) = object_shape_for_type(db, member) {
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    classification.target_has_index_signature = true;
+                }
+                if shape.number_index.is_some() {
+                    classification.target_has_number_index = true;
+                }
             }
         }
     }
 
-    // Classify each source property.
+    // Collect target properties for compatibility checking.
+    let target_props = collect_target_properties(db, target);
+
+    // Classify each source property and check compatibility of matching ones.
+    let mut all_matching_compatible = true;
+    let mut matching_props = Vec::new();
+
     for source_prop in source_props {
         let name_str = db.resolve_atom_ref(source_prop.name);
         if target_property_names.contains(name_str.as_ref()) {
-            // Property exists in target — it may be compatible or incompatible,
-            // but it is NOT excess. Detailed type compatibility is in the solver's
-            // failure reason, not re-derived here.
+            // Property exists in target — check type compatibility.
+            if let Some(target_prop_type) = target_props.get(name_str.as_ref()).copied() {
+                // Account for optional properties: target `prop?: T` accepts `T | undefined`.
+                let effective_target_type = target_prop_type;
+                if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
+                    all_matching_compatible = false;
+                    classification.incompatible_properties.push((
+                        source_prop.name,
+                        source_prop.type_id,
+                        effective_target_type,
+                    ));
+                } else {
+                    matching_props.push(source_prop.clone());
+                }
+            } else {
+                matching_props.push(source_prop.clone());
+            }
         } else if !classification.target_has_index_signature
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
@@ -623,7 +692,63 @@ pub(crate) fn classify_object_properties(
         }
     }
 
+    classification.all_matching_compatible = all_matching_compatible;
+
+    // When there are excess properties and all matching ones are compatible,
+    // check if a trimmed source (only matching properties) would be assignable.
+    // This catches structural incompatibilities beyond property names (e.g.,
+    // deferred conditional types in the target).
+    if !classification.excess_properties.is_empty() && all_matching_compatible {
+        let trimmed_source = db.object(matching_props);
+        classification.trimmed_source_assignable =
+            tsz_solver::is_subtype_of(db, trimmed_source, target);
+    }
+
     Some(classification)
+}
+
+/// Collect all property names and their types from a target type.
+///
+/// Returns a map from property name to type for type compatibility checking.
+/// For unions, uses the type from the first member that has the property.
+/// For intersections, uses the type from the first member that has the property.
+fn collect_target_properties(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+) -> std::collections::HashMap<String, TypeId> {
+    use super::common::{intersection_members, object_shape_for_type, union_members};
+    let mut props = std::collections::HashMap::new();
+
+    if let Some(shape) = object_shape_for_type(db, target) {
+        for prop in shape.properties.iter() {
+            let name = db.resolve_atom(prop.name);
+            props.entry(name).or_insert(prop.type_id);
+        }
+    }
+
+    if let Some(members) = union_members(db, target) {
+        for &member in &members {
+            if let Some(shape) = object_shape_for_type(db, member) {
+                for prop in shape.properties.iter() {
+                    let name = db.resolve_atom(prop.name);
+                    props.entry(name).or_insert(prop.type_id);
+                }
+            }
+        }
+    }
+
+    if let Some(members) = intersection_members(db, target) {
+        for &member in members.iter() {
+            if let Some(shape) = object_shape_for_type(db, member) {
+                for prop in shape.properties.iter() {
+                    let name = db.resolve_atom(prop.name);
+                    props.entry(name).or_insert(prop.type_id);
+                }
+            }
+        }
+    }
+
+    props
 }
 
 /// Collect all property names from a target type (handling unions/intersections).
