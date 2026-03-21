@@ -214,7 +214,6 @@ impl<'a> CheckerState<'a> {
     /// Enhanced to provide suggestions for similar names, import suggestions, and
     /// library change suggestions for ES2015+ types.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
-        use tsz_binder::lib_loader;
         use tsz_parser::parser::syntax_kind_ext;
 
         if self.should_suppress_unresolved_name_for_constructor_capture(name, idx) {
@@ -356,20 +355,9 @@ impl<'a> CheckerState<'a> {
         // NOTE: `symbol` is intentionally excluded — tsc never emits TS2693 for
         // lowercase `symbol`. Instead it emits TS2552 "Cannot find name 'symbol'.
         // Did you mean 'Symbol'?" via the normal spelling-suggestion path.
-        let is_primitive_type_keyword = matches!(
-            name,
-            "number"
-                | "string"
-                | "boolean"
-                | "void"
-                | "undefined"
-                | "null"
-                | "any"
-                | "unknown"
-                | "never"
-                | "object"
-                | "bigint"
-        );
+        // Uses boundary-owned classifier.
+        let is_primitive_type_keyword =
+            crate::query_boundaries::name_resolution::is_primitive_type_keyword(name);
         let is_import_equals_module_specifier = self
             .ctx
             .arena
@@ -662,52 +650,49 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if this is an ES2015+ type that requires a specific lib
-        // If so, emit TS2583 with a suggestion to change the lib
-        if lib_loader::is_es2015_plus_type(name) {
-            self.error_cannot_find_name_change_lib(name, idx);
-            return;
-        }
-
-        // Check if this is a known DOM/ScriptHost global that requires the 'dom' lib
-        // If so, emit TS2584 with a suggestion to include 'dom'
-        if is_known_dom_global(name) {
-            self.error_cannot_find_name_change_target_lib(name, idx);
-            return;
-        }
-
-        // Check if this is a known jQuery global → TS2592
-        if is_known_jquery_global(name) {
-            self.error_cannot_find_name_install_jquery_types(name, idx);
-            return;
-        }
-
-        // Check if this is a known Node.js global → TS2591
-        // Skip for "module" when there are parse errors — the parser likely failed to
-        // parse a module declaration and recovered `module` as an identifier.
-        if is_known_node_global(name) {
-            if self.is_private_name_access_base(idx) {
-                // In private-name access contexts (`obj.#field`), emit TS2304
-                // instead of TS2591.
-            } else if name == "module" && self.has_parse_errors() {
-                // Fall through to TS2304 instead of TS2591 — the parser likely failed
-                // to parse a module declaration and recovered `module` as an identifier.
-            } else {
-                self.error_cannot_find_name_install_node_types(name, idx);
+        // Classify the unresolved name using the boundary-owned suggestion policy.
+        // This replaces scattered is_known_dom_global/is_es2015_plus_type/etc. checks.
+        use crate::query_boundaries::name_resolution::{
+            UnresolvedNameClass, classify_unresolved_name_suggestion,
+        };
+        let name_class = classify_unresolved_name_suggestion(name);
+        match &name_class {
+            UnresolvedNameClass::Es2015PlusType { .. } => {
+                self.error_cannot_find_name_change_lib(name, idx);
                 return;
             }
-        }
-
-        // Check if this is a known test runner global → TS2593
-        if is_known_test_runner_global(name) {
-            self.error_cannot_find_name_install_test_types(name, idx);
-            return;
-        }
-
-        // Check if this is a known Bun global → TS2868
-        if name == "Bun" {
-            self.error_cannot_find_name_install_bun_types(name, idx);
-            return;
+            UnresolvedNameClass::DomGlobal => {
+                self.error_cannot_find_name_change_target_lib(name, idx);
+                return;
+            }
+            UnresolvedNameClass::JQueryGlobal => {
+                self.error_cannot_find_name_install_jquery_types(name, idx);
+                return;
+            }
+            UnresolvedNameClass::NodeGlobal => {
+                // Context-sensitive overrides for Node globals:
+                // - Private-name access base → emit TS2304 instead of TS2591
+                // - "module" with parse errors → fall through to TS2304
+                if self.is_private_name_access_base(idx) {
+                    // Fall through to spelling suggestions / TS2304
+                } else if name == "module" && self.has_parse_errors() {
+                    // Fall through to TS2304
+                } else {
+                    self.error_cannot_find_name_install_node_types(name, idx);
+                    return;
+                }
+            }
+            UnresolvedNameClass::TestRunnerGlobal => {
+                self.error_cannot_find_name_install_test_types(name, idx);
+                return;
+            }
+            UnresolvedNameClass::BunGlobal => {
+                self.error_cannot_find_name_install_bun_types(name, idx);
+                return;
+            }
+            // PrimitiveTypeKeyword is handled earlier (line ~390)
+            // Unknown falls through to spelling suggestions
+            _ => {}
         }
 
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
@@ -1089,6 +1074,115 @@ impl<'a> CheckerState<'a> {
         }
 
         self.error_at_node_msg(idx, diagnostic_codes::CANNOT_FIND_NAMESPACE, &[name]);
+    }
+
+    // =========================================================================
+    // Consolidated Name Resolution Failure Reporting (Boundary-Facing)
+    // =========================================================================
+
+    /// Report a diagnostic for a name resolution failure, using the boundary
+    /// types for structured failure classification and suggestion policy.
+    ///
+    /// This is the preferred entry point for new code. It replaces ad-hoc
+    /// combinations of `error_cannot_find_name_at` + manual classifier checks.
+    pub(crate) fn report_name_resolution_failure(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        failure: &crate::query_boundaries::name_resolution::ResolutionFailure,
+        suggestion: &crate::query_boundaries::name_resolution::NameSuggestion,
+    ) {
+        use crate::query_boundaries::name_resolution::{
+            NameSuggestion, ResolutionFailure, TypeOnlyOrigin,
+        };
+
+        match failure {
+            ResolutionFailure::Suppressed => {
+                // No diagnostic — suppressed by parse errors or import resolution.
+            }
+            ResolutionFailure::WrongMeaning { .. } => {
+                // Type used as value or vice versa — TS2693/TS2585
+                self.error_type_only_value_at(name, idx);
+            }
+            ResolutionFailure::TypeOnlyBinding { origin, .. } => {
+                match origin {
+                    TypeOnlyOrigin::PrimitiveKeyword => {
+                        self.error_type_only_value_at(name, idx);
+                    }
+                    TypeOnlyOrigin::MissingLib => {
+                        self.error_cannot_find_name_change_lib(name, idx);
+                    }
+                    TypeOnlyOrigin::ImportType | TypeOnlyOrigin::ExportType => {
+                        // TS1361/TS1362 handled by error_type_only_value_at
+                        self.error_type_only_value_at(name, idx);
+                    }
+                }
+            }
+            ResolutionFailure::NamespaceAsValue { namespace_name } => {
+                self.error_namespace_used_as_value_at(namespace_name, idx);
+            }
+            ResolutionFailure::NotExported {
+                namespace_name,
+                member_name,
+                available_exports,
+            } => {
+                self.error_namespace_no_export_with_exports(
+                    namespace_name,
+                    member_name,
+                    idx,
+                    available_exports,
+                );
+            }
+            ResolutionFailure::NotFound => {
+                // Emit diagnostic based on the suggestion type.
+                match suggestion {
+                    NameSuggestion::Spelling(suggestions) if !suggestions.is_empty() => {
+                        self.error_cannot_find_name_with_suggestions(name, suggestions, idx);
+                    }
+                    NameSuggestion::StaticMember { class_name } => {
+                        self.error_cannot_find_name_static_member_at(name, class_name, idx);
+                    }
+                    NameSuggestion::ChangeLib { .. } => {
+                        self.error_cannot_find_name_change_lib(name, idx);
+                    }
+                    NameSuggestion::IncludeDomLib => {
+                        self.error_cannot_find_name_change_target_lib(name, idx);
+                    }
+                    NameSuggestion::InstallNodeTypes => {
+                        self.error_cannot_find_name_install_node_types(name, idx);
+                    }
+                    NameSuggestion::InstallJQueryTypes => {
+                        self.error_cannot_find_name_install_jquery_types(name, idx);
+                    }
+                    NameSuggestion::InstallTestTypes => {
+                        self.error_cannot_find_name_install_test_types(name, idx);
+                    }
+                    NameSuggestion::InstallBunTypes => {
+                        self.error_cannot_find_name_install_bun_types(name, idx);
+                    }
+                    NameSuggestion::TypeKeywordAsValue => {
+                        self.error_type_only_value_at(name, idx);
+                    }
+                    NameSuggestion::ExportSpelling { suggestion } => {
+                        self.error_cannot_find_name_did_you_mean_at(name, suggestion, idx);
+                    }
+                    NameSuggestion::UnusedRenaming { original_name } => {
+                        let message = format!(
+                            "'{name}' is an unused renaming of '{original_name}'. Did you intend to use it as a type annotation?"
+                        );
+                        self.error_at_node(
+                            idx,
+                            &message,
+                            diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION,
+                        );
+                    }
+                    _ => {
+                        // Fall back to standard TS2304 error
+                        self.error_cannot_find_name_at(name, idx);
+                    }
+                }
+            }
+        }
     }
 }
 

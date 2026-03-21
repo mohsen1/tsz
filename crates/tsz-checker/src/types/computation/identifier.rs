@@ -1203,26 +1203,38 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Emit an appropriate error when a known global is not found.
+    ///
+    /// Uses the boundary classifier to determine the suggestion category,
+    /// replacing scattered `is_known_dom_global`/`is_es2015_plus_type` checks.
     fn emit_global_not_found_error(&mut self, idx: NodeIndex, name: &str) -> TypeId {
-        use crate::error_reporter::is_known_dom_global;
-        use tsz_binder::lib_loader;
+        use crate::query_boundaries::name_resolution::{
+            UnresolvedNameClass, classify_unresolved_name_suggestion, is_primitive_type_keyword,
+        };
+
+        let name_class = classify_unresolved_name_suggestion(name);
 
         if !self.ctx.has_lib_loaded() {
-            if lib_loader::is_es2015_plus_type(name) {
-                self.error_cannot_find_name_change_lib(name, idx);
-            } else {
-                self.error_cannot_find_name_at(name, idx);
+            match &name_class {
+                UnresolvedNameClass::Es2015PlusType { .. } => {
+                    self.error_cannot_find_name_change_lib(name, idx);
+                }
+                _ => {
+                    self.error_cannot_find_name_at(name, idx);
+                }
             }
             return TypeId::ERROR;
         }
 
-        if is_known_dom_global(name) {
-            self.error_cannot_find_name_at(name, idx);
-            return TypeId::ERROR;
-        }
-        if lib_loader::is_es2015_plus_type(name) {
-            self.error_cannot_find_global_type(name, idx);
-            return TypeId::ERROR;
+        match &name_class {
+            UnresolvedNameClass::DomGlobal => {
+                self.error_cannot_find_name_at(name, idx);
+                return TypeId::ERROR;
+            }
+            UnresolvedNameClass::Es2015PlusType { .. } => {
+                self.error_cannot_find_global_type(name, idx);
+                return TypeId::ERROR;
+            }
+            _ => {}
         }
 
         let first_char = name.chars().next().unwrap_or('a');
@@ -1230,30 +1242,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        // TS2693: Primitive type keywords used as values
-        // TypeScript primitive type keywords (number, string, boolean, etc.) are language keywords
-        // for types, not identifiers. When used in value position, emit TS2693.
-        // NOTE: `symbol` is excluded — tsc never emits TS2693 for lowercase `symbol`.
-        // Instead it emits TS2552 "Cannot find name 'symbol'. Did you mean 'Symbol'?"
-        // Exception: in import equals module references (e.g., `import r = undefined`),
-        // TS2503 is already emitted by check_namespace_import — don't also emit TS2693.
-        if matches!(
-            name,
-            "number"
-                | "string"
-                | "boolean"
-                | "void"
-                | "undefined"
-                | "null"
-                | "any"
-                | "unknown"
-                | "never"
-                | "object"
-                | "bigint"
-        ) {
+        // TS2693: Primitive type keywords used as values.
+        // Uses boundary classifier instead of inline matches! block.
+        if is_primitive_type_keyword(name) {
             // Suppress TS2693 when this identifier is the expression of an element
-            // access with a missing argument (e.g., `new number[]`).  The parser
-            // already emits TS1011 and tsc does not emit TS2693 in this case.
+            // access with a missing argument (e.g., `new number[]`).
             if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
                 && parent_ext.parent.is_some()
                 && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
@@ -1280,7 +1273,12 @@ impl<'a> CheckerState<'a> {
 
     /// Handle a truly unresolved identifier — not a type parameter, not in the
     /// binder, not a known global. Emits TS2304, TS2524, TS2662 as appropriate.
+    ///
+    /// Uses the boundary classifier for primitive keyword detection instead of
+    /// inline matches! blocks.
     fn resolve_truly_unknown_identifier(&mut self, idx: NodeIndex, name: &str) -> TypeId {
+        use crate::query_boundaries::name_resolution::is_primitive_type_keyword;
+
         // Note: TS1212/1213/1214 strict-mode reserved word check is now handled
         // centrally in error_cannot_find_name_at to cover both value and type contexts.
 
@@ -1325,20 +1323,10 @@ impl<'a> CheckerState<'a> {
         // Always emit errors for primitive type keywords used as values,
         // regardless of report_unresolved_imports. These are built-in language
         // keywords, not cross-file identifiers that might be unresolved.
-        if matches!(
-            name,
-            "number"
-                | "string"
-                | "boolean"
-                | "symbol"
-                | "void"
-                | "null"
-                | "any"
-                | "unknown"
-                | "never"
-                | "object"
-                | "bigint"
-        ) {
+        // Uses boundary classifier instead of inline matches! block.
+        // NOTE: includes `symbol` (unlike is_primitive_type_keyword) because
+        // tsc emits TS2552 "Did you mean 'Symbol'?" for `symbol` in this path.
+        if is_primitive_type_keyword(name) || name == "symbol" {
             self.error_cannot_find_name_at(name, idx);
             return TypeId::ERROR;
         }

@@ -21,7 +21,7 @@ mod dispatch_helpers;
 pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
-mod query_boundaries;
+pub mod query_boundaries;
 pub mod statements;
 pub mod triple_slash_validator;
 
