@@ -181,6 +181,123 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object(this_props)
     }
 
+    /// Build a synthetic `this` type for a function expression that is a property
+    /// initializer in an object literal. Similar to `build_object_literal_method_synthetic_this_type`
+    /// but for property assignments like `{ prop: function() { this.n } }`.
+    ///
+    /// The synthetic type includes:
+    /// - All already-processed properties from the object literal
+    /// - Placeholder signatures for pre-scanned method declarations
+    pub(super) fn build_object_literal_fn_property_synthetic_this_type(
+        &mut self,
+        properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
+        obj_all_method_names: &rustc_hash::FxHashMap<tsz_common::interner::Atom, NodeIndex>,
+        _current_property_name: &str,
+    ) -> TypeId {
+        let mut this_props: Vec<tsz_solver::PropertyInfo> = properties.values().cloned().collect();
+
+        if self.ctx.in_const_assertion {
+            for prop in &mut this_props {
+                prop.readonly = true;
+            }
+        }
+
+        // Add placeholder callable types for pre-scanned method declarations
+        for (&method_name_atom, &other_elem_idx) in obj_all_method_names {
+            if this_props.iter().any(|p| p.name == method_name_atom) {
+                continue;
+            }
+
+            let (other_params, other_return_type) = self
+                .ctx
+                .arena
+                .get(other_elem_idx)
+                .and_then(|n| self.ctx.arena.get_method_decl(n))
+                .map(|other_method| {
+                    let params: Vec<tsz_solver::ParamInfo> = other_method
+                        .parameters
+                        .nodes
+                        .iter()
+                        .filter_map(|&param_idx| {
+                            let param = self
+                                .ctx
+                                .arena
+                                .get(param_idx)
+                                .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
+                            if let Some(name_node) = self.ctx.arena.get(param.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                && ident.escaped_text == "this"
+                            {
+                                return None;
+                            }
+                            Some(tsz_solver::ParamInfo {
+                                name: self
+                                    .ctx
+                                    .arena
+                                    .get(param.name)
+                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                                    .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
+                                type_id: if param.type_annotation.is_some() {
+                                    self.get_type_from_type_node(param.type_annotation)
+                                } else {
+                                    TypeId::ANY
+                                },
+                                optional: param.question_token || param.initializer.is_some(),
+                                rest: param.dot_dot_dot_token,
+                            })
+                        })
+                        .collect();
+                    let return_type = if other_method.type_annotation.is_some() {
+                        self.get_type_from_type_node(other_method.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    };
+                    (params, return_type)
+                })
+                .unwrap_or_else(|| {
+                    (
+                        vec![tsz_solver::ParamInfo {
+                            name: None,
+                            type_id: TypeId::ANY,
+                            optional: false,
+                            rest: true,
+                        }],
+                        TypeId::ANY,
+                    )
+                });
+
+            this_props.push(tsz_solver::PropertyInfo {
+                name: method_name_atom,
+                type_id: self.ctx.types.factory().callable(CallableShape {
+                    call_signatures: vec![CallSignature {
+                        type_params: Vec::new(),
+                        params: other_params,
+                        this_type: None,
+                        return_type: other_return_type,
+                        type_predicate: None,
+                        is_method: true,
+                    }],
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                }),
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: self.ctx.in_const_assertion,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            });
+        }
+
+        self.ctx.types.factory().object(this_props)
+    }
+
     pub(super) fn widen_primitive_literal_type_display(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());
