@@ -59,6 +59,13 @@ pub(crate) enum RelationFailure {
         source_param: TypeId,
         target_param: TypeId,
     },
+    /// Function parameter count mismatch.
+    ParameterCountMismatch {
+        source_count: usize,
+        target_count: usize,
+    },
+    /// Property modifier mismatch (optional/readonly/visibility/nominal).
+    PropertyModifierMismatch { property_name: Atom },
     /// Weak union violation (no common properties).
     WeakUnionViolation {
         source_type: TypeId,
@@ -197,28 +204,17 @@ impl RelationFailure {
             | SubtypeFailureReason::ParameterCountMismatch {
                 source_count,
                 target_count,
-            } => Self::ParameterTypeMismatch {
-                param_index: target_count,
-                source_param: TypeId::ERROR,
-                target_param: TypeId::ERROR,
+            } => Self::ParameterCountMismatch {
+                source_count,
+                target_count,
             },
             SubtypeFailureReason::OptionalPropertyRequired { property_name }
             | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
             | SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
-                Self::IncompatiblePropertyValue {
-                    property_name,
-                    source_property_type: TypeId::ERROR,
-                    target_property_type: TypeId::ERROR,
-                    nested: None,
-                }
+                Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
-                Self::IncompatiblePropertyValue {
-                    property_name,
-                    source_property_type: TypeId::ERROR,
-                    target_property_type: TypeId::ERROR,
-                    nested: None,
-                }
+                Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
                 source_element,
