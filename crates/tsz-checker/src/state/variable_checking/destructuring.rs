@@ -179,11 +179,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
-        if tsz_solver::type_contains_undefined(self.ctx.types, ty) {
-            ty
-        } else {
-            self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED])
-        }
+        // Route through flow observation boundary for centralized policy.
+        flow_boundary::add_undefined_for_indexed_access(self.ctx.types, ty)
     }
 
     pub(crate) fn report_empty_array_destructuring_bounds(
@@ -352,16 +349,12 @@ impl<'a> CheckerState<'a> {
             if name_node.kind == SyntaxKind::Identifier as u16
                 && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
             {
-                // When strictNullChecks is off, undefined and null widen to any
-                // for mutable destructured bindings (var/let).
-                // This includes unions like `undefined | null`.
-                let final_type = if !self.ctx.strict_null_checks()
-                    && query::is_only_null_or_undefined(self.ctx.types, element_type)
-                {
-                    TypeId::ANY
-                } else {
-                    element_type
-                };
+                // Route null/undefined widening through the flow observation boundary.
+                let final_type = flow_boundary::widen_null_undefined_to_any(
+                    self.ctx.types,
+                    element_type,
+                    self.ctx.strict_null_checks(),
+                );
                 self.cache_symbol_type(sym_id, final_type);
             }
 
