@@ -155,5 +155,9 @@ path = "tests/flow_observation_boundary_tests.rs"
 name = "name_resolution_boundary_tests"
 path = "tests/name_resolution_boundary_tests.rs"
 
+[[test]]
+name = "lib_resolution_identity_tests"
+path = "tests/lib_resolution_identity_tests.rs"
+
 [lints]
 workspace = true
