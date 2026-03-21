@@ -1228,16 +1228,21 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Determine TS2451 vs TS2300:
-                // We are in this else branch because `has_non_block_scoped`
-                // is true (at least one non-block-scoped declaration exists).
+                // We reach this branch only when has_non_block_scoped is true,
+                // meaning at least one conflicting declaration is NOT block-scoped
+                // (e.g. var, function, class, type alias, etc.).
                 //
-                // For non-block-scoped conflicts that span different scopes
-                // (e.g., var hoisted from a child block to conflict with a
-                // function at the parent level), we fall back to scope-based
-                // analysis to choose TS2451 vs TS2300.
-                // Check if any local conflicting declaration is block-scoped, OR
-                // if a cross-file global scope conflict involves a block-scoped
-                // variable (e.g., UMD export vs `declare global { const X }`).
+                // tsc behavior:
+                // - All block-scoped (let/const vs let/const) → TS2451
+                //   (handled above by the !has_non_block_scoped branch)
+                // - Mix of block-scoped + non-block-scoped at the SAME syntactic
+                //   level (let x; var x; in same block) → TS2300
+                // - Mix where the non-block-scoped is in a NESTED block
+                //   (let x; { var x; } or let x; for (var x;;){}) → TS2451
+                //   because the var hoists from a different syntactic location.
+                // - All non-block-scoped (var vs function, type vs var, etc.) → TS2300,
+                //   unless they span different scopes (var hoisted from child block)
+                //   in which case tsc uses TS2451.
                 let has_block_scoped_conflict =
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx)
@@ -1266,7 +1271,91 @@ impl<'a> CheckerState<'a> {
                             || (has_local_block && has_remote_alias)
                     };
                 let use_ts2451 = if has_block_scoped_conflict {
-                    true
+                    if has_remote_declaration {
+                        // Cross-file mixed conflicts use TS2300
+                        false
+                    } else {
+                        // Check if all conflicting local declarations are in the
+                        // same direct enclosing scope (no var-hoisting walk-up).
+                        // When they are (e.g. `let x; var x;` in the same block),
+                        // tsc uses TS2300. When the var is nested in a child block
+                        // or for-loop and hoists out, tsc uses TS2451.
+                        let scopes: Vec<Option<tsz_binder::ScopeId>> = declarations
+                            .iter()
+                            .filter(|(decl_idx, _, is_local, _, _)| {
+                                *is_local && conflicts.contains(decl_idx)
+                            })
+                            .map(|(decl_idx, _, _, _, _)| {
+                                let parent_idx = self
+                                    .ctx
+                                    .arena
+                                    .get_extended(*decl_idx)
+                                    .map(|ext| ext.parent)
+                                    .unwrap_or(*decl_idx);
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, parent_idx)
+                            })
+                            .collect();
+                        let first_scope = scopes.first().copied().flatten();
+                        let all_same_scope = scopes.iter().all(|s| *s == first_scope);
+                        if !all_same_scope {
+                            // Different scopes (var hoisted from nested block) → TS2451
+                            true
+                        } else {
+                            // Same scope. Check if a function declaration is
+                            // in the conflict set. In 3-way conflicts with
+                            // let/const + var + function, tsc uses TS2300.
+                            // For all other mixed cases (let/const + var,
+                            // let/const + class, etc.), tsc uses TS2451.
+                            let has_function_in_conflict =
+                                declarations
+                                    .iter()
+                                    .any(|(decl_idx, flags, is_local, _, _)| {
+                                        *is_local
+                                            && conflicts.contains(decl_idx)
+                                            && (flags & symbol_flags::FUNCTION) != 0
+                                    });
+                            if has_function_in_conflict {
+                                // 3-way with function → TS2300
+                                false
+                            } else {
+                                // No function: let/const + var or let/const + class
+                                // Check source order for let/const + var case.
+                                // When var appears first, tsc uses TS2300 (collision
+                                // check doesn't fire). Otherwise TS2451.
+                                let min_block_pos = declarations
+                                    .iter()
+                                    .filter(|(decl_idx, flags, is_local, _, _)| {
+                                        *is_local
+                                            && conflicts.contains(decl_idx)
+                                            && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                                    })
+                                    .filter_map(|(decl_idx, _, _, _, _)| {
+                                        self.ctx.arena.get(*decl_idx).map(|n| n.pos)
+                                    })
+                                    .min();
+                                let min_nonblock_pos = declarations
+                                    .iter()
+                                    .filter(|(decl_idx, flags, is_local, _, _)| {
+                                        *is_local
+                                            && conflicts.contains(decl_idx)
+                                            && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                                    })
+                                    .filter_map(|(decl_idx, _, _, _, _)| {
+                                        self.ctx.arena.get(*decl_idx).map(|n| n.pos)
+                                    })
+                                    .min();
+                                match (min_block_pos, min_nonblock_pos) {
+                                    (Some(_bp), Some(nbp)) if nbp < _bp => {
+                                        // non-block-scoped first → TS2300
+                                        false
+                                    }
+                                    _ => true, // block-scoped first → TS2451
+                                }
+                            }
+                        }
+                    }
                 } else if has_remote_declaration {
                     false
                 } else {
