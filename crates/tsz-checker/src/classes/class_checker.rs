@@ -628,28 +628,37 @@ impl<'a> CheckerState<'a> {
                 let name = match self.get_property_name(method.name) {
                     Some(n) => n,
                     None => {
-                        // Computed property with unresolvable name (e.g., [sym]).
-                        // We still need to check override + dynamic name (TS4127).
-                        let has_override = self.has_override_modifier(&method.modifiers)
-                            || self.has_jsdoc_override_tag(member_idx);
-                        if has_override {
-                            return Some(ClassMemberInfo {
-                                name: String::from("__computed"),
-                                type_id: TypeId::ANY,
-                                name_idx: method.name,
-                                visibility: MemberVisibility::Public,
-                                is_method: true,
-                                is_static: self.has_static_modifier(&method.modifiers),
-                                is_accessor: false,
-                                is_abstract: self.has_abstract_modifier(&method.modifiers),
-                                has_override: true,
-                                is_jsdoc_override: !self.has_override_modifier(&method.modifiers)
-                                    && self.has_jsdoc_override_tag(member_idx),
-                                has_dynamic_name: true,
-                                has_computed_non_literal_name: true,
-                            });
+                        // Computed property — try type-based resolution for late-bindable
+                        // names like `[prop]` where `const prop = "foo"`.
+                        if let Some(resolved) = self.get_property_name_resolved(method.name) {
+                            // Name resolved (e.g., const string) — use the resolved name
+                            // and let normal override logic handle TS4113 vs OK.
+                            resolved
+                        } else {
+                            // Truly unresolvable name (e.g., [sym] where sym is a Symbol).
+                            // We still need to check override + dynamic name (TS4127).
+                            let has_override = self.has_override_modifier(&method.modifiers)
+                                || self.has_jsdoc_override_tag(member_idx);
+                            if has_override {
+                                return Some(ClassMemberInfo {
+                                    name: String::from("__computed"),
+                                    type_id: TypeId::ANY,
+                                    name_idx: method.name,
+                                    visibility: MemberVisibility::Public,
+                                    is_method: true,
+                                    is_static: self.has_static_modifier(&method.modifiers),
+                                    is_accessor: false,
+                                    is_abstract: self.has_abstract_modifier(&method.modifiers),
+                                    has_override: true,
+                                    is_jsdoc_override: !self
+                                        .has_override_modifier(&method.modifiers)
+                                        && self.has_jsdoc_override_tag(member_idx),
+                                    has_dynamic_name: true,
+                                    has_computed_non_literal_name: true,
+                                });
+                            }
+                            return None;
                         }
-                        return None;
                     }
                 };
                 if skip_private && self.has_private_modifier(&method.modifiers) {
