@@ -392,6 +392,12 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
 
+                    // Handle the optional 'as' clause (key remapping)
+                    if mapped_type.name_type.is_some() {
+                        self.write(" as ");
+                        self.emit_type(mapped_type.name_type);
+                    }
+
                     self.write("]");
 
                     // Emit question token with +/- prefix support
@@ -405,11 +411,10 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
 
-                    // Emit name type annotation
-                    if mapped_type.name_type.is_some() {
-                        self.write(": ");
-                        self.emit_type(mapped_type.name_type);
-                    }
+                    self.write(": ");
+
+                    // Emit type annotation
+                    self.emit_type(mapped_type.type_node);
 
                     // Mapped types don't add semicolon in inline mode
                 }
