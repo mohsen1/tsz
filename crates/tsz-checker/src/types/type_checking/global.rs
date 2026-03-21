@@ -379,6 +379,10 @@ impl<'a> CheckerState<'a> {
     /// TypeScript features are available. Unlike the core global types, these are
     /// only checked when the feature is potentially used in the code.
     ///
+    /// Routes through the capability boundary (`gate_for_required_type`) to map
+    /// type names to feature gates, and `should_check_feature_gate` to determine
+    /// whether the feature is actually used in the current file.
+    ///
     /// Examples:
     /// - `TypedPropertyDescriptor`: Required for decorators
     /// - `IterableIterator`: Required for generators
@@ -386,82 +390,67 @@ impl<'a> CheckerState<'a> {
     /// - Disposable/AsyncDisposable: Required for using declarations
     /// - Awaited: Required for await type operator
     pub(crate) fn check_feature_specific_global_types(&mut self) {
-        // Types that are commonly referenced in TypeScript features
-        // We check if these are available in lib contexts
-        let feature_types = [
-            // ES2015+ types that are commonly needed
-            ("Awaited", "ES2022"),               // For await type operator
-            ("IterableIterator", "ES2015"),      // For generators
-            ("AsyncIterableIterator", "ES2018"), // For async generators
-            ("TypedPropertyDescriptor", "ES5"),  // For decorators
-            ("Disposable", "ES2022"),            // For using declarations
-            ("AsyncDisposable", "ES2022"),       // For await using declarations
+        use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+
+        // Feature-specific global types checked via the capability boundary.
+        // The mapping from type name → feature gate is centralized in
+        // `EnvironmentCapabilities::gate_for_required_type()`.
+        const FEATURE_TYPES: &[&str] = &[
+            "Awaited",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "TypedPropertyDescriptor",
+            "Disposable",
+            "AsyncDisposable",
         ];
 
-        for &(type_name, _es_version) in &feature_types {
-            // Check if the type should be available but isn't
-            // Only check if:
-            // 1. The type is not in lib contexts (not available from loaded libs)
-            // 2. The type is not declared in the current file
-            // 3. This appears to be a scenario where the type would be referenced
-
-            // Check if available in lib contexts
-            if self.ctx.has_name_in_lib(type_name) {
-                continue; // Type is available
+        for &type_name in FEATURE_TYPES {
+            // Check if available in lib contexts or declared locally
+            if self.ctx.has_name_in_lib(type_name) || self.ctx.binder.file_locals.has(type_name) {
+                continue;
             }
 
-            // Check if declared in current file
-            if self.ctx.binder.file_locals.has(type_name) {
-                continue; // Type is declared locally
-            }
-
-            // At this point, the type is not available
-            // TypeScript emits TS2318 at position 0 if the type would be referenced
-            // For now, we'll emit based on certain heuristics:
-
-            let should_emit = match type_name {
-                // Always check these when libs are minimal (ES5 or noLib)
-                "IterableIterator"
-                | "AsyncIterableIterator"
-                | "TypedPropertyDescriptor"
-                | "Disposable"
-                | "AsyncDisposable" => {
-                    // These are emitted when the feature syntax is detected
-                    // For simplicity, we check if any syntax that would need them exists
-                    self.should_check_for_feature_type(type_name)
-                }
-                // Awaited is checked when using await type operator or async functions
-                "Awaited" => {
-                    // TSC emits TS2318 for Awaited when async/await syntax is used
-                    self.ctx.async_depth > 0
-                }
-                _ => false,
+            // Use the capability boundary to map the type to its feature gate
+            let Some(gate) = EnvironmentCapabilities::gate_for_required_type(type_name) else {
+                continue;
             };
 
-            if should_emit {
-                // tsc emits these with no file position (file="", line=0, column=0)
-                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
+            // Only emit if the feature is actually used in this file
+            if !self.should_check_feature_gate(gate) {
+                continue;
             }
+
+            // tsc emits these with no file position (file="", line=0, column=0)
+            self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
         }
     }
 
-    /// Check if we should emit an error for a feature-specific global type.
+    /// Check if a feature gate's corresponding syntax is used in the current file.
     ///
     /// This heuristic determines if a feature that requires a specific global type
     /// is likely being used in the code. These errors are NOT emitted just because
     /// noLib is set — they require the actual feature to be used.
-    pub(crate) fn should_check_for_feature_type(&self, type_name: &str) -> bool {
+    ///
+    /// Routes through `FileFeatures` flags set by the binder, and checker-level
+    /// state for async depth.
+    pub(crate) fn should_check_feature_gate(
+        &self,
+        gate: crate::query_boundaries::capabilities::FeatureGate,
+    ) -> bool {
+        use crate::query_boundaries::capabilities::FeatureGate;
         use tsz_binder::FileFeatures;
         let features = self.ctx.binder.file_features;
-        match type_name {
-            "IterableIterator" => features.has(FileFeatures::GENERATORS),
-            "AsyncIterableIterator" => features.has(FileFeatures::ASYNC_GENERATORS),
-            "TypedPropertyDescriptor" => {
+        match gate {
+            FeatureGate::Generators => features.has(FileFeatures::GENERATORS),
+            FeatureGate::AsyncGenerators => features.has(FileFeatures::ASYNC_GENERATORS),
+            FeatureGate::ExperimentalDecorators => {
                 self.ctx.compiler_options.experimental_decorators
                     && features.has(FileFeatures::DECORATORS)
             }
-            "Disposable" => features.has(FileFeatures::USING),
-            "AsyncDisposable" => features.has(FileFeatures::AWAIT_USING),
+            FeatureGate::UsingDeclaration => features.has(FileFeatures::USING),
+            FeatureGate::AwaitUsingDeclaration => features.has(FileFeatures::AWAIT_USING),
+            // Awaited maps to AsyncFunction gate — check async_depth
+            FeatureGate::AsyncFunction => self.ctx.async_depth > 0,
             _ => false,
         }
     }

@@ -210,6 +210,16 @@ impl<'a> CheckerContext<'a> {
         self.current_file_idx = idx;
     }
 
+    /// Set the deprecation diagnostics state on the capability boundary.
+    ///
+    /// When TS5107/TS5101 deprecation diagnostics are present, tsc stops compilation
+    /// early and never resolves lib types. This sets both the canonical flag on
+    /// `EnvironmentCapabilities` and the `skip_lib_type_resolution` shortcut.
+    pub fn set_has_deprecation_diagnostics(&mut self, has_deprecation: bool) {
+        self.capabilities.has_deprecation_diagnostics = has_deprecation;
+        self.skip_lib_type_resolution = has_deprecation;
+    }
+
     /// Get the arena for a specific file index.
     /// Returns the current arena if `file_idx` is `u32::MAX` (single-file mode).
     pub fn get_arena_for_file(&self, file_idx: u32) -> &NodeArena {

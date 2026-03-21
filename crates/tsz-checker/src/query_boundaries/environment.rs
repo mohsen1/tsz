@@ -21,6 +21,8 @@
 //! - TS2823: Import attributes require specific module option
 //! - TS2854: Top-level await using requires specific module/target
 //! - TS5071: resolveJsonModule incompatible with module option
+//! - TS5101: Deprecated compiler option (no-value)
+//! - TS5107: Deprecated compiler option value
 
 use super::capabilities::{EnvironmentCapabilities, FeatureGate, MissingGlobalKind};
 
@@ -72,6 +74,14 @@ pub(crate) enum CapabilityDiagnostic {
         gate: FeatureGate,
         required_type: &'static str,
     },
+
+    /// TS5101: Option '{name}' is deprecated and will stop functioning.
+    /// Emitted for deprecated compiler options without value context (e.g., `baseUrl`).
+    DeprecatedOption { name: String },
+
+    /// TS5107: Option '{name}={value}' is deprecated and will stop functioning.
+    /// Emitted for deprecated compiler option values (e.g., `target=ES5`).
+    DeprecatedOptionValue { name: String, value: String },
 }
 
 impl CapabilityDiagnostic {
@@ -89,6 +99,8 @@ impl CapabilityDiagnostic {
             Self::TopLevelAwaitUsingUnsupported => 2854,
             Self::ResolveJsonModuleIncompatible => 5071,
             Self::FeatureRequiresGlobalType { .. } => 2318,
+            Self::DeprecatedOption { .. } => 5101,
+            Self::DeprecatedOptionValue { .. } => 5107,
         }
     }
 }
@@ -129,6 +141,7 @@ impl EnvironmentCapabilities {
             | FeatureGate::Generators
             | FeatureGate::AsyncGenerators
             | FeatureGate::ExperimentalDecorators
+            | FeatureGate::AsyncFunction
             | FeatureGate::AsyncFunctionEs5 => {
                 if !self.has_lib {
                     if let Some(required_type) = EnvironmentCapabilities::required_global_type(gate)
@@ -188,6 +201,15 @@ impl EnvironmentCapabilities {
                 name: name.to_string(),
             }),
         }
+    }
+
+    /// Whether lib type resolution should be skipped.
+    ///
+    /// When TS5107/TS5101 deprecation diagnostics are present, tsc stops compilation
+    /// early and never resolves lib types. This centralizes the decision that was
+    /// previously passed as `skip_lib_type_resolution` from the driver.
+    pub fn should_skip_lib_type_resolution(&self) -> bool {
+        self.has_deprecation_diagnostics
     }
 
     /// Check config compatibility and return any diagnostics.
