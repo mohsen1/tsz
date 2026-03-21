@@ -763,12 +763,16 @@ impl<'a> Printer<'a> {
         }
         // The explicit parens already provide grouping, so clear the
         // "needs parens" flags to avoid double-parenthesization when the
-        // inner expression is a downlevel optional chain or nullish coalescing.
+        // inner expression is a downlevel optional chain, nullish coalescing,
+        // or yield-from-await in binary operand.
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
         let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        let prev_in_binary = self.ctx.flags.in_binary_operand;
         self.ctx.flags.optional_chain_needs_parens = false;
         self.ctx.flags.nullish_coalescing_needs_parens = false;
+        self.ctx.flags.in_binary_operand = false;
         self.emit(paren.expression);
+        self.ctx.flags.in_binary_operand = prev_in_binary;
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.write(")");
