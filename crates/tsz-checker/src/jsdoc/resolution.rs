@@ -1,4 +1,15 @@
-//! JSDoc type annotation utilities for `CheckerState`.
+//! JSDoc type annotation resolution — converting JSDoc type expressions to `TypeId`.
+//!
+//! This module owns:
+//! - Type expression parsing (`jsdoc_type_from_expression`)
+//! - Type name resolution (`resolve_jsdoc_type_str`, `resolve_jsdoc_type_name`)
+//! - Typedef resolution (`resolve_jsdoc_typedef_type`, `type_from_jsdoc_typedef`)
+//! - Symbol resolution (`resolve_jsdoc_symbol_type`, `resolve_jsdoc_entity_name_symbol`)
+//! - Annotation extraction from AST nodes (`jsdoc_type_annotation_for_node`, etc.)
+//! - Generic instantiation (`resolve_jsdoc_generic_type`)
+//! - Metadata queries (`jsdoc_has_readonly_tag`, `jsdoc_access_level`)
+
+use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
@@ -8,47 +19,13 @@ use tsz_solver::{
     FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
     TypePredicate, TypePredicateTarget, Visibility,
 };
-#[derive(Clone)]
-pub(crate) struct JsdocTypedefInfo {
-    pub(crate) base_type: Option<String>,
-    pub(crate) properties: Vec<JsdocPropertyTagInfo>,
-    pub(crate) template_params: Vec<JsdocTemplateParamInfo>,
-    /// If this is a `@callback` definition, holds the parsed parameter and return info.
-    pub(crate) callback: Option<JsdocCallbackInfo>,
-}
-#[derive(Clone)]
-pub(crate) struct JsdocTemplateParamInfo {
-    pub(crate) name: String,
-    pub(crate) constraint: Option<String>,
-}
-#[derive(Clone)]
-pub(crate) struct JsdocPropertyTagInfo {
-    pub(crate) name: String,
-    pub(crate) type_expr: String,
-    pub(crate) optional: bool,
-}
-#[derive(Clone)]
-pub(crate) struct JsdocParamTagInfo {
-    pub(crate) name: String,
-    pub(crate) type_expr: Option<String>,
-    pub(crate) optional: bool,
-    pub(crate) rest: bool,
-}
-/// Parsed `@callback` information: parameter names/types and return type/predicate.
-#[derive(Clone)]
-pub(crate) struct JsdocCallbackInfo {
-    pub(crate) params: Vec<JsdocParamTagInfo>,
-    pub(crate) return_type: Option<String>, // raw return type expression
-    /// Parsed type predicate from `@return {x is Type}`.
-    pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
-}
 impl<'a> CheckerState<'a> {
     fn jsdoc_type_expr_is_broad_function(type_expr: &str) -> bool {
         let trimmed = type_expr.trim();
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
     }
 
-    fn jsdoc_concrete_callable_type_from_expr(
+    pub(super) fn jsdoc_concrete_callable_type_from_expr(
         &mut self,
         type_expr: &str,
         anchor_pos: u32,
@@ -104,241 +81,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn jsdoc_callable_type_annotation_for_node(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<TypeId> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-
-        let sf = self.source_file_data_for_node(idx)?;
-        if sf.comments.is_empty() {
-            return None;
-        }
-
-        let source_text = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
-        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
-
-        self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
-    }
-
-    pub(crate) fn jsdoc_callable_type_annotation_for_node_direct(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<TypeId> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-
-        let sf = self.source_file_data_for_node(idx)?;
-        if sf.comments.is_empty() {
-            return None;
-        }
-
-        let source_text = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
-        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
-
-        self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
-    }
-
-    pub(crate) fn resolve_global_jsdoc_typedef_type(&mut self, name: &str) -> Option<TypeId> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-
-        if let Some(source_file) = self.ctx.arena.source_files.first() {
-            let comments = source_file.comments.clone();
-            let source_text = source_file.text.to_string();
-            if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
-            {
-                self.register_jsdoc_typedef_def(name, ty);
-                return Some(ty);
-            }
-        }
-
-        let all_arenas = self.ctx.all_arenas.clone()?;
-        let all_binders = self.ctx.all_binders.clone()?;
-
-        for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
-            if file_idx == self.ctx.current_file_idx {
-                continue;
-            }
-
-            let Some(source_file) = arena.source_files.first() else {
-                continue;
-            };
-
-            let comments = source_file.comments.clone();
-            let source_text = source_file.text.to_string();
-            let mut checker = Box::new(CheckerState::with_parent_cache(
-                arena.as_ref(),
-                binder.as_ref(),
-                self.ctx.types,
-                source_file.file_name.clone(),
-                self.ctx.compiler_options.clone(),
-                self,
-            ));
-            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            checker.ctx.all_arenas = Some(all_arenas.clone());
-            checker.ctx.all_binders = Some(all_binders.clone());
-            checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
-            checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
-            checker.ctx.current_file_idx = file_idx;
-            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                    self.ctx.cross_file_symbol_targets.borrow().clone();
-            }
-
-            if let Some(ty) =
-                checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
-            {
-                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter()
-                {
-                    self.ctx
-                        .cross_file_symbol_targets
-                        .borrow_mut()
-                        .insert(sym_id, target_idx);
-                }
-                self.register_jsdoc_typedef_def(name, ty);
-                return Some(ty);
-            }
-        }
-
-        None
-    }
-
-    pub(crate) fn source_file_data_for_node(
-        &self,
-        idx: NodeIndex,
-    ) -> Option<&tsz_parser::parser::node::SourceFileData> {
-        let mut current = idx;
-        while current.is_some() {
-            let node = self.ctx.arena.get(current)?;
-            if let Some(source_file) = self.ctx.arena.get_source_file(node) {
-                return Some(source_file);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-    /// Resolve `typeof X` type queries to the type of symbol X.
-    pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_binder::SymbolId;
-        use tsz_binder::symbol_flags;
-        use tsz_solver::SymbolRef;
-        match query::classify_type_query(self.ctx.types, type_id) {
-            query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
-                let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
-                if is_cycle {
-                    return TypeId::ERROR;
-                }
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.insert(sym_id);
-                }
-                let sym = SymbolId(sym_id);
-                let value_decl = self.get_cross_file_symbol(sym).map_or_else(
-                    || self.ctx.binder.get_symbol(sym).map(|s| s.value_declaration),
-                    |s| Some(s.value_declaration),
-                );
-                let flags = self
-                    .get_cross_file_symbol(sym)
-                    .map(|s| s.flags)
-                    .or_else(|| self.ctx.binder.get_symbol(sym).map(|s| s.flags))
-                    .unwrap_or(0);
-                let result = if self.is_merged_interface_value_symbol(sym)
-                    || ((flags & symbol_flags::CLASS) != 0
-                        && value_decl.is_some_and(|decl| !decl.is_none()))
-                {
-                    self.type_of_value_declaration_for_symbol(
-                        sym,
-                        value_decl.unwrap_or(NodeIndex::NONE),
-                    )
-                } else {
-                    self.get_type_of_symbol(sym)
-                };
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.remove(&sym_id);
-                }
-                result
-            }
-            query::TypeQueryKind::ApplicationWithTypeQuery {
-                base_sym_ref: SymbolRef(sym_id),
-                args,
-            } => {
-                let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
-                if is_cycle {
-                    return TypeId::ERROR;
-                }
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.insert(sym_id);
-                }
-                let base = self.ctx.create_lazy_type_ref(SymbolId(sym_id));
-                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
-                    stack.remove(&sym_id);
-                }
-                self.ctx.types.application(base, args)
-            }
-            query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
-        }
-    }
-    /// Extract and parse a JSDoc `@type` annotation for the given node.
-    pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-        let sf = self.source_file_data_for_node(idx)?;
-        if sf.comments.is_empty() {
-            return None;
-        }
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
-        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
-        let type_expr = type_expr.trim();
-        self.validate_jsdoc_generic_constraints_at_node(
-            idx,
-            node.pos,
-            type_expr,
-            &jsdoc,
-            &comments,
-            &source_text,
-        );
-        // Set the anchor position for typedef scoping so that resolve_jsdoc_type_str
-        // → resolve_jsdoc_type_name → resolve_jsdoc_typedef_type respects function scope.
-        let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
-        let result = self.resolve_jsdoc_type_str(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
-                .or_else(|| {
-                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
-                        return Some(resolved);
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                            return Some(resolved);
-                        }
-                    }
-                    None
-                })
-        });
-        self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
-        result
-    }
-    fn jsdoc_typedef_template_constraints_before(
+    // NOTE: jsdoc_callable_type_annotation_for_node, jsdoc_callable_type_annotation_for_node_direct,
+    // resolve_global_jsdoc_typedef_type, source_file_data_for_node, resolve_type_query_type,
+    // jsdoc_type_annotation_for_node are in lookup.rs
+    pub(super) fn jsdoc_typedef_template_constraints_before(
         &mut self,
         typedef_name: &str,
         _anchor_pos: u32,
@@ -367,180 +113,13 @@ impl<'a> CheckerState<'a> {
         }
         result
     }
-    fn validate_jsdoc_generic_constraints_at_node(
-        &mut self,
-        idx: NodeIndex,
-        anchor_pos: u32,
-        type_expr: &str,
-        _jsdoc: &str,
-        comments: &[tsz_common::comments::CommentRange],
-        source_text: &str,
-    ) {
-        let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') else {
-            return;
-        };
-        if !type_expr.ends_with('>') {
-            return;
-        }
-        let base_name = type_expr[..angle_idx].trim();
-        let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
-        let arg_strs = Self::split_type_args_respecting_nesting(args_str);
-        if arg_strs.is_empty() {
-            return;
-        }
-        let symbol_constraints = self
-            .ctx
-            .binder
-            .file_locals
-            .get(base_name)
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_symbols()
-                    .find_all_by_name(base_name)
-                    .into_iter()
-                    .find(|sym_id| {
-                        self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
-                            (symbol.flags
-                                & (symbol_flags::TYPE_ALIAS
-                                    | symbol_flags::CLASS
-                                    | symbol_flags::INTERFACE
-                                    | symbol_flags::ENUM))
-                                != 0
-                        })
-                    })
-            })
-            .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
-            .unwrap_or_default();
-        let typedef_constraints = if symbol_constraints.is_empty() {
-            self.jsdoc_typedef_template_constraints_before(
-                base_name,
-                anchor_pos,
-                comments,
-                source_text,
-            )
-        } else {
-            Vec::new()
-        };
-        let constraints: Vec<Option<TypeId>> = if !symbol_constraints.is_empty() {
-            symbol_constraints
-                .into_iter()
-                .map(|param| param.constraint)
-                .collect()
-        } else {
-            typedef_constraints
-        };
-        if constraints.is_empty() {
-            return;
-        }
-        let Some((_, comment_pos)) =
-            self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
-        else {
-            return;
-        };
-        let raw_comment = &source_text[comment_pos as usize..anchor_pos as usize];
-        let Some(type_expr_offset) = raw_comment.find(type_expr) else {
-            return;
-        };
-        let mut arg_search_offset = angle_idx + 1;
-        for (arg_str, constraint) in arg_strs.iter().zip(constraints.iter()) {
-            let Some(constraint) = constraint else {
-                arg_search_offset += arg_str.len() + 1;
-                continue;
-            };
-            let Some(type_arg) = self.resolve_jsdoc_type_str(arg_str.trim()) else {
-                arg_search_offset += arg_str.len() + 1;
-                continue;
-            };
-            if self.is_assignable_to(type_arg, *constraint) {
-                arg_search_offset += arg_str.len() + 1;
-                continue;
-            }
-            let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
-            let message = format_message(
-                diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-                &[
-                    &self.format_type_diagnostic(widened_arg),
-                    &self.format_type_diagnostic(*constraint),
-                ],
-            );
-            let Some(arg_rel_in_expr) = type_expr[arg_search_offset..].find(arg_str.trim()) else {
-                arg_search_offset += arg_str.len() + 1;
-                continue;
-            };
-            let arg_pos =
-                comment_pos as usize + type_expr_offset + arg_search_offset + arg_rel_in_expr;
-            self.ctx.error(
-                arg_pos as u32,
-                arg_str.trim().len() as u32,
-                message,
-                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-            );
-            arg_search_offset += arg_str.len() + 1;
-        }
-    }
-    /// Resolve a direct leading JSDoc `@type` annotation (no parent fallback).
-    pub(crate) fn jsdoc_type_annotation_for_node_direct(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<TypeId> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-        let sf = self.source_file_data_for_node(idx)?;
-        // Fast path: no comments in file means no JSDoc possible.
-        // Avoids expensive Arc<str>::to_string() + Vec::clone() per call.
-        if sf.comments.is_empty() {
-            return None;
-        }
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
-        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
-        let type_expr = type_expr.trim();
-        self.jsdoc_type_from_expression(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
-                .or_else(|| {
-                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
-                        return Some(resolved);
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
-                            return Some(resolved);
-                        }
-                    }
-                    None
-                })
-        })
-    }
-    /// Extract `@satisfies` annotation and its keyword position.
-    pub(crate) fn jsdoc_satisfies_annotation_with_pos(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<(TypeId, u32)> {
-        if !self.ctx.should_resolve_jsdoc() {
-            return None;
-        }
-        let sf = self.source_file_data_for_node(idx)?;
-        if sf.comments.is_empty() {
-            return None;
-        }
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let (jsdoc, jsdoc_start) =
-            self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)?;
-        let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
-        let type_expr = type_expr.trim();
-        let raw_comment = source_text.get(jsdoc_start as usize..)?;
-        let tag_offset = raw_comment.find("@satisfies")? as u32;
-        let keyword_pos = jsdoc_start + tag_offset + 1;
-        let resolved = self.resolve_jsdoc_type_str(type_expr)?;
-        Some((self.judge_evaluate(resolved), keyword_pos))
-    }
+    // NOTE: validate_jsdoc_generic_constraints_at_node, jsdoc_type_annotation_for_node_direct,
+    // jsdoc_satisfies_annotation_with_pos are in lookup.rs
 
-    fn resolve_jsdoc_import_type_reference(&mut self, type_expr: &str) -> Option<TypeId> {
+    pub(super) fn resolve_jsdoc_import_type_reference(
+        &mut self,
+        type_expr: &str,
+    ) -> Option<TypeId> {
         let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
 
         if let Some(member_name) = member_name {
@@ -1276,7 +855,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn resolve_jsdoc_symbol_type(&mut self, sym_id: tsz_binder::SymbolId) -> TypeId {
+    pub(super) fn resolve_jsdoc_symbol_type(&mut self, sym_id: tsz_binder::SymbolId) -> TypeId {
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))
@@ -1470,7 +1049,7 @@ impl<'a> CheckerState<'a> {
             .intersection2(instance_type, prototype_type)
     }
     /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
-    fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
+    pub(super) fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
         use tsz_solver::def::DefinitionInfo;
         // Avoid duplicate registration if called multiple times for the same typedef
         if self
@@ -2150,191 +1729,6 @@ impl<'a> CheckerState<'a> {
             type_args,
         ))
     }
-    /// Check if a node has a JSDoc `@readonly` tag.
-    pub(crate) fn jsdoc_has_readonly_tag(&self, idx: NodeIndex) -> bool {
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-        let Some(jsdoc) = self.try_leading_jsdoc(
-            comments,
-            self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-            source_text,
-        ) else {
-            return false;
-        };
-        Self::jsdoc_contains_tag(&jsdoc, "readonly")
-    }
-    /// Get the access level from JSDoc `@private` / `@protected` / `@public` tags.
-    pub(crate) fn jsdoc_access_level(
-        &self,
-        idx: NodeIndex,
-    ) -> Option<crate::state::MemberAccessLevel> {
-        let sf = self.ctx.arena.source_files.first()?;
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-        let jsdoc = self.try_leading_jsdoc(
-            comments,
-            self.ctx.arena.get(idx).map_or(0, |n| n.pos),
-            source_text,
-        )?;
-        if Self::jsdoc_contains_tag(&jsdoc, "private") {
-            Some(crate::state::MemberAccessLevel::Private)
-        } else if Self::jsdoc_contains_tag(&jsdoc, "protected") {
-            Some(crate::state::MemberAccessLevel::Protected)
-        } else {
-            None
-        }
-    }
-    /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
-    pub(crate) fn find_orphaned_extends_tags_for_statements(
-        &self,
-        statements: &[NodeIndex],
-    ) -> Vec<(&'static str, u32, u32)> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return Vec::new();
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-        let mut results = Vec::new();
-        let mut handled_comment_positions = Vec::new();
-        // Phase 1: Check each top-level statement's leading JSDoc
-        for &stmt_idx in statements {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                if let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text)
-                    && (Self::jsdoc_contains_tag(&jsdoc, "augments")
-                        || Self::jsdoc_contains_tag(&jsdoc, "extends"))
-                {
-                    handled_comment_positions.push(node.pos);
-                }
-                continue;
-            }
-            let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
-                continue;
-            };
-            let tag = if Self::jsdoc_contains_tag(&jsdoc, "augments") {
-                "augments"
-            } else if Self::jsdoc_contains_tag(&jsdoc, "extends") {
-                "extends"
-            } else {
-                continue;
-            };
-            handled_comment_positions.push(node.pos);
-            let (pos, len) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                if let Some(func) = self.ctx.arena.get_function(node)
-                    && let Some(name_node) = self.ctx.arena.get(func.name)
-                {
-                    (name_node.pos, name_node.end - name_node.pos)
-                } else {
-                    (node.pos, node.end - node.pos)
-                }
-            } else {
-                (node.pos, node.end - node.pos)
-            };
-            results.push((tag, pos, len));
-        }
-        // Phase 2: Check for dangling JSDoc comments not attached to any statement
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        for comment in comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            if handled_comment_positions
-                .iter()
-                .any(|&stmt_pos| comment.end <= stmt_pos)
-            {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, source_text);
-            let tag = if Self::jsdoc_contains_tag(&content, "augments") {
-                "augments"
-            } else if Self::jsdoc_contains_tag(&content, "extends") {
-                "extends"
-            } else {
-                continue;
-            };
-            let is_leading_of_any_stmt = statements.iter().any(|&stmt_idx| {
-                if let Some(n) = self.ctx.arena.get(stmt_idx)
-                    && let Some((_, leading_pos)) =
-                        self.try_leading_jsdoc_with_pos(comments, n.pos, source_text)
-                {
-                    return leading_pos == comment.pos;
-                }
-                false
-            });
-            if is_leading_of_any_stmt {
-                continue;
-            }
-            let needle = format!("@{tag}");
-            let (pos, len) = if let Some(offset) = source_text
-                .get(comment.pos as usize..comment.end as usize)
-                .and_then(|s| s.find(&needle))
-            {
-                let tag_pos = comment.pos + offset as u32;
-                (tag_pos, needle.len() as u32)
-            } else {
-                (comment.pos, comment.end - comment.pos)
-            };
-            results.push((tag, pos, len));
-        }
-        results
-    }
-
-    /// Check if two source positions are in different function scopes.
-    /// Used for JSDoc typedef scoping — a typedef defined inside a function
-    /// should not be visible outside that function.
-    #[allow(dead_code)]
-    pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text = sf.text.to_string();
-        // Walk from anchor_pos backward to see if we cross a function boundary
-        // before reaching comment_pos. If comment_pos is inside a function body
-        // and anchor_pos is outside it, they're in different scopes.
-        let text = &source_text[..anchor_pos as usize];
-        let mut depth: i32 = 0;
-        for ch in text[comment_pos as usize..].chars() {
-            match ch {
-                '{' => depth += 1,
-                '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        // If depth != 0, the comment is inside a nested scope relative to anchor
-        depth != 0
-    }
-
-    /// Find the end position of a function body by scanning for the matching '}'.
-    pub(crate) fn find_function_body_end(node_pos: u32, node_end: u32, source_text: &str) -> u32 {
-        let start = node_pos as usize;
-        let end = node_end as usize;
-        if end > source_text.len() {
-            return node_end;
-        }
-        let slice = &source_text[start..end];
-        let mut depth = 0i32;
-        let mut last_close = node_end;
-        for (i, ch) in slice.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        last_close = (start + i + 1) as u32;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        last_close
-    }
+    // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,
+    // is_in_different_function_scope, find_function_body_end are in lookup.rs
 }

@@ -1,10 +1,10 @@
-//! Pure parsing helpers for JSDoc type annotations.
+//! Pure string-level parsing helpers for JSDoc type annotations.
 //!
 //! These are associated functions on `CheckerState` (no `&self`/`&mut self`)
-//! that perform string-level parsing of JSDoc type expressions. Extracted from
-//! `jsdoc.rs` to keep that module under the 2 000 LOC target.
+//! that perform nesting-aware string splitting, tag extraction, and typedef
+//! definition parsing. No type resolution or checker state access.
 
-use super::jsdoc::{
+use super::types::{
     JsdocCallbackInfo, JsdocPropertyTagInfo, JsdocTemplateParamInfo, JsdocTypedefInfo,
 };
 use crate::state::CheckerState;
