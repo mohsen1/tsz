@@ -956,11 +956,15 @@ pub(super) fn collect_diagnostics(
                 );
             }
 
-            // Update the cache and check for export hash changes
+            // Update the cache and check for export signature changes.
+            // Uses the unified binder-level ExportSignature (shared with LSP)
+            // so body-only/comment-only/private-symbol edits produce the same
+            // invalidation decisions in both CLI and LSP.
             let checker_counters = checker.ctx.request_cache_counters;
 
             if let Some(c) = cache.as_deref_mut() {
-                let new_hash = compute_export_hash(program, file, file_idx, &mut checker);
+                let new_sig = compute_export_signature(program, file, file_idx);
+                let new_hash = new_sig.0;
                 let old_hash = c.export_hashes.get(&file_path).copied();
 
                 c.type_caches

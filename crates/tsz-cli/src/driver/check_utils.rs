@@ -450,44 +450,114 @@ fn es_decorator_helpers(
     helpers
 }
 
-pub(super) fn compute_export_hash(
+/// Compute the unified export signature for a file from the merged program.
+///
+/// This uses the same `ExportSignatureInput` → `ExportSignature` pipeline as the
+/// LSP, ensuring both systems produce identical hashes for the same public API
+/// surface. The signature is binder-level (names, flags, re-exports, augmentations)
+/// and does not include checker-inferred types.
+pub(super) fn compute_export_signature(
     program: &MergedProgram,
     file: &BoundFile,
     file_idx: usize,
-    checker: &mut CheckerState,
-) -> u64 {
-    let mut formatter = TypeFormatter::with_symbols(&program.type_interner, &program.symbols);
-    let mut hasher = FxHasher::default();
-    let mut type_str_cache: FxHashMap<TypeId, std::borrow::Cow<'static, str>> =
-        FxHashMap::default();
+) -> tsz_lsp::export_signature::ExportSignature {
+    let input = build_export_signature_input(program, file, file_idx);
+    tsz_lsp::export_signature::ExportSignature::from_input(&input)
+}
 
-    if let Some(file_locals) = program.file_locals.get(file_idx) {
-        let mut exports: Vec<(&String, SymbolId)> = file_locals
-            .iter()
-            .filter_map(|(name, &sym_id)| {
-                is_exported_symbol(&program.symbols, sym_id).then_some((name, sym_id))
-            })
-            .collect();
-        exports.sort_by(|left, right| left.0.cmp(right.0));
+/// Build an `ExportSignatureInput` from the merged program's per-file data.
+///
+/// This extracts the same data that the LSP's `ExportSignatureInput::from_binder`
+/// extracts from a `BinderState`, but reads from the post-merge program structures.
+fn build_export_signature_input(
+    program: &MergedProgram,
+    file: &BoundFile,
+    file_idx: usize,
+) -> tsz_lsp::export_signature::ExportSignatureInput {
+    let mut input = tsz_lsp::export_signature::ExportSignatureInput::default();
+    let file_name = &file.file_name;
 
-        for (name, sym_id) in exports {
-            name.hash(&mut hasher);
-            let type_id = checker.get_type_of_symbol(sym_id);
-            let type_str = type_str_cache
-                .entry(type_id)
-                .or_insert_with(|| formatter.format(type_id));
-            type_str.hash(&mut hasher);
+    // 1. Direct exports from module_exports
+    if let Some(exports) = program.module_exports.get(file_name) {
+        let mut entries: Vec<_> = exports.iter().collect();
+        entries.sort_by_key(|(name, _)| *name);
+
+        for (name, sym_id) in entries {
+            if let Some(symbol) = program.symbols.get(*sym_id) {
+                input
+                    .exports
+                    .push((name.clone(), symbol.flags, symbol.is_type_only));
+            }
         }
     }
 
-    let mut export_signatures = Vec::new();
-    collect_export_signatures(file, checker, &mut formatter, &mut export_signatures);
-    export_signatures.sort();
-    for signature in export_signatures {
-        signature.hash(&mut hasher);
+    // 2. Named re-exports
+    if let Some(reexports) = program.reexports.get(file_name) {
+        let mut entries: Vec<_> = reexports.iter().collect();
+        entries.sort_by_key(|(name, _)| *name);
+
+        for (export_name, (source_module, original_name)) in entries {
+            input.named_reexports.push((
+                export_name.clone(),
+                source_module.clone(),
+                original_name.clone(),
+            ));
+        }
     }
 
-    hasher.finish()
+    // 3. Wildcard re-exports
+    if let Some(wildcards) = program.wildcard_reexports.get(file_name) {
+        let mut sorted = wildcards.clone();
+        sorted.sort();
+        input.wildcard_reexports = sorted;
+    }
+
+    // 4. Global augmentations (per-file)
+    {
+        let mut names: Vec<&String> = file.global_augmentations.keys().collect();
+        names.sort();
+        for name in names {
+            let count = file
+                .global_augmentations
+                .get(name.as_str())
+                .map_or(0, Vec::len);
+            input.global_augmentations.push((name.clone(), count));
+        }
+    }
+
+    // 5. Module augmentations (per-file)
+    {
+        let mut modules: Vec<&String> = file.module_augmentations.keys().collect();
+        modules.sort();
+        for module in modules {
+            let mut aug_names: Vec<String> = file
+                .module_augmentations
+                .get(module.as_str())
+                .map(|augs| augs.iter().map(|a| a.name.clone()).collect())
+                .unwrap_or_default();
+            aug_names.sort();
+            input.module_augmentations.push((module.clone(), aug_names));
+        }
+    }
+
+    // 6. Exported file-local symbols
+    if let Some(file_locals) = program.file_locals.get(file_idx) {
+        let mut exported_locals: Vec<_> = file_locals
+            .iter()
+            .filter(|(_, sym_id)| program.symbols.get(**sym_id).is_some_and(|s| s.is_exported))
+            .collect();
+        exported_locals.sort_by_key(|(name, _)| *name);
+
+        for (name, sym_id) in exported_locals {
+            if let Some(symbol) = program.symbols.get(*sym_id) {
+                input
+                    .exported_locals
+                    .push((name.clone(), symbol.flags, symbol.is_type_only));
+            }
+        }
+    }
+
+    input
 }
 
 pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
@@ -513,420 +583,6 @@ pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
         .as_ref()
         .to_ascii_lowercase()
         .contains("@ts-nocheck")
-}
-
-pub(super) fn is_exported_symbol(symbols: &tsz::binder::SymbolArena, sym_id: SymbolId) -> bool {
-    let Some(symbol) = symbols.get(sym_id) else {
-        return false;
-    };
-    symbol.is_exported || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0
-}
-
-pub(super) fn collect_export_signatures(
-    file: &BoundFile,
-    checker: &mut CheckerState,
-    formatter: &mut TypeFormatter,
-    signatures: &mut Vec<String>,
-) {
-    let arena = &file.arena;
-    let Some(source) = arena.get_source_file_at(file.source_file) else {
-        return;
-    };
-
-    for &stmt_idx in &source.statements.nodes {
-        let Some(stmt) = arena.get(stmt_idx) else {
-            continue;
-        };
-
-        if let Some(export_decl) = arena.get_export_decl(stmt) {
-            if export_decl.is_default_export {
-                if let Some(signature) =
-                    export_default_signature(export_decl.export_clause, checker, formatter)
-                {
-                    signatures.push(signature);
-                }
-                continue;
-            }
-
-            if export_decl.module_specifier.is_none() {
-                if export_decl.export_clause.is_some() {
-                    let clause_node = export_decl.export_clause;
-                    if arena.get_named_imports_at(clause_node).is_some() {
-                        collect_local_named_export_signatures(
-                            arena,
-                            file.source_file,
-                            clause_node,
-                            checker,
-                            formatter,
-                            export_type_prefix(export_decl.is_type_only),
-                            signatures,
-                        );
-                    } else {
-                        collect_exported_declaration_signatures(
-                            arena,
-                            clause_node,
-                            checker,
-                            formatter,
-                            export_type_prefix(export_decl.is_type_only),
-                            signatures,
-                        );
-                    }
-                }
-                continue;
-            }
-
-            let module_spec = arena
-                .get_literal_text(export_decl.module_specifier)
-                .unwrap_or("")
-                .to_string();
-            if export_decl.export_clause.is_none() {
-                signatures.push(format!(
-                    "{}*|{}",
-                    export_type_prefix(export_decl.is_type_only),
-                    module_spec
-                ));
-                continue;
-            }
-
-            let clause_node = export_decl.export_clause;
-            if let Some(named) = arena.get_named_imports_at(clause_node) {
-                let mut specifiers = Vec::new();
-                for &spec_idx in &named.elements.nodes {
-                    let Some(spec) = arena.get_specifier_at(spec_idx) else {
-                        continue;
-                    };
-                    let name = arena.get_identifier_text(spec.name).unwrap_or("");
-                    if spec.property_name.is_none() {
-                        specifiers.push(name.to_string());
-                    } else {
-                        let property = arena.get_identifier_text(spec.property_name).unwrap_or("");
-                        specifiers.push(format!("{property} as {name}"));
-                    }
-                }
-                specifiers.sort();
-                signatures.push(format!(
-                    "{}{{{}}}|{}",
-                    export_type_prefix(export_decl.is_type_only),
-                    specifiers.join(","),
-                    module_spec
-                ));
-            } else if let Some(name) = arena.get_identifier_text(clause_node) {
-                signatures.push(format!(
-                    "{}* as {}|{}",
-                    export_type_prefix(export_decl.is_type_only),
-                    name,
-                    module_spec
-                ));
-            }
-
-            continue;
-        }
-
-        if let Some(export_assignment) = arena.get_export_assignment(stmt)
-            && export_assignment.expression.is_some()
-        {
-            let type_id = checker.get_type_of_node(export_assignment.expression);
-            let type_str = formatter.format(type_id);
-            signatures.push(format!("export=:{type_str}"));
-        }
-    }
-}
-
-fn collect_local_named_export_signatures(
-    arena: &NodeArena,
-    source_file: NodeIndex,
-    named_idx: NodeIndex,
-    checker: &mut CheckerState,
-    formatter: &mut TypeFormatter,
-    type_prefix: &str,
-    signatures: &mut Vec<String>,
-) {
-    let Some(named) = arena.get_named_imports_at(named_idx) else {
-        return;
-    };
-
-    for &spec_idx in &named.elements.nodes {
-        let Some(spec) = arena.get_specifier_at(spec_idx) else {
-            continue;
-        };
-        let exported_name = if spec.name.is_some() {
-            arena.get_identifier_text(spec.name).unwrap_or("")
-        } else {
-            arena.get_identifier_text(spec.property_name).unwrap_or("")
-        };
-        if exported_name.is_empty() {
-            continue;
-        }
-        let local_name = if spec.property_name.is_some() {
-            arena.get_identifier_text(spec.property_name).unwrap_or("")
-        } else {
-            exported_name
-        };
-        let type_id = find_local_declaration(arena, source_file, local_name)
-            .map_or(TypeId::ANY, |decl_idx| checker.get_type_of_node(decl_idx));
-        let type_str = formatter.format(type_id);
-        signatures.push(format!("{type_prefix}{exported_name}:{type_str}"));
-    }
-}
-
-fn collect_exported_declaration_signatures(
-    arena: &NodeArena,
-    decl_idx: NodeIndex,
-    checker: &mut CheckerState,
-    formatter: &mut TypeFormatter,
-    type_prefix: &str,
-    signatures: &mut Vec<String>,
-) {
-    let Some(node) = arena.get(decl_idx) else {
-        return;
-    };
-
-    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-        if let Some(var_stmt) = arena.get_variable(node) {
-            for &list_idx in &var_stmt.declarations.nodes {
-                collect_exported_declaration_signatures(
-                    arena,
-                    list_idx,
-                    checker,
-                    formatter,
-                    type_prefix,
-                    signatures,
-                );
-            }
-        }
-        return;
-    }
-
-    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-        if let Some(list) = arena.get_variable(node) {
-            for &decl_idx in &list.declarations.nodes {
-                collect_exported_declaration_signatures(
-                    arena,
-                    decl_idx,
-                    checker,
-                    formatter,
-                    type_prefix,
-                    signatures,
-                );
-            }
-        }
-        return;
-    }
-
-    if let Some(var_decl) = arena.get_variable_declaration(node) {
-        if let Some(name) = arena.get_identifier_text(var_decl.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(func) = arena.get_function(node) {
-        if let Some(name) = arena.get_identifier_text(func.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(class) = arena.get_class(node) {
-        if let Some(name) = arena.get_identifier_text(class.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(interface) = arena.get_interface(node) {
-        if let Some(name) = arena.get_identifier_text(interface.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(type_alias) = arena.get_type_alias(node) {
-        if let Some(name) = arena.get_identifier_text(type_alias.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(enum_decl) = arena.get_enum(node) {
-        if let Some(name) = arena.get_identifier_text(enum_decl.name) {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-        return;
-    }
-
-    if let Some(module_decl) = arena.get_module(node) {
-        let name = arena
-            .get_identifier_text(module_decl.name)
-            .or_else(|| arena.get_literal_text(module_decl.name));
-        if let Some(name) = name {
-            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
-        }
-    }
-}
-
-fn push_exported_signature(
-    name: &str,
-    decl_idx: NodeIndex,
-    checker: &mut CheckerState,
-    formatter: &mut TypeFormatter,
-    type_prefix: &str,
-    signatures: &mut Vec<String>,
-) {
-    let type_id = checker.get_type_of_node(decl_idx);
-    let type_str = formatter.format(type_id);
-    signatures.push(format!("{type_prefix}{name}:{type_str}"));
-}
-
-pub(super) fn find_local_declaration(
-    arena: &NodeArena,
-    source_file: NodeIndex,
-    name: &str,
-) -> Option<NodeIndex> {
-    let source = arena.get_source_file_at(source_file)?;
-
-    for &stmt_idx in &source.statements.nodes {
-        let Some(stmt) = arena.get(stmt_idx) else {
-            continue;
-        };
-        if let Some(export_decl) = arena.get_export_decl(stmt) {
-            if export_decl.export_clause.is_none() {
-                continue;
-            }
-            let clause_idx = export_decl.export_clause;
-            if arena.get_named_imports_at(clause_idx).is_some() {
-                continue;
-            }
-            if let Some(found) = find_local_declaration_in_node(arena, clause_idx, name) {
-                return Some(found);
-            }
-            continue;
-        }
-
-        if let Some(found) = find_local_declaration_in_node(arena, stmt_idx, name) {
-            return Some(found);
-        }
-    }
-
-    None
-}
-
-fn find_local_declaration_in_node(
-    arena: &NodeArena,
-    node_idx: NodeIndex,
-    name: &str,
-) -> Option<NodeIndex> {
-    let node = arena.get(node_idx)?;
-
-    if let Some(var_decl) = arena.get_variable_declaration(node) {
-        if let Some(decl_name) = arena.get_identifier_text(var_decl.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-        if let Some(var_stmt) = arena.get_variable(node) {
-            for &list_idx in &var_stmt.declarations.nodes {
-                if let Some(found) = find_local_declaration_in_node(arena, list_idx, name) {
-                    return Some(found);
-                }
-            }
-        }
-        return None;
-    }
-
-    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-        if let Some(list) = arena.get_variable(node) {
-            for &decl_idx in &list.declarations.nodes {
-                if let Some(found) = find_local_declaration_in_node(arena, decl_idx, name) {
-                    return Some(found);
-                }
-            }
-        }
-        return None;
-    }
-
-    if let Some(func) = arena.get_function(node) {
-        if let Some(decl_name) = arena.get_identifier_text(func.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if let Some(class) = arena.get_class(node) {
-        if let Some(decl_name) = arena.get_identifier_text(class.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if let Some(interface) = arena.get_interface(node) {
-        if let Some(decl_name) = arena.get_identifier_text(interface.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if let Some(type_alias) = arena.get_type_alias(node) {
-        if let Some(decl_name) = arena.get_identifier_text(type_alias.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if let Some(enum_decl) = arena.get_enum(node) {
-        if let Some(decl_name) = arena.get_identifier_text(enum_decl.name)
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-        return None;
-    }
-
-    if let Some(module_decl) = arena.get_module(node) {
-        let decl_name = arena
-            .get_identifier_text(module_decl.name)
-            .or_else(|| arena.get_literal_text(module_decl.name));
-        if let Some(decl_name) = decl_name
-            && decl_name == name
-        {
-            return Some(node_idx);
-        }
-    }
-
-    None
-}
-
-fn export_default_signature(
-    export_clause: NodeIndex,
-    checker: &mut CheckerState,
-    formatter: &mut TypeFormatter,
-) -> Option<String> {
-    if export_clause.is_none() {
-        return None;
-    }
-    let type_id = if let Some(sym_id) = checker.ctx.binder.get_node_symbol(export_clause) {
-        checker.get_type_of_symbol(sym_id)
-    } else {
-        checker.get_type_of_node(export_clause)
-    };
-    let type_str = formatter.format(type_id);
-    Some(format!("default:{type_str}"))
-}
-
-pub(super) const fn export_type_prefix(is_type_only: bool) -> &'static str {
-    if is_type_only { "type:" } else { "" }
 }
 
 /// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.
