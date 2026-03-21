@@ -417,6 +417,10 @@ pub enum SemanticDefKind {
     Enum,
     /// Namespace or module: `namespace NS {}` or `module M {}`
     Namespace,
+    /// Function declaration: `function foo() {}`
+    Function,
+    /// Variable declaration: `const x = 1` or `let y: string`
+    Variable,
 }
 
 /// Binder-captured semantic identity for a top-level declaration.

@@ -104,8 +104,16 @@ impl<'a> CheckerContext<'a> {
             != 0
         {
             tsz_solver::def::DefKind::Namespace
+        } else if (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0 {
+            tsz_solver::def::DefKind::Function
+        } else if (symbol.flags
+            & (tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
+                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE))
+            != 0
+        {
+            tsz_solver::def::DefKind::Variable
         } else {
-            // Default to TypeAlias for other symbols
+            // Default to TypeAlias for remaining symbols (type parameters, etc.)
             tsz_solver::def::DefKind::TypeAlias
         };
 
@@ -550,6 +558,8 @@ impl<'a> CheckerContext<'a> {
                 tsz_binder::SemanticDefKind::Class => DefKind::Class,
                 tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
                 tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
+                tsz_binder::SemanticDefKind::Function => DefKind::Function,
+                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
             };
 
             // Use the SemanticDefEntry's self-contained data (name, file_id,
