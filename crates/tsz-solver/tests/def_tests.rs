@@ -612,3 +612,227 @@ fn test_find_def_by_shape_cleared() {
 
     assert_eq!(store.find_def_by_shape(&empty_shape), None);
 }
+
+// =============================================================================
+// File-based index tests
+// =============================================================================
+
+#[test]
+fn test_defs_by_file_empty() {
+    let store = DefinitionStore::new();
+    assert!(store.defs_by_file(42).is_empty());
+    assert_eq!(store.file_count(), 0);
+}
+
+#[test]
+fn test_defs_by_file_single_file() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info1 = DefinitionInfo::type_alias(
+        interner.intern_string("Foo"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info1.file_id = Some(10);
+    let id1 = store.register(info1);
+
+    let mut info2 = DefinitionInfo::interface(
+        interner.intern_string("Bar"),
+        vec![],
+        vec![],
+    );
+    info2.file_id = Some(10);
+    let id2 = store.register(info2);
+
+    let defs = store.defs_by_file(10);
+    assert_eq!(defs.len(), 2);
+    assert!(defs.contains(&id1));
+    assert!(defs.contains(&id2));
+    assert_eq!(store.file_count(), 1);
+}
+
+#[test]
+fn test_defs_by_file_multiple_files() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info_a = DefinitionInfo::type_alias(
+        interner.intern_string("A"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info_a.file_id = Some(1);
+    let id_a = store.register(info_a);
+
+    let mut info_b = DefinitionInfo::type_alias(
+        interner.intern_string("B"),
+        vec![],
+        TypeId::STRING,
+    );
+    info_b.file_id = Some(2);
+    let id_b = store.register(info_b);
+
+    assert_eq!(store.defs_by_file(1), vec![id_a]);
+    assert_eq!(store.defs_by_file(2), vec![id_b]);
+    assert_eq!(store.file_count(), 2);
+}
+
+#[test]
+fn test_defs_by_file_no_file_id() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Definitions without file_id should not appear in file index.
+    let info = DefinitionInfo::type_alias(
+        interner.intern_string("Orphan"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    store.register(info);
+
+    assert_eq!(store.file_count(), 0);
+}
+
+#[test]
+fn test_invalidate_file_removes_definitions() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info = DefinitionInfo::type_alias(
+        interner.intern_string("Foo"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info.file_id = Some(5);
+    info.symbol_id = Some(100);
+    let def_id = store.register(info);
+
+    // Register symbol mapping so we can verify cleanup.
+    store.register_symbol_mapping(100, 5, def_id);
+
+    assert!(store.contains(def_id));
+    assert_eq!(store.find_def_by_symbol(100), Some(def_id));
+    assert_eq!(store.lookup_by_symbol(100, 5), Some(def_id));
+
+    let invalidated = store.invalidate_file(5);
+    assert_eq!(invalidated, 1);
+
+    // Definition should be gone.
+    assert!(!store.contains(def_id));
+    assert!(store.defs_by_file(5).is_empty());
+    assert_eq!(store.file_count(), 0);
+
+    // Symbol indices should be cleaned up.
+    assert_eq!(store.find_def_by_symbol(100), None);
+    assert_eq!(store.lookup_by_symbol(100, 5), None);
+}
+
+#[test]
+fn test_invalidate_file_preserves_other_files() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info1 = DefinitionInfo::type_alias(
+        interner.intern_string("A"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info1.file_id = Some(1);
+    let id1 = store.register(info1);
+
+    let mut info2 = DefinitionInfo::type_alias(
+        interner.intern_string("B"),
+        vec![],
+        TypeId::STRING,
+    );
+    info2.file_id = Some(2);
+    let id2 = store.register(info2);
+
+    store.invalidate_file(1);
+
+    assert!(!store.contains(id1));
+    assert!(store.contains(id2));
+    assert_eq!(store.defs_by_file(2), vec![id2]);
+    assert_eq!(store.file_count(), 1);
+}
+
+#[test]
+fn test_invalidate_file_cleans_body_to_alias() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info = DefinitionInfo::type_alias(
+        interner.intern_string("Color"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info.file_id = Some(3);
+    store.register(info);
+
+    // body_to_alias should map NUMBER -> DefId.
+    assert!(store.find_type_alias_by_body(TypeId::NUMBER).is_some());
+
+    store.invalidate_file(3);
+
+    // After invalidation, the body_to_alias entry should be cleaned up.
+    assert!(store.find_type_alias_by_body(TypeId::NUMBER).is_none());
+}
+
+#[test]
+fn test_invalidate_file_idempotent() {
+    let store = DefinitionStore::new();
+
+    // Invalidating a non-existent file returns 0 and doesn't panic.
+    assert_eq!(store.invalidate_file(999), 0);
+    assert_eq!(store.invalidate_file(999), 0);
+}
+
+#[test]
+fn test_invalidate_file_cleans_shape_index() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let empty_shape = ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    };
+
+    let mut info = DefinitionInfo::interface(
+        interner.intern_string("Empty"),
+        vec![],
+        vec![],
+    );
+    info.file_id = Some(7);
+    store.register(info);
+
+    assert!(store.find_def_by_shape(&empty_shape).is_some());
+
+    store.invalidate_file(7);
+
+    assert!(store.find_def_by_shape(&empty_shape).is_none());
+}
+
+#[test]
+fn test_clear_resets_file_index() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info = DefinitionInfo::type_alias(
+        interner.intern_string("X"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info.file_id = Some(1);
+    store.register(info);
+
+    assert_eq!(store.file_count(), 1);
+
+    store.clear();
+
+    assert_eq!(store.file_count(), 0);
+    assert!(store.defs_by_file(1).is_empty());
+}

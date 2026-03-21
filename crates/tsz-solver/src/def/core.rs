@@ -414,6 +414,15 @@ pub struct DefinitionStore {
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
     body_to_alias: DashMap<TypeId, DefId>,
 
+    /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
+    ///
+    /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
+    /// Enables O(1) lookup of all definitions originating from a given file,
+    /// which is the foundation for incremental invalidation: when a file changes,
+    /// we can instantly find all `DefId`s that need to be refreshed without
+    /// scanning the entire definition store.
+    file_to_defs: DashMap<u32, Vec<DefId>>,
+
     /// Reverse index: `ObjectShape` hash -> `DefId` for shape-based lookups.
     ///
     /// Populated when `instance_shape` is set (via `register()` or
@@ -448,6 +457,7 @@ impl DefinitionStore {
             symbol_only_index: DashMap::new(),
             body_to_alias: DashMap::new(),
             shape_to_def: DashMap::new(),
+            file_to_defs: DashMap::new(),
         }
     }
 
@@ -498,6 +508,14 @@ impl DefinitionStore {
         if let Some(ref shape) = info.instance_shape {
             let hash = Self::hash_shape(shape);
             self.shape_to_def.entry(hash).or_insert(id);
+        }
+
+        // Populate file_to_defs index for per-file lookups.
+        if let Some(file_id) = info.file_id {
+            self.file_to_defs
+                .entry(file_id)
+                .or_insert_with(Vec::new)
+                .push(id);
         }
 
         self.definitions.insert(id, info);
@@ -619,6 +637,7 @@ impl DefinitionStore {
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
         self.shape_to_def.clear();
+        self.file_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -697,6 +716,105 @@ impl DefinitionStore {
     /// covering all registration paths.
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
         self.body_to_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Get all `DefId`s originating from the given file.
+    ///
+    /// Returns a clone of the `Vec<DefId>` for the file, or an empty `Vec` if
+    /// no definitions were registered with that `file_id`. This is an O(1)
+    /// lookup via the `file_to_defs` index.
+    ///
+    /// Used for incremental invalidation: when a file changes, the caller can
+    /// find all `DefId`s that need to be refreshed.
+    pub fn defs_by_file(&self, file_id: u32) -> Vec<DefId> {
+        self.file_to_defs
+            .get(&file_id)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Invalidate all definitions originating from the given file.
+    ///
+    /// Removes each `DefId` from the main definition store and all reverse
+    /// indices (`type_to_def`, `symbol_def_index`, `symbol_only_index`,
+    /// `body_to_alias`, `shape_to_def`). The `file_to_defs` entry itself is
+    /// also removed.
+    ///
+    /// After invalidation, the `DefId` values are "dangling" — any remaining
+    /// references to them (e.g., in `TypeData::Lazy(DefId)`) will fail to
+    /// resolve, which is the intended behavior for incremental re-checking:
+    /// the caller must re-bind and re-register the changed file's definitions.
+    ///
+    /// Returns the number of definitions invalidated.
+    pub fn invalidate_file(&self, file_id: u32) -> usize {
+        let def_ids = match self.file_to_defs.remove(&file_id) {
+            Some((_, ids)) => ids,
+            None => return 0,
+        };
+
+        let count = def_ids.len();
+        for def_id in &def_ids {
+            // Remove from the main store and capture the info for index cleanup.
+            if let Some((_, info)) = self.definitions.remove(def_id) {
+                // Clean up symbol indices.
+                if let Some(sym_id) = info.symbol_id {
+                    if let Some(fid) = info.file_id {
+                        self.symbol_def_index.remove(&(sym_id, fid));
+                    }
+                    // Only remove from symbol_only_index if it points to this DefId.
+                    if let Some(entry) = self.symbol_only_index.get(&sym_id) {
+                        if *entry == *def_id {
+                            drop(entry);
+                            self.symbol_only_index.remove(&sym_id);
+                        }
+                    }
+                }
+
+                // Clean up type_to_def (reverse scan is expensive, but invalidation
+                // is rare and bounded by per-file definition count).
+                self.type_to_def.retain(|_, v| *v != *def_id);
+
+                // Clean up body_to_alias.
+                if info.kind == DefKind::TypeAlias
+                    && info.type_params.is_empty()
+                    && let Some(body) = info.body
+                {
+                    if let Some(entry) = self.body_to_alias.get(&body) {
+                        if *entry == *def_id {
+                            drop(entry);
+                            self.body_to_alias.remove(&body);
+                        }
+                    }
+                }
+
+                // Clean up shape_to_def.
+                if let Some(ref shape) = info.instance_shape {
+                    let hash = Self::hash_shape(shape);
+                    if let Some(entry) = self.shape_to_def.get(&hash) {
+                        if *entry == *def_id {
+                            drop(entry);
+                            self.shape_to_def.remove(&hash);
+                        }
+                    }
+                }
+            }
+        }
+
+        trace!(
+            instance_id = self.instance_id,
+            file_id,
+            invalidated_count = count,
+            "DefinitionStore::invalidate_file"
+        );
+
+        count
+    }
+
+    /// Get the number of files that have definitions registered.
+    ///
+    /// Useful for diagnostics and testing.
+    pub fn file_count(&self) -> usize {
+        self.file_to_defs.len()
     }
 }
 
