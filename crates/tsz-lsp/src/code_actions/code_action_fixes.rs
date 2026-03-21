@@ -231,6 +231,12 @@ impl CodeFixRegistry {
                 vec![("fixReturnTypeInAsyncFunction", "fixReturnTypeInAsyncFunction", "Fix return type", "Fix all incorrect return types")]
             }
 
+            // === addMissingNewOperator ===
+            // Value of type '{0}' is not callable. Did you mean to include 'new'?
+            2348 => {
+                vec![("addMissingNewOperator", "addMissingNewOperator", "Add missing 'new' operator to call", "Add missing 'new' operator to all calls")]
+            }
+
             // === fixMissingCallParentheses ===
             // This condition will always return true since this function is always defined
             2774 => {
@@ -276,12 +282,6 @@ impl CodeFixRegistry {
             // Unreachable code detected.
             7027 => {
                 vec![("fixUnreachableCode", "fixUnreachableCode", "Remove unreachable code", "Remove all unreachable code")]
-            }
-
-            // === fixAddMissingNewOperator ===
-            // Value of type '{0}' is not callable. Did you mean to include 'new'?
-            2348 => {
-                vec![("fixAddMissingNewOperator", "fixAddMissingNewOperator", "Add missing 'new' operator", "Add all missing 'new' operators")]
             }
 
             // === fixCannotFindModule ===
