@@ -381,7 +381,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        let refresh_diag_start = self.ctx.diagnostics.len();
+                        let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                         let value_type =
                             self.get_type_of_node_with_request(prop.initializer, &property_request);
                         if initializer_is_function_like
@@ -400,7 +400,7 @@ impl<'a> CheckerState<'a> {
                             let spans = self.function_like_param_spans_for_node(prop.initializer);
                             self.clear_stale_function_like_implicit_any_diagnostics(
                                 &spans,
-                                refresh_diag_start,
+                                &pre_refresh_snap,
                             );
                         }
 
@@ -1087,7 +1087,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let method_diag_guard = DiagnosticSpeculationGuard::new(&self.ctx);
-                    let refresh_diag_start = method_diag_guard.checkpoint();
+                    let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
                         self.request_has_concrete_contextual_type(&method_request);
@@ -1095,7 +1095,7 @@ impl<'a> CheckerState<'a> {
                         let spans = self.function_like_param_spans_for_node(elem_idx);
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
-                            refresh_diag_start,
+                            &pre_refresh_snap,
                         );
                     }
 
@@ -1163,13 +1163,13 @@ impl<'a> CheckerState<'a> {
                         );
                         self.ctx.this_type_stack.push(refined_this_type);
                         let rerun_guard = DiagnosticSpeculationGuard::new(&self.ctx);
-                        let rerun_refresh_diag_start = rerun_guard.checkpoint();
+                        let rerun_pre_refresh_snap = self.ctx.snapshot_diagnostics();
                         let _ = self.get_type_of_function_impl(elem_idx, &method_request);
                         if has_concrete_method_context {
                             let spans = self.function_like_param_spans_for_node(elem_idx);
                             self.clear_stale_function_like_implicit_any_diagnostics(
                                 &spans,
-                                rerun_refresh_diag_start,
+                                &rerun_pre_refresh_snap,
                             );
                         }
                         self.ctx.this_type_stack.pop();
@@ -1314,13 +1314,13 @@ impl<'a> CheckerState<'a> {
                     let method_request = base_request.contextual_opt(
                         self.contextual_type_option_for_expression(computed_context_type),
                     );
-                    let refresh_diag_start = self.ctx.diagnostics.len();
+                    let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     if self.request_has_concrete_contextual_type(&method_request) {
                         let spans = self.function_like_param_spans_for_node(elem_idx);
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
-                            refresh_diag_start,
+                            &pre_refresh_snap,
                         );
                     }
 
