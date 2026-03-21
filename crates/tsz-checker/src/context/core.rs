@@ -212,13 +212,68 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
-        // Build the global file_locals index: name -> Vec<(file_idx, SymbolId)>
+        // If all 4 global indices are already pre-populated (e.g., from ProjectEnv),
+        // skip the O(N) binder scans entirely. This is the fast path for multi-file
+        // checking where ProjectEnv::build_global_indices was called once at the driver level.
+        let has_prebuilt_indices = self.global_file_locals_index.is_some()
+            && self.global_module_exports_index.is_some()
+            && self.global_module_augmentations_index.is_some()
+            && self.global_augmentation_targets_index.is_some();
+
+        if has_prebuilt_indices {
+            // Indices already set — just store the binders and handle remaining
+            // non-indexed data (declared_modules, expando) if needed.
+            if self.global_declared_modules.is_none() {
+                let mut dm = super::GlobalDeclaredModules::default();
+                for binder in binders.iter() {
+                    for (module_spec, _) in binder.module_exports.iter() {
+                        let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                        if normalized.contains('*') {
+                            dm.patterns.push(normalized.to_string());
+                        } else {
+                            dm.exact.insert(normalized.to_string());
+                        }
+                    }
+                    for name in binder
+                        .declared_modules
+                        .iter()
+                        .chain(binder.shorthand_ambient_modules.iter())
+                    {
+                        let normalized = name.trim_matches('"').trim_matches('\'');
+                        if normalized.contains('*') {
+                            dm.patterns.push(normalized.to_string());
+                        } else {
+                            dm.exact.insert(normalized.to_string());
+                        }
+                    }
+                }
+                dm.patterns.sort();
+                dm.patterns.dedup();
+                self.global_declared_modules = Some(Arc::new(dm));
+            }
+            if self.global_expando_index.is_none() {
+                let mut expando_index: FxHashMap<String, FxHashSet<String>> =
+                    FxHashMap::default();
+                for binder in binders.iter() {
+                    for (obj_key, props) in binder.expando_properties.iter() {
+                        expando_index
+                            .entry(obj_key.clone())
+                            .or_default()
+                            .extend(props.iter().cloned());
+                    }
+                }
+                self.global_expando_index = Some(Arc::new(expando_index));
+            }
+            self.all_binders = Some(binders);
+            return;
+        }
+
+        // Fallback: build all indices from scratch (legacy path for tests and
+        // callers that don't use ProjectEnv).
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        // Build the global module_exports index: (module_specifier, export_name) -> Vec<(file_idx, SymbolId)>
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();
 
-        // If declared modules were pre-populated from skeleton, skip building from binders.
         let has_skeleton_declared_modules = self.global_declared_modules.is_some();
         let mut declared_modules = if has_skeleton_declared_modules {
             None
@@ -240,8 +295,6 @@ impl<'a> CheckerContext<'a> {
                         .or_default()
                         .push((file_idx, sym_id));
                 }
-                // Also index the module_exports key itself as a declared module
-                // (only when not pre-populated from skeleton)
                 if let Some(ref mut dm) = declared_modules {
                     let normalized = module_spec.trim_matches('"').trim_matches('\'');
                     if normalized.contains('*') {
@@ -252,8 +305,6 @@ impl<'a> CheckerContext<'a> {
                 }
             }
 
-            // Index declared_modules and shorthand_ambient_modules
-            // (only when not pre-populated from skeleton)
             if let Some(ref mut dm) = declared_modules {
                 for name in binder
                     .declared_modules
@@ -270,8 +321,6 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Build the global expando properties index: obj_key -> {property_names}
-        // If pre-populated from skeleton, skip the binder scan.
         let has_skeleton_expando = self.global_expando_index.is_some();
         if !has_skeleton_expando {
             let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
@@ -286,18 +335,14 @@ impl<'a> CheckerContext<'a> {
             self.global_expando_index = Some(Arc::new(expando_index));
         }
 
-        // Set declared modules from binder scan if not already from skeleton
         if let Some(mut dm) = declared_modules {
-            // Deduplicate wildcard patterns
             dm.patterns.sort();
             dm.patterns.dedup();
             self.global_declared_modules = Some(Arc::new(dm));
         }
 
-        // Build the global module augmentations index: module_specifier -> Vec<(file_idx, ModuleAugmentation)>
         let mut module_augs_index: FxHashMap<String, Vec<(usize, tsz_binder::ModuleAugmentation)>> =
             FxHashMap::default();
-        // Build the global augmentation targets index: module_specifier -> Vec<(SymbolId, file_idx)>
         let mut aug_targets_index: FxHashMap<String, Vec<(tsz_binder::SymbolId, usize)>> =
             FxHashMap::default();
         for (file_idx, binder) in binders.iter().enumerate() {

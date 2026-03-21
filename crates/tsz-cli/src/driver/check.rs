@@ -382,13 +382,19 @@ pub(super) fn collect_diagnostics(
         .map(|skel| Arc::new(skel.expando_properties.clone()));
 
     // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
-    let project_env = tsz::checker::context::ProjectEnv {
+    // build_global_indices computes the 4 binder-derived indices once here so that
+    // per-file checker creation via apply_to skips the O(N) binder scans.
+    let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: lib_contexts.to_vec(),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
         skeleton_declared_modules,
         skeleton_expando_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
+        global_file_locals_index: None,
+        global_module_exports_index: None,
+        global_module_augmentations_index: None,
+        global_augmentation_targets_index: None,
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_errors: Arc::clone(&resolved_module_errors),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),
@@ -396,6 +402,7 @@ pub(super) fn collect_diagnostics(
         typescript_dom_replacement_globals,
         has_deprecation_diagnostics,
     };
+    project_env.build_global_indices();
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.

@@ -21,6 +21,10 @@ fn empty_project_env() -> ProjectEnv {
         skeleton_declared_modules: None,
         skeleton_expando_index: None,
         symbol_file_targets: Arc::new(vec![]),
+        global_file_locals_index: None,
+        global_module_exports_index: None,
+        global_module_augmentations_index: None,
+        global_augmentation_targets_index: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -132,4 +136,85 @@ fn apply_to_sets_deprecation_diagnostics() {
     env.apply_to(&mut checker.ctx);
 
     assert!(checker.ctx.skip_lib_type_resolution);
+}
+
+#[test]
+fn build_global_indices_populates_file_locals() {
+    // Create binders with file_locals entries.
+    let mut binder_a = BinderState::new();
+    binder_a
+        .file_locals
+        .set("Foo".to_string(), SymbolId(10));
+    let mut binder_b = BinderState::new();
+    binder_b
+        .file_locals
+        .set("Bar".to_string(), SymbolId(20));
+    binder_b
+        .file_locals
+        .set("Foo".to_string(), SymbolId(30));
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
+    env.build_global_indices();
+
+    let idx = env.global_file_locals_index.as_ref().unwrap();
+    let foo_entries = idx.get("Foo").unwrap();
+    assert_eq!(foo_entries.len(), 2);
+    assert!(foo_entries.contains(&(0, SymbolId(10))));
+    assert!(foo_entries.contains(&(1, SymbolId(30))));
+    let bar_entries = idx.get("Bar").unwrap();
+    assert_eq!(bar_entries.len(), 1);
+    assert!(bar_entries.contains(&(1, SymbolId(20))));
+}
+
+#[test]
+fn build_global_indices_skips_rebuild_in_set_all_binders() {
+    // After build_global_indices + apply_to, the pre-built indices should be
+    // used by the checker context (not rebuilt inside set_all_binders).
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut binder_a = BinderState::new();
+    binder_a
+        .file_locals
+        .set("TestSym".to_string(), SymbolId(42));
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(binder_a)]);
+    env.build_global_indices();
+
+    // The ProjectEnv now has pre-built indices.
+    assert!(env.global_file_locals_index.is_some());
+    assert!(env.global_module_exports_index.is_some());
+    assert!(env.global_module_augmentations_index.is_some());
+    assert!(env.global_augmentation_targets_index.is_some());
+
+    // apply_to should pass them through to the context.
+    env.apply_to(&mut checker.ctx);
+
+    let ctx_idx = checker.ctx.global_file_locals_index.as_ref().unwrap();
+    assert!(ctx_idx.get("TestSym").is_some());
+}
+
+#[test]
+fn build_global_indices_builds_declared_modules_when_no_skeleton() {
+    let mut binder = BinderState::new();
+    binder
+        .declared_modules
+        .insert("my-lib".to_string());
+    binder
+        .shorthand_ambient_modules
+        .insert("*.css".to_string());
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(binder)]);
+    env.build_global_indices();
+
+    // declared_modules should be built from binder data since no skeleton was set.
+    let dm = env.skeleton_declared_modules.as_ref().unwrap();
+    assert!(dm.exact.contains("my-lib"));
+    assert!(dm.patterns.contains(&"*.css".to_string()));
 }
