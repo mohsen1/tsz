@@ -4976,7 +4976,10 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_property_name_text(name_idx))
     }
 
-    fn resolved_computed_property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(super) fn resolved_computed_property_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
         let name_node = self.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return None;

@@ -1673,7 +1673,12 @@ impl<'a> DeclarationEmitter<'a> {
                                     interner, t,
                                 )
                             })
-                    }));
+                    }))
+            // If the computed name resolves to a known literal (e.g. const enum member),
+            // keep method syntax — the name is a valid property name in .d.ts
+            && self
+                .resolved_computed_property_name_text(method.name)
+                .is_none();
 
         if use_property_syntax {
             self.write(": ");

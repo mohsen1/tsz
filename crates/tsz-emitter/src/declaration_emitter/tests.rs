@@ -5434,3 +5434,29 @@ export class C {
         "Expected non-empty output for class with computed properties"
     );
 }
+
+#[test]
+fn test_const_enum_computed_method_keeps_method_syntax() {
+    // Computed method names referencing const enum members should use method
+    // syntax `[G.A](): void` not property syntax `[G.A]: () => void`, because
+    // const enum values are always literals (valid property names in .d.ts).
+    let output = emit_dts_with_binding(
+        r#"
+const enum G {
+    A = 0,
+    B = 1,
+}
+export class C {
+    [G.A]() { }
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](x: number) { }
+}
+"#,
+    );
+    assert!(
+        !output.contains("[G.A]: () =>"),
+        "Expected method syntax not property syntax for const enum computed method: {output}"
+    );
+}
