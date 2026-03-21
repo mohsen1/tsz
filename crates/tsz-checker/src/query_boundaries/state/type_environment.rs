@@ -74,6 +74,64 @@ pub(crate) fn is_union_or_intersection(db: &dyn TypeDatabase, type_id: TypeId) -
         || tsz_solver::type_queries::is_intersection_type(db, type_id)
 }
 
+pub(crate) use tsz_solver::type_queries::MappedSourceKind;
+
+/// Classify a mapped-type source for array/tuple preservation decisions.
+///
+/// The checker uses this to decide whether to delegate to the solver's
+/// tuple/array mapped evaluation or expand as a plain object.
+pub(crate) fn classify_mapped_source(db: &dyn TypeDatabase, source: TypeId) -> MappedSourceKind {
+    tsz_solver::type_queries::classify_mapped_source(db, source)
+}
+
+/// Check if a mapped type's `as` clause is identity-preserving.
+pub(crate) fn is_identity_name_mapping(
+    db: &dyn TypeDatabase,
+    mapped: &tsz_solver::MappedType,
+) -> bool {
+    tsz_solver::type_queries::is_identity_name_mapping(db, mapped)
+}
+
+/// Compute modifier values for a mapped-type property.
+pub(crate) fn compute_mapped_modifiers(
+    mapped: &tsz_solver::MappedType,
+    is_homomorphic: bool,
+    source_optional: bool,
+    source_readonly: bool,
+) -> (bool, bool) {
+    tsz_solver::type_queries::compute_mapped_modifiers(
+        mapped,
+        is_homomorphic,
+        source_optional,
+        source_readonly,
+    )
+}
+
+/// Collect source property info for a homomorphic mapped type.
+pub(crate) fn collect_homomorphic_source_properties(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+) -> rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> {
+    tsz_solver::type_queries::collect_homomorphic_source_properties(db, source)
+}
+
+/// Expand a mapped type with resolved finite keys into PropertyInfo list.
+pub(crate) fn expand_mapped_type_to_properties(
+    db: &dyn TypeDatabase,
+    mapped: &tsz_solver::MappedType,
+    string_keys: &[tsz_common::Atom],
+    source_props: &rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)>,
+    is_homomorphic: bool,
+) -> Vec<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::expand_mapped_type_to_properties(
+        db,
+        mapped,
+        string_keys,
+        source_props,
+        is_homomorphic,
+    )
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }
