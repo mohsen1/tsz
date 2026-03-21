@@ -6497,10 +6497,12 @@ impl<'a> DeclarationEmitter<'a> {
         let widened_enum_type = (has_initializer && keyword != "const")
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
-        let literal_initializer_text =
-            (keyword == "const" && !has_type_annotation && has_initializer)
-                .then(|| self.const_literal_initializer_text_deep(initializer))
-                .flatten();
+        let literal_initializer_text = (keyword == "const"
+            && !has_type_annotation
+            && has_initializer
+            && const_asserted_enum_member.is_none())
+        .then(|| self.const_literal_initializer_text_deep(initializer))
+        .flatten();
 
         // Determine if we should emit a literal initializer for const
         if let Some(literal_initializer_text) = literal_initializer_text {
