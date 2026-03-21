@@ -870,6 +870,14 @@ impl<'a> CheckerState<'a> {
 
         let span_request = request.read().normal_origin().contextual_opt(None);
 
+        // Preserve literal types for template span expressions so that
+        // `abc${0}abc` can resolve to the concrete string literal "abc0abc".
+        // In tsc, literals in expression position always keep their literal type;
+        // widening only happens at binding sites. We temporarily enable literal
+        // preservation here to match that behavior.
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+
         // Type-check each template span's expression and collect types + text parts
         let mut part_types = Vec::new();
         let mut texts = vec![head_text];
@@ -896,6 +904,9 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_default();
             texts.push(tail_text);
         }
+
+        // Restore previous literal preservation state
+        self.ctx.preserve_literal_types = prev_preserve;
 
         // Check if we're in a template literal context:
         // 1. Contextual type is/contains a template literal type or string literal type
