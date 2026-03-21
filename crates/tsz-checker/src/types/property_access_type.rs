@@ -7,6 +7,7 @@ use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
+use tsz_common::common::Visibility;
 use tsz_parser::parser::NodeIndex;
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
@@ -120,7 +121,27 @@ impl<'a> CheckerState<'a> {
                     | PropertyAccessResult::PossiblyNullOrUndefined {
                         property_type: Some(type_id),
                         ..
-                    } => return Some(type_id),
+                    } => {
+                        // Don't recover private or protected members from implemented
+                        // interfaces. When an interface extends a class with private
+                        // members, those members should only be accessible on classes
+                        // that actually extend that base class, not on any class that
+                        // merely implements the interface.
+                        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            interface_type_resolved,
+                        ) {
+                            let prop_atom = self.ctx.types.intern_string(property_name);
+                            if let Some(prop_info) =
+                                shape.properties.iter().find(|p| p.name == prop_atom)
+                            {
+                                if prop_info.visibility != Visibility::Public {
+                                    continue;
+                                }
+                            }
+                        }
+                        return Some(type_id);
+                    }
                     _ => {}
                 }
             }
