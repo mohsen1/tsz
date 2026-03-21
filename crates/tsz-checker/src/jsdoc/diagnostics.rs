@@ -217,6 +217,34 @@ impl<'a> CheckerState<'a> {
                             comment.pos + after_import as u32 + from_off as u32 + 4,
                             1,
                         );
+                    } else if !joined.is_empty() && !joined.contains("from") {
+                        // TS1005: @import clause without 'from' keyword, e.g.:
+                        //   @import x = require("types")  — should be: @import { x } from "types"
+                        //   @import Foo                    — missing 'from "module"'
+                        // Find the position after the import clause (first identifier)
+                        // where 'from' is expected.
+                        let rest_trimmed = rest_full.trim_start();
+                        let skip_ws = rest_full.len() - rest_trimmed.len();
+                        // Skip past the first identifier-like characters
+                        let clause_end = rest_trimmed
+                            .find(|c: char| {
+                                !c.is_alphanumeric()
+                                    && c != '_'
+                                    && c != '{'
+                                    && c != '}'
+                                    && c != '*'
+                                    && c != ' '
+                                    && c != ','
+                            })
+                            .unwrap_or(rest_trimmed.len());
+                        let error_pos =
+                            comment.pos + after_import as u32 + skip_ws as u32 + clause_end as u32;
+                        self.error_at_position(
+                            error_pos,
+                            1,
+                            "'from' expected.",
+                            crate::diagnostics::diagnostic_codes::EXPECTED,
+                        );
                     }
                     search_from = after_import;
                 }
