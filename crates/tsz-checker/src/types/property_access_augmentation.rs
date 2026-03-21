@@ -58,6 +58,7 @@ impl<'a> CheckerState<'a> {
         let all_arenas = self.ctx.all_arenas.clone();
         let all_binders = self.ctx.all_binders.clone();
         let lib_contexts = self.ctx.lib_contexts.clone();
+        let file_locals_idx = self.ctx.global_file_locals_index.clone();
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
             let arenas = all_arenas.as_ref()?;
             let binders = all_binders.as_ref()?;
@@ -123,8 +124,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
                     return Some(found_sym.0);
                 }
-                if let Some(all_binders) = all_binders.as_ref() {
-                    for binder in all_binders.iter() {
+                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
+                if let Some(idx) = file_locals_idx.as_ref() {
+                    if let Some(entries) = idx.get(ident_name) {
+                        if let Some(&(_, sym_id)) = entries.first() {
+                            return Some(sym_id.0);
+                        }
+                    }
+                } else if let Some(binders) = all_binders.as_ref() {
+                    for binder in binders.iter() {
                         if let Some(found_sym) = binder.file_locals.get(ident_name) {
                             return Some(found_sym.0);
                         }
@@ -151,9 +159,16 @@ impl<'a> CheckerState<'a> {
                 if is_compiler_managed_type(ident_name) {
                     return None;
                 }
+                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                 let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
-                    if let Some(all_binders) = all_binders.as_ref() {
-                        for binder in all_binders.iter() {
+                    if let Some(idx) = file_locals_idx.as_ref() {
+                        if let Some(entries) = idx.get(ident_name) {
+                            if let Some(&(_, sym_id)) = entries.first() {
+                                return Some(sym_id);
+                            }
+                        }
+                    } else if let Some(binders) = all_binders.as_ref() {
+                        for binder in binders.iter() {
                             if let Some(found_sym) = binder.file_locals.get(ident_name) {
                                 return Some(found_sym);
                             }
@@ -320,6 +335,7 @@ impl<'a> CheckerState<'a> {
         let all_arenas = self.ctx.all_arenas.clone();
         let all_binders = self.ctx.all_binders.clone();
         let lib_contexts = self.ctx.lib_contexts.clone();
+        let file_locals_idx = self.ctx.global_file_locals_index.clone();
 
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
             let arenas = all_arenas.as_ref()?;
@@ -388,8 +404,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
                     return Some(found_sym.0);
                 }
-                if let Some(all_binders) = all_binders.as_ref() {
-                    for binder in all_binders.iter() {
+                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
+                if let Some(idx) = file_locals_idx.as_ref() {
+                    if let Some(entries) = idx.get(ident_name) {
+                        if let Some(&(_, sym_id)) = entries.first() {
+                            return Some(sym_id.0);
+                        }
+                    }
+                } else if let Some(binders) = all_binders.as_ref() {
+                    for binder in binders.iter() {
                         if let Some(found_sym) = binder.file_locals.get(ident_name) {
                             return Some(found_sym.0);
                         }
@@ -417,9 +440,16 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
+                    // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                     let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
-                        if let Some(all_binders) = all_binders.as_ref() {
-                            for binder in all_binders.iter() {
+                        if let Some(idx) = file_locals_idx.as_ref() {
+                            if let Some(entries) = idx.get(ident_name) {
+                                if let Some(&(_, sym_id)) = entries.first() {
+                                    return Some(sym_id);
+                                }
+                            }
+                        } else if let Some(binders) = all_binders.as_ref() {
+                            for binder in binders.iter() {
                                 if let Some(found_sym) = binder.file_locals.get(ident_name) {
                                     return Some(found_sym);
                                 }

@@ -218,6 +218,17 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
+        // Build the global expando properties index: obj_key -> {property_names}
+        let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+        for binder in binders.iter() {
+            for (obj_key, props) in binder.expando_properties.iter() {
+                expando_index
+                    .entry(obj_key.clone())
+                    .or_default()
+                    .extend(props.iter().cloned());
+            }
+        }
+
         // Deduplicate wildcard patterns
         declared_modules.patterns.sort();
         declared_modules.patterns.dedup();
@@ -225,6 +236,7 @@ impl<'a> CheckerContext<'a> {
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.global_declared_modules = Some(Arc::new(declared_modules));
+        self.global_expando_index = Some(Arc::new(expando_index));
         self.all_binders = Some(binders);
     }
 

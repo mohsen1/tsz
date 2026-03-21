@@ -146,7 +146,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(all_binders) = &self.ctx.all_binders {
+        // Use global expando index for O(1) lookup instead of O(N) binder scan
+        if let Some(expando_idx) = &self.ctx.global_expando_index {
+            if expando_idx
+                .get(&obj_key)
+                .is_some_and(|props| props.contains(&prop_key))
+            {
+                return true;
+            }
+        } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if binder
                     .expando_properties

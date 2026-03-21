@@ -813,6 +813,11 @@ pub struct CheckerContext<'a> {
     /// Eliminates O(N*M) scans in `any_ambient_module_declared`.
     pub global_declared_modules: Option<Arc<GlobalDeclaredModules>>,
 
+    /// Pre-built global index: obj_key -> {property_names} merged from all binders'
+    /// `expando_properties`. Eliminates O(N) scans when checking whether an expando
+    /// property exists across any file (property_access_helpers, access computation).
+    pub global_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
