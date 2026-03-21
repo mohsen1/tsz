@@ -246,6 +246,15 @@ impl<'a> UsageAnalyzer<'a> {
                                 self.mark_symbol_used(sym_id, UsageKind::VALUE | UsageKind::TYPE);
                             }
                         }
+                        // Default export with expression: export default new A()
+                        // Unwrap new/call to find the constructor reference.
+                        k if k == syntax_kind_ext::NEW_EXPRESSION
+                            || k == syntax_kind_ext::CALL_EXPRESSION =>
+                        {
+                            let callee =
+                                self.unwrap_export_default_expression(export.export_clause);
+                            self.analyze_entity_name(callee);
+                        }
                         _ => {}
                     }
                 }
@@ -343,15 +352,33 @@ impl<'a> UsageAnalyzer<'a> {
         };
         // Mark the expression as used (could be a type or value reference)
         if export_assign.expression.is_some() {
+            let expr_idx = self.unwrap_export_default_expression(export_assign.expression);
             let old = self.in_value_pos;
             self.in_value_pos = true;
-            self.analyze_entity_name(export_assign.expression);
-            self.analyze_local_import_equals_dependency(export_assign.expression);
+            self.analyze_entity_name(expr_idx);
+            self.analyze_local_import_equals_dependency(expr_idx);
             self.in_value_pos = old;
             // Also type usage
-            self.analyze_entity_name(export_assign.expression);
-            self.analyze_local_import_equals_dependency(export_assign.expression);
+            self.analyze_entity_name(expr_idx);
+            self.analyze_local_import_equals_dependency(expr_idx);
         }
+    }
+
+    /// Unwrap `new X()` and `X()` expressions to find the constructor/callee
+    /// reference for dependency tracking in default exports.
+    fn unwrap_export_default_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return expr_idx;
+        };
+        // `export default new A()` → track `A`
+        if expr_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+        {
+            if let Some(call) = self.arena.get_call_expr(expr_node) {
+                return call.expression;
+            }
+        }
+        expr_idx
     }
 
     fn analyze_local_import_equals_dependency(&mut self, name_idx: NodeIndex) {
