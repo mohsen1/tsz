@@ -68,19 +68,39 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
-        self.should_skip_weak_union_error_with_hint(source, target, source_idx, None)
+        self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
     }
 
-    /// Like `should_skip_weak_union_error`, but accepts a pre-computed
-    /// weak-union-violation hint from a prior `RelationOutcome`. When the
-    /// hint is `Some(true)` the expensive `is_weak_union_violation` solver
-    /// call is elided.
+    /// Legacy entry point: accepts a pre-computed weak-union-violation hint.
+    /// Delegates to `should_skip_weak_union_error_with_outcome` which uses
+    /// the full `RelationOutcome` for both weak-union detection AND property
+    /// classification. When no outcome is available, builds one from the hint.
+    #[allow(dead_code)]
     fn should_skip_weak_union_error_with_hint(
         &mut self,
         source: TypeId,
         target: TypeId,
         source_idx: NodeIndex,
-        weak_union_hint: Option<bool>,
+        _weak_union_hint: Option<bool>,
+    ) -> bool {
+        // Route through the canonical outcome-based path.
+        self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
+    }
+
+    /// Like `should_skip_weak_union_error`, but uses a pre-computed
+    /// `RelationOutcome` from a prior boundary call to avoid redundant
+    /// property enumeration and compatibility checks.
+    ///
+    /// When `outcome` is `Some`, this uses:
+    /// - `outcome.weak_union_violation` instead of calling `is_weak_union_violation`
+    /// - `outcome.property_classification` instead of re-enumerating source/target
+    ///   properties and re-checking assignability
+    pub(crate) fn should_skip_weak_union_error_with_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        outcome: Option<&crate::query_boundaries::assignability::RelationOutcome>,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(source_idx) else {
             return false;
@@ -89,14 +109,36 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check for weak union violation — use the pre-computed hint when available
+        // Check for weak union violation — use the outcome when available
         // to avoid an extra solver round-trip.
-        let is_weak_union =
-            weak_union_hint.unwrap_or_else(|| self.is_weak_union_violation(source, target));
+        let is_weak_union = outcome
+            .map(|o| o.weak_union_violation)
+            .unwrap_or_else(|| self.is_weak_union_violation(source, target));
         if is_weak_union {
             return true;
         }
 
+        // Use the canonical property classification from the RelationOutcome
+        // to decide if the failure is caused ONLY by excess properties.
+        // This replaces the previous checker-local property enumeration and
+        // per-property assignability re-checking.
+        if let Some(outcome) = outcome {
+            if let Some(ref cls) = outcome.property_classification {
+                // No excess properties → don't skip
+                if cls.excess_properties.is_empty() {
+                    return false;
+                }
+                // Has excess properties AND all matching ones are compatible
+                // AND trimmed source is structurally assignable → skip
+                if cls.all_matching_compatible && cls.trimmed_source_assignable {
+                    return true;
+                }
+                // Has incompatible matching properties → don't skip
+                return false;
+            }
+        }
+
+        // Fallback: no outcome available, use legacy path.
         // Check if there are excess properties.
         if !self.object_literal_has_excess_properties(source, target, source_idx) {
             return false;
@@ -109,19 +151,12 @@ impl<'a> CheckerState<'a> {
 
         let resolved_target = self.normalized_target_for_excess_properties(target);
         let Some(target_shape) = object_shape_for_type(self.ctx.types, resolved_target) else {
-            // If we can't extract a simple object shape from the target (e.g., it's
-            // an intersection with a deferred conditional type), we should NOT skip
-            // the assignability error. The solver already determined the types are
-            // incompatible, and inability to extract properties for excess-property
-            // analysis doesn't mean the assignment is valid.
             return false;
         };
 
         let source_props = source_shape.properties.as_slice();
         let target_props = target_shape.properties.as_slice();
 
-        // Check if any source property that exists in target has a wrong type.
-        // Also collect the matching properties so we can verify structural assignability.
         let mut matching_props = Vec::new();
         for source_prop in source_props {
             if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
@@ -136,21 +171,13 @@ impl<'a> CheckerState<'a> {
                     target_prop_type
                 };
 
-                let is_assignable =
-                    { self.is_assignable_to(source_prop_type, effective_target_type) };
-
-                if !is_assignable {
+                if !self.is_assignable_to(source_prop_type, effective_target_type) {
                     return false;
                 }
                 matching_props.push(source_prop.clone());
             }
         }
 
-        // All matching properties are compatible. Verify that the failure is truly
-        // caused by excess properties alone by checking if an object with only the
-        // matching properties would be assignable. If not, the failure is structural
-        // (e.g., target contains a deferred conditional type) and we should NOT
-        // suppress TS2322.
         let trimmed_source = self.ctx.types.object(matching_props);
         if !self.is_assignable_to(trimmed_source, target) {
             return false;
@@ -415,14 +442,14 @@ impl<'a> CheckerState<'a> {
         };
         let outcome = self.execute_relation_request(&request);
 
-        // Use the pre-computed weak_union_violation flag as a hint to avoid
-        // re-calling `analyze_assignability_failure` inside the skip logic.
+        // Use the pre-computed RelationOutcome to avoid re-enumerating
+        // properties and re-checking assignability inside the skip logic.
         if outcome.weak_union_violation
-            || self.should_skip_weak_union_error_with_hint(
+            || self.should_skip_weak_union_error_with_outcome(
                 source,
                 target,
                 source_idx,
-                Some(outcome.weak_union_violation),
+                Some(&outcome),
             )
         {
             return true;
@@ -577,12 +604,7 @@ impl<'a> CheckerState<'a> {
         };
         let outcome = self.execute_relation_request(&request);
 
-        if self.should_skip_weak_union_error_with_hint(
-            source,
-            target,
-            arg_idx,
-            Some(outcome.weak_union_violation),
-        ) {
+        if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
         }
         // Conditional/generic callback contexts can narrow argument callback parameter
@@ -815,50 +837,57 @@ impl<'a> CheckerState<'a> {
                 failure_reason: None,
             };
         }
-        let mut result = gate.analysis.unwrap_or(
+        // ExcessProperty failure suppression (deferred conditionals, non-EPC
+        // intersection members) is now handled by the boundary's
+        // `suppress_excess_property_failure_if_needed` in `execute_relation`.
+        // The raw failure reason here is from `check_assignable_gate_with_overrides`
+        // which doesn't go through that path, so we apply it here too.
+        let result = gate.analysis.unwrap_or(
             crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
                 failure_reason: None,
             },
         );
 
-        // When the failure is ExcessProperty but the target contains a deferred
-        // conditional type, the real issue is structural (the deferred conditional
-        // makes the assignment incompatible regardless of excess properties).
-        // tsc emits TS2322 rather than TS2353 in this case. Evaluate the target
-        // to check for conditional members and downgrade to a generic TS2322.
-        if matches!(
+        // Apply boundary-level excess property suppression to the raw failure reason.
+        let failure_reason = if matches!(
             &result.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::ExcessProperty { .. })
         ) {
+            // Convert to RelationFailure to check, then back. But simpler: just
+            // check the conditions directly using the boundary's logic.
             let evaluated_target = self.evaluate_type_for_assignability(target);
-            if tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target) {
-                result.failure_reason = None;
+            let should_suppress =
+                tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target)
+                    || [target, evaluated_target].into_iter().any(|candidate| {
+                        tsz_solver::type_queries::data::get_intersection_members(
+                            self.ctx.types,
+                            candidate,
+                        )
+                        .is_some_and(|members| {
+                            members.iter().any(|member| {
+                                let evaluated = self.evaluate_type_for_assignability(*member);
+                                tsz_solver::is_primitive_type(self.ctx.types, evaluated)
+                                    || tsz_solver::type_queries::is_type_parameter_like(
+                                        self.ctx.types,
+                                        evaluated,
+                                    )
+                            })
+                        })
+                    });
+            if should_suppress {
+                None
+            } else {
+                result.failure_reason
             }
-            let has_non_epc_intersection_member = [target, evaluated_target]
-                .into_iter()
-                .filter_map(|candidate| {
-                    tsz_solver::type_queries::data::get_intersection_members(
-                        self.ctx.types,
-                        candidate,
-                    )
-                })
-                .any(|members| {
-                    members.iter().any(|member| {
-                        let evaluated_member = self.evaluate_type_for_assignability(*member);
-                        tsz_solver::is_primitive_type(self.ctx.types, evaluated_member)
-                            || tsz_solver::type_queries::is_type_parameter_like(
-                                self.ctx.types,
-                                evaluated_member,
-                            )
-                    })
-                });
-            if has_non_epc_intersection_member {
-                result.failure_reason = None;
-            }
-        }
+        } else {
+            result.failure_reason
+        };
 
-        result
+        crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+            weak_union_violation: result.weak_union_violation,
+            failure_reason,
+        }
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
