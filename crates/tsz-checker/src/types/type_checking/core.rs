@@ -1233,13 +1233,13 @@ impl<'a> CheckerState<'a> {
             // strip `undefined` from the element type before recursing.
             // The default guarantees the value won't be undefined at runtime,
             // so nested property lookups should not see `| undefined`.
-            let nested_type = if element_data.initializer.is_some()
-                && self.ctx.strict_null_checks()
-                && element_type != TypeId::ANY
-                && element_type != TypeId::UNKNOWN
-                && element_type != TypeId::ERROR
+            let nested_type = if element_data.initializer.is_some() && self.ctx.strict_null_checks()
             {
-                tsz_solver::remove_undefined(self.ctx.types, element_type)
+                crate::query_boundaries::flow::narrow_destructuring_default(
+                    self.ctx.types,
+                    element_type,
+                    true,
+                )
             } else {
                 element_type
             };

@@ -211,7 +211,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let left_non_nullish = tsz_solver::remove_nullish(self.ctx.types, left_type);
+        let left_non_nullish =
+            crate::query_boundaries::flow::narrow_optional_chain(self.ctx.types, left_type);
         if left_non_nullish == TypeId::ERROR {
             return None;
         }

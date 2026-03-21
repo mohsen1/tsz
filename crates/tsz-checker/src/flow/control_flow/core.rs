@@ -1176,7 +1176,11 @@ impl<'a> FlowAnalyzer<'a> {
                                         })
                                     })
                                     .unwrap_or(initial_type);
-                                tsz_solver::remove_undefined(self.interner, declared_type)
+                                flow_boundary::narrow_destructuring_default(
+                                    self.interner.as_type_database(),
+                                    declared_type,
+                                    true,
+                                )
                             } else {
                                 current_type
                             }

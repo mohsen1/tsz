@@ -152,7 +152,11 @@ impl<'a> CheckerState<'a> {
                 t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
             }
             if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                t = tsz_solver::remove_undefined(self.ctx.types, t);
+                t = crate::query_boundaries::flow::narrow_destructuring_default(
+                    self.ctx.types,
+                    t,
+                    true,
+                );
             }
             return Some(t);
         }
@@ -173,7 +177,11 @@ impl<'a> CheckerState<'a> {
                     t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
                 }
                 if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                    t = tsz_solver::remove_undefined(self.ctx.types, t);
+                    t = crate::query_boundaries::flow::narrow_destructuring_default(
+                        self.ctx.types,
+                        t,
+                        true,
+                    );
                 }
                 return Some(t);
             }
@@ -250,7 +258,11 @@ impl<'a> CheckerState<'a> {
                     t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
                 }
                 if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                    t = tsz_solver::remove_undefined(self.ctx.types, t);
+                    t = crate::query_boundaries::flow::narrow_destructuring_default(
+                        self.ctx.types,
+                        t,
+                        true,
+                    );
                 }
                 return Some(t);
             }
@@ -277,7 +289,11 @@ impl<'a> CheckerState<'a> {
                 if !prop_types.is_empty() {
                     let mut t = tsz_solver::utils::union_or_single(self.ctx.types, prop_types);
                     if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                        t = tsz_solver::remove_undefined(self.ctx.types, t);
+                        t = crate::query_boundaries::flow::narrow_destructuring_default(
+                            self.ctx.types,
+                            t,
+                            true,
+                        );
                     }
                     return Some(t);
                 }
