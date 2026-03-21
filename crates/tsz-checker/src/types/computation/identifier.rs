@@ -1849,8 +1849,8 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         // Method calls that mutate: x.push(), x.splice(), etc.
-        if grand_node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            if let Some(call) = self.ctx.arena.get_call_expr(grand_node)
+        if grand_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(grand_node)
                 && call.expression == parent
             {
                 return matches!(
@@ -1868,18 +1868,15 @@ impl<'a> CheckerState<'a> {
                     )
                 );
             }
-        }
         // Element access assignments: x[0] = value
         if grand_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            if let Some(bin) = self.ctx.arena.get_binary_expr(grand_node)
+            && let Some(bin) = self.ctx.arena.get_binary_expr(grand_node)
                 && bin.operator_token == SyntaxKind::EqualsToken as u16
                 && bin.left == parent
             {
                 return true;
             }
-        }
         false
     }
 

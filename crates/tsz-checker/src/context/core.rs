@@ -103,7 +103,7 @@ impl<'a> CheckerContext<'a> {
     /// Set the count of actual lib files loaded (not including user files).
     /// This is used by `has_lib_loaded()` to correctly determine if standard library is available.
     /// Also updates the capabilities matrix `has_lib` flag.
-    pub fn set_actual_lib_file_count(&mut self, count: usize) {
+    pub const fn set_actual_lib_file_count(&mut self, count: usize) {
         self.actual_lib_file_count = count;
         // Update the precomputed capabilities matrix
         let has_lib = !self.compiler_options.no_lib && count > 0;

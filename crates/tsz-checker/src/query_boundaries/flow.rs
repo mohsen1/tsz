@@ -16,13 +16,13 @@
 //! - **Destructuring**: a binding pattern extracts a property/element from a
 //!   composite type.  The solver resolves the element type and optionally
 //!   removes `undefined` when a default value is present.
-//! - **CatchVariable**: the catch clause binds a variable typed as `any` or
+//! - **`CatchVariable`**: the catch clause binds a variable typed as `any` or
 //!   `unknown` depending on compiler options.
-//! - **OptionalChainNonNullish**: an optional chain (e.g. `a?.b`) was observed
+//! - **`OptionalChainNonNullish`**: an optional chain (e.g. `a?.b`) was observed
 //!   in a truthy branch, implying the base is non-nullish.
-//! - **ForOfElement**: a `for-of` loop destructures an iterable; the solver
+//! - **`ForOfElement`**: a `for-of` loop destructures an iterable; the solver
 //!   resolves the iterated element type.
-//! - **TruthyNarrow**: a value was used in a boolean context; remove nullish
+//! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
 //!   and other falsy constituents.
 
 use tsz_solver::{TypeDatabase, TypeId};
@@ -133,7 +133,7 @@ pub(crate) fn narrow_optional_chain(db: &dyn TypeDatabase, base_type: TypeId) ->
 }
 
 /// Resolve catch variable type through the boundary.
-pub(crate) fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
+pub(crate) const fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     if use_unknown {
         TypeId::UNKNOWN
     } else {

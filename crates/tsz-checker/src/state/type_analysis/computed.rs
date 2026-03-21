@@ -933,10 +933,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Class property declarations: resolve type from annotation or initializer.
-        if flags & symbol_flags::PROPERTY != 0 {
-            if let Some(node) = self.ctx.arena.get(value_decl) {
-                if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    if let Some(prop_decl) = self.ctx.arena.get_property_decl(node) {
+        if flags & symbol_flags::PROPERTY != 0
+            && let Some(node) = self.ctx.arena.get(value_decl)
+                && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    && let Some(prop_decl) = self.ctx.arena.get_property_decl(node) {
                         if prop_decl.type_annotation.is_some() {
                             let annotation_type =
                                 self.get_type_from_type_node(prop_decl.type_annotation);
@@ -950,9 +950,6 @@ impl<'a> CheckerState<'a> {
                             return (init_type, Vec::new());
                         }
                     }
-                }
-            }
-        }
 
         // Variable - get type from annotation or infer from initializer
         if flags & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
@@ -1392,8 +1389,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(surface) = self.resolve_js_export_surface_for_module(
                         &module_specifier,
                         Some(self.ctx.current_file_idx),
-                    ) {
-                        if surface.has_commonjs_exports {
+                    )
+                        && surface.has_commonjs_exports {
                             let display_name =
                                 self.imported_namespace_display_module_name(&module_specifier);
                             if let Some(type_id) =
@@ -1402,7 +1399,6 @@ impl<'a> CheckerState<'a> {
                                 return (type_id, Vec::new());
                             }
                         }
-                    }
                     self.emit_module_not_found_error(&module_specifier, value_decl);
                     return (TypeId::ANY, Vec::new());
                 }
