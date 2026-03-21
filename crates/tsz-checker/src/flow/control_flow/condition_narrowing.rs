@@ -1190,8 +1190,10 @@ impl<'a> FlowAnalyzer<'a> {
                     .binder
                     .resolve_identifier(self.arena, target)
                     .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
-                let typeof_base_type =
-                    flow_boundary::catch_variable_typeof_base(type_id, is_catch_var);
+                // For catch variables, `type_id` is already the catch base
+                // type (`any` or `unknown`), so we can use it directly as
+                // the typeof narrowing base.
+                let typeof_base_type = type_id;
                 return narrowing.narrow_type(
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),

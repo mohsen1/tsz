@@ -420,12 +420,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Callable source with properties vs Object target: when a callable type with
-        // properties is assigned to an object type, check property compatibility.
+        // Callable source vs Object target: when a callable type is assigned to an
+        // object type, check for missing properties to produce TS2741/TS2739 instead
+        // of generic TS2322.
+        //
+        // This applies when the callable has named properties (hybrid callable+object
+        // types) OR when it has construct signatures (class constructors like
+        // `typeof Foo`). Plain call-only callables (function expressions) get TS2322
+        // from the fallback path, matching tsc behavior.
         if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
             let s_callable = self.interner.callable_shape(s_callable_id);
-            if !s_callable.properties.is_empty()
+            let has_properties = !s_callable.properties.is_empty();
+            let is_constructor = !s_callable.construct_signatures.is_empty();
+            if (has_properties || is_constructor)
                 && let Some(t_shape_id) = object_shape_id(self.interner, resolved_target)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_target))
             {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 return self.explain_object_failure(
