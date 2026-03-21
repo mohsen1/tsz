@@ -1615,12 +1615,35 @@ impl BinderState {
                             }
 
                             if Self::is_assignment_operator(bin.operator_token) {
+                                // For destructuring defaults (LHS is a pattern),
+                                // bind RHS before LHS to match runtime eval order.
+                                let lhs_is_destructuring = bin.operator_token
+                                    == SyntaxKind::EqualsToken as u16
+                                    && arena.get(bin.left).is_some_and(|left_node| {
+                                        left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                            || left_node.kind
+                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                            || left_node.kind
+                                                == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                            || left_node.kind
+                                                == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    });
                                 stack.push(WorkItem::PostAssign(idx));
-                                if bin.right.is_some() {
-                                    stack.push(WorkItem::Visit(bin.right));
-                                }
-                                if bin.left.is_some() {
-                                    stack.push(WorkItem::Visit(bin.left));
+                                if lhs_is_destructuring {
+                                    // Stack is LIFO: push LHS last so it runs after RHS
+                                    if bin.left.is_some() {
+                                        stack.push(WorkItem::Visit(bin.left));
+                                    }
+                                    if bin.right.is_some() {
+                                        stack.push(WorkItem::Visit(bin.right));
+                                    }
+                                } else {
+                                    if bin.right.is_some() {
+                                        stack.push(WorkItem::Visit(bin.right));
+                                    }
+                                    if bin.left.is_some() {
+                                        stack.push(WorkItem::Visit(bin.left));
+                                    }
                                 }
                                 continue;
                             }
@@ -1689,8 +1712,27 @@ impl BinderState {
 
                 if Self::is_assignment_operator(bin.operator_token) {
                     self.record_flow(idx);
-                    self.bind_expression(arena, bin.left);
-                    self.bind_expression(arena, bin.right);
+                    // For destructuring assignments (LHS is array/object literal),
+                    // bind the RHS (source/default) before the LHS (pattern).
+                    // This matches tsc's bindDestructuringTargetFlow: at runtime,
+                    // the source/default is evaluated before the pattern is applied,
+                    // so flow-sensitive reads in the default must see pre-assignment
+                    // values. E.g., `[{ [(a = 1)]: b } = [9, a] as const] = []`
+                    // must evaluate `[9, a]` (reading `a = 0`) before `(a = 1)`.
+                    let lhs_is_destructuring = bin.operator_token == SyntaxKind::EqualsToken as u16
+                        && arena.get(bin.left).is_some_and(|left_node| {
+                            left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || left_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        });
+                    if lhs_is_destructuring {
+                        self.bind_expression(arena, bin.right);
+                        self.bind_expression(arena, bin.left);
+                    } else {
+                        self.bind_expression(arena, bin.left);
+                        self.bind_expression(arena, bin.right);
+                    }
                     if !Self::is_inside_class_member_computed_property_name(arena, idx) {
                         let flow = self.create_flow_assignment(idx);
                         self.current_flow = flow;
