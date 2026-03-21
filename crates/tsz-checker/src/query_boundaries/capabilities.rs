@@ -1,9 +1,3 @@
-    dead_code,
-    clippy::missing_const_for_fn,
-    clippy::match_same_arms,
-    clippy::doc_markdown
-)]
-
 //! Environment capabilities boundary for lib/config/feature-gate diagnostics.
 //!
 //! This module centralizes all environment and capability queries that determine
