@@ -148,9 +148,9 @@ var c = { value: "hello" };
 // TS8039: @template after @typedef/@callback
 // =============================================================================
 
-/// @template after @typedef should emit TS8039.
+/// tsc 6.0: @template after @typedef is valid (defines typedef type params).
 #[test]
-fn template_after_typedef_emits_ts8039() {
+fn template_after_typedef_no_ts8039() {
     let codes = check_js(
         r#"
 /**
@@ -160,15 +160,15 @@ fn template_after_typedef_emits_ts8039() {
 "#,
     );
     assert!(
-        codes.contains(&8039),
-        "Expected TS8039 for @template after @typedef, got: {:?}",
+        !codes.contains(&8039),
+        "tsc 6.0 allows @template after @typedef, should not emit TS8039, got: {:?}",
         codes
     );
 }
 
-/// @template after @callback should emit TS8039.
+/// tsc 6.0: @template after @callback is valid.
 #[test]
-fn template_after_callback_emits_ts8039() {
+fn template_after_callback_no_ts8039() {
     let codes = check_js(
         r#"
 /**
@@ -179,8 +179,8 @@ fn template_after_callback_emits_ts8039() {
 "#,
     );
     assert!(
-        codes.contains(&8039),
-        "Expected TS8039 for @template after @callback, got: {:?}",
+        !codes.contains(&8039),
+        "tsc 6.0 allows @template after @callback, should not emit TS8039, got: {:?}",
         codes
     );
 }
