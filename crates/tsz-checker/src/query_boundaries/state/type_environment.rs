@@ -190,6 +190,64 @@ pub(crate) fn extract_string_literal_keys(
     tsz_solver::type_queries::extract_string_literal_keys(db, type_id)
 }
 
+/// Check if a type is a primitive (string, number, boolean, bigint, etc.).
+pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_primitive_type(db, type_id)
+}
+
+/// Check if a type contains `this` type references.
+pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::contains_this_type(db, type_id)
+}
+
+/// Substitute `this` type references in a type with a concrete type.
+pub(crate) fn substitute_this_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    tsz_solver::substitute_this_type(db, type_id, this_type)
+}
+
+/// Get the intersection members of a type (if it is an intersection).
+pub(crate) fn get_intersection_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_intersection_members(db, type_id)
+}
+
+/// Check if a type is a discriminated object intersection.
+pub(crate) fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_discriminated_object_intersection(db, type_id)
+}
+
+/// Check if a type contains infer types.
+pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::contains_infer_types(db, type_id)
+}
+
+/// Check if a type contains infer types (TypeDatabase-taking variant).
+pub(crate) fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_infer_types_db(db, type_id)
+}
+
+/// Get the callable shape id from a type.
+pub(crate) fn callable_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::CallableShapeId> {
+    tsz_solver::callable_shape_id(db, type_id)
+}
+
+/// Check if a type is a type query symbol reference.
+pub(crate) fn type_query_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::SymbolRef> {
+    tsz_solver::type_query_symbol(db, type_id)
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }
