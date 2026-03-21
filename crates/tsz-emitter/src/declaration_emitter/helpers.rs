@@ -2411,6 +2411,18 @@ impl<'a> DeclarationEmitter<'a> {
             || (self.source_is_js_file && is_exported))
     }
 
+    /// Whether an exported declaration should emit its `export` keyword.
+    ///
+    /// Inside an ambient (declare) namespace, `export` is only emitted when
+    /// the namespace body has a mix of exported and non-exported members
+    /// (i.e., a "scope marker" is needed).  Inside a non-ambient namespace,
+    /// `export` is always significant and must be preserved.
+    pub(crate) const fn should_emit_export_keyword(&self) -> bool {
+        !self.inside_declare_namespace
+            || self.ambient_module_has_scope_marker
+            || self.inside_non_ambient_namespace
+    }
+
     pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {
         if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
             return false;
