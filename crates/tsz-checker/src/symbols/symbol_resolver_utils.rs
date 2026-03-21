@@ -672,11 +672,9 @@ impl<'a> CheckerState<'a> {
         let left_sym = match self.resolve_qualified_symbol(qn.left) {
             Some(sym) => sym,
             None => {
-                // If left resolution failed and left is itself a qualified name,
-                // recurse to report the error at the correct intermediate level.
-                // e.g. for `globals.toString.Blah`, when `globals.toString` fails
-                // to resolve, recurse into `globals.toString` to find that
-                // `toString` is not an exported member of `globals`.
+                // The left side couldn't be fully resolved. For nested qualified names
+                // like X.Y.Z where Y doesn't exist in X, the resolution of X.Y fails.
+                // Recursively check if we can report TS2694 on the left sub-expression.
                 return self.report_type_query_missing_member(qn.left);
             }
         };
@@ -959,7 +957,6 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_SPECIFIER
-                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                 | syntax_kind_ext::CONSTRUCTOR
                 | syntax_kind_ext::TYPE_PARAMETER
                 | syntax_kind_ext::PARAMETER => {
