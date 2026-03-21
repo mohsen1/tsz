@@ -138,52 +138,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Fallback: no outcome available, use legacy path.
-        // Check if there are excess properties.
-        if !self.object_literal_has_excess_properties(source, target, source_idx) {
-            return false;
-        }
-
-        // There are excess properties. Check if all matching properties have compatible types.
-        let Some(source_shape) = object_shape_for_type(self.ctx.types, source) else {
-            return true;
-        };
-
-        let resolved_target = self.normalized_target_for_excess_properties(target);
-        let Some(target_shape) = object_shape_for_type(self.ctx.types, resolved_target) else {
-            return false;
-        };
-
-        let source_props = source_shape.properties.as_slice();
-        let target_props = target_shape.properties.as_slice();
-
-        let mut matching_props = Vec::new();
-        for source_prop in source_props {
-            if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
-                let source_prop_type = source_prop.type_id;
-                let target_prop_type = target_prop.type_id;
-
-                let effective_target_type = if target_prop.optional {
-                    self.ctx
-                        .types
-                        .union(vec![target_prop_type, TypeId::UNDEFINED])
-                } else {
-                    target_prop_type
-                };
-
-                if !self.is_assignable_to(source_prop_type, effective_target_type) {
-                    return false;
-                }
-                matching_props.push(source_prop.clone());
+        // No pre-computed outcome available. Build one through the canonical
+        // boundary so we never fall back to checker-local property enumeration.
+        use crate::query_boundaries::assignability::RelationRequest;
+        let (ps, pt) = self.prepare_assignability_inputs(source, target);
+        let built_outcome = self.execute_relation_request(&RelationRequest::assign(ps, pt));
+        if let Some(ref cls) = built_outcome.property_classification {
+            if cls.excess_properties.is_empty() {
+                return false;
             }
-        }
-
-        let trimmed_source = self.ctx.types.object(matching_props);
-        if !self.is_assignable_to(trimmed_source, target) {
+            if cls.all_matching_compatible && cls.trimmed_source_assignable {
+                return true;
+            }
             return false;
         }
-
-        true
+        // No property classification available (e.g., non-object types) → don't skip
+        false
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.

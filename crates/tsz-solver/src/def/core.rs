@@ -482,7 +482,9 @@ impl DefinitionStore {
     /// `register_symbol_mapping`. This is an O(1) lookup that replaces the
     /// expensive multi-binder validation in `get_or_create_def_id`.
     pub fn lookup_by_symbol(&self, symbol_id: u32, file_idx: u32) -> Option<DefId> {
-        self.symbol_def_index.get(&(symbol_id, file_idx)).map(|r| *r)
+        self.symbol_def_index
+            .get(&(symbol_id, file_idx))
+            .map(|r| *r)
     }
 
     /// Get definition info by `DefId`.
