@@ -411,6 +411,21 @@ impl<'a> CheckerState<'a> {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
         }
 
+        // Function/arrow expressions: deep-widen including return types for TS2403 comparison.
+        // `var fn = (s: string) => 3` should have widened type `(s: string) => number`
+        // so that a subsequent `var fn: (s: string) => number` is compatible.
+        // The function type may retain literal return types when contextually typed
+        // (the contextual type suppresses return type widening in infer_return_type_from_body),
+        // but for TS2403 identity checking, the types must be widened.
+        // We use `widen_type_deep` which bypasses the fast path that skips Function types
+        // in the standard `widen_type`, ensuring the return type is widened.
+        if matches!(
+            init_node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+        ) {
+            return tsz_solver::widening::widen_type_deep(self.ctx.types, fallback_type);
+        }
+
         // Handle bare enum identifier: `var x = E`
         if init_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)

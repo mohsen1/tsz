@@ -17234,6 +17234,25 @@ fn test_chain_summary_deep_hierarchy_property_access() {
     );
 }
 
+/// TS2403: Arrow function return type widening for var redeclaration.
+/// `var fn = (s: string) => 3; var fn: (s: string) => number;` should NOT trigger TS2403
+/// because the literal return type `3` widens to `number` for mutable bindings.
+#[test]
+fn test_ts2403_arrow_return_type_widened() {
+    let source = r#"
+for (var fn1 = function (s: string) { return 42; }; ;) { }
+for (var fn1 = (s: string) => 3; ;) { }
+for (var fn1: (s: string) => number; ;) { }
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+    assert!(
+        ts2403.is_empty(),
+        "Should NOT emit TS2403 for arrow with literal return widened to number, got: {:?}",
+        ts2403
+    );
+}
+
 #[test]
 fn test_ts2403_false_positive_investigation() {
     // Test patterns that might cause false TS2403 in conformance tests
@@ -17399,6 +17418,13 @@ namespace M1 {
 namespace M2 {
     var s: number = 0;
     var n = s;
+    var n: number;
+}
+function fn() {
+    var s: boolean = false;
+    var n = s;
+    var n: boolean;
+}
     var n: number;
 }
 function fn() {

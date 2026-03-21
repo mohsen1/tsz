@@ -214,7 +214,6 @@ impl<'a> CheckerState<'a> {
     /// Enhanced to provide suggestions for similar names, import suggestions, and
     /// library change suggestions for ES2015+ types.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
-        
         use tsz_parser::parser::syntax_kind_ext;
 
         if self.should_suppress_unresolved_name_for_constructor_capture(name, idx) {

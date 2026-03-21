@@ -134,9 +134,10 @@ impl<'a> CheckerState<'a> {
                             let prop_atom = self.ctx.types.intern_string(property_name);
                             if let Some(prop_info) =
                                 shape.properties.iter().find(|p| p.name == prop_atom)
-                                && prop_info.visibility != Visibility::Public {
-                                    continue;
-                                }
+                                && prop_info.visibility != Visibility::Public
+                            {
+                                continue;
+                            }
                         }
                         return Some(type_id);
                     }

@@ -84,9 +84,10 @@ impl JsExportSurface {
         // Only tag with display name if we have named exports (namespace-like).
         // A bare direct export (module.exports = X) keeps the raw type display.
         if let Some(name) = display_name
-            && !self.named_exports.is_empty() {
-                checker.ctx.namespace_module_names.insert(type_id, name);
-            }
+            && !self.named_exports.is_empty()
+        {
+            checker.ctx.namespace_module_names.insert(type_id, name);
+        }
         Some(type_id)
     }
 }

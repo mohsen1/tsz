@@ -169,7 +169,10 @@ pub(crate) fn narrow_destructuring_default(
 ///   and returns it.  The caller emits TS1196 if the annotation is invalid.
 /// - If no annotation and `use_unknown` is true, returns `unknown`.
 /// - Otherwise returns `any`.
-pub(crate) const fn catch_variable_type(annotation_type: Option<TypeId>, use_unknown: bool) -> TypeId {
+pub(crate) const fn catch_variable_type(
+    annotation_type: Option<TypeId>,
+    use_unknown: bool,
+) -> TypeId {
     match annotation_type {
         Some(ty) => ty,
         None => resolve_catch_variable_type(use_unknown),
