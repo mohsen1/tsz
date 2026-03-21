@@ -726,10 +726,9 @@ fn jsdoc_comment_reindented_in_class_body() {
     );
 }
 
-/// When static class properties are lowered (moved outside the class body),
-/// their leading JSDoc comments should be reindented to the new (top-level) context.
+/// When static class properties are lowered to `static { this.p1 = ""; }` blocks
+/// inside the class body, their leading JSDoc comments should preserve class-level indent.
 #[test]
-#[ignore = "JSDoc reindent for lowered static field emits class-level indent instead of top-level"]
 fn jsdoc_comment_reindented_for_lowered_static_field() {
     let source = "class test {\n    /**\n     * p1 comment\n     */\n    static p1 = \"\";\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -740,10 +739,15 @@ fn jsdoc_comment_reindented_for_lowered_static_field() {
     printer.print(root);
     let output = printer.finish().code;
 
-    // The lowered static field is at top level, so JSDoc should have no extra indent
+    // The static field is lowered to a static block inside the class,
+    // so JSDoc should keep class-level indent (4 spaces)
     assert!(
-        output.contains("/**\n * p1 comment\n */"),
-        "JSDoc on lowered static field should be reindented to top level.\nOutput:\n{output}"
+        output.contains("/**\n     * p1 comment\n     */"),
+        "JSDoc on lowered static field should preserve class-level indent.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { this.p1 = \"\"; }"),
+        "Static field should be lowered to a static block.\nOutput:\n{output}"
     );
 }
 
