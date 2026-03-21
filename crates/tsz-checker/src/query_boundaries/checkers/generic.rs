@@ -23,3 +23,18 @@ pub(crate) fn index_access_components(
 ) -> Option<(TypeId, TypeId)> {
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
+
+/// Get the extends type and false type of a conditional type.
+///
+/// Returns `Some((extends_type, false_type))` if the type is a `Conditional`.
+/// Used for TS2344 constraint checking: for `Extract<T, C>` (i.e., `T extends C ? T : never`),
+/// the result is always a subtype of `C`, so if `C` satisfies the required constraint,
+/// the TS2344 check should be skipped.
+pub(crate) fn conditional_type_components(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    let cond_id = tsz_solver::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.get_conditional(cond_id);
+    Some((cond.extends_type, cond.false_type))
+}
