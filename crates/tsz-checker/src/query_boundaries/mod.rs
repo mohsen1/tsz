@@ -1,4 +1,5 @@
 pub(crate) mod assignability;
+pub(crate) mod capabilities;
 pub(crate) mod checkers;
 pub(crate) mod class;
 pub(crate) mod class_type;
