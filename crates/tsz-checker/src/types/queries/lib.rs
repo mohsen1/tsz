@@ -1608,12 +1608,13 @@ impl<'a> CheckerState<'a> {
                     let span = self.ctx.arena.get_template_span(span_node)?;
                     // Recursively evaluate the expression inside ${}
                     let expr_type = self.literal_type_from_initializer(span.expression)?;
-                    // Extract the string value from the literal type
-                    let expr_str = tsz_solver::type_queries::get_string_literal_value(
+                    // Stringify the literal type (handles string, number, bigint,
+                    // boolean, null, undefined — not just string literals)
+                    let expr_str = tsz_solver::type_queries::stringify_literal_type(
                         self.ctx.types,
                         expr_type,
                     )?;
-                    result.push_str(&self.ctx.types.resolve_atom(expr_str));
+                    result.push_str(&expr_str);
                     // Get the text after this expression (middle or tail)
                     let tail_text = self
                         .ctx
