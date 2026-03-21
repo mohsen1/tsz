@@ -347,6 +347,39 @@ impl<'a> CheckerState<'a> {
                                 .remove(&prop.initializer);
                             self.clear_type_cache_recursive(prop.initializer);
                         }
+                        // For function expression property initializers (not arrow functions),
+                        // push a synthetic `this` type so that `this` inside the function body
+                        // resolves to the object literal's type rather than `any`.
+                        // Arrow functions inherit `this` from the enclosing scope, so they
+                        // must NOT get a synthetic `this` push.
+                        let initializer_is_function_expression = self
+                            .ctx
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|init_node| {
+                                init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            });
+                        let mut pushed_prop_fn_this = false;
+                        if initializer_is_function_expression
+                            && marker_this_type.is_none()
+                            && self.current_this_type().is_none()
+                        {
+                            if let Some(ctx_type) = contextual_type {
+                                let ctx_type = self.evaluate_contextual_type(ctx_type);
+                                self.ctx.this_type_stack.push(ctx_type);
+                                pushed_prop_fn_this = true;
+                            } else {
+                                let synthetic_this_type = self
+                                    .build_object_literal_fn_property_synthetic_this_type(
+                                        &properties,
+                                        &obj_all_method_names,
+                                        &name,
+                                    );
+                                self.ctx.this_type_stack.push(synthetic_this_type);
+                                pushed_prop_fn_this = true;
+                            }
+                        }
+
                         let refresh_diag_start = self.ctx.diagnostics.len();
                         let value_type =
                             self.get_type_of_node_with_request(prop.initializer, &property_request);
@@ -369,6 +402,11 @@ impl<'a> CheckerState<'a> {
                                 refresh_diag_start,
                             );
                         }
+
+                        if pushed_prop_fn_this {
+                            self.ctx.this_type_stack.pop();
+                        }
+
                         value_type
                     };
 
