@@ -15,6 +15,7 @@
 
 extern crate self as tsz_checker;
 
+#[allow(clippy::type_complexity)]
 pub mod context;
 pub mod dispatch;
 mod dispatch_helpers;
