@@ -90,6 +90,8 @@ impl<'a> CheckerState<'a> {
             node.kind,
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
         )
     }
 

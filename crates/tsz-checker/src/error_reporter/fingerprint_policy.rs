@@ -361,11 +361,11 @@ impl<'a> CheckerState<'a> {
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,
-                ..
+                nested_reason,
             } => {
                 let source_str = self.format_type_diagnostic(*source_return);
                 let target_str = self.format_type_diagnostic(*target_return);
-                vec![
+                let mut items = vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
                         code: reason.diagnostic_code(),
@@ -387,7 +387,21 @@ impl<'a> CheckerState<'a> {
                             &[&source_str, &target_str],
                         ),
                     },
-                ]
+                ];
+                // Drill into nested reason to produce elaboration diagnostics
+                // (e.g. TS2741 "Property 'x' is missing..." when the return type
+                // mismatch is due to a missing property).
+                if let Some(nested) = nested_reason {
+                    if let Some(nested_related) = self.related_from_failure_reason(
+                        nested,
+                        *source_return,
+                        *target_return,
+                        anchor_idx,
+                    ) {
+                        items.extend(nested_related);
+                    }
+                }
+                items
             }
             SubtypeFailureReason::IndexSignatureMismatch {
                 index_kind,

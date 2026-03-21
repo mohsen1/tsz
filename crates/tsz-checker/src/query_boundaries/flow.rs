@@ -25,7 +25,7 @@
 //! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
 //!   and other falsy constituents.
 
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{TypeData, TypeDatabase, TypeId};
 
 /// Syntactic observation the checker extracts from flow analysis.
 ///
