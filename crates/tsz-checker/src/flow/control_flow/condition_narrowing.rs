@@ -1186,7 +1186,7 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(typeof_kind) = TypeofKind::parse(type_name) {
                 // Route catch-variable typeof base reset through the flow
                 // observation boundary (NORTH_STAR §3.3 / §22).
-                let is_catch_var = self
+                let _is_catch_var = self
                     .binder
                     .resolve_identifier(self.arena, target)
                     .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
