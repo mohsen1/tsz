@@ -779,10 +779,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
                 line.push_str(&format!(
                     "[{}: string]: {};",
                     param,
-                    nested.print_type(idx.value_type)
+                    nested.print_type(widened)
                 ));
                 lines.push(line);
             }
@@ -796,10 +797,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
                 line.push_str(&format!(
                     "[{}: number]: {};",
                     param,
-                    nested.print_type(idx.value_type)
+                    nested.print_type(widened)
                 ));
                 lines.push(line);
             }
@@ -885,10 +887,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
                 member.push_str(&format!(
                     "[{}: string]: {}",
                     param,
-                    self.print_type(idx.value_type)
+                    self.print_type(widened)
                 ));
                 members.push(member);
             }
@@ -901,10 +904,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
                 member.push_str(&format!(
                     "[{}: number]: {}",
                     param,
-                    self.print_type(idx.value_type)
+                    self.print_type(widened)
                 ));
                 members.push(member);
             }
