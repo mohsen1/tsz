@@ -528,6 +528,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Reset constructor and method overload tracking for this class
+        self.class_has_constructor_overloads = false;
+        self.method_names_with_overloads = rustc_hash::FxHashSet::default();
+
+        // Emit parameter properties from constructor first (before other members)
+        self.emit_parameter_properties(&class.members);
+
         // Emit `#private;` if any member has a private identifier name
         if self.class_has_private_identifier_member(&class.members) {
             self.write_indent();
@@ -536,7 +543,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for &member_idx in &class.members.nodes {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
+            let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
+            if self.writer.len() == before_member_len {
+                // Member didn't emit anything (e.g., skipped implementation overload).
+                // Rollback the speculatively emitted JSDoc comments.
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(mn) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(mn.pos, mn.end);
+                }
+            }
         }
 
         self.decrease_indent();
@@ -2048,6 +2070,7 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),
+                        k if k == SyntaxKind::OverrideKeyword as u16 => self.write("override "),
                         k if k == SyntaxKind::AsyncKeyword as u16 => {
                             // tsc strips `async` in .d.ts — the return type already
                             // encodes Promise<T>, so the modifier is redundant.
