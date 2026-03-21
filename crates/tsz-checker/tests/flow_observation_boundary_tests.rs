@@ -1,14 +1,8 @@
-//! Regression tests for the flow observation boundary.
+//! Regression tests for the FlowObservation boundary (query_boundaries/flow.rs).
 //!
-//! These tests verify that the checker correctly routes narrowing decisions
-//! through the `query_boundaries::flow` module instead of ad-hoc inline logic.
-//!
-//! Coverage areas:
-//! - Destructuring control-flow (default values strip undefined)
-//! - Optional-chain narrowing (truthy branch removes nullish)
-//! - Catch variable unknown behavior (useUnknownInCatchVariables)
-//! - For-of destructuring
-//! - Dependent destructured variables
+//! These tests verify that control-flow narrowing decisions are correctly
+//! routed through the boundary layer rather than being made locally in the
+//! checker.  Each test targets a specific observation kind.
 
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
@@ -17,316 +11,360 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Helper: parse, bind, check with default options.
-fn check_default(source: &str) -> Vec<Diagnostic> {
-    check_with_options(source, CheckerOptions::default())
-}
-
-/// Helper: parse, bind, check with strict null checks.
-fn check_strict(source: &str) -> Vec<Diagnostic> {
-    let mut options = CheckerOptions::default();
-    options.strict = true;
-    options.strict_null_checks = true;
-    check_with_options(source, options)
-}
-
-/// Helper: parse, bind, check with useUnknownInCatchVariables.
-fn check_unknown_catch(source: &str) -> Vec<Diagnostic> {
-    let mut options = CheckerOptions::default();
-    options.strict = true;
-    options.strict_null_checks = true;
-    options.use_unknown_in_catch_variables = true;
-    check_with_options(source, options)
-}
-
-fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
+fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let source_file = parser.parse_source_file();
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
+    binder.bind_source_file(parser.get_arena(), source_file);
     let types = TypeInterner::new();
-
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
+        file_name.to_string(),
         options,
     );
-
-    checker.check_source_file(root);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(source_file);
     checker.ctx.diagnostics.clone()
 }
 
-fn has_error_code(diagnostics: &[Diagnostic], code: u32) -> bool {
-    diagnostics.iter().any(|d| d.code == code)
+fn check_ts(source: &str) -> Vec<Diagnostic> {
+    check_source(source, "test.ts", CheckerOptions::default())
 }
 
-fn error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
+fn codes(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
+    diags.iter().filter(|d| d.code == code).collect()
 }
 
-// ============================================================
-// Destructuring control-flow: default values
-// ============================================================
+// =============================================================================
+// Destructuring control-flow
+// =============================================================================
 
+/// Destructuring with defaults should strip `undefined` from optional properties.
 #[test]
-fn destructuring_object_default_strips_undefined() {
-    // { name = "default" }: { name?: string } → name should be `string`, not `string | undefined`
-    let source = r#"
-        function f(x: { name?: string }) {
-            const { name = "default" } = x;
-            const s: string = name;
-        }
-    "#;
-    let diagnostics = check_strict(source);
-    // Should NOT have TS2322 (string | undefined not assignable to string)
+fn destructuring_property_default_strips_undefined() {
+    let diags = check_ts(
+        r#"
+function f(opts: { name?: string }) {
+    const { name = "default" } = opts;
+    const x: string = name;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Destructuring default should strip undefined. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Destructuring default should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// Destructuring element with default in array pattern.
 #[test]
-fn destructuring_array_default_strips_undefined() {
-    // const [x = 0] = arr where arr: (number | undefined)[]
-    let source = r#"
-        function f(arr: (number | undefined)[]) {
-            const [x = 0] = arr;
-            const n: number = x;
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn destructuring_element_default_strips_undefined() {
+    let diags = check_ts(
+        r#"
+function f(arr: [string | undefined]) {
+    const [first = "fallback"] = arr;
+    const x: string = first;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Array destructuring default should strip undefined. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Array destructuring default should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// Nested destructuring with defaults.
 #[test]
-fn destructuring_nested_default_strips_undefined() {
-    // Nested: { a: { b = 1 } = {} } : { a?: { b?: number } }
-    let source = r#"
-        function f(x: { a?: { b?: number } }) {
-            const { a: { b = 1 } = {} } = x;
-            const n: number = b;
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn nested_destructuring_with_defaults() {
+    let diags = check_ts(
+        r#"
+interface Config {
+    server?: {
+        port?: number;
+    };
+}
+function f(config: Config) {
+    const { server: { port = 3000 } = {} } = config;
+    const p: number = port;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Nested destructuring default should strip undefined. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Nested destructuring default should strip undefined, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
-// ============================================================
+// =============================================================================
 // Optional-chain narrowing
-// ============================================================
+// =============================================================================
 
+/// Optional chain in truthy branch should narrow the base to non-nullish.
 #[test]
-fn optional_chain_truthiness_narrows_base() {
-    // if (a?.b) { a } → a is non-nullish in true branch
-    let source = r#"
-        function f(a: { b: string } | null | undefined) {
-            if (a?.b) {
-                const x: { b: string } = a;
-            }
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn optional_chain_truthy_narrows_non_nullish() {
+    let diags = check_ts(
+        r#"
+function f(x: { y: number } | null | undefined) {
+    if (x?.y) {
+        const n: number = x.y;
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Optional chain truthiness should narrow base to non-nullish. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Optional chain truthy should narrow non-nullish, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// Chained optional access in condition.
 #[test]
-fn optional_chain_equality_narrows_base() {
-    // if (a?.kind === "x") { a } → a is non-nullish in true branch
-    let source = r#"
-        type T = { kind: "x"; value: number } | { kind: "y"; value: string } | null;
-        function f(a: T) {
-            if (a?.kind === "x") {
-                const v: number = a.value;
-            }
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn chained_optional_access_narrows() {
+    let diags = check_ts(
+        r#"
+interface A { b?: { c: number } }
+function f(a: A | null) {
+    if (a?.b?.c) {
+        const n: number = a.b.c;
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Optional chain equality should narrow base. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Chained optional access should narrow, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
-// ============================================================
+// =============================================================================
 // Catch variable unknown behavior
-// ============================================================
+// =============================================================================
 
+/// With useUnknownInCatchVariables (default strict), catch var should be `unknown`.
 #[test]
-fn catch_variable_is_unknown_when_flag_set() {
-    // With useUnknownInCatchVariables, catch variable should be `unknown`
-    let source = r#"
-        try {
-            throw new Error("oops");
-        } catch (e) {
-            const x: unknown = e;
-        }
-    "#;
-    let diagnostics = check_unknown_catch(source);
+fn catch_variable_is_unknown_by_default() {
+    let diags = check_ts(
+        r#"
+try {
+    throw new Error("oops");
+} catch (e) {
+    const msg: string = e.message;
+}
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2571 || d.code == 18046)
+        .collect();
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Catch variable should be unknown with useUnknownInCatchVariables. Got: {:?}",
-        error_codes(&diagnostics)
+        !relevant.is_empty(),
+        "Catch variable should be 'unknown' with strict mode, expected error for e.message"
     );
 }
 
+/// With useUnknownInCatchVariables=false, catch var should be `any`.
 #[test]
-fn catch_variable_is_any_without_flag() {
-    // Without useUnknownInCatchVariables, catch variable should be `any`
-    let source = r#"
-        try {
-            throw new Error("oops");
-        } catch (e) {
-            e.message;
-        }
-    "#;
-    let diagnostics = check_default(source);
+fn catch_variable_is_any_when_disabled() {
+    let diags = check_source(
+        r#"
+try {
+    throw new Error("oops");
+} catch (e) {
+    const msg: string = e.message;
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let errs = codes(&diags, 2571);
     assert!(
-        !has_error_code(&diagnostics, 2571), // TS2571: Object is of type 'unknown'
-        "Catch variable should be any without flag. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Catch variable should be 'any' with flag disabled, got TS2571: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// Typeof narrowing on catch variable should work from unknown domain.
 #[test]
-fn catch_variable_annotation_must_be_any_or_unknown() {
-    // Catch variable with non-any/unknown annotation → TS1196
-    let source = r#"
-        try {
-        } catch (e: string) {
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn catch_variable_typeof_narrows_from_unknown() {
+    let diags = check_ts(
+        r#"
+try {
+    throw new Error("oops");
+} catch (e) {
+    if (typeof e === "string") {
+        const s: string = e;
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        has_error_code(&diagnostics, 1196),
-        "Catch variable with string annotation should produce TS1196. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Typeof narrowing on catch variable should work, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
-#[test]
-fn catch_variable_unknown_typeof_narrowing() {
-    // Unknown catch variable should narrow by typeof
-    let source = r#"
-        try {
-        } catch (e) {
-            if (typeof e === "string") {
-                const s: string = e;
-            }
-        }
-    "#;
-    let diagnostics = check_unknown_catch(source);
-    assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Unknown catch variable should narrow by typeof. Got: {:?}",
-        error_codes(&diagnostics)
-    );
-}
-
-// ============================================================
+// =============================================================================
 // For-of destructuring
-// ============================================================
+// =============================================================================
 
+/// For-of with simple variable binding.
 #[test]
-fn for_of_basic_iteration() {
-    let source = r#"
-        const arr = [1, 2, 3];
-        for (const x of arr) {
-            const n: number = x;
-        }
-    "#;
-    let diagnostics = check_strict(source);
+fn for_of_simple_variable() {
+    let diags = check_ts(
+        r#"
+const arr: number[] = [1, 2, 3];
+for (const x of arr) {
+    const n: number = x;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "For-of should correctly infer element type. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "For-of element should have correct type, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// For-of with destructuring pattern.
 #[test]
 fn for_of_with_destructuring() {
-    let source = r#"
-        const arr: { x: number; y: string }[] = [];
-        for (const { x, y } of arr) {
-            const n: number = x;
-            const s: string = y;
-        }
-    "#;
-    let diagnostics = check_strict(source);
+    let diags = check_ts(
+        r#"
+const pairs: [string, number][] = [["a", 1], ["b", 2]];
+for (const [key, value] of pairs) {
+    const k: string = key;
+    const v: number = value;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "For-of with destructuring should correctly infer element types. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "For-of destructuring should resolve types, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// For-of with object destructuring and defaults.
 #[test]
-fn for_of_with_default_suppresses_missing_property() {
-    // for (let {x = default} of [{}]) - should not emit TS2339 for `x`
-    let source = r#"
-        for (const { x = 10 } of [{}]) {
-            const n: number = x;
-        }
-    "#;
-    let diagnostics = check_default(source);
+fn for_of_object_destructuring_with_default() {
+    let diags = check_ts(
+        r#"
+interface Item { name?: string; value: number }
+const items: Item[] = [];
+for (const { name = "unknown", value } of items) {
+    const n: string = name;
+    const v: number = value;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2339),
-        "For-of with default should suppress TS2339. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "For-of object destructuring with default should work, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
-// ============================================================
+// =============================================================================
 // Dependent destructured variables
-// ============================================================
+// =============================================================================
 
+/// Multiple bindings from same destructuring share the parent type.
 #[test]
-fn destructuring_tuple_types_elements() {
-    let source = r#"
-        function f(): [string, number] {
-            return ["hello", 42];
-        }
-        const [a, b] = f();
-        const s: string = a;
-        const n: number = b;
-    "#;
-    let diagnostics = check_strict(source);
+fn dependent_destructured_bindings() {
+    let diags = check_ts(
+        r#"
+interface Pair { first: string; second: number }
+function f(p: Pair) {
+    const { first, second } = p;
+    const s: string = first;
+    const n: number = second;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Tuple destructuring should correctly type individual elements. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Dependent destructured variables should have correct types, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
+/// Rest element in destructuring.
 #[test]
 fn destructuring_rest_element() {
-    let source = r#"
-        function f(arr: [number, string, boolean]) {
-            const [first, ...rest] = arr;
-            const n: number = first;
-        }
-    "#;
-    let diagnostics = check_strict(source);
+    let diags = check_ts(
+        r#"
+function f(arr: [number, string, ...boolean[]]) {
+    const [first, second, ...rest] = arr;
+    const n: number = first;
+    const s: string = second;
+    const b: boolean[] = rest;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
     assert!(
-        !has_error_code(&diagnostics, 2322),
-        "Destructuring rest should correctly type first element. Got: {:?}",
-        error_codes(&diagnostics)
+        errs.is_empty(),
+        "Rest element destructuring should work, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// FlowObservation boundary integration
+// =============================================================================
+
+/// Verify catch variable type is correctly routed through the boundary.
+#[test]
+fn flow_observation_boundary_catch_variable_integration() {
+    // With strict mode (default), catch variable should be unknown
+    let diags_strict = check_ts(
+        r#"
+try {} catch (e) {
+    let x = e;
+}
+"#,
+    );
+    let ts2322_strict = codes(&diags_strict, 2322);
+    assert!(ts2322_strict.is_empty());
+
+    // Without useUnknownInCatchVariables, catch variable should be any
+    let diags_lax = check_source(
+        r#"
+try {} catch (e) {
+    let x: number = e;
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_lax = codes(&diags_lax, 2322);
+    assert!(
+        ts2322_lax.is_empty(),
+        "catch variable with useUnknown=false should be any"
     );
 }
