@@ -382,6 +382,26 @@ pub struct DefinitionStore {
     /// backward compatibility and to avoid `DashMap` overhead on repeated lookups
     /// within the same context.
     symbol_def_index: DashMap<(u32, u32), DefId>,
+
+    /// Reverse index: `SymbolId` (raw u32) -> `DefId` (file-agnostic).
+    ///
+    /// Unlike `symbol_def_index` which uses the composite `(symbol_id, file_idx)` key,
+    /// this index is keyed by `symbol_id` alone. It maps to the *first* `DefId`
+    /// registered for that symbol. This serves the `TypeFormatter` use case where
+    /// only a `SymbolRef` (raw u32) is available and we need *any* matching `DefId`
+    /// to look up the definition name and type parameters.
+    ///
+    /// Replaces the O(N) linear scan in the previous `find_def_by_symbol`.
+    symbol_only_index: DashMap<u32, DefId>,
+
+    /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
+    ///
+    /// Populated by `set_body` when the definition is a `TypeAlias` with no type
+    /// parameters. Enables O(1) lookup in `find_type_alias_by_body`, replacing an
+    /// O(N) linear scan over all definitions. This is used by the `TypeFormatter`
+    /// and error reporters to display alias names (e.g., "Color") instead of
+    /// structural expansions (e.g., "{ r: number; g: number; b: number }").
+    body_to_alias: DashMap<TypeId, DefId>,
 }
 
 impl Default for DefinitionStore {
@@ -401,6 +421,8 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             type_to_def: DashMap::new(),
             symbol_def_index: DashMap::new(),
+            symbol_only_index: DashMap::new(),
+            body_to_alias: DashMap::new(),
         }
     }
 
@@ -425,6 +447,20 @@ impl DefinitionStore {
             kind = ?info.kind,
             "DefinitionStore::register"
         );
+
+        // Populate symbol_only_index if a symbol_id is present.
+        // Uses entry API to keep the *first* registered DefId (stable identity).
+        if let Some(sym_id) = info.symbol_id {
+            self.symbol_only_index.entry(sym_id).or_insert(id);
+        }
+
+        // Populate body_to_alias for non-generic type aliases with a body.
+        if info.kind == DefKind::TypeAlias && info.type_params.is_empty() {
+            if let Some(body) = info.body {
+                self.body_to_alias.entry(body).or_insert(id);
+            }
+        }
+
         self.definitions.insert(id, info);
         id
     }
@@ -436,6 +472,8 @@ impl DefinitionStore {
     /// that the same `SymbolId(u32)` from different binders maps to different `DefIds`.
     pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
         self.symbol_def_index.insert((symbol_id, file_idx), def_id);
+        // Also maintain the file-agnostic index (keeps the first registered DefId).
+        self.symbol_only_index.entry(symbol_id).or_insert(def_id);
     }
 
     /// Look up a `DefId` by `(SymbolId, file_idx)`.
@@ -490,6 +528,11 @@ impl DefinitionStore {
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.body = Some(body);
+
+            // Maintain body_to_alias index for non-generic type aliases.
+            if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
+                self.body_to_alias.entry(body).or_insert(id);
+            }
         }
     }
 
@@ -530,6 +573,8 @@ impl DefinitionStore {
         self.definitions.clear();
         self.type_to_def.clear();
         self.symbol_def_index.clear();
+        self.symbol_only_index.clear();
+        self.body_to_alias.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -609,7 +654,17 @@ impl DefinitionStore {
     /// Used by the `TypeFormatter` to look up whether a symbol corresponds to a
     /// generic definition, enabling display of type parameters in error messages
     /// (e.g., `S18<unknown, unknown, unknown>` instead of just `S18`).
+    ///
+    /// O(1) via `symbol_only_index`; falls back to linear scan for DefIds
+    /// registered before the index was populated (should not happen in practice).
     pub fn find_def_by_symbol(&self, symbol_id: u32) -> Option<DefId> {
+        // Fast path: O(1) index lookup.
+        if let Some(def_id) = self.symbol_only_index.get(&symbol_id) {
+            return Some(*def_id);
+        }
+
+        // Fallback: linear scan for backward compatibility with definitions
+        // registered without symbol_id in the index (e.g., test code).
         self.definitions
             .iter()
             .find(|entry| entry.value().symbol_id == Some(symbol_id))
@@ -625,7 +680,16 @@ impl DefinitionStore {
     ///
     /// Only matches non-generic type aliases (no type parameters) to avoid
     /// ambiguity with instantiated generics.
+    ///
+    /// O(1) via `body_to_alias` index; falls back to linear scan for bodies
+    /// set before the index was populated (should not happen in practice).
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
+        // Fast path: O(1) index lookup.
+        if let Some(def_id) = self.body_to_alias.get(&type_id) {
+            return Some(*def_id);
+        }
+
+        // Fallback: linear scan for backward compatibility.
         self.definitions
             .iter()
             .find(|entry| {
