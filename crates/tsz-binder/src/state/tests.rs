@@ -3559,7 +3559,7 @@ fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
 
     // User's Error should be a Class, not an Interface.
     let user_sym_id = main_binder.file_locals.get("Error").unwrap();
-    let user_entry = main_binder.semantic_defs.get(&user_sym_id).unwrap();
+    let user_entry = &main_binder.semantic_defs[&user_sym_id];
     assert_eq!(user_entry.kind, super::SemanticDefKind::Class);
 
     main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
@@ -3570,7 +3570,7 @@ fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
     // entry reuses the user's SymbolId with merged flags. The semantic_def
     // should still be the user's original entry.
     let merged_sym_id = main_binder.file_locals.get("Error").unwrap();
-    let merged_entry = main_binder.semantic_defs.get(&merged_sym_id).unwrap();
+    let merged_entry = &main_binder.semantic_defs[&merged_sym_id];
     assert_eq!(
         merged_entry.kind,
         super::SemanticDefKind::Class,

@@ -402,6 +402,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // (see function_type.rs comment on final_generator_yield_type).
                     if async_info.is_some() {
                         self.checker.ctx.generator_yield_operand_types.push(element);
+                        // When yield* delegates to an async iterable with `any` element
+                        // type, suppress TS7055 at the function level (see sync path).
+                        if element == TypeId::ANY {
+                            self.checker.ctx.generator_had_ts7057 = true;
+                        }
                     }
                     element
                 } else {
@@ -431,6 +436,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .ctx
                             .generator_yield_operand_types
                             .push(i.yield_type);
+                        // When yield* delegates to an iterable with `any` element type
+                        // (e.g. `any[]`), suppress TS7055 at the function level.
+                        // tsc considers the `any` yield type to be "explained" by
+                        // the delegated iterable's type, not requiring a function-level
+                        // implicit-any warning. Set the flag to suppress TS7055.
+                        if i.yield_type == TypeId::ANY {
+                            self.checker.ctx.generator_had_ts7057 = true;
+                        }
                     }
                     info.map_or(TypeId::ANY, |i| i.yield_type)
                 }
