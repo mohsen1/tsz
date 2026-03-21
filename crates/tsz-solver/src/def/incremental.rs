@@ -70,7 +70,7 @@ pub struct FileChangeSet {
 
 impl FileChangeSet {
     /// Create an empty changeset.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             changes: Vec::new(),
         }
@@ -112,12 +112,12 @@ impl FileChangeSet {
     }
 
     /// Number of file changes in this batch.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.changes.len()
     }
 
     /// Whether the changeset is empty (no files changed).
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 
@@ -224,19 +224,19 @@ pub struct InvalidationSummary {
 
 impl InvalidationSummary {
     /// Total number of files in the changeset.
-    pub fn total_files(&self) -> usize {
+    pub const fn total_files(&self) -> usize {
         self.files_modified + self.files_removed + self.files_added
     }
 
     /// Whether any definitions were actually invalidated.
-    pub fn had_invalidations(&self) -> bool {
+    pub const fn had_invalidations(&self) -> bool {
         self.total_defs_invalidated > 0
     }
 
     /// File IDs that need re-binding and re-registration.
     ///
-    /// This is files_modified + files_added (removed files don't need re-binding).
-    pub fn files_needing_repopulation(&self) -> usize {
+    /// This is `files_modified` + `files_added` (removed files don't need re-binding).
+    pub const fn files_needing_repopulation(&self) -> usize {
         self.files_modified + self.files_added
     }
 }
