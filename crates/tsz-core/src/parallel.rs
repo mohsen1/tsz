@@ -1569,6 +1569,14 @@ pub struct MergedProgram {
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver DefIds.
     pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    /// Skeleton index computed alongside the legacy merge path.
+    ///
+    /// This captures the same merge-relevant topology (symbol merging, augmentation
+    /// targets, re-export graph) without retaining any arena or binder state.
+    /// It is computed from pre-merge `BindResult`s during `merge_bind_results_ref`
+    /// and stored here so downstream consumers can begin migrating off arena-backed
+    /// lookups toward skeleton-based queries.
+    pub skeleton_index: Option<SkeletonIndex>,
 }
 
 /// High-level residency counters for `MergedProgram` state.
@@ -1811,6 +1819,12 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
+    // Extract file skeletons from pre-merge bind results and reduce them into a
+    // global index. This runs before the legacy merge so we capture the original
+    // per-file symbol/augmentation/re-export data without any remapping.
+    let skeletons: Vec<FileSkeleton> = results.iter().map(|r| extract_skeleton(r)).collect();
+    let skeleton_index = reduce_skeletons(&skeletons);
+
     // Collect lib_binders from all results (deduplicated by address), paired with their arenas
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
     let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
@@ -2918,6 +2932,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         type_interner: TypeInterner::new(),
         alias_partners,
         semantic_defs,
+        skeleton_index: Some(skeleton_index),
     }
 }
 
