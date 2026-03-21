@@ -8413,6 +8413,13 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         use tsz_common::diagnostics::Diagnostic;
 
+        // In node16/nodenext module modes, module resolution already enforces
+        // portability via the exports map (emitting TS2307 for blocked paths).
+        // Skip the TS2883 check to match tsc behavior.
+        if self.skip_portability_check {
+            return;
+        }
+
         // First, detect non-portable references (immutable borrow of self)
         let non_portable = self.find_non_portable_type_reference(type_id);
 

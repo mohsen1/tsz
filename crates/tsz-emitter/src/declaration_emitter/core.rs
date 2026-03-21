@@ -150,6 +150,10 @@ pub struct DeclarationEmitter<'a> {
     pub(super) emitted_synthetic_dependency_symbols: FxHashSet<SymbolId>,
     /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).
     pub(super) diagnostics: Vec<Diagnostic>,
+    /// When true, skip TS2883 non-portable type reference checks.
+    /// Set for node16/nodenext module modes where module resolution already
+    /// enforces portability via the exports map (TS2307).
+    pub(super) skip_portability_check: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -237,6 +241,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_jsdoc_type_aliases: FxHashSet::default(),
             emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
+            skip_portability_check: false,
         }
     }
 
@@ -306,6 +311,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_jsdoc_type_aliases: FxHashSet::default(),
             emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
+            skip_portability_check: false,
         }
     }
 
@@ -370,6 +376,13 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub const fn set_strip_internal(&mut self, strip: bool) {
         self.strip_internal = strip;
+    }
+
+    /// Skip TS2883 non-portable type reference checks.
+    /// Use for node16/nodenext module modes where module resolution already
+    /// enforces portability via the exports map.
+    pub const fn set_skip_portability_check(&mut self, skip: bool) {
+        self.skip_portability_check = skip;
     }
 
     /// Take diagnostics collected during declaration emit (e.g., TS2883).

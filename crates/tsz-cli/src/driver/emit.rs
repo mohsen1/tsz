@@ -290,6 +290,13 @@ pub(crate) fn emit_outputs(
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter
                 };
+
+                // In node16/nodenext module modes, module resolution already enforces
+                // portability via the exports map (TS2307 for blocked paths), so the
+                // TS2883 non-portable type check is redundant and matches tsc behavior.
+                if context.options.printer.module.is_node_module() {
+                    emitter.set_skip_portability_check(true);
+                }
                 let map_info =
                     if declaration_bundle_path.is_none() && context.options.declaration_map {
                         map_output_info(&dts_path)
