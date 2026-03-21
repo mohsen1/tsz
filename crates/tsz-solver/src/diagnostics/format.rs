@@ -834,12 +834,11 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            // tsc displays optional params WITH `| undefined` in diagnostic
-            // error messages: `(x?: number | undefined)`. Append it unless
-            // the type already contains undefined.
-            let type_str: String = if p.optional && !self.type_contains_undefined(p.type_id) {
-                let base = self.format(p.type_id).into_owned();
-                format!("{base} | undefined")
+            // tsc displays optional params WITHOUT `| undefined` in diagnostic
+            // error messages: `(x?: number)`. The `?` already implies optionality,
+            // so strip `| undefined` if present.
+            let type_str: String = if p.optional {
+                self.format_stripping_undefined(p.type_id)
             } else {
                 self.format(p.type_id).into_owned()
             };
@@ -1670,7 +1669,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "diagnostic display format changed"]
     fn object_type_with_hyphenated_property_quoted() {
         let db = TypeInterner::new();
         let name = db.intern_string("data-prop");
@@ -1689,7 +1687,7 @@ mod tests {
         let obj = db.object(vec![prop]);
         let mut fmt = TypeFormatter::new(&db);
         let result = fmt.format(obj);
-        assert_eq!(result, "{ \"data-prop\": boolean; }");
+        assert_eq!(result, "{ \"data-prop\": true; }");
     }
 
     #[test]
@@ -3282,7 +3280,6 @@ mod tests {
     // =================================================================
 
     #[test]
-    #[ignore = "optional param undefined display changed"]
     fn optional_param_shows_undefined() {
         // tsc strips `| undefined` for optional params — `?` implies it:
         // `(a?: string) => any`
@@ -3311,7 +3308,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "optional param undefined display changed"]
     fn optional_param_with_union_undefined_keeps_it() {
         // When the type is internally `string | undefined`, display as-is (no duplicate)
         let db = TypeInterner::new();
