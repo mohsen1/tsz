@@ -565,6 +565,76 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                 );
+
+            // For each named import specifier, emit an additional diagnostic
+            // alongside TS2497 explaining how the symbol should be imported.
+            // The exact code depends on the module kind and importing file type:
+            //   - ES module targets: TS2595 "can only be imported by using a default import"
+            //   - CommonJS + .ts file: TS2616 "can only be imported by using 'import X = require(...)' or a default import"
+            //   - CommonJS + .js file: TS2597 "can only be imported by using a 'require' call or by using a default import"
+            if has_named_imports {
+                let is_es_module = (self.ctx.compiler_options.module as u32)
+                    >= (tsz_common::ModuleKind::ES2015 as u32);
+                let is_js_file = self.ctx.file_name.ends_with(".js")
+                    || self.ctx.file_name.ends_with(".jsx")
+                    || self.ctx.file_name.ends_with(".mjs")
+                    || self.ctx.file_name.ends_with(".cjs");
+
+                if let Some(bindings_node) = bindings_node
+                    && let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node)
+                {
+                    for element_idx in &named_imports.elements.nodes {
+                        let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                            continue;
+                        };
+                        let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                            continue;
+                        };
+
+                        let name_idx = specifier.name;
+                        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                            continue;
+                        };
+                        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                            continue;
+                        };
+
+                        let name = name_ident.escaped_text.as_str();
+
+                        let (msg, code) = if is_es_module {
+                            // TS2595
+                            (
+                                format_message(
+                                    diagnostic_messages::CAN_ONLY_BE_IMPORTED_BY_USING_A_DEFAULT_IMPORT,
+                                    &[name],
+                                ),
+                                diagnostic_codes::CAN_ONLY_BE_IMPORTED_BY_USING_A_DEFAULT_IMPORT,
+                            )
+                        } else if is_js_file {
+                            // TS2597
+                            (
+                                format_message(
+                                    diagnostic_messages::CAN_ONLY_BE_IMPORTED_BY_USING_A_REQUIRE_CALL_OR_BY_USING_A_DEFAULT_IMPORT,
+                                    &[name],
+                                ),
+                                diagnostic_codes::CAN_ONLY_BE_IMPORTED_BY_USING_A_REQUIRE_CALL_OR_BY_USING_A_DEFAULT_IMPORT,
+                            )
+                        } else {
+                            // TS2616
+                            let quoted_spec = format!("\"{}\"", module_name);
+                            (
+                                format_message(
+                                    diagnostic_messages::CAN_ONLY_BE_IMPORTED_BY_USING_IMPORT_REQUIRE_OR_A_DEFAULT_IMPORT,
+                                    &[name, name, &quoted_spec],
+                                ),
+                                diagnostic_codes::CAN_ONLY_BE_IMPORTED_BY_USING_IMPORT_REQUIRE_OR_A_DEFAULT_IMPORT,
+                            )
+                        };
+
+                        self.error_at_node(name_idx, &msg, code);
+                    }
+                }
+            }
         }
 
         // Check default import: import X from "module"
