@@ -340,6 +340,18 @@ impl<'a> CheckerState<'a> {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
         }
 
+        // Function expressions and arrow functions: widen deeply including
+        // inside the function's return type. TSC widens `var fn = (s: string) => 3`
+        // to type `(s: string) => number`, so the literal `3` return type becomes
+        // `number`. Without this, TS2403 falsely fires when redeclaring with the
+        // widened type annotation `var fn: (s: string) => number`.
+        if matches!(
+            init_node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+        ) {
+            return tsz_solver::widening::widen_type_deep(self.ctx.types, fallback_type);
+        }
+
         // Handle bare enum identifier: `var x = E`
         if init_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
