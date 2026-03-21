@@ -1905,10 +1905,27 @@ impl<'a> CheckerState<'a> {
                     };
                     // Suppress the inner return type check when the expected type has
                     // unresolved inference holes, OR when the actual return is callable
-                    // but expected is not (function-to-non-function shape mismatch).
-                    // tsc reports shape mismatches as TS2345 on the argument, not TS2322
-                    // on the body. Example: `foo(() => g)` where g is a function but
-                    // foo expects string return — tsc emits TS2345 only.
+                    // but expected is not (function-to-non-function shape mismatch),
+                    // OR when the body is a simple expression (not object/array literal
+                    // or block). tsc reports simple expression-bodied arrow return type
+                    // mismatches as TS2345 on the argument, not TS2322 on the body.
+                    let body_is_simple_expression =
+                        self.ctx.arena.get(body).is_some_and(|body_node| {
+                            let effective_kind =
+                                if body_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                    self.ctx
+                                        .arena
+                                        .get_parenthesized(body_node)
+                                        .and_then(|paren| self.ctx.arena.get(paren.expression))
+                                        .map(|inner| inner.kind)
+                                        .unwrap_or(body_node.kind)
+                                } else {
+                                    body_node.kind
+                                };
+                            effective_kind != syntax_kind_ext::BLOCK
+                                && effective_kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                && effective_kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        });
                     let suppress_contextual_return_check = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && (self.type_has_unresolved_inference_holes(expected_return_type)
@@ -1918,7 +1935,8 @@ impl<'a> CheckerState<'a> {
                             ) && !tsz_solver::type_queries::is_callable_type(
                                 self.ctx.types,
                                 expected_return_type,
-                            )));
+                            ))
+                            || body_is_simple_expression);
                     let use_generic_return_mismatch = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && self.ctx.arena.get(body).is_some_and(|body_node| {
