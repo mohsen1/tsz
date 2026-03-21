@@ -1658,10 +1658,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     any_reversed = true;
                     v
                 }
-                // If reversal fails for this property, use `unknown` as a placeholder.
-                // The post-inference check will catch the type mismatch
-                // (e.g., TS2322: number not assignable to () => unknown).
-                None => TypeId::UNKNOWN,
+                None => {
+                    // When reversal fails because the source property is a function
+                    // with only `any`-typed parameters (from untyped method shorthands),
+                    // treat the reversal as successful with `unknown`. This matches
+                    // tsc's getPartiallyInferableType behavior: implicit `any` params
+                    // don't contribute to inference, producing `unknown` instead of
+                    // falling through to the reverse-keyof `{ key: any }` path.
+                    let is_function_with_any_params =
+                        self.is_function_with_only_any_params(prop.type_id);
+                    if is_function_with_any_params {
+                        any_reversed = true;
+                    }
+                    TypeId::UNKNOWN
+                }
             };
 
             // Reverse the mapped type's modifier directives to reconstruct T's modifiers.
@@ -1962,8 +1972,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Try reversing through parameters first (handles contravariant case:
                 // source `(v: string) => bool` against template `(val: T["foo"]) => bool`
                 // → T["foo"] = string)
+                //
+                // Try reversing through parameters first (handles contravariant case:
+                // source `(v: string) => bool` against template `(val: T["foo"]) => bool`
+                // → T["foo"] = string)
+                //
+                // Apply "partially inferable" semantics: when the source parameter
+                // type is `any` (typically from untyped method shorthand or callback),
+                // treat it as `unknown` for reversal. This prevents implicit `any`
+                // from flowing through as T[K] = any. Matches tsc's
+                // getPartiallyInferableType behavior. We return Some(unknown) rather
+                // than None so that the caller knows this property DID participate
+                // in the reverse mapping (just with an uninformative type), preventing
+                // fallback to the reverse-keyof `{ key: any }` path.
                 let min_params = template_fn.params.len().min(source_fn.params.len());
+                let mut any_param_matched_placeholder = false;
                 for i in 0..min_params {
+                    if source_fn.params[i].type_id == TypeId::ANY {
+                        // Check if the template param references the target placeholder.
+                        // If so, record that we have an `any`-param match that should
+                        // produce `unknown` rather than `any`.
+                        if let Some(TypeData::IndexAccess(obj, _)) =
+                            self.interner.lookup(template_fn.params[i].type_id)
+                            && self.is_placeholder_match(obj, target_placeholder)
+                        {
+                            any_param_matched_placeholder = true;
+                        }
+                        continue;
+                    }
                     if let Some(reversed) = self.reverse_infer_through_template(
                         source_fn.params[i].type_id,
                         template_fn.params[i].type_id,
@@ -1972,6 +2008,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return Some(reversed);
                     }
                 }
+                // If only `any`-typed params matched the placeholder, return None
+                // so the Object case (Case 4) tries the next property. The caller
+                // (`constrain_reverse_mapped_type`) already defaults to UNKNOWN when
+                // all property reversals fail.
                 // Try reversing through the return type (covariant case:
                 // source `() => number` against template `() => T["bar"]` → T["bar"] = number)
                 return self.reverse_infer_through_template(
@@ -3027,6 +3067,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 members
                     .iter()
                     .any(|&m| self.is_iterable_like_evaluated_object(m))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is a function (or object containing only a function)
+    /// whose parameters are ALL `any`-typed (from implicit typing).
+    /// Used to detect "partially inferable" types during reverse-mapped inference.
+    fn is_function_with_only_any_params(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                !shape.params.is_empty() && shape.params.iter().all(|p| p.type_id == TypeId::ANY)
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| self.is_function_with_only_any_params(p.type_id))
             }
             _ => false,
         }
