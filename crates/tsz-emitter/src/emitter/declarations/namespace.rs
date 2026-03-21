@@ -762,6 +762,12 @@ impl<'a> Printer<'a> {
                                 &ns_name,
                                 Some(module.body),
                             );
+                        } else if inner_kind == syntax_kind_ext::NAMED_EXPORTS {
+                            // export { X as y }; inside a namespace IIFE.
+                            // Named re-exports don't produce runtime code in namespace
+                            // context — the declarations they reference are already
+                            // bound to the namespace via `ns.X = X;` assignments.
+                            // tsc elides these entirely.
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
