@@ -57,6 +57,7 @@ pub(crate) struct PrivateAccessorDef {
     /// Optional setter parameter node index.
     pub param: Option<NodeIndex>,
     /// Whether this is an async accessor.
+    #[allow(dead_code)]
     pub is_async: bool,
 }
 
@@ -523,21 +524,21 @@ pub struct Printer<'a> {
     /// Emitted as `_a = ClassName;` after the class body.
     pub(crate) pending_private_class_alias: Option<(String, String)>,
 
-    /// Private field constructor inits: (weakmap_name, has_initializer, initializer_idx).
+    /// Private field constructor inits: (`weakmap_name`, `has_initializer`, `initializer_idx`).
     /// Emitted as `_C_field.set(this, <init>)` at the start of the constructor.
     pub(crate) pending_private_field_constructor_inits: Vec<(String, bool, NodeIndex)>,
 
-    /// WeakSet instance name for `_X_instances.add(this)` in the constructor.
+    /// `WeakSet` instance name for `_X_instances.add(this)` in the constructor.
     /// Set when the class has private instance methods or accessors.
     pub(crate) pending_instances_weakset_add: Option<String>,
 
     /// Private method/accessor function definitions to emit after the class body.
-    /// Each entry is (var_name, body_idx, params) for `_C_method = function _C_method(params) { ... }`.
+    /// Each entry is (`var_name`, `body_idx`, params) for `_C_method = function _C_method(params) { ... }`.
     /// These are joined with the WeakMap/WeakSet inits using comma separation.
     pub(crate) pending_private_method_defs: Vec<(String, NodeIndex, Vec<NodeIndex>)>,
 
     /// Private accessor function definitions to emit after the class body.
-    /// Each entry is (var_name, body_idx) for `_C_prop_get = function _C_prop_get() { ... }`.
+    /// Each entry is (`var_name`, `body_idx`) for `_C_prop_get = function _C_prop_get() { ... }`.
     pub(crate) pending_private_accessor_defs: Vec<PrivateAccessorDef>,
 
     /// Set of private method/accessor names (without #) that should be skipped

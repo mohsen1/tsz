@@ -313,7 +313,7 @@ pub struct ES5ClassTransformer<'a> {
     indent_base: u32,
     /// Counter for generating unique temp variable names (_a, _b, _c, ...)
     temp_var_counter: u32,
-    /// Mapping from computed property name expression NodeIndex to temp variable name.
+    /// Mapping from computed property name expression `NodeIndex` to temp variable name.
     computed_prop_temp_map: std::collections::HashMap<NodeIndex, String>,
 }
 
@@ -357,16 +357,16 @@ impl<'a> ES5ClassTransformer<'a> {
             return true;
         }
         // Look through type assertions
-        if k == syntax_kind_ext::TYPE_ASSERTION || k == syntax_kind_ext::AS_EXPRESSION {
-            if let Some(a) = arena.get_type_assertion(expr_node) {
-                return Self::is_expr_side_effect_free(arena, a.expression);
-            }
+        if (k == syntax_kind_ext::TYPE_ASSERTION || k == syntax_kind_ext::AS_EXPRESSION)
+            && let Some(a) = arena.get_type_assertion(expr_node)
+        {
+            return Self::is_expr_side_effect_free(arena, a.expression);
         }
         // Look through parenthesized expressions
-        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(p) = arena.get_parenthesized(expr_node) {
-                return Self::is_expr_side_effect_free(arena, p.expression);
-            }
+        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(p) = arena.get_parenthesized(expr_node)
+        {
+            return Self::is_expr_side_effect_free(arena, p.expression);
         }
         false
     }
@@ -378,7 +378,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if idx < 26 {
             format!("_{}", (b'a' + idx as u8) as char)
         } else {
-            format!("_{}", idx)
+            format!("_{idx}")
         }
     }
 

@@ -545,10 +545,9 @@ impl<'a> CheckerContext<'a> {
             .global_module_exports_index
             .as_ref()
             .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+            && let Some(&(_file_idx, sym_id)) = entries.first()
         {
-            if let Some(&(_file_idx, sym_id)) = entries.first() {
-                return Some(sym_id);
-            }
+            return Some(sym_id);
         }
         None
     }
@@ -572,10 +571,9 @@ impl<'a> CheckerContext<'a> {
             .global_module_exports_index
             .as_ref()
             .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+            && let Some(&(file_idx, sym_id)) = entries.first()
         {
-            if let Some(&(file_idx, sym_id)) = entries.first() {
-                return Some((sym_id, file_idx));
-            }
+            return Some((sym_id, file_idx));
         }
         None
     }

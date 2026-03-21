@@ -5,8 +5,6 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn prime_lib_type_params(&mut self, name: &str) {
-        use tsz_parser::parser::node::NodeAccess;
-
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
             return;
         };

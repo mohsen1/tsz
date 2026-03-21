@@ -672,7 +672,7 @@ impl<'a> CheckerState<'a> {
     /// This is the canonical stable-identity helper that consolidates the common
     /// two-step pattern:
     ///   1. `type_reference_symbol_type(sym_id)` — ensures the symbol's body is
-    ///      materialized in type_env
+    ///      materialized in `type_env`
     ///   2. `ctx.create_lazy_type_ref(sym_id)` — creates `TypeData::Lazy(DefId)`
     ///
     /// Use this in type literal and type reference resolution paths instead of

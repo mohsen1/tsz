@@ -245,7 +245,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Ok(ResolvedName)` if the symbol matches, or `Err(ResolutionFailure)`
     /// with `WrongMeaning` if it doesn't.
-    pub(crate) fn classify_symbol_meaning(
+    pub(crate) const fn classify_symbol_meaning(
         &self,
         sym_id: SymbolId,
         flags: u32,

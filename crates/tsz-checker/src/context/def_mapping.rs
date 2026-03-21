@@ -235,13 +235,13 @@ impl<'a> CheckerContext<'a> {
         // ---- Step 2: DefinitionStore direct lookup (O(1)) ----
         // The store has type params for this exact DefId if they were set via
         // insert_def_type_params (which calls definition_store.set_type_params).
-        if let Some(store_params) = self.definition_store.get_type_params(def_id) {
-            if !store_params.is_empty() {
-                self.def_type_params
-                    .borrow_mut()
-                    .insert(def_id, store_params.clone());
-                return Some(store_params);
-            }
+        if let Some(store_params) = self.definition_store.get_type_params(def_id)
+            && !store_params.is_empty()
+        {
+            self.def_type_params
+                .borrow_mut()
+                .insert(def_id, store_params.clone());
+            return Some(store_params);
         }
 
         // ---- Step 3: cross-DefId fallback via SymbolId (O(1)) ----
@@ -250,17 +250,15 @@ impl<'a> CheckerContext<'a> {
         // to find the canonical DefId and retrieve its type params.
         let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
         let canonical_def_id = self.definition_store.find_def_by_symbol(sym_id.0)?;
-        if canonical_def_id != def_id {
-            if let Some(canonical_params) = self.definition_store.get_type_params(canonical_def_id)
-            {
-                if !canonical_params.is_empty() {
-                    // Cache for future lookups under the requesting DefId.
-                    self.def_type_params
-                        .borrow_mut()
-                        .insert(def_id, canonical_params.clone());
-                    return Some(canonical_params);
-                }
-            }
+        if canonical_def_id != def_id
+            && let Some(canonical_params) = self.definition_store.get_type_params(canonical_def_id)
+            && !canonical_params.is_empty()
+        {
+            // Cache for future lookups under the requesting DefId.
+            self.def_type_params
+                .borrow_mut()
+                .insert(def_id, canonical_params.clone());
+            return Some(canonical_params);
         }
 
         None
@@ -326,7 +324,7 @@ impl<'a> CheckerContext<'a> {
     ///
     /// 1. **Local cache** (`symbol_to_def`): O(1) `FxHashMap` lookup, no locking.
     /// 2. **Authoritative index** (`DefinitionStore::symbol_only_index`): O(1)
-    ///    `DashMap` lookup. This catches DefIds created in other checker contexts
+    ///    `DashMap` lookup. This catches `DefIds` created in other checker contexts
     ///    (e.g., cross-file references, lib types) that aren't yet in the local cache.
     ///    On a hit, the local caches are populated for future fast-path access.
     pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
@@ -420,11 +418,11 @@ impl<'a> CheckerContext<'a> {
     /// `semantic_defs` index (Phase 1 DefId-first stable identity).
     ///
     /// Called once during checker construction so that `get_or_create_def_id`
-    /// finds stable DefIds already present for top-level declarations. This
+    /// finds stable `DefIds` already present for top-level declarations. This
     /// moves identity creation to bind time (deterministic, early) rather than
     /// being recovered on-demand in hot checker paths (late, order-dependent).
     ///
-    /// Returns the number of DefIds pre-populated.
+    /// Returns the number of `DefIds` pre-populated.
     pub fn pre_populate_def_ids_from_binder(&self) -> usize {
         self.populate_def_ids_from_semantic_defs(&self.binder.semantic_defs)
     }
@@ -438,7 +436,7 @@ impl<'a> CheckerContext<'a> {
     /// find the symbol and create its DefId on demand. By pre-populating here, these
     /// symbols hit the O(1) `find_def_by_symbol` path in Step 2 instead.
     ///
-    /// Returns the total number of DefIds pre-populated across all lib binders.
+    /// Returns the total number of `DefIds` pre-populated across all lib binders.
     pub fn pre_populate_def_ids_from_lib_binders(&self) -> usize {
         let mut total = 0;
         for lib_ctx in &self.lib_contexts {

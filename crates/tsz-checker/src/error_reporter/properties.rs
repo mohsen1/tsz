@@ -1,6 +1,6 @@
 //! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes};
+use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

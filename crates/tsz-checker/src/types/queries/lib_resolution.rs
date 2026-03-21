@@ -3,11 +3,11 @@
 //!
 //! ## Stable Identity Helpers
 //!
-//! Lib lowering resolves NodeIndex values from multiple arenas into SymbolIds
-//! and DefIds.  The canonical resolution path is:
+//! Lib lowering resolves `NodeIndex` values from multiple arenas into `SymbolIds`
+//! and `DefIds`.  The canonical resolution path is:
 //!
-//! 1. [`resolve_lib_node_in_arenas`] — NodeIndex → raw `SymbolId` value via
-//!    identifier-text lookup across declaration arenas, then file_locals lookup.
+//! 1. [`resolve_lib_node_in_arenas`] — `NodeIndex` → raw `SymbolId` value via
+//!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
 //! 2. [`CheckerContext::get_or_create_def_id`] — SymbolId → DefId via the
 //!    stable, validated, cached identity path.
 //!

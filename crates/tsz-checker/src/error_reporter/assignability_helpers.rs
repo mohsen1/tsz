@@ -1,7 +1,7 @@
 //! Helper methods for assignability error reporting.
 //! Extracted from `assignability.rs` for maintainability.
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };

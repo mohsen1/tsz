@@ -25,7 +25,7 @@
 //! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
 //!   and other falsy constituents.
 
-use tsz_solver::{TypeData, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
 /// Syntactic observation the checker extracts from flow analysis.
 ///
@@ -256,7 +256,7 @@ pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: T
     // Check if already contains undefined
     if let Some(tsz_solver::TypeData::Union(list_id)) = db.lookup(type_id) {
         let members = db.type_list(list_id);
-        if members.iter().any(|m| *m == TypeId::UNDEFINED) {
+        if members.contains(&TypeId::UNDEFINED) {
             return type_id;
         }
     }

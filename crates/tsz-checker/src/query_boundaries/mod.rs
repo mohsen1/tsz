@@ -74,6 +74,7 @@ pub(crate) mod dispatch;
     clippy::doc_markdown,
     clippy::manual_map
 )]
+#[allow(private_interfaces)]
 pub(crate) mod environment;
 #[allow(
     dead_code,

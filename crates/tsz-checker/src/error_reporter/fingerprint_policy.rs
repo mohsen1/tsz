@@ -109,7 +109,11 @@ pub(crate) struct DiagnosticRenderRequest {
 
 impl DiagnosticRenderRequest {
     /// Create a simple render request with no related information.
-    pub(crate) fn simple(anchor_kind: DiagnosticAnchorKind, code: u32, message: String) -> Self {
+    pub(crate) const fn simple(
+        anchor_kind: DiagnosticAnchorKind,
+        code: u32,
+        message: String,
+    ) -> Self {
         Self {
             anchor_kind,
             code,
@@ -120,7 +124,7 @@ impl DiagnosticRenderRequest {
     }
 
     /// Create a render request that generates related info from a failure reason.
-    pub(crate) fn with_failure_reason(
+    pub(crate) const fn with_failure_reason(
         anchor_kind: DiagnosticAnchorKind,
         code: u32,
         message: String,
@@ -142,7 +146,7 @@ impl DiagnosticRenderRequest {
     }
 
     /// Create a render request with pre-built related information.
-    pub(crate) fn with_related(
+    pub(crate) const fn with_related(
         anchor_kind: DiagnosticAnchorKind,
         code: u32,
         message: String,
@@ -391,15 +395,15 @@ impl<'a> CheckerState<'a> {
                 // Drill into nested reason to produce elaboration diagnostics
                 // (e.g. TS2741 "Property 'x' is missing..." when the return type
                 // mismatch is due to a missing property).
-                if let Some(nested) = nested_reason {
-                    if let Some(nested_related) = self.related_from_failure_reason(
+                if let Some(nested) = nested_reason
+                    && let Some(nested_related) = self.related_from_failure_reason(
                         nested,
                         *source_return,
                         *target_return,
                         anchor_idx,
-                    ) {
-                        items.extend(nested_related);
-                    }
+                    )
+                {
+                    items.extend(nested_related);
                 }
                 items
             }

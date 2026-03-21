@@ -147,7 +147,6 @@ impl<'a> CheckerState<'a> {
     /// In tsc, `@template` tags must appear BEFORE `@typedef`/`@callback`/`@overload`.
     /// When `@template` appears after, it's scoped to the preceding tag and is invalid.
     pub(crate) fn check_template_after_typedef_callback(&mut self) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_common::comments::is_jsdoc_comment;
 
         let Some(sf) = self.ctx.arena.source_files.first() else {
@@ -161,7 +160,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let comment_text =
+            let _comment_text =
                 &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
 
             // tsc 6.0: @template after @typedef/@callback/@overload in the same

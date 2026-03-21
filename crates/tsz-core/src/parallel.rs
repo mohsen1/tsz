@@ -1133,7 +1133,7 @@ pub struct FileSkeleton {
     pub file_name: String,
     /// Whether this file is an external module (has imports/exports).
     pub is_external_module: bool,
-    /// Top-level symbols (root scope + exported file_locals).
+    /// Top-level symbols (root scope + exported `file_locals`).
     pub symbols: Vec<SkeletonSymbol>,
     /// Global augmentation targets from `declare global {}` blocks.
     pub global_augmentations: Vec<SkeletonAugmentation>,
@@ -1567,7 +1567,7 @@ pub struct MergedProgram {
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
-    /// The checker reads this during construction to pre-create solver DefIds.
+    /// The checker reads this during construction to pre-create solver `DefIds`.
     pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
     /// Skeleton index computed alongside the legacy merge path.
     ///

@@ -1776,29 +1776,29 @@ impl<'a> Printer<'a> {
             // Prepare private accessor function defs for after the class body
             // Both instance and static private accessors are extracted.
             for accessor in &private_accessors {
-                if let Some(body_idx) = accessor.getter_body {
-                    if let Some(ref var_name) = accessor.get_var_name {
-                        self.pending_private_accessor_defs.push(
-                            crate::emitter::core::PrivateAccessorDef {
-                                var_name: var_name.clone(),
-                                body: body_idx,
-                                param: None,
-                                is_async: false,
-                            },
-                        );
-                    }
+                if let Some(body_idx) = accessor.getter_body
+                    && let Some(ref var_name) = accessor.get_var_name
+                {
+                    self.pending_private_accessor_defs.push(
+                        crate::emitter::core::PrivateAccessorDef {
+                            var_name: var_name.clone(),
+                            body: body_idx,
+                            param: None,
+                            is_async: false,
+                        },
+                    );
                 }
-                if let Some(body_idx) = accessor.setter_body {
-                    if let Some(ref var_name) = accessor.set_var_name {
-                        self.pending_private_accessor_defs.push(
-                            crate::emitter::core::PrivateAccessorDef {
-                                var_name: var_name.clone(),
-                                body: body_idx,
-                                param: accessor.setter_param,
-                                is_async: false,
-                            },
-                        );
-                    }
+                if let Some(body_idx) = accessor.setter_body
+                    && let Some(ref var_name) = accessor.set_var_name
+                {
+                    self.pending_private_accessor_defs.push(
+                        crate::emitter::core::PrivateAccessorDef {
+                            var_name: var_name.clone(),
+                            body: body_idx,
+                            param: accessor.setter_param,
+                            is_async: false,
+                        },
+                    );
                 }
             }
 
@@ -2071,7 +2071,6 @@ impl<'a> Printer<'a> {
 
         // Private field WeakMap.set inits are handled via pending_private_field_constructor_inits
         // which is emitted in emit_constructor_prologue and the synthesized constructor path.
-        if !private_fields.is_empty() {}
 
         // Check if we need to lower class fields to constructor.
         // This is needed when target < ES2022 OR when useDefineForClassFields is false
@@ -3263,10 +3262,10 @@ impl<'a> Printer<'a> {
                     if i > 0 {
                         self.write(", ");
                     }
-                    if let Some(param_node) = self.arena.get(param_idx) {
-                        if let Some(param_data) = self.arena.get_parameter(param_node) {
-                            self.emit(param_data.name);
-                        }
+                    if let Some(param_node) = self.arena.get(param_idx)
+                        && let Some(param_data) = self.arena.get_parameter(param_node)
+                    {
+                        self.emit(param_data.name);
                     }
                 }
                 self.write(") ");
@@ -3283,12 +3282,11 @@ impl<'a> Printer<'a> {
                 self.write(" = function ");
                 self.write(&def.var_name);
                 self.write("(");
-                if let Some(param_idx) = def.param {
-                    if let Some(param_node) = self.arena.get(param_idx) {
-                        if let Some(param_data) = self.arena.get_parameter(param_node) {
-                            self.emit(param_data.name);
-                        }
-                    }
+                if let Some(param_idx) = def.param
+                    && let Some(param_node) = self.arena.get(param_idx)
+                    && let Some(param_data) = self.arena.get_parameter(param_node)
+                {
+                    self.emit(param_data.name);
                 }
                 self.write(") ");
                 self.emit_single_line_block(def.body);
@@ -3314,15 +3312,13 @@ impl<'a> Printer<'a> {
 
             // Close the comma expression with the temp var, unless the static field
             // comma expr path will handle the closing.
-            if !needs_static_comma_expr {
-                if let Some(ref temp) = class_expr_temp {
-                    self.write(",");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write(temp);
-                    self.write(")");
-                    self.decrease_indent();
-                }
+            if !needs_static_comma_expr && let Some(ref temp) = class_expr_temp {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(temp);
+                self.write(")");
+                self.decrease_indent();
             }
         } else if has_post_class_inits {
             self.write_line();
@@ -3371,10 +3367,10 @@ impl<'a> Printer<'a> {
                         self.write(", ");
                     }
                     // Emit parameter name (identifier or pattern)
-                    if let Some(param_node) = self.arena.get(param_idx) {
-                        if let Some(param_data) = self.arena.get_parameter(param_node) {
-                            self.emit(param_data.name);
-                        }
+                    if let Some(param_node) = self.arena.get(param_idx)
+                        && let Some(param_data) = self.arena.get_parameter(param_node)
+                    {
+                        self.emit(param_data.name);
                     }
                 }
                 self.write(") ");
@@ -3395,10 +3391,10 @@ impl<'a> Printer<'a> {
                 self.write("(");
                 if let Some(param_idx) = def.param {
                     // Emit setter parameter name
-                    if let Some(param_node) = self.arena.get(param_idx) {
-                        if let Some(param_data) = self.arena.get_parameter(param_node) {
-                            self.emit(param_data.name);
-                        }
+                    if let Some(param_node) = self.arena.get(param_idx)
+                        && let Some(param_data) = self.arena.get_parameter(param_node)
+                    {
+                        self.emit(param_data.name);
                     }
                 }
                 self.write(") ");
@@ -3466,7 +3462,7 @@ impl<'a> Printer<'a> {
 
     /// Resolve the binding name for an anonymous class expression from its parent chain.
     /// For `const C = class { ... }`, this returns `Some("C")`.
-    /// Walks up: ClassExpression -> VariableDeclaration -> name identifier.
+    /// Walks up: `ClassExpression` -> `VariableDeclaration` -> name identifier.
     fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<String> {
         let ext = self.arena.get_extended(class_idx)?;
         let parent_idx = ext.parent;
@@ -3510,19 +3506,18 @@ impl<'a> Printer<'a> {
             return true;
         }
         // Type assertions: `<T>expr`, `expr as T`, `expr satisfies T` — look through
-        if k == syntax_kind_ext::TYPE_ASSERTION
+        if (k == syntax_kind_ext::TYPE_ASSERTION
             || k == syntax_kind_ext::AS_EXPRESSION
-            || k == syntax_kind_ext::SATISFIES_EXPRESSION
+            || k == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(assertion) = self.arena.get_type_assertion(expr_node)
         {
-            if let Some(assertion) = self.arena.get_type_assertion(expr_node) {
-                return self.is_computed_name_expr_side_effect_free(assertion.expression);
-            }
+            return self.is_computed_name_expr_side_effect_free(assertion.expression);
         }
         // Parenthesized expression: `(expr)` — look through
-        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(expr_node) {
-                return self.is_computed_name_expr_side_effect_free(paren.expression);
-            }
+        if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(expr_node)
+        {
+            return self.is_computed_name_expr_side_effect_free(paren.expression);
         }
         false
     }

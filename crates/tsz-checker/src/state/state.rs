@@ -1923,11 +1923,11 @@ impl<'a> CheckerState<'a> {
         // For expression-bodied arrows, use targeted invalidation since the
         // body is a single expression tree. Block bodies use recursive clearing
         // because they contain statement lists referencing changed param types.
-        if let Some(body_node) = self.ctx.arena.get(body) {
-            if body_node.kind != syntax_kind_ext::BLOCK {
-                self.invalidate_expression_for_contextual_retry(body);
-                return;
-            }
+        if let Some(body_node) = self.ctx.arena.get(body)
+            && body_node.kind != syntax_kind_ext::BLOCK
+        {
+            self.invalidate_expression_for_contextual_retry(body);
+            return;
         }
         self.clear_type_cache_recursive(body);
     }
