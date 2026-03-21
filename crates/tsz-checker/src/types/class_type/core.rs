@@ -277,10 +277,41 @@ impl<'a> CheckerState<'a> {
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
                         let visibility = self.get_member_visibility(&method.modifiers, method.name);
+                        // For methods with explicit return type annotations, create a
+                        // proper Callable type so that `this.method()` during other
+                        // method body inference resolves to the correct return type.
+                        // Without this, the prescan type has methods typed as `any`,
+                        // causing `{ ...this.annotatedMethod() }` to produce `{}`.
+                        let method_type = if method.type_annotation.is_some() {
+                            let return_type = self.get_type_from_type_node(method.type_annotation);
+                            self.ctx.types.factory().callable(CallableShape {
+                                call_signatures: vec![CallSignature {
+                                    type_params: Vec::new(),
+                                    params: vec![tsz_solver::ParamInfo {
+                                        name: None,
+                                        type_id: TypeId::ANY,
+                                        optional: false,
+                                        rest: true,
+                                    }],
+                                    this_type: None,
+                                    return_type,
+                                    type_predicate: None,
+                                    is_method: true,
+                                }],
+                                construct_signatures: Vec::new(),
+                                properties: Vec::new(),
+                                string_index: None,
+                                number_index: None,
+                                symbol: None,
+                                is_abstract: false,
+                            })
+                        } else {
+                            TypeId::ANY
+                        };
                         prescan_props.push(PropertyInfo {
                             name: name_atom,
-                            type_id: TypeId::ANY,
-                            write_type: TypeId::ANY,
+                            type_id: method_type,
+                            write_type: method_type,
                             optional: false,
                             readonly: false,
                             is_method: true,
@@ -738,6 +769,16 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
                     if !partial_props.iter().any(|p| p.name == name_atom) {
+                        // For methods with explicit return type annotations, use the
+                        // declared return type instead of ANY. This allows other methods
+                        // that reference `this.method()` during body inference to get the
+                        // correct return type. Without this, `{ ...this.annotatedMethod() }`
+                        // would see return type ANY and produce an empty spread result.
+                        let return_type = if method.type_annotation.is_some() {
+                            self.get_type_from_type_node(method.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
                         let placeholder = factory.callable(CallableShape {
                             call_signatures: vec![CallSignature {
                                 type_params: Vec::new(),
@@ -748,7 +789,7 @@ impl<'a> CheckerState<'a> {
                                     rest: true,
                                 }],
                                 this_type: None,
-                                return_type: TypeId::ANY,
+                                return_type,
                                 type_predicate: None,
                                 is_method: true,
                             }],

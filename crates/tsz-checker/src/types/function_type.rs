@@ -2121,12 +2121,22 @@ impl<'a> CheckerState<'a> {
                     });
                 let diag_snap =
                     suppress_expression_body_diagnostics.then(|| self.ctx.snapshot_diagnostics());
+                // During type environment building (before is_checking_statements),
+                // skip full body checking for class methods/constructors. The class
+                // context (enclosing_class, this_type_stack) is not yet established,
+                // so `this` would resolve to `any`, producing incorrect cache entries
+                // (e.g., `{ ...this.method() }` cached as `{}`). The body will be
+                // properly checked later during check_class_member with correct context.
+                // The method's return type is already computed above (from annotation
+                // or infer_return_type_from_body which snapshots/restores).
+                let skip_body_check = !self.ctx.is_checking_statements && is_method_or_constructor;
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
-                self.check_statement_with_request(body, &TypingRequest::NONE);
-
+                if !skip_body_check {
+                    self.check_statement_with_request(body, &TypingRequest::NONE);
+                }
                 if let Some(snap) = &diag_snap {
                     self.ctx.rollback_diagnostics(snap);
                 }
