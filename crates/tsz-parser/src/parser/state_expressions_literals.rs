@@ -693,7 +693,8 @@ impl ParserState {
 
         // Capture regex flag errors BEFORE calling parse_expected (which clears them via next_token)
         let flag_errors: Vec<_> = self.scanner.get_regex_flag_errors().to_vec();
-        self.report_invalid_regular_expression_escape_errors();
+        // NOTE: tsc does not emit TS1125 for invalid unicode escapes inside regex literals.
+        // Removed call to report_invalid_regular_expression_escape_errors() to match tsc behavior.
 
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
         let end_pos = self.token_end();

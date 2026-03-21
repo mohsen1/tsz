@@ -260,10 +260,10 @@ fn test_lib_symbols_have_existing_def_ids_after_pre_population() {
     ];
     let mut missing = Vec::new();
     for name in &expected_symbols {
-        if let Some(sym_id) = binder.file_locals.get(*name) {
-            if checker.ctx.get_existing_def_id(sym_id).is_none() {
-                missing.push(*name);
-            }
+        if let Some(sym_id) = binder.file_locals.get(name)
+            && checker.ctx.get_existing_def_id(sym_id).is_none()
+        {
+            missing.push(*name);
         }
         // Symbol might not be in file_locals if lib files don't include it
     }

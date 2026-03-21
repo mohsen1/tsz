@@ -1152,7 +1152,7 @@ mod index_tests {
         let binders = vec![Arc::new(binder1), Arc::new(binder2)];
         let (aug_index, _) = build_module_augmentation_indices(&binders);
 
-        let entries = aug_index.get("./module-a").unwrap();
+        let entries = &aug_index["./module-a"];
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, 0); // file_idx 0
         assert_eq!(entries[0].1.name, "MyInterface");
@@ -1197,12 +1197,12 @@ mod index_tests {
         let binders = vec![Arc::new(binder1), Arc::new(binder2)];
         let (_, targets_index) = build_module_augmentation_indices(&binders);
 
-        let target_entries = targets_index.get("./target").unwrap();
+        let target_entries = &targets_index["./target"];
         assert_eq!(target_entries.len(), 2);
         assert_eq!(target_entries[0], (SymbolId(100), 0));
         assert_eq!(target_entries[1], (SymbolId(200), 1));
 
-        let other_entries = targets_index.get("./other").unwrap();
+        let other_entries = &targets_index["./other"];
         assert_eq!(other_entries.len(), 1);
         assert_eq!(other_entries[0], (SymbolId(201), 1));
     }

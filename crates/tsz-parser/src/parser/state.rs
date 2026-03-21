@@ -1202,6 +1202,9 @@ impl ParserState {
     }
 
     /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
+    /// NOTE: Currently unused - tsc does not emit TS1125 for invalid unicode escapes
+    /// inside regex literals. Kept for potential future use if tsc behavior changes.
+    #[allow(dead_code)]
     pub(crate) fn report_invalid_regular_expression_escape_errors(&mut self) {
         let token_text = self.scanner.get_token_text_ref().to_string();
         if !token_text.starts_with('/') || token_text.len() < 2 {
