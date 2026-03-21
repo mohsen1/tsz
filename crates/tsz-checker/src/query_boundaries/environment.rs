@@ -232,7 +232,7 @@ impl EnvironmentCapabilities {
     ///
     /// Returns `Some(ImportAssertDeprecated)` when `ignore_deprecations` is false
     /// (meaning the deprecation is not suppressed by the user's config).
-    pub fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
+    pub(crate) fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
         if !self.ignore_deprecations {
             Some(CapabilityDiagnostic::ImportAssertDeprecated)
         } else {

@@ -3236,7 +3236,7 @@ function outer() {
 ",
     );
     // Inner and Local should NOT be in semantic_defs because they're inside a function body
-    for (_, entry) in &binder.semantic_defs {
+    for entry in binder.semantic_defs.values() {
         assert_ne!(entry.name, "Inner", "nested class should not be captured");
         assert_ne!(
             entry.name, "Local",

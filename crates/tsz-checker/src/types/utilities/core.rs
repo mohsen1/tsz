@@ -1703,6 +1703,34 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For type parameters with a concrete (non-generic) constraint, check the
+        // constraint's indexability. tsc reports TS7053 when the constraint lacks
+        // the needed index signature (e.g., T extends Item, obj[string] → TS7053).
+        // Only do this when the index type is concrete (e.g., `string`, a literal).
+        // When the index is itself a type parameter (e.g., K extends keyof T), the
+        // generic element resolution path already handles it via deferred IndexAccess.
+        // Also skip when the constraint contains type parameters (e.g., Record<K, number>)
+        // since indexability depends on the instantiation.
+        let check_type = if let Some(constraint) =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, object_type)
+        {
+            if tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
+                || tsz_solver::visitor::contains_type_parameters(self.ctx.types, constraint)
+            {
+                // Constraint is generic or index is generic — can't determine
+                // indexability until instantiation. Don't report TS7053.
+                return false;
+            }
+            constraint
+        } else {
+            object_type
+        };
+
+        if check_type == TypeId::ANY || check_type == TypeId::UNKNOWN || check_type == TypeId::ERROR
+        {
+            return false;
+        }
+
         let index_key_kind = self.get_index_key_kind(index_type);
         let wants_number = literal_index.is_some()
             || index_key_kind
@@ -1715,7 +1743,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, object_type);
+        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
 
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
     }
