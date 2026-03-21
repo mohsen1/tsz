@@ -1226,9 +1226,10 @@ impl<'a> CheckerState<'a> {
             | syntax_kind_ext::NAMESPACE_IMPORT
             | syntax_kind_ext::IMPORT_SPECIFIER => Some(symbol_flags::ALIAS),
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
-                // 'export as namespace' creates a global alias to the module.
-                // It behaves like a global value module alias.
-                Some(symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS)
+                // 'export as namespace' creates a block-scoped global alias to the module.
+                // tsc treats this as a block-scoped variable in the global scope,
+                // producing TS2451 when it conflicts with other block-scoped declarations.
+                Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
             }
             _ => None,
         }

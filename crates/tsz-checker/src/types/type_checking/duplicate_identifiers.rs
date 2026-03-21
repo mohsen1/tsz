@@ -97,6 +97,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let umd_global_aug_declarations =
+                self.umd_global_augmentation_conflict_declarations(&symbol.escaped_name, sym_id);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -112,6 +114,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && umd_global_aug_declarations.is_empty()
                 {
                     continue;
                 }
@@ -155,7 +158,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty() || !script_scope_declarations.is_empty()
+            if !module_augmentation_declarations.is_empty()
+                || !script_scope_declarations.is_empty()
+                || !umd_global_aug_declarations.is_empty()
             {
                 has_remote = true;
             }
@@ -205,6 +210,8 @@ impl<'a> CheckerState<'a> {
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let umd_global_aug_declarations =
+                self.umd_global_augmentation_conflict_declarations(&symbol.escaped_name, sym_id);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -226,6 +233,7 @@ impl<'a> CheckerState<'a> {
                 if !has_cross_file
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
+                    && umd_global_aug_declarations.is_empty()
                 {
                     continue;
                 }
@@ -316,6 +324,7 @@ impl<'a> CheckerState<'a> {
                 declarations.extend(script_scope_declarations);
             }
             declarations.extend(module_augmentation_declarations);
+            declarations.extend(umd_global_aug_declarations);
 
             if declarations.len() <= 1 {
                 continue;
@@ -938,6 +947,20 @@ impl<'a> CheckerState<'a> {
                     if (decl_is_namespace && other_is_variable)
                         || (decl_is_variable && other_is_namespace)
                     {
+                        // UMD exports (`export as namespace Foo`) are treated as
+                        // block-scoped variables for TS2451 purposes, but they can
+                        // merge with namespace declarations without conflict.
+                        let variable_idx = if decl_is_variable {
+                            decl_idx
+                        } else {
+                            other_idx
+                        };
+                        let variable_is_umd_export = self
+                            .resolve_to_namespace_export_declaration(variable_idx)
+                            .is_some();
+                        if variable_is_umd_export {
+                            continue;
+                        }
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
@@ -1193,104 +1216,98 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Determine TS2451 vs TS2300:
+                // tsc uses TS2451 ("Cannot redeclare block-scoped variable")
+                // whenever ANY declaration in the conflict set is a block-scoped
+                // variable (let/const). This applies uniformly regardless of
+                // whether the conflict is cross-file or single-file, and
+                // regardless of whether conflicting declarations are at the
+                // same scope level. Only when NO block-scoped variable is
+                // involved does tsc use TS2300 ("Duplicate identifier").
                 //
-                // In tsc's binder (declareSymbol, line 814), the error code is
-                // decided by checking the EXISTING symbol's flags when a conflict
-                // is detected. Since the binder processes declarations in source
-                // order, the first declaration creates the symbol:
-                //   - If existing symbol has BlockScopedVariable → TS2451
-                //   - If existing symbol does NOT → TS2300
-                //
-                // When there are 3+ declarations (e.g., `let e0; var e0; function
-                // e0()`), after the second declaration conflicts, tsc creates a
-                // new symbol. The third declaration then conflicts with the NEW
-                // symbol (which has FunctionScopedVariable, not BlockScopedVariable),
-                // producing TS2300 diagnostics that overwrite the earlier TS2451
-                // at the same location.
-                //
-                // Our checker-based approach approximates this by checking:
-                // 1. If there are non-block-scoped declarations at the same
-                //    syntactic scope level as block-scoped ones:
-                //    a. 2+ non-block-scoped at same scope → TS2300
-                //    b. 1 non-block-scoped appears before first block-scoped → TS2300
-                //    c. Otherwise → TS2451
-                // 2. If all conflict declarations are block-scoped → TS2451
-                // 3. If no block-scoped → scope-based analysis
+                // For non-block-scoped conflicts that span different scopes
+                // (e.g., var hoisted from a child block to conflict with a
+                // function at the parent level), we fall back to scope-based
+                // analysis to choose TS2451 vs TS2300.
                 let has_block_scoped_conflict =
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
                 let use_ts2451 = if has_block_scoped_conflict {
-                    if has_remote_declaration {
-                        // Cross-file: if either is block-scoped, use TS2451
-                        true
-                    } else {
-                        // Single-file: check if non-block-scoped declarations
-                        // are at the same syntactic scope as block-scoped ones.
-                        // Get the enclosing block scope for each conflicting
-                        // declaration WITHOUT walking up for var hoisting.
-                        let local_conflicts: Vec<(NodeIndex, u32)> = declarations
+                    // When block-scoped variables (let/const) conflict with
+                    // declarations that include function or class (multi-way
+                    // conflict) AND all are at the same scope, tsc uses TS2300.
+                    // For pure let+var pairs at the same scope, tsc uses TS2451.
+                    // When declarations span different scopes (var hoisted from
+                    // a nested block), tsc also uses TS2451.
+                    // Three-way conflict: let/const + var + function at same
+                    // scope → TS2300. This only applies when BOTH a var AND a
+                    // function/class are in the conflict alongside the let/const.
+                    // Pure let+function or let+class gets TS2451.
+                    let has_var_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                        conflicts.contains(decl_idx)
+                            && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                    });
+                    let has_func_or_class_conflict =
+                        declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                            conflicts.contains(decl_idx)
+                                && (flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                        });
+                    if has_var_conflict && has_func_or_class_conflict {
+                        // Multi-way conflict: check if all at same scope
+                        let conflict_scopes: Vec<Option<tsz_binder::ScopeId>> = declarations
                             .iter()
                             .filter(|(decl_idx, _, is_local, _, _)| {
                                 *is_local && conflicts.contains(decl_idx)
                             })
-                            .map(|(decl_idx, flags, _, _, _)| (*decl_idx, *flags))
-                            .collect();
-
-                        // Get the block scope of each declaration
-                        let get_direct_scope =
-                            |decl_idx: NodeIndex| -> Option<tsz_binder::ScopeId> {
+                            .map(|(decl_idx, _, _, _, _)| {
                                 let parent_idx = self
                                     .ctx
                                     .arena
-                                    .get_extended(decl_idx)
+                                    .get_extended(*decl_idx)
                                     .map(|ext| ext.parent)
-                                    .unwrap_or(decl_idx);
+                                    .unwrap_or(*decl_idx);
                                 self.ctx
                                     .binder
                                     .find_enclosing_scope(self.ctx.arena, parent_idx)
-                            };
-
-                        // Find block-scoped declarations and their scopes
-                        let first_block_scoped = local_conflicts
+                            })
+                            .collect();
+                        let first_scope = conflict_scopes.first().copied().flatten();
+                        let all_same_scope = conflict_scopes.iter().all(|s| *s == first_scope);
+                        !all_same_scope // same scope → false (TS2300)
+                    } else {
+                        // Pure var+let pair: tsc uses TS2300 when the var
+                        // declaration appears BEFORE the let/const in source
+                        // order (the let "re-declares" the existing var).
+                        // When let comes first and var comes second, tsc
+                        // uses TS2451 ("cannot redeclare block-scoped").
+                        let first_var_pos = declarations
                             .iter()
-                            .find(|(_, flags)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0);
-
-                        if let Some(&(first_bs_idx, _)) = first_block_scoped {
-                            let bs_scope = get_direct_scope(first_bs_idx);
-
-                            // Count non-block-scoped declarations at the SAME
-                            // direct scope (not hoisted from a nested block)
-                            let non_bs_same_scope: Vec<NodeIndex> = local_conflicts
-                                .iter()
-                                .filter(|(_, flags)| {
-                                    (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
-                                })
-                                .filter(|(idx, _)| get_direct_scope(*idx) == bs_scope)
-                                .map(|(idx, _)| *idx)
-                                .collect();
-
-                            if non_bs_same_scope.len() >= 2 {
-                                // 2+ non-block-scoped at same scope → TS2300
-                                false
-                            } else if non_bs_same_scope.len() == 1 {
-                                // 1 non-block-scoped: check source order
-                                // If it appears before the first block-scoped → TS2300
-                                let nbs_idx = non_bs_same_scope[0];
-                                if nbs_idx.0 < first_bs_idx.0 {
-                                    false // TS2300
-                                } else {
-                                    true // TS2451
-                                }
-                            } else {
-                                // No non-block-scoped at same scope → TS2451
-                                true
+                            .filter(|(idx, flags, is_local, _, _)| {
+                                *is_local
+                                    && conflicts.contains(idx)
+                                    && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                            })
+                            .map(|(idx, _, _, _, _)| {
+                                self.ctx.arena.get(*idx).map_or(u32::MAX, |n| n.pos)
+                            })
+                            .min();
+                        let first_let_pos = declarations
+                            .iter()
+                            .filter(|(idx, flags, is_local, _, _)| {
+                                *is_local
+                                    && conflicts.contains(idx)
+                                    && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                            })
+                            .map(|(idx, _, _, _, _)| {
+                                self.ctx.arena.get(*idx).map_or(u32::MAX, |n| n.pos)
+                            })
+                            .min();
+                        match (first_var_pos, first_let_pos) {
+                            (Some(var_pos), Some(let_pos)) if var_pos < let_pos => {
+                                false // var first → TS2300
                             }
-                        } else {
-                            // No block-scoped found (shouldn't happen given
-                            // has_block_scoped_conflict), fall back to TS2451
-                            true
+                            _ => true, // let first (or same pos) → TS2451
                         }
                     }
                 } else if has_remote_declaration {
