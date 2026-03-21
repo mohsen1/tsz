@@ -348,6 +348,33 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Check (without advancing the cursor) whether there is a comment in
+    /// `[start_pos, end_pos)` that introduces a newline break. This is used
+    /// to detect cases where a line comment between a keyword (`yield`) and
+    /// its operand would trigger ASI, requiring the operand to be wrapped in
+    /// parentheses.
+    pub(in crate::emitter) fn has_newline_comment_in_range(
+        &self,
+        start_pos: u32,
+        end_pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.pos >= end_pos {
+                break;
+            }
+            if comment.end > start_pos && comment.has_trailing_new_line {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
     /// Emit all comments whose span lies within `[start_pos, end_pos)`.
     /// When `insert_space_for_adjacent_inline` is true, a space is emitted before
     /// same-line inline comments when the comment starts immediately after source

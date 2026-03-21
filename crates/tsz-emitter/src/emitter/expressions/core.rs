@@ -902,14 +902,24 @@ impl<'a> Printer<'a> {
                 }
                 // When there IS a comment but the inner expression is a type
                 // assertion/as/satisfies that will be erased, still strip the
-                // parens. The comment system will emit the comment before the
-                // unwrapped expression naturally.
+                // parens — UNLESS the comment introduces a newline (e.g., a
+                // line comment `// ...`). A newline between a keyword like
+                // `yield` and its operand triggers ASI, so the parens must be
+                // preserved to keep the operand attached:
+                //   `yield (// comment\n a as any)` → `yield (\n// comment\n a)`
+                //   `yield (/* ok */ a as any)`     → `yield /* ok */ a`
                 if inner.kind == syntax_kind_ext::TYPE_ASSERTION
                     || inner.kind == syntax_kind_ext::AS_EXPRESSION
                     || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
                 {
-                    self.emit(paren.expression);
-                    return;
+                    let has_newline_comment = self.all_comments.iter().any(|c| {
+                        c.pos >= node.pos && c.end <= actual_inner_start && c.has_trailing_new_line
+                    });
+                    if !has_newline_comment {
+                        self.emit(paren.expression);
+                        return;
+                    }
+                    // Fall through to emit with parens preserved
                 }
                 // Fall through to emit with parens preserved (non-type-erasure case)
             }
@@ -1017,10 +1027,17 @@ impl<'a> Printer<'a> {
         self.write("(");
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
+        // When the comment has a trailing newline (line comment `// ...`),
+        // emit a newline after `(` so that the output matches tsc:
+        //   `yield (\n// comment\na)` instead of `yield ( // comment\na)`
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
         {
-            self.write(" ");
+            if self.has_newline_comment_in_range(node.pos, inner_node.pos) {
+                self.write_line();
+            } else {
+                self.write(" ");
+            }
             self.emit_comments_before_pos(inner_node.pos);
             self.pending_block_comment_space = false;
         }
@@ -1657,6 +1674,36 @@ mod tests {
         assert!(
             !output.contains("yield ;"),
             "Yield without an operand must not include a separating space.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a parenthesized type assertion wraps a line comment between `yield`
+    /// and its operand, the parens must be preserved to prevent ASI.
+    /// `yield (// comment\n a as any)` -> `yield (\n// comment\n a)` (not `yield // comment\n a`)
+    #[test]
+    fn yield_preserves_parens_for_line_comment_in_type_assertion() {
+        let source =
+            "function *t1() {\n    yield (\n        // comment\n        a as any\n    );\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("yield ("),
+            "yield with line comment before operand must preserve opening paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// comment"),
+            "Line comment must be preserved in output.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("yield // comment"),
+            "yield must not be directly followed by the line comment (ASI hazard).\nOutput:\n{output}"
         );
     }
 
