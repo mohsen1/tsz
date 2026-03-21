@@ -1393,9 +1393,12 @@ impl<'a> CheckerState<'a> {
                                     .get(arg_idx)
                                     .map(|node| (node.pos, node.end))
                                     .unwrap_or((0, 0));
-                                self.ctx
-                                    .diagnostics
-                                    .retain(|diag| diag.start < start || diag.start >= end);
+                                self.ctx.diagnostics.retain(|diag| {
+                                    // Preserve TS2454 (variable used before assignment) —
+                                    // definite assignment errors are independent of contextual
+                                    // type re-evaluation and must not be cleared during round 2.
+                                    diag.code == 2454 || diag.start < start || diag.start >= end
+                                });
                                 self.ctx.rebuild_emitted_diagnostics_from_current();
                                 self.compute_single_call_argument_type(
                                     arg_idx,
