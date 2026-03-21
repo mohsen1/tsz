@@ -1745,6 +1745,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if all_pass {
                     return CallResult::Success(combined.return_type);
                 }
+                // When the combined (intersected) parameter type is `never` and all
+                // per-member calls fail, this is likely a false positive from correlated
+                // type parameters. For example, calling a union of functions obtained
+                // from `MappedType[K]` where the argument type correlates with K.
+                // In tsc, K links the handler and argument, so the call succeeds.
+                // As a fallback, check if each argument is assignable to the UNION
+                // of all parameter types (rather than the intersection). This correctly
+                // handles the correlated mapped-type pattern without being unsound for
+                // truly incompatible union calls (those still fail per-member).
+                if combined.param_types.iter().any(|&p| p == TypeId::NEVER) {
+                    let all_arg_mismatch = failures
+                        .iter()
+                        .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));
+                    if all_arg_mismatch {
+                        let mut param_union_pass = true;
+                        for (i, &arg_type) in arg_types.iter().enumerate() {
+                            if i < combined.param_types.len()
+                                && combined.param_types[i] == TypeId::NEVER
+                            {
+                                // Collect per-member param types at this position
+                                let member_param_types: Vec<TypeId> = failures
+                                    .iter()
+                                    .filter_map(|f| {
+                                        if let CallResult::ArgumentTypeMismatch {
+                                            expected, ..
+                                        } = f
+                                        {
+                                            Some(*expected)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                let param_union = self.interner.union(member_param_types);
+                                if !self.checker.is_assignable_to(arg_type, param_union) {
+                                    param_union_pass = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if param_union_pass {
+                            return CallResult::Success(combined.return_type);
+                        }
+                    }
+                }
             }
         }
 
