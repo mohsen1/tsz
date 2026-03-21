@@ -1178,11 +1178,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // will match correctly.
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
-            } else {
+            } else if self.erase_generics {
+                // When erase_generics is enabled (e.g., for base type structural
+                // checks like TS2415/TS2417), erase target type params to constraints.
+                // This matches tsc's eraseGenerics behavior in typeRelatedTo.
                 let target_canonical =
                     erase_type_params_to_constraints(&target_instantiated.type_params);
                 target_instantiated =
                     self.instantiate_function_shape(&target_instantiated, &target_canonical);
+            } else {
+                // A truly non-generic function is not assignable to a generic function.
+                // In tsc, when a source signature has no type parameters and the target
+                // has type parameters, they differ by type parameter arity and the
+                // relation fails (signatureRelatedTo returns Ternary.False).
+                //
+                // Example: `(x: string) => string` is NOT assignable to `<T>(x: T) => T`
+                // because the generic function must work for ALL type arguments T, not
+                // just string.
+                self.type_param_equivalences.truncate(equiv_start);
+                return SubtypeResult::False;
             }
         }
 
