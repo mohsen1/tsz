@@ -671,7 +671,14 @@ impl<'a> CheckerState<'a> {
 
         let left_sym = match self.resolve_qualified_symbol(qn.left) {
             Some(sym) => sym,
-            None => return false,
+            None => {
+                // If left resolution failed and left is itself a qualified name,
+                // recurse to report the error at the correct intermediate level.
+                // e.g. for `globals.toString.Blah`, when `globals.toString` fails
+                // to resolve, recurse into `globals.toString` to find that
+                // `toString` is not an exported member of `globals`.
+                return self.report_type_query_missing_member(qn.left);
+            }
         };
         let lib_binders = self.get_lib_binders();
         let left_symbol = match self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) {
