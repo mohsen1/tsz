@@ -251,210 +251,70 @@ pub(super) fn collect_diagnostics(
             let file_path = Path::new(&file.file_name);
 
             for (specifier, specifier_node, import_kind) in &module_specifiers {
-                // Get span from the specifier node
                 let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
                     Span::new(spec_node.pos, spec_node.end)
                 } else {
-                    Span::new(0, 0) // Fallback for invalid nodes
+                    Span::new(0, 0)
                 };
 
-                // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
-                match module_resolver.resolve_with_kind(specifier, file_path, span, *import_kind) {
-                    Ok(resolved_module) => {
-                        resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                        let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
-                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                            resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                        }
+                let request = tsz::module_resolver::ModuleLookupRequest {
+                    specifier,
+                    containing_file: file_path,
+                    specifier_span: span,
+                    import_kind: *import_kind,
+                    no_implicit_any: options.checker.no_implicit_any,
+                    implied_classic_resolution: options.checker.implied_classic_resolution,
+                };
+
+                let result = module_resolver.lookup(
+                    &request,
+                    |spec, fp| {
+                        resolve_module_specifier(
+                            fp,
+                            spec,
+                            options,
+                            base_dir,
+                            &mut resolution_cache,
+                            &program_paths,
+                        )
+                    },
+                    |spec| {
+                        program.declared_modules.contains(spec)
+                            || program.shorthand_ambient_modules.contains(spec)
+                    },
+                );
+
+                if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
+                    tracing::debug!(
+                        "module lookup: file={} spec={} resolved={:?} treat_as_resolved={} error={:?}",
+                        file_path.display(),
+                        specifier,
+                        result.resolved_path,
+                        result.treat_as_resolved,
+                        result.error,
+                    );
+                }
+
+                // Map resolved path to file index
+                if let Some(ref resolved_path) = result.resolved_path {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    let canonical = canonicalize_or_owned(resolved_path);
+                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                     }
-                    Err(failure) => {
-                        let mut resolved_override: Option<PathBuf> = None;
-                        if let tsz::module_resolver::ResolutionFailure::JsxNotEnabled {
-                            resolved_path,
-                            ..
-                        } = &failure
-                        {
-                            resolved_override = Some(resolved_path.clone());
-                        }
-                        // Check if the fallback resolver can find this module.
-                        // tsc tries all resolution strategies before giving up.
-                        // Our ModuleResolver may fail with ModuleResolutionModeMismatch,
-                        // PackageJsonError, etc. even though a simpler resolution
-                        // strategy would succeed. Try the fallback for these cases too.
-                        if failure.should_try_fallback()
-                            && let Some(resolved) = resolve_module_specifier(
-                                file_path,
-                                specifier,
-                                options,
-                                base_dir,
-                                &mut resolution_cache,
-                                &program_paths,
-                            )
-                        {
-                            if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
-                                tracing::debug!(
-                                    "module specifier fallback success: file={} spec={} -> {}",
-                                    file_path.display(),
-                                    specifier,
-                                    resolved.display()
-                                );
-                            }
-                            // Validate Node16/NodeNext extension requirements for virtual files
-                            let resolution_kind = options.effective_module_resolution();
-                            let is_node16_or_next = matches!(
-                                resolution_kind,
-                                crate::config::ModuleResolutionKind::Node16
-                                    | crate::config::ModuleResolutionKind::NodeNext
-                            );
+                } else if result.treat_as_resolved {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                }
 
-                            if is_node16_or_next {
-                                // Check if importing file is ESM (by extension or path)
-                                let file_path_str = file_path.to_string_lossy();
-                                let importing_ext =
-                                    tsz::module_resolver::ModuleExtension::from_path(file_path);
-                                let is_esm = importing_ext.forces_esm()
-                                    || file_path_str.ends_with(".mts")
-                                    || file_path_str.ends_with(".mjs");
-
-                                // Check if specifier has an extension
-                                let specifier_has_extension =
-                                    Path::new(specifier).extension().is_some();
-
-                                // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
-                                // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
-                                // even though the file exists, because ESM requires explicit extensions
-                                if is_esm && !specifier_has_extension && specifier.starts_with('.')
-                                {
-                                    // Emit TS2307 error - module cannot be found with the exact specifier
-                                    // (even though the file exists, ESM requires explicit extension)
-                                    resolved_module_errors.insert(
-                                            (file_idx, specifier.clone()),
-                                            tsz::checker::context::ResolutionError {
-                                                code: tsz::module_resolver::CANNOT_FIND_MODULE,
-                                                message: format!(
-                                                    "Cannot find module '{specifier}' or its corresponding type declarations."
-                                                ),
-                                            },
-                                        );
-                                    continue; // Don't add to resolved_modules - this is an error
-                                }
-                            }
-
-                            // Fallback succeeded and passed validation - add to resolved paths
-                            let canonical = canonicalize_or_owned(&resolved);
-                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                                resolved_module_paths
-                                    .insert((file_idx, specifier.clone()), target_idx);
-                            }
-                            continue; // Virtual file found and validated, skip error
-                        }
-
-                        // Check if this is a JSON module import without resolveJsonModule enabled
-                        // If so, emit TS2732 instead of TS2307
-                        let failure_to_use = if matches!(
-                            failure,
-                            tsz::module_resolver::ResolutionFailure::NotFound { .. }
-                        ) && specifier.ends_with(".json")
-                            && !options.resolve_json_module
-                        {
-                            // Create TS2732 error for JSON import without resolveJsonModule
-                            tsz::module_resolver::ResolutionFailure::JsonModuleWithoutResolveJsonModule {
-                                specifier: specifier.clone(),
-                                containing_file: file_path.to_string_lossy().to_string(),
-                                span,
-                            }
-                        } else {
-                            failure
-                        };
-
-                        if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
-                            tracing::debug!(
-                                "module specifier resolution failed: file={} spec={} failure={:?}",
-                                file_path.display(),
-                                specifier,
-                                failure_to_use
-                            );
-                        }
-
-                        let is_ordinary_bare_specifier = !specifier.starts_with('.')
-                            && !specifier.starts_with('/')
-                            && !specifier.contains(':');
-                        if is_ordinary_bare_specifier
-                            && (program.declared_modules.contains(specifier)
-                                || program.shorthand_ambient_modules.contains(specifier))
-                        {
-                            // Local ambient modules are discovered by binding rather than
-                            // path-based resolution. Keep the specifier "resolved" here so
-                            // the checker can import from the ambient module without a
-                            // spurious TS2307 from the driver layer.
-                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                            continue;
-                        }
-
-                        // Untyped JS module handling: When resolution fails but a JS
-                        // file exists for this specifier (without declaration files),
-                        // TypeScript treats it as an untyped module:
-                        // - With noImplicitAny: emit TS7016 ("Could not find a declaration file")
-                        // - Without noImplicitAny: silently treat as `any` (no error)
-                        if matches!(
-                            failure_to_use,
-                            tsz::module_resolver::ResolutionFailure::NotFound { .. }
-                                | tsz::module_resolver::ResolutionFailure::PackageJsonError { .. }
-                        ) && let Some(js_path) =
-                            module_resolver.probe_js_file(specifier, file_path, span, *import_kind)
-                        {
-                            if options.checker.no_implicit_any {
-                                resolved_module_errors.insert(
-                                        (file_idx, specifier.clone()),
-                                        tsz::checker::context::ResolutionError {
-                                            code: tsz::checker::diagnostics::diagnostic_codes::COULD_NOT_FIND_A_DECLARATION_FILE_FOR_MODULE_IMPLICITLY_HAS_AN_ANY_TYPE,
-                                            message: format!(
-                                                "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
-                                                specifier, js_path.display()
-                                            ),
-                                        },
-                                    );
-                            }
-                            // Mark the module as "resolved" so the checker doesn't
-                            // independently emit TS2307. The module is treated as
-                            // untyped (type `any`) — no target file index needed.
-                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                            continue;
-                        }
-
-                        // Convert ResolutionFailure to Diagnostic to get the error code and message
-                        let mut diagnostic = failure_to_use.to_diagnostic();
-
-                        // TypeScript emits TS2792 (instead of TS2307) when module resolution
-                        // is Classic. The `implied_classic_resolution` flag is computed from
-                        // `effective_module_resolution()` at config resolution time.
-                        // tsc emits TS2792 regardless of whether the specifier has a file
-                        // extension — the decision is purely based on the resolution mode.
-                        if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
-                            && options.checker.implied_classic_resolution
-                        {
-                            diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
-                            diagnostic.message = format!(
-                                "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
-                            );
-                        }
-
-                        resolved_module_errors.insert(
-                            (file_idx, specifier.clone()),
-                            tsz::checker::context::ResolutionError {
-                                code: diagnostic.code,
-                                message: diagnostic.message,
-                            },
-                        );
-
-                        if resolved_override.is_some() {
-                            // Mark as resolved to suppress TS2307, but don't map
-                            // to a target file. For JsxNotEnabled, the resolved
-                            // file shouldn't have its exports validated (which
-                            // would cause spurious TS1192/TS2306 errors).
-                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                        }
-                    }
+                // Record error for the checker
+                if let Some(ref error) = result.error {
+                    resolved_module_errors.insert(
+                        (file_idx, specifier.clone()),
+                        tsz::checker::context::ResolutionError {
+                            code: error.code,
+                            message: error.message.clone(),
+                        },
+                    );
                 }
             }
         }
