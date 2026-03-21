@@ -173,8 +173,7 @@ impl<'a> CheckerContext<'a> {
     /// so that subsequent cross-file symbol lookups are O(1) instead of O(N).
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
         // Build the global file_locals index: name -> Vec<(file_idx, SymbolId)>
-        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> =
-            FxHashMap::default();
+        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         // Build the global module_exports index: (module_specifier, export_name) -> Vec<(file_idx, SymbolId)>
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();

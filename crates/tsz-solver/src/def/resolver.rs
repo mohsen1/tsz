@@ -742,19 +742,16 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
-        self.symbol_to_def
-            .get(&symbol.0)
-            .copied()
-            .or_else(|| {
-                // Fallback: check the shared DefinitionStore for DefIds created in
-                // other checker contexts (e.g., lib symbols resolved before this
-                // TypeEnvironment was populated). This eliminates the need for
-                // callers to fall back to `interner.reference(SymbolRef)` which
-                // creates unregistered zombie DefIds.
-                self.definition_store
-                    .as_ref()
-                    .and_then(|store| store.find_def_by_symbol(symbol.0))
-            })
+        self.symbol_to_def.get(&symbol.0).copied().or_else(|| {
+            // Fallback: check the shared DefinitionStore for DefIds created in
+            // other checker contexts (e.g., lib symbols resolved before this
+            // TypeEnvironment was populated). This eliminates the need for
+            // callers to fall back to `interner.reference(SymbolRef)` which
+            // creates unregistered zombie DefIds.
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.find_def_by_symbol(symbol.0))
+        })
     }
 
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
