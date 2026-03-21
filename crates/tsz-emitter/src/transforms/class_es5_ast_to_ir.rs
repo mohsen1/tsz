@@ -1154,6 +1154,12 @@ impl<'a> AstToIr<'a> {
 
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
+            // Async arrow functions need __awaiter/__generator lowering.
+            // Delegate to the main emitter via ASTRef so the ES5ArrowFunction
+            // directive triggers the full async arrow emit path.
+            if arrow.is_async {
+                return IRNode::ASTRef(idx);
+            }
             // First check if there's a directive from LoweringPass
             let (captures_this, class_alias) = if let Some(ref transforms) = self.transforms {
                 if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {

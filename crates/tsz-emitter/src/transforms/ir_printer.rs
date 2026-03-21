@@ -1094,22 +1094,32 @@ impl<'a> IRPrinter<'a> {
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 self.write(", void 0, void 0, function () {");
-                self.write_line();
-                self.increase_indent();
-                // Emit hoisted var declarations before return __generator(...)
-                for var_name in hoisted_vars {
-                    self.write_indent();
-                    self.write("var ");
-                    self.write(var_name);
-                    self.write(";");
+                if hoisted_vars.is_empty() {
+                    // Inline format (matches tsc): put __generator on same line
+                    // return __awaiter(this, void 0, void 0, function () { return __generator(this, function (_a) {
+                    //     ...
+                    // }); });
+                    self.write(" ");
+                    self.emit_node(generator_body);
+                    self.write(" });");
+                } else {
+                    // Multi-line format with hoisted vars
                     self.write_line();
+                    self.increase_indent();
+                    for var_name in hoisted_vars {
+                        self.write_indent();
+                        self.write("var ");
+                        self.write(var_name);
+                        self.write(";");
+                        self.write_line();
+                    }
+                    self.write_indent();
+                    self.emit_node(generator_body);
+                    self.decrease_indent();
+                    self.write_line();
+                    self.write_indent();
+                    self.write("});");
                 }
-                self.write_indent();
-                self.emit_node(generator_body);
-                self.decrease_indent();
-                self.write_line();
-                self.write_indent();
-                self.write("});");
             }
             IRNode::GeneratorBody { has_await, cases } => {
                 self.write("return ");
@@ -1453,6 +1463,27 @@ impl<'a> IRPrinter<'a> {
                         ) && node.kind == syntax_kind_ext::ARROW_FUNCTION
                             && let Some(func_data) = arena.get_function(node)
                         {
+                            // Async arrows need __awaiter/__generator lowering.
+                            // Delegate to the full AstPrinter which has the
+                            // emit_arrow_function_es5 → emit_async_arrow_es5_inline path.
+                            if func_data.is_async {
+                                if let Some(ref transforms) = self.transforms {
+                                    let mut printer = AstPrinter::with_transforms_and_options(
+                                        arena,
+                                        transforms.clone(),
+                                        PrinterOptions {
+                                            target: crate::emitter::ScriptTarget::ES5,
+                                            ..PrinterOptions::default()
+                                        },
+                                    );
+                                    if let Some(source_text) = self.source_text {
+                                        printer.set_source_text(source_text);
+                                    }
+                                    printer.emit_expression(*idx);
+                                    self.write(printer.get_output());
+                                    return;
+                                }
+                            }
                             self.emit_arrow_function_es5_with_flags(arena, func_data);
                             return;
                         }
