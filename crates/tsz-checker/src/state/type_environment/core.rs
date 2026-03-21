@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
         // interface extends pattern). Caching them poisons later lookups.
         if result != type_id
             && !type_id.is_intrinsic()
-            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, result)
+            && !query::contains_infer_types_db(self.ctx.types, result)
         {
             self.ctx
                 .env_eval_cache
@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
             // provided type arguments. tsc's getTypeOfInstantiationExpression does this
             // per-signature: each signature with matching type param count gets
             // its params replaced.
-            if !args.is_empty() && tsz_solver::type_query_symbol(self.ctx.types, base).is_some() {
+            if !args.is_empty() && query::type_query_symbol(self.ctx.types, base).is_some() {
                 let instantiated = self.instantiate_callable_type_params(body_type, &args);
                 if instantiated != body_type {
                     return self.evaluate_type_with_env(instantiated);
@@ -371,7 +371,7 @@ impl<'a> CheckerState<'a> {
             && idx < args.len()
         {
             let arg = self.evaluate_type_with_env(args[idx]);
-            if tsz_solver::is_primitive_type(self.ctx.types, arg) {
+            if query::is_primitive_type(self.ctx.types, arg) {
                 // For `any`: only passthrough when the type parameter has an
                 // array/tuple constraint. Otherwise, `any` must flow through
                 // mapped type expansion to produce { [x: string]: any }.
@@ -500,8 +500,8 @@ impl<'a> CheckerState<'a> {
         if depth_exceeded {
             self.ctx.depth_exceeded.set(true);
         }
-        if tsz_solver::contains_this_type(self.ctx.types, instantiated) {
-            instantiated = tsz_solver::substitute_this_type(self.ctx.types, instantiated, type_id);
+        if query::contains_this_type(self.ctx.types, instantiated) {
+            instantiated = query::substitute_this_type(self.ctx.types, instantiated, type_id);
         }
         // Recursively evaluate in case the result contains more applications
         let evaluated_result = self.evaluate_application_type(instantiated);
@@ -513,7 +513,7 @@ impl<'a> CheckerState<'a> {
         // Preserve instantiated discriminated object intersections in their deferred
         // intersection form. Eager env evaluation collapses these into distributed
         // unions, which loses both discriminant-aware `keyof` and fresh EPC behavior.
-        if tsz_solver::type_queries::is_discriminated_object_intersection(self.ctx.types, result) {
+        if query::is_discriminated_object_intersection(self.ctx.types, result) {
             return result;
         }
 
@@ -533,7 +533,7 @@ impl<'a> CheckerState<'a> {
         body_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, body_type) {
+        if let Some(shape_id) = query::callable_shape_id(self.ctx.types, body_type) {
             let shape = self.ctx.types.callable_shape(shape_id);
             let new_call_sigs = self.instantiate_signatures(&shape.call_signatures, type_args);
             let new_construct_sigs =
@@ -552,9 +552,7 @@ impl<'a> CheckerState<'a> {
                 is_abstract: shape.is_abstract,
             };
             self.ctx.types.callable(new_shape)
-        } else if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, body_type)
-        {
+        } else if let Some(members) = query::get_intersection_members(self.ctx.types, body_type) {
             let mut changed = false;
             let new_members: Vec<TypeId> = members
                 .iter()
@@ -628,7 +626,7 @@ impl<'a> CheckerState<'a> {
         let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
             return false;
         };
-        tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
+        query::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Check if a type body is a Conditional type whose `extends_type` is an Application
@@ -640,7 +638,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         query::application_info(self.ctx.types, cond.extends_type).is_some()
-            && tsz_solver::contains_infer_types(self.ctx.types, cond.extends_type)
+            && query::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.
