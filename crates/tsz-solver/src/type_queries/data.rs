@@ -2372,9 +2372,11 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
         Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             if let Some(ref idx) = shape.number_index
-                && idx.readonly && idx.key_type == TypeId::NUMBER {
-                    return MappedSourceKind::ReadonlyArray(idx.value_type);
-                }
+                && idx.readonly
+                && idx.key_type == TypeId::NUMBER
+            {
+                return MappedSourceKind::ReadonlyArray(idx.value_type);
+            }
             MappedSourceKind::Object
         }
         Some(TypeData::TypeParameter(info)) => {
