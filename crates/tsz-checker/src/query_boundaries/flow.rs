@@ -213,19 +213,6 @@ pub(crate) fn narrow_destructuring_default(
     tsz_solver::remove_undefined(db, element_type)
 }
 
-/// Resolve the base type for `typeof` narrowing on a variable that may be
-/// a catch clause binding. Catch variables default to `any` (or `unknown`
-/// with `useUnknownInCatchVariables`), so `typeof` narrowing should operate
-/// on the catch variable's declared type, not the current flow type.
-pub(crate) fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
-    if is_catch_var && type_id == TypeId::UNKNOWN {
-        // `typeof` on `unknown` catch variables should narrow from `unknown`
-        TypeId::UNKNOWN
-    } else {
-        type_id
-    }
-}
-
 /// Widen standalone `null | undefined` types to `any` when `strictNullChecks`
 /// is off.  Centralizes the widening policy for mutable bindings and
 /// destructuring elements.
