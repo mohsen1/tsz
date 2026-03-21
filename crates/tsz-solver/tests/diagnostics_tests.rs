@@ -89,7 +89,7 @@ fn test_format_object_type_numeric_keys_sorted_first() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: 2; }"
+        "{ 0: string; 1: number; length: number; }"
     );
 }
 
@@ -117,7 +117,7 @@ fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: 2; }"
+        "{ 0: string; 1: number; length: number; }"
     );
 }
 
