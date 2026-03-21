@@ -719,23 +719,10 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION =>
             {
-                let actual_return_type = self.get_type_of_node(func.body);
-                if actual_return_type == TypeId::ERROR
-                    || self.is_assignable_to(actual_return_type, expected_return_type)
-                {
-                    return false;
-                }
-
-                if self.try_elaborate_assignment_source_error(func.body, expected_return_type) {
-                    return true;
-                }
-
-                self.error_type_not_assignable_at_with_anchor(
-                    actual_return_type,
-                    expected_return_type,
-                    func.body,
-                );
-                true
+                // tsc does not elaborate simple expression-bodied arrow functions.
+                // It reports TS2345 at the call argument level, not TS2322 on the
+                // return expression. Let the caller emit TS2345 instead.
+                false
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let Some(paren) = self.ctx.arena.get_parenthesized(body_node) else {
