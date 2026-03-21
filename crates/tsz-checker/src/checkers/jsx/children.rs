@@ -722,9 +722,21 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
         {
             let members_vec: Vec<TypeId> = members.to_vec();
-            return members_vec
+            if members_vec
                 .iter()
-                .any(|&member| self.type_allows_multiple_children(member));
+                .any(|&member| self.type_allows_multiple_children(member))
+            {
+                return true;
+            }
+        }
+
+        // Fallback: check if an array of the children type is assignable to the declared
+        // children type. This handles cases like `ReactNode` where `ReactNodeArray extends
+        // Array<ReactNode>` is a member of the union, but we can't detect it structurally
+        // because it's an interface extending Array rather than a direct Array type.
+        let array_of_children = self.ctx.types.factory().array(type_id);
+        if self.is_assignable_to(array_of_children, type_id) {
+            return true;
         }
 
         false

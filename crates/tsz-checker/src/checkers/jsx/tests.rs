@@ -393,3 +393,30 @@ fn jsx_discriminated_union_props_incompatible_emits_ts2322() {
         "Incompatible discriminated union props should still emit TS2322, got: {diagnostics:?}"
     );
 }
+
+/// Multiple JSX children should not emit TS2746 when the children type accepts arrays.
+/// This tests that union types containing an array-like member (e.g. ReactNode which
+/// includes ReactNodeArray) are correctly recognized as allowing multiple children.
+#[test]
+fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                div: { children?: ChildNode };
+            }
+        }
+        interface ChildNodeArray extends Array<ChildNode> {}
+        type ChildNode = string | number | boolean | ChildNodeArray | null | undefined;
+        <div>
+            {"hello"}
+            {"world"}
+        </div>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should be allowed when children type includes array-like union member, got: {diagnostics:?}"
+    );
+}
