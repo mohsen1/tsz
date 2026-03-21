@@ -15,6 +15,8 @@ pub(crate) mod environment;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
 pub(crate) mod js_exports;
+#[allow(dead_code)]
+pub(crate) mod name_resolution;
 pub(crate) mod property_access;
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod relation_types;

@@ -733,20 +733,22 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .module_resolves_to_non_module_entity(module_specifier)
             {
-                let namespace_name = self
-                    .entity_name_text(qn.left)
-                    .unwrap_or_else(|| left_symbol.escaped_name.clone());
                 let export_names: Vec<String> = left_symbol
                     .exports
                     .as_ref()
                     .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
                     .unwrap_or_default();
-                self.error_namespace_no_export_with_exports(
-                    &namespace_name,
+                let req = crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
                     right_name,
                     qn.right,
-                    &export_names,
+                    left_sym,
+                    export_names,
                 );
+                let failure = match self.resolve_name_structured(&req) {
+                    Err(f) => f,
+                    Ok(_) => return true,
+                };
+                self.report_name_resolution_failure(&req, &failure);
                 return true;
             }
             let mut visited_aliases = Vec::new();
@@ -762,20 +764,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let namespace_name = self
-            .entity_name_text(qn.left)
-            .unwrap_or_else(|| left_symbol.escaped_name.clone());
         let export_names: Vec<String> = left_symbol
             .exports
             .as_ref()
             .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
             .unwrap_or_default();
-        self.error_namespace_no_export_with_exports(
-            &namespace_name,
+        let req = crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
             right_name,
             qn.right,
-            &export_names,
+            left_sym,
+            export_names,
         );
+        let failure = match self.resolve_name_structured(&req) {
+            Err(f) => f,
+            Ok(_) => return true,
+        };
+        self.report_name_resolution_failure(&req, &failure);
         true
     }
 

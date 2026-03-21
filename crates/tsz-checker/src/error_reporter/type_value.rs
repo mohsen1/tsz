@@ -113,7 +113,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Search export names for a spelling suggestion matching `member_name`.
-    fn find_export_spelling_suggestion(
+    pub(crate) fn find_export_spelling_suggestion(
         member_name: &str,
         export_names: &[String],
     ) -> Option<String> {
