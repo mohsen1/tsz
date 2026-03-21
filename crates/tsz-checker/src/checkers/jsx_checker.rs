@@ -701,12 +701,16 @@ impl<'a> CheckerState<'a> {
             // Suppression rules (matching tsc behaviour):
             // 1. ReactJsx/ReactJsxDev modes use jsxImportSource for element types; they do not rely on
             //    the global JSX.IntrinsicElements, so TS7026 must not fire.
-            // 2. When the file has parser-level errors (e.g. malformed JSX attributes → TS1145),
+            // 2. When @jsxImportSource pragma or jsxImportSource config is set, the JSX namespace
+            //    comes from the import source module, not the global scope. TS7026 must not fire.
+            // 3. When the file has parser-level errors (e.g. malformed JSX attributes → TS1145),
             //    tsc suppresses TS7026 to avoid double-reporting in error-recovery situations.
             use tsz_common::checker_options::JsxMode;
             let jsx_mode = self.ctx.compiler_options.jsx_mode;
-            let uses_import_source =
-                jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
+            let uses_import_source = jsx_mode == JsxMode::ReactJsx
+                || jsx_mode == JsxMode::ReactJsxDev
+                || self.extract_jsx_import_source_pragma().is_some()
+                || !self.ctx.compiler_options.jsx_import_source.is_empty();
             if !uses_import_source && !self.ctx.has_parse_errors {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
@@ -1011,10 +1015,14 @@ impl<'a> CheckerState<'a> {
         };
         // Same suppression rules as the opening-element TS7026 check:
         // - ReactJsx/ReactJsxDev use jsxImportSource (no global IntrinsicElements needed)
+        // - @jsxImportSource pragma or config overrides to use import source
         // - File has parse errors → suppress to avoid double-reporting
         use tsz_common::checker_options::JsxMode;
         let jsx_mode = self.ctx.compiler_options.jsx_mode;
-        let uses_import_source = jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
+        let uses_import_source = jsx_mode == JsxMode::ReactJsx
+            || jsx_mode == JsxMode::ReactJsxDev
+            || self.extract_jsx_import_source_pragma().is_some()
+            || !self.ctx.compiler_options.jsx_import_source.is_empty();
         if is_intrinsic
             && self.get_intrinsic_elements_type().is_none()
             && !uses_import_source
