@@ -65,6 +65,100 @@ impl RelatedInformationPolicy {
     };
 }
 
+// =========================================================================
+// DiagnosticRenderRequest — explicit render-policy input
+// =========================================================================
+
+/// Strategy for generating related diagnostic information.
+///
+/// Each variant captures the inputs needed so that `emit_render_request`
+/// can produce the related info through the central policy surface.
+pub(crate) enum RelatedInfoStrategy {
+    /// No related information.
+    None,
+    /// Generate from a solver failure reason using `related_from_failure_reason`.
+    FromFailureReason {
+        reason: tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+    },
+    /// Use pre-built related items (already constructed by the reporter).
+    Prebuilt(Vec<DiagnosticRelatedInformation>),
+}
+
+/// An explicit render-policy object that captures all decisions for emitting
+/// a semantic diagnostic.
+///
+/// Reporters construct this to describe *what* to report (anchor kind, code,
+/// message, related-info strategy). The central `emit_render_request` method
+/// handles *how*: anchor resolution, related-info generation, normalization,
+/// and emission. This prevents open-coded anchor/related-info decisions from
+/// spreading across reporter modules.
+pub(crate) struct DiagnosticRenderRequest {
+    /// How to resolve the diagnostic anchor from the AST node.
+    pub anchor_kind: DiagnosticAnchorKind,
+    /// The diagnostic error code.
+    pub code: u32,
+    /// The formatted message text.
+    pub message: String,
+    /// Strategy for related-information generation.
+    pub related: RelatedInfoStrategy,
+    /// Policy for normalizing related information.
+    pub related_policy: RelatedInformationPolicy,
+}
+
+impl DiagnosticRenderRequest {
+    /// Create a simple render request with no related information.
+    pub(crate) fn simple(anchor_kind: DiagnosticAnchorKind, code: u32, message: String) -> Self {
+        Self {
+            anchor_kind,
+            code,
+            message,
+            related: RelatedInfoStrategy::None,
+            related_policy: RelatedInformationPolicy::ELABORATION,
+        }
+    }
+
+    /// Create a render request that generates related info from a failure reason.
+    pub(crate) fn with_failure_reason(
+        anchor_kind: DiagnosticAnchorKind,
+        code: u32,
+        message: String,
+        reason: tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self {
+            anchor_kind,
+            code,
+            message,
+            related: RelatedInfoStrategy::FromFailureReason {
+                reason,
+                source,
+                target,
+            },
+            related_policy: RelatedInformationPolicy::ELABORATION,
+        }
+    }
+
+    /// Create a render request with pre-built related information.
+    pub(crate) fn with_related(
+        anchor_kind: DiagnosticAnchorKind,
+        code: u32,
+        message: String,
+        related: Vec<DiagnosticRelatedInformation>,
+        policy: RelatedInformationPolicy,
+    ) -> Self {
+        Self {
+            anchor_kind,
+            code,
+            message,
+            related: RelatedInfoStrategy::Prebuilt(related),
+            related_policy: policy,
+        }
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_diagnostic_anchor(
         &self,

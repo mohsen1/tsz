@@ -25,3 +25,7 @@ mod type_value;
 
 // Re-export known-global classifier from the canonical capabilities boundary.
 pub(crate) use crate::query_boundaries::capabilities::is_known_dom_global;
+
+#[cfg(test)]
+#[path = "render_request_tests.rs"]
+mod render_request_tests;

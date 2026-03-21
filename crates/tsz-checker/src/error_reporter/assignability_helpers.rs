@@ -2,7 +2,9 @@
 //! Extracted from `assignability.rs` for maintainability.
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
-use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -49,10 +51,6 @@ impl<'a> CheckerState<'a> {
         target_level: Option<MemberAccessLevel>,
         idx: NodeIndex,
     ) {
-        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
-            return;
-        };
-
         let source_type = self.format_type_diagnostic(source);
         let target_type = self.format_type_diagnostic(target);
         let message = format_message(
@@ -65,20 +63,33 @@ impl<'a> CheckerState<'a> {
             Self::constructor_access_name(target_level),
         );
 
-        let diag = Diagnostic::error(
-            self.ctx.file_name.clone(),
-            anchor.start,
-            anchor.length,
-            message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        )
-        .with_related(
-            self.ctx.file_name.clone(),
-            anchor.start,
-            anchor.length,
-            detail,
+        // Build related info referencing the anchor span — since we don't know
+        // the span yet, use a placeholder (0, 0) and let emit_render_request
+        // fill it in via the anchor. Actually, the related info needs the span.
+        // Resolve anchor first to get the span for the related item.
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
+            return;
+        };
+
+        let related = vec![crate::diagnostics::DiagnosticRelatedInformation {
+            category: crate::diagnostics::DiagnosticCategory::Error,
+            code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            file: self.ctx.file_name.clone(),
+            start: anchor.start,
+            length: anchor.length,
+            message_text: detail,
+        }];
+
+        self.emit_render_request_at_anchor(
+            anchor,
+            DiagnosticRenderRequest::with_related(
+                DiagnosticAnchorKind::Exact,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                message,
+                related,
+                RelatedInformationPolicy::ELABORATION,
+            ),
         );
-        self.ctx.push_diagnostic(diag);
     }
 
     /// Check if the diagnostic anchor node traces back to an assignment target
