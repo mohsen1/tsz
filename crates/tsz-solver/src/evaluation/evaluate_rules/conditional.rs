@@ -325,6 +325,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 };
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
+                // Preserve the raw extends_type when it's an Application containing infer.
+                // Evaluating an Application like `Synthetic<T, infer V>` can collapse it
+                // to a structural Object (e.g., empty `{}`), losing the infer pattern.
+                // When the deferred conditional is later instantiated, the Application form
+                // is needed by `is_conditional_with_application_infer` and
+                // `try_application_infer_match` to perform declaration-level infer matching.
+                let deferred_extends = if matches!(
+                    self.interner().lookup(cond.extends_type),
+                    Some(TypeData::Application(_))
+                ) && self.type_contains_infer(cond.extends_type)
+                {
+                    cond.extends_type
+                } else {
+                    extends_type
+                };
                 return self.interner().conditional(ConditionalType {
                     check_type,
                     extends_type: deferred_extends,
