@@ -344,23 +344,21 @@ impl<'a> CheckerState<'a> {
 
                 // Check for `export as namespace X` (UMD namespace export)
                 if stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
-                    if let Some(export) = arena.get_export_decl(stmt_node) {
-                        if let Some(ident) = arena.get_identifier_at(export.export_clause) {
-                            if ident.escaped_text == name {
-                                // Assign flags directly — declaration_symbol_flags cannot
-                                // resolve the identifier to its NAMESPACE_EXPORT_DECLARATION
-                                // parent because that kind isn't in resolve_duplicate_decl_node.
-                                let flags =
-                                    symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
-                                declarations.push((
-                                    export.export_clause,
-                                    flags,
-                                    false,
-                                    true,
-                                    DuplicateDeclarationOrigin::SymbolDeclaration,
-                                ));
-                            }
-                        }
+                    if let Some(export) = arena.get_export_decl(stmt_node)
+                        && let Some(ident) = arena.get_identifier_at(export.export_clause)
+                        && ident.escaped_text == name
+                    {
+                        // Assign flags directly — declaration_symbol_flags cannot
+                        // resolve the identifier to its NAMESPACE_EXPORT_DECLARATION
+                        // parent because that kind isn't in resolve_duplicate_decl_node.
+                        let flags = symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
+                        declarations.push((
+                            export.export_clause,
+                            flags,
+                            false,
+                            true,
+                            DuplicateDeclarationOrigin::SymbolDeclaration,
+                        ));
                     }
                     continue;
                 }
@@ -449,18 +447,17 @@ impl<'a> CheckerState<'a> {
                     let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
                         continue;
                     };
-                    if let Some(ident) = arena.get_identifier_at(var_decl.name) {
-                        if ident.escaped_text == name {
-                            if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
-                                declarations.push((
-                                    decl_idx,
-                                    flags,
-                                    false,
-                                    false,
-                                    DuplicateDeclarationOrigin::SymbolDeclaration,
-                                ));
-                            }
-                        }
+                    if let Some(ident) = arena.get_identifier_at(var_decl.name)
+                        && ident.escaped_text == name
+                        && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
+                    {
+                        declarations.push((
+                            decl_idx,
+                            flags,
+                            false,
+                            false,
+                            DuplicateDeclarationOrigin::SymbolDeclaration,
+                        ));
                     }
                 }
             }
