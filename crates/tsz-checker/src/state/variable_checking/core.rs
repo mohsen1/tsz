@@ -1114,15 +1114,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     init_type
                 };
-                // When strictNullChecks is off, undefined and null widen to any
-                // regardless of freshness (this applies to destructured bindings too)
-                if !checker.ctx.strict_null_checks()
-                    && query::is_only_null_or_undefined(checker.ctx.types, widened)
-                {
-                    TypeId::ANY
-                } else {
-                    widened
-                }
+                // Route null/undefined widening through the flow observation boundary.
+                flow_boundary::widen_null_undefined_to_any(
+                    checker.ctx.types,
+                    widened,
+                    checker.ctx.strict_null_checks(),
+                )
             } else {
                 // For for-in/for-of loop variables, the element type has already been cached
                 // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.

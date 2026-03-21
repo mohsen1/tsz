@@ -990,14 +990,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     init_type
                 };
-                // When strictNullChecks is off, undefined and null widen to any
-                // (always, regardless of freshness)
-                if !self.ctx.strict_null_checks()
-                    && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
-                {
-                    return TypeId::ANY;
-                }
-                return widened;
+                // Route null/undefined widening through the flow observation boundary.
+                return flow_boundary::widen_null_undefined_to_any(
+                    self.ctx.types,
+                    widened,
+                    self.ctx.strict_null_checks(),
+                );
             }
 
             // `const k = Symbol()` — infer unique symbol type.

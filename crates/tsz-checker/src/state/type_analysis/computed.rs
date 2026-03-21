@@ -1,6 +1,7 @@
 //! Computed symbol type analysis: `compute_type_of_symbol`, contextual literal types,
 //! and private property access checking.
 
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -1146,17 +1147,13 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     inferred_type
                                 };
-                            // When strictNullChecks is off, undefined and null widen to any
-                            // (always, regardless of freshness)
-                            if !self.ctx.strict_null_checks()
-                                && tsz_solver::type_queries::is_only_null_or_undefined(
-                                    self.ctx.types,
-                                    widened_type,
-                                )
-                            {
-                                return (TypeId::ANY, Vec::new());
-                            }
-                            return (widened_type, Vec::new());
+                            // Route null/undefined widening through the flow observation boundary.
+                            let final_type = flow_boundary::widen_null_undefined_to_any(
+                                self.ctx.types,
+                                widened_type,
+                                self.ctx.strict_null_checks(),
+                            );
+                            return (final_type, Vec::new());
                         }
                         return (inferred_type, Vec::new());
                     }

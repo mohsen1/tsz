@@ -735,8 +735,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_variable_checking array element checks should route through query_boundaries::state::checking"
     );
     assert!(
-        state_variable_checking_src.contains("query::is_only_null_or_undefined("),
-        "state_variable_checking null/undefined checks should route through query_boundaries::state::checking"
+        state_variable_checking_src.contains("flow_boundary::widen_null_undefined_to_any("),
+        "state_variable_checking null/undefined widening should route through flow observation boundary"
     );
     assert!(
         state_variable_checking_src.contains("query::has_type_query_for_symbol("),
@@ -747,8 +747,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_variable_checking should not call solver type_queries directly; use state_checking query boundaries"
     );
     assert!(
-        state_variable_checking_destructuring_src.contains("query::is_only_null_or_undefined("),
-        "state_variable_checking_destructuring null/undefined checks should route through query_boundaries::state::checking"
+        state_variable_checking_destructuring_src
+            .contains("flow_boundary::widen_null_undefined_to_any("),
+        "state_variable_checking_destructuring null/undefined widening should route through flow observation boundary"
     );
     assert!(
         !state_variable_checking_destructuring_src.contains("tsz_solver::type_queries::"),

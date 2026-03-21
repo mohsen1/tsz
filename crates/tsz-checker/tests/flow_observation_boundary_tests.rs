@@ -368,3 +368,308 @@ try {} catch (e) {
         "catch variable with useUnknown=false should be any"
     );
 }
+
+// =============================================================================
+// Phase 2: NullUndefinedWidening boundary
+// =============================================================================
+
+/// When strictNullChecks is off, a destructured binding whose type is
+/// `undefined | null` should be widened to `any`.
+#[test]
+fn destructuring_null_undefined_widens_to_any_when_strict_off() {
+    let diags = check_source(
+        r#"
+declare const obj: { x: undefined };
+const { x } = obj;
+const n: number = x;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: false,
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "undefined binding should widen to any when strictNullChecks off, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// When strictNullChecks is on, `undefined` should NOT widen to `any`.
+#[test]
+fn destructuring_null_undefined_preserved_when_strict_on() {
+    let diags = check_ts(
+        r#"
+declare const obj: { x: undefined };
+const { x } = obj;
+const n: number = x;
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        !errs.is_empty(),
+        "undefined binding should NOT widen to any when strictNullChecks on"
+    );
+}
+
+/// Variable declaration null/undefined widening through boundary.
+#[test]
+fn variable_null_undefined_widens_to_any_when_strict_off() {
+    let diags = check_source(
+        r#"
+let x = undefined;
+const n: number = x;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: false,
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "undefined variable should widen to any when strictNullChecks off, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: UncheckedIndexedAccess boundary
+// =============================================================================
+
+/// noUncheckedIndexedAccess adds undefined to array element types
+/// during destructuring.
+#[test]
+fn unchecked_indexed_access_adds_undefined_in_destructuring() {
+    let diags = check_source(
+        r#"
+const arr: string[] = ["a", "b"];
+const [first] = arr;
+const s: string = first;
+"#,
+        "test.ts",
+        CheckerOptions {
+            no_unchecked_indexed_access: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        !errs.is_empty(),
+        "noUncheckedIndexedAccess should add undefined, causing TS2322"
+    );
+}
+
+// =============================================================================
+// Phase 2: ForInExpressionNullish boundary
+// =============================================================================
+
+/// For-in expression with a non-null type should resolve to string.
+#[test]
+fn for_in_variable_type_is_string() {
+    let diags = check_ts(
+        r#"
+const obj = { a: 1, b: 2 };
+for (const key in obj) {
+    const s: string = key;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "for-in variable should be string, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Catch variable with destructuring in catch
+// =============================================================================
+
+/// Catch variable with explicit unknown annotation should allow typeof narrowing.
+#[test]
+fn catch_variable_explicit_unknown_annotation_typeof() {
+    let diags = check_ts(
+        r#"
+try {
+    throw "oops";
+} catch (e: unknown) {
+    if (typeof e === "string") {
+        const s: string = e;
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Catch variable with explicit unknown should allow typeof narrowing, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Catch variable with explicit any annotation should suppress type errors.
+#[test]
+fn catch_variable_explicit_any_annotation() {
+    let diags = check_ts(
+        r#"
+try {
+    throw "oops";
+} catch (e: any) {
+    const n: number = e.anything;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Catch variable with explicit any should suppress errors, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: For-of with various iterable patterns
+// =============================================================================
+
+/// For-of with string iteration yields string characters.
+#[test]
+fn for_of_string_iteration() {
+    let diags = check_ts(
+        r#"
+const s = "hello";
+for (const ch of s) {
+    const c: string = ch;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "For-of string should yield string chars, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// For-of with nested destructuring from array of objects.
+#[test]
+fn for_of_nested_object_destructuring() {
+    let diags = check_ts(
+        r#"
+interface Entry { key: string; value: number }
+const entries: Entry[] = [];
+for (const { key, value } of entries) {
+    const k: string = key;
+    const v: number = value;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "For-of nested object destructuring should work, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Dependent destructured variables (union narrowing)
+// =============================================================================
+
+/// Destructuring a discriminated union type preserves property types.
+#[test]
+fn dependent_destructured_discriminated_union() {
+    let diags = check_ts(
+        r#"
+type A = { kind: "a"; value: string };
+type B = { kind: "b"; value: number };
+type AB = A | B;
+function f(x: AB) {
+    const { kind, value } = x;
+    const k: "a" | "b" = kind;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Discriminated union destructuring should preserve types, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Multiple property destructuring from a single source.
+#[test]
+fn dependent_destructured_multiple_properties() {
+    let diags = check_ts(
+        r#"
+interface Config {
+    host: string;
+    port: number;
+    debug: boolean;
+}
+function f(config: Config) {
+    const { host, port, debug } = config;
+    const h: string = host;
+    const p: number = port;
+    const d: boolean = debug;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Multiple destructured properties should have correct types, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Destructuring with renaming preserves types.
+#[test]
+fn destructuring_with_rename() {
+    let diags = check_ts(
+        r#"
+interface Point { x: number; y: number }
+function f(p: Point) {
+    const { x: myX, y: myY } = p;
+    const a: number = myX;
+    const b: number = myY;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Destructuring with rename should preserve types, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Phase 2: Optional chain + truthiness combined
+// =============================================================================
+
+/// Optional chain in ternary expression.
+#[test]
+fn optional_chain_ternary_narrows() {
+    let diags = check_ts(
+        r#"
+function f(x: { y: number } | null) {
+    const result = x?.y ? x.y : 0;
+    const n: number = result;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Optional chain in ternary should narrow, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
