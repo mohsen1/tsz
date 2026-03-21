@@ -46,7 +46,7 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const MAX_INTERNED_TYPES: usize = 2_000_000;
+pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
