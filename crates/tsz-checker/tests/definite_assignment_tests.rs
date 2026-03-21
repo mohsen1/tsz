@@ -921,7 +921,8 @@ fn test_ts2454_skipped_for_undefined_type() {
 
 /// TS2454 should not fire when `strictNullChecks` is off.
 #[test]
-fn test_ts2454_not_emitted_without_strict_null_checks() {
+fn test_ts2454_emitted_even_without_strict_null_checks() {
+    // tsc 6.0: TS2454 fires regardless of strictNullChecks
     let source = r"
         var a: number;
         var b = a;
@@ -933,13 +934,12 @@ fn test_ts2454_not_emitted_without_strict_null_checks() {
             ..Default::default()
         },
     );
-    assert_eq!(
+    assert!(
         count_code(
             &diags,
             diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
-        ),
-        0,
-        "TS2454 requires strictNullChecks, got: {diags:?}"
+        ) > 0,
+        "tsc 6.0 emits TS2454 even without strictNullChecks, got: {diags:?}"
     );
 }
 
