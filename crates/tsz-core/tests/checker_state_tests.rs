@@ -23576,7 +23576,6 @@ if ((o = fn()).done) {
 
 /// Test destructuring assignment default value narrowing with complex patterns
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_destructuring_assignment_default_order_narrows() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
