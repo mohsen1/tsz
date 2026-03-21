@@ -155,45 +155,6 @@ pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bo
     }
 }
 
-/// Remove null and undefined from a type (non-null assertion `x!`).
-/// Centralizes the narrowing policy for non-null assertions.
-pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, type_id)
-}
-
-/// Remove null and undefined from a type for for-of/for-in iteration.
-/// The iterable expression type should not include nullish types.
-pub(crate) fn remove_nullish_for_iteration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, type_id)
-}
-
-/// Widen null/undefined literal types to `any` for loose-mode variable declarations.
-/// Used when `noImplicitAny` is off and the declared type is null or undefined.
-/// With `strict_null_checks`, null/undefined are kept as-is.
-pub(crate) fn widen_null_undefined_to_any(
-    _db: &dyn TypeDatabase,
-    type_id: TypeId,
-    strict_null_checks: bool,
-) -> TypeId {
-    if strict_null_checks {
-        return type_id;
-    }
-    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
-        TypeId::ANY
-    } else {
-        type_id
-    }
-}
-
-/// Add `undefined` to a type when it's accessed through a destructuring index.
-/// Under `noUncheckedIndexedAccess`, indexed access adds `| undefined`.
-pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::UNDEFINED {
-        return type_id;
-    }
-    db.union2(type_id, TypeId::UNDEFINED)
-}
-
 /// Strip undefined from a destructured element type when a default is present.
 /// Centralizes the narrowing policy for destructuring defaults.
 pub(crate) fn narrow_destructuring_default(

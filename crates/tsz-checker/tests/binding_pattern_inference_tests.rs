@@ -30,7 +30,6 @@ fn compile_and_get_diagnostics(source: &str, options: CheckerOptions) -> Vec<(u3
 }
 
 #[test]
-#[ignore = "missing TS2571 before second TS2488 in unknown array destructuring"]
 fn test_unknown_binding_patterns_match_tsc_split_diagnostics() {
     let source = r#"
 declare function f<T>(): T;
