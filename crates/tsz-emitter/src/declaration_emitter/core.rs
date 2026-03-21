@@ -4208,6 +4208,9 @@ impl<'a> DeclarationEmitter<'a> {
                         k if k == SyntaxKind::ReadonlyKeyword as u16 => {
                             self.write("readonly ");
                         }
+                        k if k == SyntaxKind::OverrideKeyword as u16 => {
+                            self.write("override ");
+                        }
                         _ => {}
                     }
                 }
