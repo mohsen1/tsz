@@ -432,6 +432,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // 2. The source property is optional
             // Regardless of whether the output property stays optional or not (e.g., `-?`
             // removes optionality, but the declared type is still correct).
+            // For homomorphic mapped types with optional source properties, use the
+            // source property's declared type (raw type_id from the source Object). This
+            // replaces the template-evaluated type which includes `| undefined` from the
+            // indexed access on an optional property. The declared type preserves the
+            // distinction between implicit undefined (from `a?: string` → `string`) and
+            // explicit undefined (from `a?: string | undefined` → `string | undefined`).
+            // This is critical for `-?` (Required): it removes optionality but must
+            // preserve explicitly written `| undefined` in the source property's type.
             if is_homomorphic
                 && source_optional
                 && let Some((_, _, declared_type)) = source_info

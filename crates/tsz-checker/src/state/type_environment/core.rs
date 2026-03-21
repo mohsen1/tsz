@@ -768,11 +768,53 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // For homomorphic mapped types with `-?`, collect source properties so we
+        // can use their raw type_id (without implicit undefined from optionality).
+        // This distinguishes `{ a?: string }` (raw type = string) from
+        // `{ a?: string | undefined }` (raw type = string | undefined).
+        let is_remove_optional =
+            mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove);
+        let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, TypeId)> =
+            if is_remove_optional {
+                if let Some(source) =
+                    tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
+                {
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
+                        .map(|shape| {
+                            shape
+                                .properties
+                                .iter()
+                                .map(|p| (p.name, (p.optional, p.type_id)))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    Default::default()
+                }
+            } else {
+                Default::default()
+            };
+
         // Build the resulting object properties
         let mut properties = Vec::new();
         for key_name in string_keys {
-            let property_type =
+            let mut property_type =
                 self.instantiate_mapped_property_template_with_env(&mapped, key_name);
+
+            // When `-?` removes optionality from a homomorphic mapped type, use the
+            // source property's raw type_id instead of the template-evaluated type.
+            // The template evaluation (T[K]) adds `| undefined` for optional properties,
+            // but the raw type_id preserves the distinction between implicit undefined
+            // (from `a?: string` → raw type `string`) and explicit undefined
+            // (from `a?: string | undefined` → raw type `string | undefined`).
+            // This matches tsc's `removeMissingType` which only strips the implicit part.
+            if is_remove_optional {
+                if let Some(&(source_optional, raw_type)) = source_prop_map.get(&key_name) {
+                    if source_optional {
+                        property_type = raw_type;
+                    }
+                }
+            }
 
             let optional = matches!(
                 mapped.optional_modifier,
