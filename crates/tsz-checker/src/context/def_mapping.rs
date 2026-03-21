@@ -239,7 +239,8 @@ impl<'a> CheckerContext<'a> {
         let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
         let canonical_def_id = self.definition_store.find_def_by_symbol(sym_id.0)?;
         if canonical_def_id != def_id {
-            if let Some(canonical_params) = self.definition_store.get_type_params(canonical_def_id) {
+            if let Some(canonical_params) = self.definition_store.get_type_params(canonical_def_id)
+            {
                 if !canonical_params.is_empty() {
                     // Cache for future lookups under the requesting DefId.
                     self.def_type_params
