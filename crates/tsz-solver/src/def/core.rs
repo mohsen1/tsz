@@ -24,6 +24,7 @@
 
 use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use dashmap::DashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
@@ -402,6 +403,19 @@ pub struct DefinitionStore {
     /// and error reporters to display alias names (e.g., "Color") instead of
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
     body_to_alias: DashMap<TypeId, DefId>,
+
+    /// Reverse index: `ObjectShape` hash -> `DefId` for shape-based lookups.
+    ///
+    /// Populated when `instance_shape` is set (via `register()` or
+    /// `set_instance_shape()`). Enables O(1) lookup in `find_def_by_shape`,
+    /// replacing an O(N) linear scan over all definitions. Used by the
+    /// `TypeFormatter` to display interface/class names instead of structural
+    /// expansions in diagnostic messages.
+    ///
+    /// Keyed by a 64-bit FxHash of the `ObjectShape`. Hash collisions are
+    /// theoretically possible but astronomically unlikely with FxHash, and the
+    /// formatter use case is best-effort diagnostic naming.
+    shape_to_def: DashMap<u64, DefId>,
 }
 
 impl Default for DefinitionStore {
@@ -423,7 +437,15 @@ impl DefinitionStore {
             symbol_def_index: DashMap::new(),
             symbol_only_index: DashMap::new(),
             body_to_alias: DashMap::new(),
+            shape_to_def: DashMap::new(),
         }
+    }
+
+    /// Compute a 64-bit FxHash fingerprint for an `ObjectShape`.
+    fn hash_shape(shape: &ObjectShape) -> u64 {
+        let mut hasher = rustc_hash::FxHasher::default();
+        shape.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Allocate a fresh `DefId`.
@@ -459,6 +481,12 @@ impl DefinitionStore {
             if let Some(body) = info.body {
                 self.body_to_alias.entry(body).or_insert(id);
             }
+        }
+
+        // Populate shape_to_def for definitions with an instance shape.
+        if let Some(ref shape) = info.instance_shape {
+            let hash = Self::hash_shape(shape);
+            self.shape_to_def.entry(hash).or_insert(id);
         }
 
         self.definitions.insert(id, info);
@@ -556,7 +584,9 @@ impl DefinitionStore {
     /// for an interface/class definition and should be recorded for diagnostics.
     pub fn set_instance_shape(&self, id: DefId, shape: Arc<ObjectShape>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            let hash = Self::hash_shape(&shape);
             entry.instance_shape = Some(shape);
+            self.shape_to_def.entry(hash).or_insert(id);
         }
     }
 
@@ -577,6 +607,7 @@ impl DefinitionStore {
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
+        self.shape_to_def.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -618,37 +649,13 @@ impl DefinitionStore {
     /// This is used by the `TypeFormatter` to preserve interface names in error messages.
     /// When an Object type matches an interface's instance shape, we use the interface name
     /// instead of expanding the object literal.
-    pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
-        self.definitions
-            .iter()
-            .find(|entry| {
-                entry
-                    .value()
-                    .instance_shape
-                    .as_ref()
-                    .map(std::convert::AsRef::as_ref)
-                    == Some(shape)
-            })
-            .map(|entry| *entry.key())
-    }
-
-    /// Check if a type name is ambiguous (appears in multiple files).
     ///
-    /// Used by the `TypeFormatter` to decide whether to import-qualify a type.
-    /// tsc only shows `import("specifier").TypeName` when there are multiple types
-    /// with the same name in different files. If the name is unique, tsc shows
-    /// just `TypeName` even for cross-file types.
-    pub fn has_ambiguous_name(
-        &self,
-        name: &str,
-        file_id: u32,
-        interner: &dyn crate::TypeDatabase,
-    ) -> bool {
-        self.definitions.iter().any(|entry| {
-            let def = entry.value();
-            let def_name = interner.resolve_atom_ref(def.name);
-            def_name.as_ref() == name && def.file_id.is_some_and(|fid| fid != file_id)
-        })
+    /// O(1) via `shape_to_def` index. The index is populated by both `register()`
+    /// (when `DefinitionInfo::instance_shape` is set) and `set_instance_shape()`,
+    /// covering all registration paths.
+    pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
+        let hash = Self::hash_shape(shape);
+        self.shape_to_def.get(&hash).map(|r| *r)
     }
 
     /// Find a `DefId` by its associated `SymbolId` (raw u32).
