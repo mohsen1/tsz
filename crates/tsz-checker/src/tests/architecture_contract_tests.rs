@@ -546,6 +546,23 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
 }
 
 #[test]
+fn test_subtype_identity_checker_no_direct_solver_inspection() {
+    let source = fs::read_to_string("src/assignability/subtype_identity_checker.rs").expect(
+        "failed to read src/assignability/subtype_identity_checker.rs for architecture guard",
+    );
+    // Must not use raw `.lookup()` — route through query_boundaries wrappers
+    assert!(
+        !source.contains(".lookup("),
+        "subtype_identity_checker must not use raw .lookup(); use query_boundaries helpers instead"
+    );
+    // Must not match on TypeData variants directly
+    assert!(
+        !source.contains("TypeData::"),
+        "subtype_identity_checker must not inspect TypeData variants; use query_boundaries helpers instead"
+    );
+}
+
+#[test]
 fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers() {
     let assignment_checker_src = fs::read_to_string("src/assignability/assignment_checker.rs")
         .expect("failed to read src/assignability/assignment_checker.rs for architecture guard");
