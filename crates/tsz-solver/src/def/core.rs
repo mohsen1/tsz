@@ -82,6 +82,8 @@ impl DefId {
 /// | Class | Lazy expand | Yes (with brand) | `class Foo {}` |
 /// | Enum | Special handling | Yes | `enum Color { Red, Green }` |
 /// | Namespace | Export lookup | No | `namespace NS { export type T = number }` |
+/// | Function | Value-space | No | `function foo(): void {}` |
+/// | Variable | Value-space | No | `const x: number = 1` |
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefKind {
     /// Type alias: always expand (transparent).
@@ -107,6 +109,14 @@ pub enum DefKind {
     /// Class constructor (static side): displayed as `typeof ClassName`.
     /// Distinguishes the constructor/static type from the instance type (`DefKind::Class`).
     ClassConstructor,
+
+    /// Function declaration: value-space callable.
+    /// `function foo(x: number): string { ... }`
+    Function,
+
+    /// Variable declaration: value-space binding.
+    /// `const x: number = 42` or `let y = "hello"`
+    Variable,
 }
 
 // =============================================================================

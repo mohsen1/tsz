@@ -67,6 +67,12 @@ impl BinderState {
 
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 self.node_symbols.insert(decl.name.0, sym_id);
+                self.record_semantic_def(
+                    sym_id,
+                    crate::state::SemanticDefKind::Variable,
+                    name,
+                    idx,
+                );
 
                 // Hoist global augmentation variables to file_locals for cross-file
                 // visibility. Without this, `declare global { const X }` variables are
@@ -93,6 +99,12 @@ impl BinderState {
                 for ident_idx in names {
                     if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
                         let sym_id = self.declare_symbol(name, flags, ident_idx, is_exported);
+                        self.record_semantic_def(
+                            sym_id,
+                            crate::state::SemanticDefKind::Variable,
+                            name,
+                            ident_idx,
+                        );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
                             self.global_augmentations
@@ -141,7 +153,13 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                self.declare_symbol(name, symbol_flags::FUNCTION, idx, is_exported);
+                let sym_id = self.declare_symbol(name, symbol_flags::FUNCTION, idx, is_exported);
+                self.record_semantic_def(
+                    sym_id,
+                    crate::state::SemanticDefKind::Function,
+                    name,
+                    idx,
+                );
             }
 
             // Enter function scope and bind body

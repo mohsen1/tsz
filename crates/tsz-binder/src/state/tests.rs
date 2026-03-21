@@ -3254,6 +3254,8 @@ interface B { x: number }
 type C = string;
 enum D { X }
 namespace E { export const v = 1 }
+function F() {}
+const G = 42;
 ";
     let binder1 = bind_source(source);
     let binder2 = bind_source(source);
@@ -3304,7 +3306,7 @@ interface Merged { b: number }
 }
 
 #[test]
-fn semantic_defs_covers_all_five_declaration_kinds() {
+fn semantic_defs_covers_all_seven_declaration_kinds() {
     let binder = bind_source(
         "
 class MyClass {}
@@ -3312,13 +3314,19 @@ interface MyInterface {}
 type MyType = number;
 enum MyEnum { A }
 namespace MyNS {}
+function myFunc() {}
+const myVar = 1;
 ",
     );
     assert_eq!(
         binder.semantic_defs.len(),
-        5,
-        "expected exactly 5 semantic defs, got {}",
-        binder.semantic_defs.len()
+        7,
+        "expected exactly 7 semantic defs, got {:?}",
+        binder
+            .semantic_defs
+            .values()
+            .map(|e| &e.name)
+            .collect::<Vec<_>>()
     );
     let kinds: std::collections::HashSet<_> =
         binder.semantic_defs.values().map(|e| e.kind).collect();
@@ -3327,6 +3335,113 @@ namespace MyNS {}
     assert!(kinds.contains(&super::SemanticDefKind::TypeAlias));
     assert!(kinds.contains(&super::SemanticDefKind::Enum));
     assert!(kinds.contains(&super::SemanticDefKind::Namespace));
+    assert!(kinds.contains(&super::SemanticDefKind::Function));
+    assert!(kinds.contains(&super::SemanticDefKind::Variable));
+}
+
+#[test]
+fn semantic_defs_captures_top_level_function() {
+    let binder = bind_source("function greet(name: string): string { return name; }");
+    let sym_id = binder.file_locals.get("greet").expect("expected greet");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for function greet");
+    assert_eq!(entry.kind, super::SemanticDefKind::Function);
+    assert_eq!(entry.name, "greet");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_variable_const() {
+    let binder = bind_source("const MAX_SIZE = 100;");
+    let sym_id = binder
+        .file_locals
+        .get("MAX_SIZE")
+        .expect("expected MAX_SIZE");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for variable MAX_SIZE");
+    assert_eq!(entry.kind, super::SemanticDefKind::Variable);
+    assert_eq!(entry.name, "MAX_SIZE");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_variable_let() {
+    let binder = bind_source("let counter = 0;");
+    let sym_id = binder
+        .file_locals
+        .get("counter")
+        .expect("expected counter");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for variable counter");
+    assert_eq!(entry.kind, super::SemanticDefKind::Variable);
+    assert_eq!(entry.name, "counter");
+}
+
+#[test]
+fn semantic_defs_captures_top_level_variable_var() {
+    let binder = bind_source("var legacy = true;");
+    let sym_id = binder
+        .file_locals
+        .get("legacy")
+        .expect("expected legacy");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for variable legacy");
+    assert_eq!(entry.kind, super::SemanticDefKind::Variable);
+    assert_eq!(entry.name, "legacy");
+}
+
+#[test]
+fn semantic_defs_captures_destructured_top_level_variables() {
+    let binder = bind_source("const { a, b } = { a: 1, b: 2 };");
+    let sym_a = binder.file_locals.get("a").expect("expected a");
+    let entry_a = binder
+        .semantic_defs
+        .get(&sym_a)
+        .expect("expected semantic def for variable a");
+    assert_eq!(entry_a.kind, super::SemanticDefKind::Variable);
+    assert_eq!(entry_a.name, "a");
+
+    let sym_b = binder.file_locals.get("b").expect("expected b");
+    let entry_b = binder
+        .semantic_defs
+        .get(&sym_b)
+        .expect("expected semantic def for variable b");
+    assert_eq!(entry_b.kind, super::SemanticDefKind::Variable);
+    assert_eq!(entry_b.name, "b");
+}
+
+#[test]
+fn semantic_defs_excludes_nested_functions_and_variables() {
+    let binder = bind_source(
+        "
+function outer() {
+    function inner() {}
+    const localVar = 1;
+}
+",
+    );
+    // outer should be captured, but inner and localVar should not
+    let has_outer = binder.semantic_defs.values().any(|e| e.name == "outer");
+    assert!(has_outer, "top-level function 'outer' should be captured");
+    let has_inner = binder.semantic_defs.values().any(|e| e.name == "inner");
+    assert!(
+        !has_inner,
+        "nested function 'inner' should not be captured"
+    );
+    let has_local_var = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "localVar");
+    assert!(
+        !has_local_var,
+        "nested variable 'localVar' should not be captured"
+    );
 }
 
 #[test]
