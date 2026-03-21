@@ -2346,7 +2346,7 @@ pub enum MappedSourceKind {
     Array(TypeId),
     /// Source is a tuple type — preserve as tuple after mapping.
     Tuple(crate::types::TupleListId),
-    /// Source is a readonly array (ObjectWithIndex with readonly number index).
+    /// Source is a readonly array (`ObjectWithIndex` with readonly number index).
     ReadonlyArray(TypeId),
     /// Source is a regular object or other non-array/tuple type.
     Object,
@@ -2371,11 +2371,10 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
         Some(TypeData::Tuple(tuple_id)) => MappedSourceKind::Tuple(tuple_id),
         Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
-            if let Some(ref idx) = shape.number_index {
-                if idx.readonly && idx.key_type == TypeId::NUMBER {
+            if let Some(ref idx) = shape.number_index
+                && idx.readonly && idx.key_type == TypeId::NUMBER {
                     return MappedSourceKind::ReadonlyArray(idx.value_type);
                 }
-            }
             MappedSourceKind::Object
         }
         Some(TypeData::TypeParameter(info)) => {
@@ -2413,7 +2412,7 @@ pub fn is_identity_name_mapping(db: &dyn TypeDatabase, mapped: &crate::types::Ma
 /// This centralizes the `-?`, `+?`, `-readonly`, `+readonly` logic that was
 /// previously duplicated between the solver's `evaluate_mapped` and the checker's
 /// `evaluate_mapped_type_with_resolution_inner`.
-pub fn compute_mapped_modifiers(
+pub const fn compute_mapped_modifiers(
     mapped: &crate::types::MappedType,
     is_homomorphic: bool,
     source_optional: bool,
@@ -2483,7 +2482,7 @@ pub fn collect_homomorphic_source_properties(
 /// - `mapped`: the mapped type definition
 /// - `string_keys`: pre-collected finite key atoms (already resolved from constraint)
 /// - `source_props`: optional map of source property info for homomorphic types
-///   (maps key atom → (optional, readonly, declared_type))
+///   (maps key atom → (optional, readonly, `declared_type`))
 /// - `is_homomorphic`: whether this is a homomorphic mapped type (keyof T pattern)
 ///
 /// Returns the expanded properties with correct modifiers and template instantiation.
