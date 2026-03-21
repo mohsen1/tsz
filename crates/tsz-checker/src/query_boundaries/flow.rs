@@ -141,6 +141,20 @@ pub(crate) const fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     }
 }
 
+/// For catch variables in typeof narrowing, the typeof check should narrow
+/// from the catch variable's declared base type (any/unknown) rather than
+/// the already-narrowed flow type.  Non-catch variables pass through unchanged.
+pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
+    if is_catch_var {
+        // Catch variables are typed as `any` (or `unknown` with strict flag),
+        // but in typeof guards, tsc always widens back to `any` so the typeof
+        // narrowing starts from a clean slate.
+        TypeId::ANY
+    } else {
+        type_id
+    }
+}
+
 /// Strip undefined from a destructured element type when a default is present.
 /// Centralizes the narrowing policy for destructuring defaults.
 pub(crate) fn narrow_destructuring_default(
