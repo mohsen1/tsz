@@ -192,6 +192,9 @@ impl<'a> CheckerState<'a> {
                 // TS8021: Check for @typedef without type or @property tags
                 self.check_typedef_missing_type();
 
+                // TS8039: Check for @template tags after @typedef/@callback/@overload
+                self.check_template_after_typedef_callback();
+
                 // TS2304: Check for @typedef base types that can't be resolved
                 self.check_jsdoc_typedef_base_types();
             }
