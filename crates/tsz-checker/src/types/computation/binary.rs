@@ -1098,7 +1098,15 @@ impl<'a> CheckerState<'a> {
             // For typeof expressions, use the typeof result type (union of all
             // valid typeof return strings) so that comparisons like
             // `typeof x == "Object"` correctly detect no overlap.
-            let left_comparison_type = if self.ctx.arena.get(left_idx).is_some_and(|n| {
+            // When the pre-narrowed type of either operand is `any`, skip flow
+            // narrowing for TS2367 purposes. `any` overlaps with everything, so
+            // comparisons like `var1.constructor === Number` (where `var1: any`)
+            // must not trigger TS2367 even if a prior `if (var1.constructor ===
+            // String)` caused flow narrowing to produce a specific type for
+            // `var1.constructor`.
+            let left_comparison_type = if left_type == TypeId::ANY {
+                left_type
+            } else if self.ctx.arena.get(left_idx).is_some_and(|n| {
                 n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             }) {
@@ -1106,7 +1114,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 left_type
             };
-            let right_comparison_type = if self.ctx.arena.get(right_idx).is_some_and(|n| {
+            let right_comparison_type = if right_type == TypeId::ANY {
+                right_type
+            } else if self.ctx.arena.get(right_idx).is_some_and(|n| {
                 n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             }) {
