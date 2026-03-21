@@ -1184,16 +1184,14 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
             // Use unified narrow_type API with TypeGuard::Typeof for both branches
             if let Some(typeof_kind) = TypeofKind::parse(type_name) {
-                let typeof_base_type = if type_id != TypeId::UNKNOWN
-                    && self
-                        .binder
-                        .resolve_identifier(self.arena, target)
-                        .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid))
-                {
-                    TypeId::UNKNOWN
-                } else {
-                    type_id
-                };
+                // Route catch-variable typeof base reset through the flow
+                // observation boundary (NORTH_STAR §3.3 / §22).
+                let is_catch_var = self
+                    .binder
+                    .resolve_identifier(self.arena, target)
+                    .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
+                let typeof_base_type =
+                    flow_boundary::catch_variable_typeof_base(type_id, is_catch_var);
                 return narrowing.narrow_type(
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
