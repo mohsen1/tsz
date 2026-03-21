@@ -1,7 +1,7 @@
+use super::lib_resolution::resolve_lib_node_in_arenas;
 use crate::state::CheckerState;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::{NodeArena, NodeIndex};
-use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn prime_lib_type_params(&mut self, name: &str) {
@@ -46,27 +46,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Use the stable identity helper instead of a local resolver closure.
         let binder = &self.ctx.binder;
         let resolver = |node_idx: NodeIndex| -> Option<u32> {
-            for (_, arena) in &decls_with_arenas {
-                if let Some(ident_name) = arena.get_identifier_text(node_idx) {
-                    if is_compiler_managed_type(ident_name) {
-                        continue;
-                    }
-                    if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                        return Some(found_sym.0);
-                    }
-                }
-            }
-            if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
-                if is_compiler_managed_type(ident_name) {
-                    return None;
-                }
-                if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
-                }
-            }
-            None
+            resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
             resolver(node_idx)

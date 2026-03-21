@@ -1,5 +1,18 @@
 //! Library type resolution: resolving built-in types from `.d.ts` lib files,
 //! merging interface heritage from lib arenas, and handling global augmentations.
+//!
+//! ## Stable Identity Helpers
+//!
+//! Lib lowering resolves NodeIndex values from multiple arenas into SymbolIds
+//! and DefIds.  The canonical resolution path is:
+//!
+//! 1. [`resolve_lib_node_in_arenas`] — NodeIndex → raw `SymbolId` value via
+//!    identifier-text lookup across declaration arenas, then file_locals lookup.
+//! 2. [`CheckerContext::get_or_create_def_id`] — SymbolId → DefId via the
+//!    stable, validated, cached identity path.
+//!
+//! All lib-lowering resolver closures should delegate to these helpers instead
+//! of maintaining per-call caches.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -11,6 +24,47 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
+
+/// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
+/// multiple declaration arenas.
+///
+/// This is the stable resolution path for lib lowering.  It replaces the
+/// per-call resolver closures that previously duplicated this logic (and
+/// sometimes added redundant local caches).
+///
+/// The lookup order is:
+/// 1. Iterate `decl_arenas`; for each arena that yields identifier text at
+///    `node_idx`, check `binder.file_locals`.
+/// 2. If no declaration arena matched, try `fallback_arena`.
+///
+/// Returns `None` when the identifier is a compiler-managed type (e.g.,
+/// `__String`) or when no matching symbol is found.
+pub(crate) fn resolve_lib_node_in_arenas(
+    binder: &tsz_binder::BinderState,
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+) -> Option<u32> {
+    for (_, arena) in decl_arenas {
+        if let Some(ident_name) = arena.get_identifier_text(node_idx) {
+            if is_compiler_managed_type(ident_name) {
+                continue;
+            }
+            if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                return Some(found_sym.0);
+            }
+        }
+    }
+    if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
+        if is_compiler_managed_type(ident_name) {
+            return None;
+        }
+        if let Some(found_sym) = binder.file_locals.get(ident_name) {
+            return Some(found_sym.0);
+        }
+    }
+    None
+}
 
 impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
@@ -463,67 +517,22 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
 
-                // Create resolver that looks up names in the MAIN file's binder
-                // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions
+                // Create resolver that looks up names in the MAIN file's binder.
+                // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions.
+                //
+                // Delegates to `resolve_lib_node_in_arenas` (the stable identity path)
+                // instead of maintaining per-call SymbolId→DefId or NodeIndex caches.
+                // `get_or_create_def_id` already caches SymbolId→DefId mappings centrally.
                 let binder = &self.ctx.binder;
-                // Resolver hot path: cache SymbolId -> DefId for this lowering run.
-                // Many identifiers repeat across merged lib declarations.
-                let def_id_cache =
-                    RefCell::new(FxHashMap::<tsz_binder::SymbolId, tsz_solver::DefId>::default());
-                let resolver_cache = RefCell::new(FxHashMap::<NodeIndex, Option<u32>>::default());
-                let get_cached_def_id = |symbol_id: tsz_binder::SymbolId| -> tsz_solver::DefId {
-                    if let Some(def_id) = def_id_cache.borrow().get(&symbol_id).copied() {
-                        return def_id;
-                    }
-                    let def_id = self.ctx.get_or_create_def_id(symbol_id);
-                    def_id_cache.borrow_mut().insert(symbol_id, def_id);
-                    def_id
-                };
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    if let Some(cached) = resolver_cache.borrow().get(&node_idx) {
-                        return *cached;
-                    }
-
-                    // For merged declarations, we need to check the arena for this specific node.
-                    // IMPORTANT: NodeIndex values are arena-specific — the same index can refer
-                    // to different nodes in different arenas. We must check ALL arenas and only
-                    // return a match when the identifier is found in file_locals. Don't break
-                    // early on a mismatch since another arena may have the correct identifier
-                    // at the same NodeIndex.
-                    for (_, arena) in &decls_with_arenas {
-                        if let Some(ident_name) = arena.get_identifier_text(node_idx) {
-                            if is_compiler_managed_type(ident_name) {
-                                continue;
-                            }
-                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                let resolved = Some(found_sym.0);
-                                resolver_cache.borrow_mut().insert(node_idx, resolved);
-                                return resolved;
-                            }
-                            // Don't break - another arena may have a different identifier
-                            // at the same NodeIndex that resolves successfully
-                        }
-                    }
-                    // Also try fallback arena
-                    if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
-                        if is_compiler_managed_type(ident_name) {
-                            resolver_cache.borrow_mut().insert(node_idx, None);
-                            return None;
-                        }
-                        if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                            let resolved = Some(found_sym.0);
-                            resolver_cache.borrow_mut().insert(node_idx, resolved);
-                            return resolved;
-                        }
-                    }
-                    resolver_cache.borrow_mut().insert(node_idx, None);
-                    None
+                    resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
                 };
 
-                // Create def_id_resolver that converts SymbolIds to DefIds
-                // This is required for Phase 4.2 which uses TypeData::Lazy(DefId) everywhere
+                // DefId resolver: NodeIndex → SymbolId (via stable helper) → DefId
+                // (via get_or_create_def_id's validated cache).
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).map(|sym_id| get_cached_def_id(tsz_binder::SymbolId(sym_id)))
+                    resolver(node_idx)
+                        .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
                 };
 
                 // Name-based resolver: resolves identifier text directly without NodeIndex.
@@ -585,7 +594,7 @@ impl<'a> CheckerState<'a> {
                             // Record type parameters for generic interfaces
                             let file_sym_id =
                                 self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = get_cached_def_id(file_sym_id);
+                            let def_id = self.ctx.get_or_create_def_id(file_sym_id);
                             if !params.is_empty() {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
@@ -632,7 +641,7 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Cache type parameters for Application expansion
-                                    let def_id = get_cached_def_id(sym_id);
+                                    let def_id = self.ctx.get_or_create_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
                                     // CRITICAL: Register the type body in TypeEnvironment so that
@@ -831,25 +840,11 @@ impl<'a> CheckerState<'a> {
                     }
                     resolve_name_symbol(ident_name).map(|sym| sym.0)
                 };
+                // DefId resolver: delegates to the SymbolId resolver above
+                // and maps through the stable get_or_create_def_id path.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                        return Some(
-                            self.ctx
-                                .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                        );
-                    }
-                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena_ref, node_idx) {
-                        return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
-                    }
-                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    let sym_id = resolve_name_symbol(ident_name)?;
-                    Some(
-                        self.ctx
-                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                    )
+                    resolver(node_idx)
+                        .map(|raw_sym| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(raw_sym)))
                 };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     arena_ref,
