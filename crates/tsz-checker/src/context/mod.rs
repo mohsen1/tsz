@@ -317,6 +317,11 @@ pub struct CheckerContext<'a> {
     /// on recursive type aliases.
     pub type_resolution_visiting: FxHashSet<TypeId>,
 
+    /// Recursion guard for `resolve_jsdoc_typedef_type`.
+    /// Prevents infinite recursion when a JSDoc `@typedef` references itself
+    /// (e.g., `@typedef {... | Json[]} Json`).
+    pub jsdoc_typedef_resolving: RefCell<rustc_hash::FxHashSet<String>>,
+
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.
