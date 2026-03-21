@@ -6,6 +6,7 @@
 
 use super::object_literal_context::ContextualPropertyPresence;
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1085,8 +1086,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let method_diag_snap = self.ctx.snapshot_diagnostics();
-                    let refresh_diag_start = self.ctx.diagnostics.len();
+                    let method_diag_guard = DiagnosticSpeculationGuard::new(&self.ctx);
+                    let refresh_diag_start = method_diag_guard.checkpoint();
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
                         self.request_has_concrete_contextual_type(&method_request);
@@ -1106,7 +1107,8 @@ impl<'a> CheckerState<'a> {
                         && !has_concrete_method_context
                         && !this_property_accesses.is_empty()
                         && self.ctx.arena.get(method.body).is_some_and(|body_node| {
-                            self.ctx.diagnostics[method_diag_snap.diagnostics_len..]
+                            self.ctx
+                                .speculative_diagnostics_since(method_diag_guard.snapshot())
                                 .iter()
                                 .any(|diag| {
                                     diag.start >= body_node.pos
@@ -1120,7 +1122,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if method_return_this_circularity {
-                        self.ctx.rollback_diagnostics(&method_diag_snap);
+                        method_diag_guard.rollback(&mut self.ctx);
                         self.clear_type_cache_recursive(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
@@ -1160,8 +1162,8 @@ impl<'a> CheckerState<'a> {
                             )),
                         );
                         self.ctx.this_type_stack.push(refined_this_type);
-                        let rerun_diag_snap = self.ctx.snapshot_diagnostics();
-                        let rerun_refresh_diag_start = self.ctx.diagnostics.len();
+                        let rerun_guard = DiagnosticSpeculationGuard::new(&self.ctx);
+                        let rerun_refresh_diag_start = rerun_guard.checkpoint();
                         let _ = self.get_type_of_function_impl(elem_idx, &method_request);
                         if has_concrete_method_context {
                             let spans = self.function_like_param_spans_for_node(elem_idx);
@@ -1178,12 +1180,11 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(*idx).map(|node| node.pos)
                                 })
                                 .collect();
-                        self.ctx
-                            .rollback_diagnostics_filtered(&rerun_diag_snap, |diag| {
-                                let is_replaced_this_property_error = diag.code == 2339
-                                    && this_property_positions.contains(&diag.start);
-                                !is_replaced_this_property_error
-                            });
+                        rerun_guard.rollback_filtered(&mut self.ctx, |diag| {
+                            let is_replaced_this_property_error =
+                                diag.code == 2339 && this_property_positions.contains(&diag.start);
+                            !is_replaced_this_property_error
+                        });
                         for (property_idx, property_name) in &this_property_accesses {
                             self.error_property_not_exist_with_apparent_type(
                                 property_name,
