@@ -461,8 +461,19 @@ impl<'a> CheckerState<'a> {
                     // This happens when:
                     // - The value is `null` or `undefined` with strictNullChecks off (widens to any)
                     // - The value has type `any` without a contextual/declared type
+                    // Suppress TS7018 when the object literal is a parameter default value.
+                    // In `function f({b1} = { b1: null })`, the `{ b1: null }` literal
+                    // gets its contextual type from the parameter binding, so tsc never
+                    // emits TS7018 for it even though `null` widens to `any`.
+                    let is_parameter_default = self.ctx.arena.node_info(idx).is_some_and(|info| {
+                        self.ctx.arena.get(info.parent).is_some_and(|parent_node| {
+                            parent_node.kind == syntax_kind_ext::PARAMETER
+                        })
+                    });
+
                     if self.ctx.no_implicit_any()
                         && !self.ctx.in_destructuring_target
+                        && !is_parameter_default
                         && jsdoc_declared_type.is_none()
                         && property_context_type.is_none()
                         && prop.initializer != prop.name
