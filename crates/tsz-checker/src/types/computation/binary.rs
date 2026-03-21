@@ -610,7 +610,21 @@ impl<'a> CheckerState<'a> {
                     // context.
                     let right_request = if outer_context.is_none() {
                         let evaluated_left = self.evaluate_type_with_env(left_type);
-                        let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
+                        let mut non_nullish = self.ctx.types.remove_nullish(evaluated_left);
+                        // When the left type was flow-narrowed to only null/undefined
+                        // (e.g., after `f || ...` on a previous line), non_nullish
+                        // becomes NEVER. Fall back to the declared type of the left
+                        // operand so the right operand still gets contextual typing.
+                        if non_nullish == TypeId::NEVER
+                            && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
+                        {
+                            let declared = self.get_type_of_symbol(sym_id);
+                            let ev = self.evaluate_type_with_env(declared);
+                            let dn = self.ctx.types.remove_nullish(ev);
+                            if dn != TypeId::NEVER {
+                                non_nullish = dn;
+                            }
+                        }
                         let right_ctx_idx =
                             self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
                         let right_accepts_context =
