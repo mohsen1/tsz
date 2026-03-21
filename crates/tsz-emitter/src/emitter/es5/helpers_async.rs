@@ -256,9 +256,9 @@ impl<'a> Printer<'a> {
 
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
-            // Use current indent level since __generator is placed on the same line
-            // as `function () {` in the inline __awaiter format (matching tsc).
-            async_emitter.set_indent_level(self.writer.indent_level());
+            // The generator body is nested inside `function () { ... }` in the __awaiter
+            // callback, so render it at one extra indent level (matching tsc multi-line format).
+            async_emitter.set_indent_level(self.writer.indent_level() + 1);
             if let Some(text) = self.source_text_for_map() {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
             }
@@ -340,11 +340,15 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_expr);
             if hoisted_vars.is_empty() {
-                // Inline format (matches tsc): put __generator on same line as function () {
-                // e.g., return __awaiter(this, void 0, void 0, function () { return __generator(this, function (_a) {
-                //     ...
-                // }); });
-                self.write(", void 0, void 0, function () { ");
+                // Multi-line format (matches tsc):
+                // return __awaiter(this, void 0, void 0, function () {
+                //     return __generator(this, function (_a) {
+                //         ...
+                //     });
+                // });
+                self.write(", void 0, void 0, function () {");
+                self.write_line();
+                self.increase_indent();
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -355,7 +359,9 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&generator_body);
                 }
-                self.write(" });");
+                self.decrease_indent();
+                self.write_line();
+                self.write("});");
             } else {
                 // Multi-line format with hoisted vars
                 self.write(", void 0, void 0, function () {");

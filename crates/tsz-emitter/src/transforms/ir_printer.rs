@@ -1095,13 +1095,20 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(this_arg);
                 self.write(", void 0, void 0, function () {");
                 if hoisted_vars.is_empty() {
-                    // Inline format (matches tsc): put __generator on same line
-                    // return __awaiter(this, void 0, void 0, function () { return __generator(this, function (_a) {
-                    //     ...
-                    // }); });
-                    self.write(" ");
+                    // Multi-line format (matches tsc):
+                    // return __awaiter(this, void 0, void 0, function () {
+                    //     return __generator(this, function (_a) {
+                    //         ...
+                    //     });
+                    // });
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
                     self.emit_node(generator_body);
-                    self.write(" });");
+                    self.decrease_indent();
+                    self.write_line();
+                    self.write_indent();
+                    self.write("});");
                 } else {
                     // Multi-line format with hoisted vars
                     self.write_line();
