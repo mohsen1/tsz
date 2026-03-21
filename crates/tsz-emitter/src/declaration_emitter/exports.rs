@@ -1310,7 +1310,7 @@ impl<'a> DeclarationEmitter<'a> {
             if self.should_emit_declare_keyword(is_exported) {
                 self.write("declare ");
             }
-        } else if is_exported && self.ambient_module_has_scope_marker {
+        } else if is_exported && self.should_emit_export_keyword() {
             self.write("export ");
         }
 
@@ -1666,10 +1666,16 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": any");
                 }
 
-                // TODO: When strictNullChecks is true and a parameter has an
+                // When strictNullChecks is true and a parameter has an
                 // initializer before the last required parameter, tsc appends
-                // `| undefined` to its type. We need the strictNullChecks flag
-                // plumbed into the DTS emitter before we can implement this.
+                // `| undefined` — but only when the type doesn't already
+                // include undefined (to avoid `T | undefined | undefined`).
+                if self.strict_null_checks && has_initializer_before_required {
+                    let output = self.writer.get_output();
+                    if !output.ends_with("| undefined") {
+                        self.write(" | undefined");
+                    }
+                }
             }
         }
 

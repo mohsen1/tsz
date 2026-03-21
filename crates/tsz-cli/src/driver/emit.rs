@@ -280,6 +280,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
+                    emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
@@ -288,6 +289,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
+                    emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
                     emitter
                 };
 
