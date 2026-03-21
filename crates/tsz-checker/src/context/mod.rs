@@ -390,6 +390,13 @@ pub struct CheckerContext<'a> {
     /// otherwise the declared type gets overridden with the narrowed type.
     pub daa_error_nodes: FxHashSet<u32>,
 
+    /// Deferred TS2454 diagnostics that survive speculative rollback.
+    /// `check_flow_usage` can run inside speculative call-checker contexts
+    /// (generic inference, overload probing) that truncate diagnostics on
+    /// rollback. To prevent TS2454 from being silently discarded, the error
+    /// is buffered here and emitted at the end of `check_source_file`.
+    pub deferred_ts2454_errors: Vec<(NodeIndex, SymbolId)>,
+
     /// Nodes where `check_flow_usage` already applied flow narrowing.
     /// The second narrowing pass in `get_type_of_node` must skip these to avoid
     /// double-narrowing (e.g., `any` → `string` → `string & Object`).
