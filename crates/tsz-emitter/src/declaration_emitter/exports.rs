@@ -1526,7 +1526,23 @@ impl<'a> DeclarationEmitter<'a> {
             if self.used_symbols.is_none() {
                 return;
             }
+
             if !self.should_emit_public_api_dependency(import_eq.import_clause) {
+                return;
+            }
+
+            // For namespace-path imports (import x = a.b, not import x = require("...")),
+            // tsc only preserves them in .d.ts if the alias targets a type-level entity
+            // (class, interface, enum, namespace, type alias, function). If the target is
+            // a value-only entity (e.g., a variable), the emitted type resolves directly
+            // to the underlying type (e.g., `number`) without needing the alias.
+            let is_require_import = self
+                .arena
+                .get(import_eq.module_specifier)
+                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+            if !is_require_import
+                && !self.import_alias_targets_type_entity(import_eq.module_specifier)
+            {
                 return;
             }
         }
