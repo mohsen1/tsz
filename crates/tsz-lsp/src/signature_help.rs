@@ -821,9 +821,8 @@ impl<'a> SignatureHelpProvider<'a> {
             checker.format_type(shape.return_type)
         };
         let prefix = if is_constructor {
-            // Constructor signatures use the class name as prefix, not "new"
-            // TypeScript shows: ClassName(params): ClassName
-            format!("{callee_name}{type_params_str}(")
+            // TypeScript shows construct signatures as: new (params): ReturnType
+            format!("new {type_params_str}(")
         } else {
             format!("{callee_name}{type_params_str}(")
         };

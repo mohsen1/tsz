@@ -1630,15 +1630,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // accessed position is not guaranteed to exist.  Fixed tuple elements
         // that are within the minimum guaranteed length never need it.
         if self.no_unchecked_indexed_access() {
-            // Single pass: count required elements and detect variable length.
-            let min_guaranteed = elements.iter().filter(|e| e.is_required()).count();
-            if min_guaranteed == elements.len() {
-                // All positions are fixed and guaranteed — no undefined needed.
-                return result;
-            }
-
             // For literal numeric indices, check against the minimum guaranteed
             // length (count of required non-rest elements).
+            let min_guaranteed = elements.iter().filter(|e| e.is_required()).count();
             if let Some(n) = literal_number(self.interner(), index_type)
                 && (n.0 as usize) < min_guaranteed
             {
@@ -1646,6 +1640,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
+            // For non-literal indices (string, number, etc.), or indices
+            // beyond the guaranteed range, add undefined.
             return self.add_undefined_if_unchecked(result);
         }
 
