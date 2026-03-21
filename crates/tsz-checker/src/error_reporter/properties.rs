@@ -434,17 +434,13 @@ impl<'a> CheckerState<'a> {
     /// Falls back to TS2571 ("Object is of type 'unknown'.") when the expression name
     /// cannot be determined.
     ///
-    /// Returns `true` if the error was emitted, `false` if suppressed (e.g., without
-    /// `--strictNullChecks`). Callers should treat `unknown` as `any` when `false`.
+    /// Returns `true` if the error was emitted, `false` if suppressed.
+    /// Callers should treat `unknown` as `any` when `false`.
     pub fn error_is_of_type_unknown(&mut self, expr_idx: NodeIndex) -> bool {
-        // tsc only emits TS18046 under --strictNullChecks (which is part of --strict).
-        // Without it, `unknown` is treated more like `any` for property access, calls,
-        // and operations. This prevents false positives when types resolve to unknown
-        // due to inference/resolution limitations (e.g., generic construct signatures,
-        // multi-file namespace merging, iterator helpers).
-        if !self.ctx.compiler_options.strict_null_checks {
-            return false;
-        }
+        // In tsc, TS18046 is emitted regardless of --strictNullChecks.
+        // The `unknown` type is always restricted: you cannot access properties,
+        // call, or operate on it without narrowing. The --strictNullChecks flag
+        // only controls `null`/`undefined` checking (TS2531/TS2532), not `unknown`.
         let expr_text = self.expression_text(expr_idx);
         let loc = self.get_source_location(expr_idx);
 
