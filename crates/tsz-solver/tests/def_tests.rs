@@ -204,3 +204,73 @@ fn test_definition_store_concurrent() {
 
     assert_eq!(store.len(), 400);
 }
+
+// =============================================================================
+// Symbol mapping index tests
+// =============================================================================
+
+#[test]
+fn test_symbol_def_index_basic_lookup() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Foo");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    let def_id = store.register(info);
+
+    // Register in the symbol index
+    let symbol_id = 42u32;
+    let file_idx = 0u32;
+    store.register_symbol_mapping(symbol_id, file_idx, def_id);
+
+    // Lookup should succeed
+    assert_eq!(store.lookup_by_symbol(symbol_id, file_idx), Some(def_id));
+
+    // Lookup with different file_idx should fail (different binder)
+    assert_eq!(store.lookup_by_symbol(symbol_id, 1), None);
+
+    // Lookup with different symbol_id should fail
+    assert_eq!(store.lookup_by_symbol(43, file_idx), None);
+}
+
+#[test]
+fn test_symbol_def_index_cross_binder_disambiguation() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Same SymbolId(5) in two different binders (file_idx 0 and 1)
+    let name_foo = interner.intern_string("Foo");
+    let info_foo = DefinitionInfo::type_alias(name_foo, vec![], TypeId::NUMBER);
+    let def_foo = store.register(info_foo);
+
+    let name_bar = interner.intern_string("Bar");
+    let info_bar = DefinitionInfo::type_alias(name_bar, vec![], TypeId::STRING);
+    let def_bar = store.register(info_bar);
+
+    // Register same symbol_id=5 for different files
+    store.register_symbol_mapping(5, 0, def_foo);
+    store.register_symbol_mapping(5, 1, def_bar);
+
+    // Each lookup returns the correct DefId for its binder
+    assert_eq!(store.lookup_by_symbol(5, 0), Some(def_foo));
+    assert_eq!(store.lookup_by_symbol(5, 1), Some(def_bar));
+    assert_ne!(def_foo, def_bar);
+}
+
+#[test]
+fn test_symbol_def_index_cleared_on_store_clear() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("X");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::BOOLEAN);
+    let def_id = store.register(info);
+    store.register_symbol_mapping(10, 0, def_id);
+
+    assert_eq!(store.lookup_by_symbol(10, 0), Some(def_id));
+
+    store.clear();
+
+    // After clear, lookup should return None
+    assert_eq!(store.lookup_by_symbol(10, 0), None);
+}
