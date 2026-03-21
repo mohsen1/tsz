@@ -137,3 +137,66 @@ fn identity_name_mapping_detection_via_boundary() {
     };
     assert!(is_identity_name_mapping(&types, &mapped_with_as_k));
 }
+
+#[test]
+fn solver_evaluator_handles_mapped_type_with_resolver() {
+    // Verify that the solver's TypeEvaluator can evaluate mapped types when
+    // given a resolver. This validates the architectural path where mapped types
+    // flow through evaluate_type_with_env (solver) rather than the checker-side
+    // evaluate_mapped_type_with_resolution.
+    use tsz_solver::{MappedType, TypeEnvironment, TypeEvaluator, TypeParamInfo};
+
+    let types = TypeInterner::new();
+    let k_name = types.intern_string("K");
+    let a_name = types.intern_string("a");
+    let b_name = types.intern_string("b");
+
+    // Build mapped type: { [K in "a" | "b"]: number }
+    let constraint = types.union(vec![
+        types.literal_string_atom(a_name),
+        types.literal_string_atom(b_name),
+    ]);
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let mapped_type = types.mapped(mapped);
+
+    // Evaluate using the solver's TypeEvaluator with an empty TypeEnvironment.
+    // This should produce an object with properties { a: number; b: number }.
+    let env = TypeEnvironment::new();
+    let mut evaluator = TypeEvaluator::with_resolver(&types, &env);
+    let result = evaluator.evaluate(mapped_type);
+
+    // The result should be an Object, not the original Mapped type.
+    assert_ne!(
+        result, mapped_type,
+        "Mapped type should be evaluated to an Object"
+    );
+    // Should be an object with 2 properties
+    match types.lookup(result) {
+        Some(tsz_solver::TypeData::Object(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 2, "Should have 2 properties");
+            // Both properties should be number
+            for prop in &shape.properties {
+                assert_eq!(
+                    prop.type_id,
+                    TypeId::NUMBER,
+                    "Property {:?} should be number",
+                    types.resolve_atom(prop.name)
+                );
+            }
+        }
+        other => panic!("Expected Object, got {:?}", other),
+    }
+}
