@@ -263,6 +263,37 @@ impl<'a> CheckerContext<'a> {
         self.all_binders = Some(binders);
     }
 
+    /// Validate that skeleton-derived declared modules match the binder-built ones.
+    ///
+    /// Called from the orchestration layer after `set_all_binders` when a
+    /// `SkeletonIndex` is available. In debug builds, asserts exact match between
+    /// the two construction paths, proving the skeleton captures all the data
+    /// needed for this index. In release builds, this is a no-op.
+    ///
+    /// # Arguments
+    /// * `skeleton_exact` - Exact module names from `SkeletonIndex::build_declared_module_sets()`
+    /// * `skeleton_patterns` - Wildcard patterns from `SkeletonIndex::build_declared_module_sets()`
+    pub fn validate_skeleton_declared_modules(
+        &self,
+        skeleton_exact: &FxHashSet<String>,
+        skeleton_patterns: &[String],
+    ) {
+        if cfg!(debug_assertions) {
+            if let Some(ref binder_built) = self.global_declared_modules {
+                // Exact names must match.
+                assert_eq!(
+                    &binder_built.exact, skeleton_exact,
+                    "skeleton declared_modules exact set differs from binder-built"
+                );
+                // Patterns must match (both are sorted+deduped).
+                assert_eq!(
+                    &binder_built.patterns, skeleton_patterns,
+                    "skeleton declared_modules patterns differ from binder-built"
+                );
+            }
+        }
+    }
+
     /// Set resolved module paths map for cross-file import resolution.
     pub fn set_resolved_module_paths(&mut self, paths: Arc<FxHashMap<(usize, String), usize>>) {
         self.resolved_module_paths = Some(paths);

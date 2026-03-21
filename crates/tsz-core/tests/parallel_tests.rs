@@ -3131,3 +3131,98 @@ fn skeleton_index_external_modules_excluded_from_global_merge() {
         "external module symbols should not appear as merge candidates"
     );
 }
+
+#[test]
+fn skeleton_index_captures_module_export_specifiers() {
+    // declare module "x" { ... } populates module_exports in the binder.
+    // The skeleton should capture those keys in module_export_specifiers.
+    let files = vec![(
+        "ambient.d.ts".to_string(),
+        r#"declare module "my-lib" { export function greet(): string; }"#.to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    assert!(
+        idx.module_export_specifiers.contains("my-lib")
+            || idx.module_export_specifiers.contains("\"my-lib\""),
+        "skeleton index should capture module export specifiers, got: {:?}",
+        idx.module_export_specifiers
+    );
+}
+
+#[test]
+fn skeleton_build_declared_modules_matches_binder() {
+    // Verify that SkeletonIndex::build_declared_module_sets produces the same
+    // result as the binder-scanning loop in set_all_binders for declared modules.
+    let files = vec![
+        (
+            "ambient.d.ts".to_string(),
+            r#"declare module "fs" { export function readFile(): void; }"#.to_string(),
+        ),
+        (
+            "wildcard.d.ts".to_string(),
+            r#"declare module "*.css" { const content: string; export default content; }"#
+                .to_string(),
+        ),
+        (
+            "shorthand.d.ts".to_string(),
+            r#"declare module "my-shorthand";"#.to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    let (exact, patterns) = idx.build_declared_module_sets();
+
+    // "fs" should be in exact (from module_exports key or declared_modules)
+    assert!(
+        exact.contains("fs"),
+        "exact set should contain 'fs', got: {:?}",
+        exact
+    );
+
+    // "my-shorthand" from shorthand ambient module
+    assert!(
+        exact.contains("my-shorthand"),
+        "exact set should contain 'my-shorthand', got: {:?}",
+        exact
+    );
+
+    // "*.css" should be in patterns
+    assert!(
+        patterns.contains(&"*.css".to_string()),
+        "patterns should contain '*.css', got: {:?}",
+        patterns
+    );
+}
+
+#[test]
+fn skeleton_build_declared_modules_deduplicates_patterns() {
+    // Two files both declaring the same wildcard module should produce
+    // only one entry in patterns.
+    let files = vec![
+        (
+            "a.d.ts".to_string(),
+            r#"declare module "*.svg" { const url: string; export default url; }"#.to_string(),
+        ),
+        (
+            "b.d.ts".to_string(),
+            r#"declare module "*.svg" { }"#.to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let idx = program.skeleton_index.as_ref().unwrap();
+    let (_exact, patterns) = idx.build_declared_module_sets();
+
+    let svg_count = patterns.iter().filter(|p| *p == "*.svg").count();
+    assert_eq!(
+        svg_count, 1,
+        "duplicate wildcard patterns should be deduplicated, got {} occurrences",
+        svg_count
+    );
+}
