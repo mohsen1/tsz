@@ -193,6 +193,39 @@ pub(crate) const fn catch_variable_type(
     }
 }
 
+/// Remove null and undefined from a type (non-null assertion `x!`).
+pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::remove_nullish(db, type_id)
+}
+
+/// Remove nullish types for for-of iteration.
+pub(crate) fn remove_nullish_for_iteration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::remove_nullish(db, type_id)
+}
+
+/// Widen null/undefined to any when strictNullChecks is off.
+/// When strict, null/undefined are kept as-is.
+pub(crate) fn widen_null_undefined_to_any(
+    _db: &dyn TypeDatabase,
+    type_id: TypeId,
+    strict_null_checks: bool,
+) -> TypeId {
+    if !strict_null_checks && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED) {
+        TypeId::ANY
+    } else {
+        type_id
+    }
+}
+
+/// Add undefined to a type for optional indexed access.
+pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::ERROR {
+        type_id
+    } else {
+        db.union(vec![type_id, TypeId::UNDEFINED])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
