@@ -151,5 +151,9 @@ path = "tests/speculation_rollback_tests.rs"
 name = "flow_observation_boundary_tests"
 path = "tests/flow_observation_boundary_tests.rs"
 
+[[test]]
+name = "name_resolution_boundary_tests"
+path = "tests/name_resolution_boundary_tests.rs"
+
 [lints]
 workspace = true
