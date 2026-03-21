@@ -12470,12 +12470,14 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
     ) => Omit<GetProps<C>, keyof Shared<TInjectedProps, GetProps<C>>> & TNeedsProps;
         ",
     );
-    // tsc defers constraint checking for composite type arguments that contain
-    // type parameters. The self-referential composite structure can't be reliably
-    // checked until instantiation resolves the type parameters.
+    // tsc emits TS2344 when the base constraint of a composite type argument
+    // (resolved through conditional type evaluation) is a conditional with
+    // false=never whose extends clause does not satisfy the required constraint.
+    // For GetProps<C> used where constraint is Shared<...>, tsc reports
+    // "Type 'GetProps<C>' does not satisfy the constraint 'Shared<...>'".
     assert!(
-        !has_error(&diagnostics, 2344),
-        "Should NOT emit TS2344 for recursive composite type arguments (tsc defers to instantiation).\nActual: {diagnostics:?}"
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 for recursive composite type arguments where conditional base constraint does not satisfy the required constraint.\nActual: {diagnostics:?}"
     );
 }
 
