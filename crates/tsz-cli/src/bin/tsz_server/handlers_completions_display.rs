@@ -690,6 +690,37 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+
+            // When trigger reason is "characterTyped", suppress signature help
+            // if cursor is inside a string, comment, or template literal.
+            let trigger_reason = request
+                .arguments
+                .get("triggerReason")
+                .and_then(|v| v.as_object());
+            if let Some(reason) = trigger_reason {
+                let kind = reason.get("kind").and_then(|v| v.as_str());
+                if kind == Some("characterTyped") {
+                    // Compute byte offset from line/character position
+                    let byte_offset = {
+                        let mut off = 0usize;
+                        let mut current_line = 0u32;
+                        for (i, ch) in source_text.char_indices() {
+                            if current_line == position.line {
+                                off = i + position.character as usize;
+                                break;
+                            }
+                            if ch == '\n' {
+                                current_line += 1;
+                            }
+                        }
+                        off
+                    };
+                    if Self::is_in_string_or_comment(&source_text, byte_offset) {
+                        return None;
+                    }
+                }
+            }
+
             let interner = TypeInterner::new();
             let provider = SignatureHelpProvider::new(
                 &arena,
@@ -969,5 +1000,93 @@ impl Server {
         }
 
         parts
+    }
+
+    /// Check if a byte offset is inside a string literal, template literal, or comment.
+    /// Used to suppress signature help when trigger character is typed in non-code context.
+    fn is_in_string_or_comment(source: &str, offset: usize) -> bool {
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() && i < offset {
+            match bytes[i] {
+                b'/' if i + 1 < bytes.len() => {
+                    if bytes[i + 1] == b'/' {
+                        // Line comment — skip to end of line
+                        i += 2;
+                        while i < bytes.len() && bytes[i] != b'\n' {
+                            if i == offset {
+                                return true;
+                            }
+                            i += 1;
+                        }
+                        continue;
+                    } else if bytes[i + 1] == b'*' {
+                        // Block comment — skip to */
+                        i += 2;
+                        while i + 1 < bytes.len() {
+                            if i == offset || i + 1 == offset {
+                                return true;
+                            }
+                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                                i += 2;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    i += 1;
+                }
+                b'\'' | b'"' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != quote {
+                        if i == offset {
+                            return true;
+                        }
+                        if bytes[i] == b'\\' {
+                            i += 1; // skip escaped char
+                        }
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        i += 1; // skip closing quote
+                    }
+                }
+                b'`' => {
+                    // Template literal
+                    i += 1;
+                    let mut depth = 0u32;
+                    while i < bytes.len() {
+                        if i == offset && depth == 0 {
+                            return true;
+                        }
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                            depth += 1;
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'}' && depth > 0 {
+                            depth -= 1;
+                            i += 1;
+                            continue;
+                        }
+                        if bytes[i] == b'`' && depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        false
     }
 }
