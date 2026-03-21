@@ -642,13 +642,31 @@ impl ParserState {
                 self.parse_exported_declaration(start_pos)
             }
             // Duplicate 'export' modifier (e.g., `export export class Foo {}`)
+            // or `export export = x` (export assignment with modifiers)
             SyntaxKind::ExportKeyword => {
-                self.parse_error_at_current_token(
-                    &format!("'{}' modifier already seen.", "export"),
-                    diagnostic_codes::MODIFIER_ALREADY_SEEN,
-                );
+                let second_export_pos = self.token_pos();
                 self.next_token();
-                self.parse_exported_declaration(start_pos)
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    // `export export = x` — this is an export assignment with modifiers.
+                    // tsc reports TS1120: An export assignment cannot have modifiers.
+                    use tsz_common::diagnostics::diagnostic_messages;
+                    self.parse_error_at(
+                        start_pos,
+                        second_export_pos + 6 - start_pos, // span covers "export export"
+                        diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                        diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                    );
+                    self.parse_export_assignment(start_pos)
+                } else {
+                    // Genuine duplicate export modifier
+                    self.parse_error_at(
+                        second_export_pos,
+                        6, // length of "export"
+                        &format!("'{}' modifier already seen.", "export"),
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                    self.parse_exported_declaration(start_pos)
+                }
             }
             _ => {
                 self.parse_error_at(
