@@ -583,7 +583,26 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("{}<{}>", kind_name, self.format(*type_arg)).into()
             }
-            TypeData::Enum(def_id, _member_type) => self.format_def_id(*def_id, "Enum").into(),
+            TypeData::Enum(def_id, _member_type) => {
+                // Enum members should be qualified with their parent enum name
+                // (e.g., `Foo.A` not just `A`). Try the symbol arena first, which
+                // walks the parent chain and qualifies enum members correctly.
+                // Use the definition's stored symbol_id (not the raw def_id) to
+                // find the correct binder symbol.
+                if let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && let Some(sym_raw) = def.symbol_id
+                {
+                    if let Some(name) = self.format_symbol_name(SymbolId(sym_raw)) {
+                        return name.into();
+                    }
+                }
+                // Fallback: try raw def_id as symbol_id (legacy path)
+                if let Some(name) = self.format_raw_def_id_symbol_fallback(*def_id) {
+                    return name.into();
+                }
+                self.format_def_id(*def_id, "Enum").into()
+            }
             TypeData::ModuleNamespace(sym) => {
                 let name = if let Some(name) = self.resolve_symbol_ref_name(*sym) {
                     name
