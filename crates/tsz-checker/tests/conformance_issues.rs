@@ -3261,7 +3261,6 @@ const obj = {
 }
 
 #[test]
-#[ignore = "requires lib files: no_lib=true causes TS2318 floods that prevent type resolution needed for TS2454"]
 fn test_jsdoc_type_reference_to_merged_class_preserves_ts2454() {
     let diagnostics = compile_and_get_diagnostics_named(
         "jsdocTypeReferenceToMergedClass.js",
