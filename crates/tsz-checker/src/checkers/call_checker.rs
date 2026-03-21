@@ -88,6 +88,11 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         diag.code == diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
             || diag.code == diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE
+            // TS2454 (variable used before being assigned) is a semantic fact
+            // about the variable's definite-assignment status, not a speculative
+            // inference result from the call. It must survive call-expression
+            // diagnostic rollbacks (round 1 → round 2, return-context re-check).
+            || diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
     }
 
     pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(
