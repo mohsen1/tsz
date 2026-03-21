@@ -31,6 +31,7 @@ fn empty_project_env() -> ProjectEnv {
         file_is_esm_map: Arc::new(FxHashMap::default()),
         typescript_dom_replacement_globals: (false, false, false),
         has_deprecation_diagnostics: false,
+        last_skeleton_fingerprint: None,
     }
 }
 
@@ -218,4 +219,47 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
     let def_a = checker.ctx.get_existing_def_id(SymbolId(10)).unwrap();
     let def_b = checker.ctx.get_existing_def_id(SymbolId(20)).unwrap();
     assert_ne!(def_a, def_b, "Different symbols must get distinct DefIds");
+}
+
+#[test]
+fn build_global_indices_if_changed_rebuilds_on_first_call() {
+    let mut env = empty_project_env();
+    assert!(env.last_skeleton_fingerprint.is_none());
+
+    let rebuilt = env.build_global_indices_if_changed(0xCAFE);
+    assert!(rebuilt, "First call should always rebuild");
+    assert_eq!(env.last_skeleton_fingerprint, Some(0xCAFE));
+    // Global indices should be populated.
+    assert!(env.global_file_locals_index.is_some());
+    assert!(env.global_module_exports_index.is_some());
+    assert!(env.global_module_augmentations_index.is_some());
+    assert!(env.global_augmentation_targets_index.is_some());
+}
+
+#[test]
+fn build_global_indices_if_changed_skips_when_fingerprint_matches() {
+    let mut env = empty_project_env();
+
+    // First build populates everything.
+    let rebuilt = env.build_global_indices_if_changed(42);
+    assert!(rebuilt);
+    assert_eq!(env.last_skeleton_fingerprint, Some(42));
+
+    // Second call with same fingerprint should skip.
+    let rebuilt = env.build_global_indices_if_changed(42);
+    assert!(!rebuilt, "Same fingerprint should skip rebuild");
+    assert_eq!(env.last_skeleton_fingerprint, Some(42));
+}
+
+#[test]
+fn build_global_indices_if_changed_rebuilds_on_different_fingerprint() {
+    let mut env = empty_project_env();
+
+    env.build_global_indices_if_changed(100);
+    assert_eq!(env.last_skeleton_fingerprint, Some(100));
+
+    // Different fingerprint triggers rebuild.
+    let rebuilt = env.build_global_indices_if_changed(200);
+    assert!(rebuilt, "Different fingerprint should trigger rebuild");
+    assert_eq!(env.last_skeleton_fingerprint, Some(200));
 }

@@ -401,8 +401,16 @@ pub(super) fn collect_diagnostics(
         file_is_esm_map: Arc::clone(&file_is_esm_map),
         typescript_dom_replacement_globals,
         has_deprecation_diagnostics,
+        last_skeleton_fingerprint: None,
     };
-    project_env.build_global_indices();
+    // Use fingerprint-aware rebuild when a skeleton index is available.
+    // On the first build this always rebuilds; on subsequent incremental builds
+    // with the same skeleton fingerprint the O(N) binder scan is skipped.
+    if let Some(ref skel) = program.skeleton_index {
+        project_env.build_global_indices_if_changed(skel.fingerprint);
+    } else {
+        project_env.build_global_indices();
+    }
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
