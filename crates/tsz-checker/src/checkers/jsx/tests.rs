@@ -322,3 +322,74 @@ fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
         "Component with outer type params should not emit false TS2786, got: {diagnostics:?}"
     );
 }
+
+/// Discriminated union JSX props: when the attribute value spans the full
+/// union (e.g., `"a" | "b"`) and the per-member check fails, the fallback
+/// whole-object assignability check determines the final result. Our solver
+/// currently accepts this (consistent with tsc's JSX attribute checking).
+#[test]
+fn jsx_discriminated_union_props_full_concrete_union_no_ts2322() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        type Props = { variant: "a"; } | { variant: "b"; };
+        declare function Comp(_data: Props): JSX.Element | null;
+        declare var v: "a" | "b";
+        <Comp variant={v} />;
+        "#,
+    );
+    // Whole-object assignability check: { variant: "a" | "b" } is accepted against
+    // { variant: "a" } | { variant: "b" } by the solver (consistent with tsc).
+    assert!(
+        !diagnostics.contains(&2322),
+        "Discriminated union props with full union value should not emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+/// Discriminated union JSX props: when the attribute type is a type parameter
+/// whose constraint covers the union, no TS2322 should fire.
+/// Repro from TS test discriminatedUnionJsxElement.tsx (#46021).
+#[test]
+fn jsx_discriminated_union_props_type_param_no_false_ts2322() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        type Props = { variant: "a"; } | { variant: "b"; };
+        declare function Comp(_data: Props): JSX.Element | null;
+        function Menu<V extends "a" | "b">(v: V) {
+            return <Comp variant={v} />;
+        }
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2322),
+        "Discriminated union props with type parameter constraint should not emit false TS2322, got: {diagnostics:?}"
+    );
+}
+
+/// Discriminated union JSX props with concrete types should still emit TS2322
+/// when attribute values are genuinely incompatible.
+#[test]
+fn jsx_discriminated_union_props_incompatible_emits_ts2322() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        type Props = { variant: "a"; x: number; } | { variant: "b"; y: string; };
+        declare function Comp(_data: Props): JSX.Element | null;
+        <Comp variant="c" />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2322),
+        "Incompatible discriminated union props should still emit TS2322, got: {diagnostics:?}"
+    );
+}

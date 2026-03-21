@@ -2322,37 +2322,56 @@ impl<'a> CheckerState<'a> {
         }
 
         if !any_member_compatible {
-            // Build the attributes object type for the error message.
-            // tsc widens shorthand boolean `true` to `boolean` in the JSX attribute
-            // object type displayed in error messages (fresh object literal widening).
-            let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
-                .iter()
-                .map(|(name, type_id)| {
-                    let name_atom = self.ctx.types.intern_string(name);
-                    // Widen BOOLEAN_TRUE → BOOLEAN for error display
-                    let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
-                        TypeId::BOOLEAN
-                    } else {
-                        *type_id
-                    };
-                    tsz_solver::PropertyInfo {
-                        name: name_atom,
-                        type_id: display_type,
-                        write_type: display_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                    }
-                })
-                .collect();
-            let attrs_type = self.ctx.types.factory().object(properties);
-            // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
-            // not the attributes container.
-            self.check_assignable_or_report_at(attrs_type, props_type, tag_name_idx, tag_name_idx);
+            // When any provided attribute type contains unresolved type parameters,
+            // skip the TS2322 error. Type parameters can't be properly checked
+            // against individual union members at this point — they'll be validated
+            // when the generic function is instantiated. This prevents false TS2322
+            // for cases like `<ListItem variant={v} />` inside a generic function
+            // where `v: MenuItemVariant` and `MenuItemVariant extends ListItemVariant`.
+            // The per-member check fails because the type parameter doesn't match any
+            // single member, but the constraint ensures correctness at instantiation.
+            let any_attr_has_type_params = provided_attrs.iter().any(|(_, attr_type)| {
+                tsz_solver::contains_type_parameters(self.ctx.types, *attr_type)
+            });
+
+            if !any_attr_has_type_params {
+                // Build the attributes object type for the error message.
+                // tsc widens shorthand boolean `true` to `boolean` in the JSX attribute
+                // object type displayed in error messages (fresh object literal widening).
+                let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
+                    .iter()
+                    .map(|(name, type_id)| {
+                        let name_atom = self.ctx.types.intern_string(name);
+                        // Widen BOOLEAN_TRUE → BOOLEAN for error display
+                        let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
+                            TypeId::BOOLEAN
+                        } else {
+                            *type_id
+                        };
+                        tsz_solver::PropertyInfo {
+                            name: name_atom,
+                            type_id: display_type,
+                            write_type: display_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: None,
+                            declaration_order: 0,
+                        }
+                    })
+                    .collect();
+                let attrs_type = self.ctx.types.factory().object(properties);
+                // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
+                // not the attributes container.
+                self.check_assignable_or_report_at(
+                    attrs_type,
+                    props_type,
+                    tag_name_idx,
+                    tag_name_idx,
+                );
+            }
         }
     }
     /// TS2322: Check that spread attribute property types are compatible with props.
