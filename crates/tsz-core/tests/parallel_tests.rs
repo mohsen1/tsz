@@ -1666,6 +1666,70 @@ declare module "./a" {
 }
 
 #[test]
+fn test_umd_export_vs_declare_global_const_emits_ts2451() {
+    // `export as namespace React` in module.d.ts creates a UMD global binding.
+    // `declare global { const React }` in global.d.ts creates a global const.
+    // tsc expects TS2451 on both declarations.
+    let files = vec![
+        (
+            "module.d.ts".to_string(),
+            "export as namespace React;\nexport function foo(): string;\n".to_string(),
+        ),
+        (
+            "global.d.ts".to_string(),
+            "declare global {\n    const React: typeof import(\"./module\");\n}\nexport {};\n"
+                .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::ESNext,
+            target: tsz_common::common::ScriptTarget::ES2018,
+            strict: true,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let module_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "module.d.ts")
+        .expect("expected module.d.ts result");
+    let global_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "global.d.ts")
+        .expect("expected global.d.ts result");
+
+    let module_ts2451 = module_file
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2451)
+        .count();
+    let global_ts2451 = global_file
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2451)
+        .count();
+
+    assert!(
+        module_ts2451 > 0,
+        "Expected TS2451 in module.d.ts for UMD export conflicting with declare global const. Diagnostics: {:#?}",
+        module_file.diagnostics
+    );
+    assert!(
+        global_ts2451 > 0,
+        "Expected TS2451 in global.d.ts for declare global const conflicting with UMD export. Diagnostics: {:#?}",
+        global_file.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (

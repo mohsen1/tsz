@@ -308,121 +308,85 @@ impl<'a> CheckerState<'a> {
         declarations
     }
 
-    /// Detect cross-file conflicts between UMD exports (`export as namespace X`)
-    /// and `declare global { const/let X }` variable declarations.
+    /// Detect cross-file global scope conflicts between UMD namespace exports
+    /// (`export as namespace X`) and `declare global { const/let X }` across
+    /// external module files. Returns remote declarations that conflict with
+    /// the given name from the current file's global contributions.
     ///
-    /// These both contribute a block-scoped name to the global scope.
-    /// When the same name appears as both a UMD export in one file and a
-    /// `declare global` variable in another, tsc emits TS2451 on both.
-    ///
-    /// This method returns remote declarations that conflict with a local
-    /// symbol of the given name. Two conflict patterns are detected:
-    ///
-    /// 1. Current file has a UMD export → check `global_augmentations` for
-    ///    variable declarations with the same name from other files
-    /// 2. Current file has a variable in `global_augmentations` → check other
-    ///    files' binders for UMD exports with the same name
-    pub(super) fn umd_global_augmentation_conflict_declarations(
+    /// Scans other files' ASTs directly because `all_binders` stores merged
+    /// global augmentations (identical for every file), not per-file data.
+    pub(super) fn global_scope_conflict_declarations_for_current_file(
         &self,
         name: &str,
-        sym_id: tsz_binder::SymbolId,
     ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
-        let Some(all_binders) = self.ctx.all_binders.as_ref() else {
+        use tsz_parser::parser::node_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
 
         let mut declarations = Vec::new();
 
-        // Check if the current file's symbol is a UMD export
-        let is_local_umd = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .is_some_and(|s| s.is_umd_export);
-
-        if is_local_umd {
-            // Pattern 1: Current file has UMD export, check global_augmentations
-            // for variable declarations from other files with the same name
-            if let Some(augmentations) = self.ctx.binder.global_augmentations.get(name) {
-                for augmentation in augmentations {
-                    let Some(arena) = augmentation.arena.as_deref() else {
-                        continue;
-                    };
-                    // Skip augmentations from the current file (same-file handled elsewhere)
-                    if std::ptr::eq(arena, self.ctx.arena) {
-                        continue;
-                    }
-                    let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node)
-                    else {
-                        continue;
-                    };
-                    // Only conflict with block-scoped variables (const/let)
-                    if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
-                        continue;
-                    }
-                    // Use TargetedModuleAugmentation origin to prevent the
-                    // module-scoped-local skip logic from suppressing this
-                    // conflict. UMD exports and declare-global variables are
-                    // both global-scope contributions that must conflict.
-                    declarations.push((
-                        augmentation.node,
-                        flags,
-                        false,
-                        false,
-                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
-                    ));
-                }
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
             }
-        }
 
-        // Pattern 2: Check if any global augmentation variable in the current file
-        // conflicts with a UMD export from another file
-        let has_local_global_aug_var =
-            self.ctx
-                .binder
-                .global_augmentations
-                .get(name)
-                .is_some_and(|augs| {
-                    augs.iter().any(|aug| {
-                        aug.arena
-                            .as_deref()
-                            .is_some_and(|arena| std::ptr::eq(arena, self.ctx.arena))
-                            && self
-                                .declaration_symbol_flags(self.ctx.arena, aug.node)
-                                .is_some_and(|f| (f & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0)
-                    })
-                });
+            let Some(source_file_node) = arena.source_files.first() else {
+                continue;
+            };
 
-        if has_local_global_aug_var {
-            // Check other files' binders for UMD exports with the same name
-            for (file_idx, binder) in all_binders.iter().enumerate() {
-                if file_idx == self.ctx.current_file_idx {
+            for &stmt_idx in &source_file_node.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+
+                // Check for `export as namespace X` (UMD namespace export)
+                if stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+                    if let Some(export) = arena.get_export_decl(stmt_node) {
+                        if let Some(ident) = arena.get_identifier_at(export.export_clause) {
+                            if ident.escaped_text == name {
+                                // Assign flags directly — declaration_symbol_flags cannot
+                                // resolve the identifier to its NAMESPACE_EXPORT_DECLARATION
+                                // parent because that kind isn't in resolve_duplicate_decl_node.
+                                let flags =
+                                    symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
+                                declarations.push((
+                                    export.export_clause,
+                                    flags,
+                                    false,
+                                    true,
+                                    DuplicateDeclarationOrigin::SymbolDeclaration,
+                                ));
+                            }
+                        }
+                    }
                     continue;
                 }
-                // Look for a UMD export symbol with this name
-                if let Some(other_sym_id) = binder.file_locals.get(name)
-                    && let Some(other_sym) = binder.get_symbol(other_sym_id)
-                    && other_sym.is_umd_export
-                {
-                    // Find the UMD export's declaration node
-                    for &decl_idx in &other_sym.declarations {
-                        let Some(other_arena) = self.ctx.all_arenas.as_ref() else {
-                            continue;
-                        };
-                        let Some(arena) = other_arena.get(file_idx) else {
-                            continue;
-                        };
-                        let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) else {
-                            continue;
-                        };
-                        declarations.push((
-                            decl_idx,
-                            flags,
-                            false,
-                            false,
-                            DuplicateDeclarationOrigin::TargetedModuleAugmentation,
-                        ));
+
+                // Check for `declare global { ... }` containing variable declarations
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    let is_global = (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION)
+                        != 0
+                        || arena
+                            .get_module(stmt_node)
+                            .and_then(|m| arena.get(m.name))
+                            .and_then(|n| arena.get_identifier(n))
+                            .is_some_and(|ident| ident.escaped_text == "global");
+                    if !is_global {
+                        continue;
                     }
+                    let Some(module) = arena.get_module(stmt_node) else {
+                        continue;
+                    };
+                    // Scan the body for variable declarations matching `name`
+                    self.scan_global_block_for_variable(
+                        arena.as_ref(),
+                        module.body,
+                        name,
+                        &mut declarations,
+                    );
                 }
             }
         }
@@ -430,20 +394,76 @@ impl<'a> CheckerState<'a> {
         declarations
     }
 
-    /// Check if a declaration node resolves to a `NAMESPACE_EXPORT_DECLARATION`
-    /// (i.e., `export as namespace Foo`). The declaration node may be an
-    /// identifier child of the `NAMESPACE_EXPORT_DECLARATION`.
-    pub(super) fn resolve_to_namespace_export_declaration(
+    /// Scan a `declare global { ... }` block body for variable declarations
+    /// with the given name. Uses `get_variable` for VariableStatement access
+    /// and `get_variable_declaration` for individual declarations.
+    fn scan_global_block_for_variable(
         &self,
-        decl_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
+        arena: &tsz_parser::parser::node::NodeArena,
+        body_idx: NodeIndex,
+        name: &str,
+        declarations: &mut Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)>,
+    ) {
         use tsz_parser::parser::syntax_kind_ext;
-        let resolved = self.resolve_duplicate_decl_node(self.ctx.arena, decl_idx)?;
-        let node = self.ctx.arena.get(resolved)?;
-        if node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
-            Some(resolved)
+
+        let Some(body_node) = arena.get(body_idx) else {
+            return;
+        };
+        // The body of a ModuleDeclaration is a ModuleBlock
+        let stmts = if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
+            if let Some(block) = arena.get_module_block(body_node)
+                && let Some(ref stmts) = block.statements
+            {
+                &stmts.nodes[..]
+            } else {
+                return;
+            }
         } else {
-            None
+            return;
+        };
+
+        for &inner_stmt in stmts {
+            let Some(inner_node) = arena.get(inner_stmt) else {
+                continue;
+            };
+            if inner_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_data) = arena.get_variable(inner_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_data.declarations.nodes {
+                let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list_data) = arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list_data.declarations.nodes {
+                    let Some(decl_node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                        continue;
+                    }
+                    let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    if let Some(ident) = arena.get_identifier_at(var_decl.name) {
+                        if ident.escaped_text == name {
+                            if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
+                                declarations.push((
+                                    decl_idx,
+                                    flags,
+                                    false,
+                                    false,
+                                    DuplicateDeclarationOrigin::SymbolDeclaration,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

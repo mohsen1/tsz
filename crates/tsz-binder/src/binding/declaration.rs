@@ -67,6 +67,19 @@ impl BinderState {
 
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 self.node_symbols.insert(decl.name.0, sym_id);
+
+                // Hoist global augmentation variables to file_locals for cross-file
+                // visibility. Without this, `declare global { const X }` variables are
+                // invisible to cross-file duplicate detection (e.g., UMD `export as
+                // namespace X` conflicting with `declare global { const X }`).
+                // This mirrors the interface hoisting at bind_interface_declaration.
+                if self.in_global_augmentation {
+                    self.file_locals.set(name.to_string(), sym_id);
+                    self.global_augmentations
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(crate::state::GlobalAugmentation::new(idx));
+                }
             } else {
                 let flags = if is_block_scoped {
                     symbol_flags::BLOCK_SCOPED_VARIABLE
@@ -79,7 +92,14 @@ impl BinderState {
                 Self::collect_binding_identifiers(arena, decl.name, &mut names);
                 for ident_idx in names {
                     if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
-                        self.declare_symbol(name, flags, ident_idx, is_exported);
+                        let sym_id = self.declare_symbol(name, flags, ident_idx, is_exported);
+                        if self.in_global_augmentation {
+                            self.file_locals.set(name.to_string(), sym_id);
+                            self.global_augmentations
+                                .entry(name.to_string())
+                                .or_default()
+                                .push(crate::state::GlobalAugmentation::new(ident_idx));
+                        }
                     }
                 }
             }
