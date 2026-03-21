@@ -707,6 +707,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return Some(from_call_signature(first));
             }
 
+            // tsc's getIntersectedSignatures returns undefined when multiple
+            // signatures are present and ANY has type parameters. This prevents
+            // contextual typing of arrow functions assigned to overloaded types
+            // with both generic and non-generic call signatures.
+            if signatures.iter().any(|sig| !sig.type_params.is_empty()) {
+                return None;
+            }
+
             let effective_arg_count = arg_count.unwrap_or_else(|| {
                 signatures
                     .iter()
