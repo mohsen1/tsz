@@ -1531,7 +1531,10 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1147 // Import declarations in a namespace cannot reference a module
         | 1164 // Computed property names are not allowed in enums
         | 1185 // Merge conflict marker encountered
-        | 1191 // An import declaration cannot have modifiers
+        // Note: TS1191 (An import declaration cannot have modifiers) is intentionally
+        // excluded. It is a grammar constraint error, not a structural parse failure.
+        // The AST is fully valid — the import is parsed correctly. tsc still emits
+        // semantic errors like TS2323 alongside TS1191.
         | 1313 // 'else' is not allowed after rest element
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
         | 1357 // A default clause cannot appear more than once
@@ -1615,6 +1618,7 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
         | 1047 // A rest parameter cannot be optional
         | 1048 // A rest parameter cannot have an initializer
         | 1185 // Merge conflict marker
+        | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
         | 1214 // Identifier expected (strict mode reserved word)
         | 1262 // 'await' at top level
         | 1359 // 'await' in async context
