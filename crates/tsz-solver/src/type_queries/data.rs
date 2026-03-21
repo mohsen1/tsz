@@ -107,6 +107,33 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     })
 }
 
+/// Check if a type contains any unresolved `TypeQuery` references.
+///
+/// TypeQuery types represent `typeof X` that haven't been resolved to concrete types yet.
+/// Evaluation results containing unresolved TypeQueries should not be cached, as the
+/// TypeQuery may resolve to a different type once the referenced symbol's type is available
+/// in the TypeEnvironment.
+pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::TypeQuery(_)) => return true,
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::Recursive(_),
+        ) => return false,
+        _ => {}
+    }
+    contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_)))
+}
+
 /// Check if a type contains unresolved type parameters other than tsz's internal
 /// `__infer_*` placeholders.
 ///

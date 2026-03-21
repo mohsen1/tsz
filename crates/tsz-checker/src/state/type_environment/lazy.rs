@@ -151,6 +151,14 @@ impl<'a> CheckerState<'a> {
             && REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL
         {
             self.ensure_relation_input_ready(type_id);
+        } else if eval_depth == 0 {
+            // Even during symbol resolution, resolve TypeQuery symbols (typeof X)
+            // into the type environment so the evaluator can resolve them.
+            // This is safe because it only calls get_type_of_symbol for the
+            // referenced variable (not heritage chains), preventing the issue
+            // where `Parameters<typeof x>` produces a deferred conditional
+            // because `typeof x` can't be resolved during type alias processing.
+            self.resolve_type_queries_for_eval(type_id);
         }
 
         let mut depth_exceeded = false;
@@ -186,6 +194,7 @@ impl<'a> CheckerState<'a> {
                     if k != v
                         && !k.is_intrinsic()
                         && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
+                        && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
                     {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
@@ -216,6 +225,7 @@ impl<'a> CheckerState<'a> {
                     if k != v
                         && !k.is_intrinsic()
                         && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
+                        && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
                     {
                         cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
                             result: v,
@@ -233,6 +243,7 @@ impl<'a> CheckerState<'a> {
         // containing unbound infer types from partially-evaluated conditional types.
         if use_cache
             && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, final_result)
+            && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, final_result)
         {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
@@ -466,6 +477,32 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         self.evaluate_type_with_env_impl(type_id, true)
+    }
+
+    /// Resolve TypeQuery symbols in a type into the type environment.
+    ///
+    /// This is a lightweight alternative to `ensure_relation_input_ready` that only
+    /// resolves `typeof X` references. It's safe to call during symbol resolution
+    /// because it only triggers `get_type_of_symbol` for the referenced variables
+    /// (not full heritage chain resolution that can cause OOM).
+    ///
+    /// This fixes the case where `Parameters<typeof x>` evaluates during type alias
+    /// processing: the evaluator needs `typeof x` resolved in the TypeEnvironment to
+    /// correctly evaluate the conditional type, but `ensure_relation_input_ready` is
+    /// skipped because we're inside symbol resolution.
+    fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {
+        use tsz_solver::visitor::collect_type_queries;
+
+        let type_queries = collect_type_queries(self.ctx.types, type_id);
+        for symbol_ref in type_queries {
+            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let _ = self.get_type_of_symbol(sym_id);
+            if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id)
+                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+            {
+                env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
+            }
+        }
     }
 
     pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {
