@@ -509,9 +509,10 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        // Check if this DefId corresponds to a CLASS symbol
-        let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
-        let Some(sym_id) = sym_id_opt else {
+        // Use stable-identity fallback to resolve DefId→SymbolId.
+        // def_to_symbol_id_with_fallback handles cross-context DefIds by
+        // falling back to the DefinitionStore's symbol_id backreference.
+        let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
             return type_id;
         };
 

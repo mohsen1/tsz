@@ -2111,4 +2111,20 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    /// Resolve a `DefId` from a node index for type lowering.
+    ///
+    /// This is the canonical stable-identity helper for `def_id_resolver` closures.
+    /// It encapsulates the common pattern:
+    ///   `resolve_type_symbol_for_lowering(node_idx) → SymbolId → get_or_create_def_id`
+    ///
+    /// Use this instead of inlining the SymbolId wrapping + DefId creation at each
+    /// lowering call site.
+    pub(crate) fn resolve_def_id_for_lowering(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<tsz_solver::def::DefId> {
+        self.resolve_type_symbol_for_lowering(node_idx)
+            .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+    }
 }

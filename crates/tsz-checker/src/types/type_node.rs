@@ -1270,18 +1270,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     /// Resolve a DefId from a node index via the type resolver.
+    ///
+    /// Uses the stable-identity helper `ensure_def_id_with_alias` to mint
+    /// the DefId and ensure type alias body+params are registered.
     fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<tsz_solver::def::DefId> {
         let sym_id_raw = self.resolve_type_symbol(node_idx)?;
         let sym_id = tsz_binder::SymbolId(sym_id_raw);
-        let def_id = self.ctx.get_or_create_def_id(sym_id);
-
-        // Ensure type alias type params and body are registered for Application expansion.
-        // TypeLowering creates Application(Lazy(DefId)) without calling get_type_of_symbol,
-        // so type aliases referenced inside lowered types (mapped type templates, conditional
-        // types, etc.) may not have their params/body registered in the resolver.
-        self.ensure_type_alias_resolved(sym_id, def_id);
-
-        Some(def_id)
+        Some(self.ensure_def_id_with_alias(sym_id))
     }
 
     /// Collect type parameter bindings from the current scope.
