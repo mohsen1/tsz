@@ -1142,9 +1142,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|idx| idx.get(name.as_str()))
             {
                 for &(_file_idx, sym_id) in entries {
-                    if let Some(sym) =
-                        self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                    {
+                    if let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                         if sym.is_type_only {
                             return if sym.import_module.is_some() {
                                 Some(TypeOnlyKind::ImportType)
