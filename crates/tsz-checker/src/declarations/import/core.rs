@@ -649,14 +649,13 @@ impl<'a> CheckerState<'a> {
                         self.named_import_found_via_reexport(module_name, normalized, import_name);
 
                     if !found_via_reexport {
-                        if self
-                            .resolve_direct_commonjs_assignment_export_type(
-                                module_name,
-                                import_name,
-                                Some(self.ctx.current_file_idx),
-                            )
-                            .is_some()
-                        {
+                        // Use the unified JS export surface to check for CommonJS
+                        // property-assignment exports (exports.foo = ..., module.exports.foo = ...).
+                        if self.js_export_surface_has_export(
+                            module_name,
+                            import_name,
+                            Some(self.ctx.current_file_idx),
+                        ) {
                             continue;
                         }
 
@@ -748,14 +747,13 @@ impl<'a> CheckerState<'a> {
                         self.named_import_found_via_reexport(module_name, normalized, import_name);
 
                     if !found_via_reexport {
-                        if self
-                            .resolve_direct_commonjs_assignment_export_type(
-                                module_name,
-                                import_name,
-                                Some(self.ctx.current_file_idx),
-                            )
-                            .is_some()
-                        {
+                        // Use the unified JS export surface to check for CommonJS
+                        // property-assignment exports (exports.foo = ..., module.exports.foo = ...).
+                        if self.js_export_surface_has_export(
+                            module_name,
+                            import_name,
+                            Some(self.ctx.current_file_idx),
+                        ) {
                             continue;
                         }
 
