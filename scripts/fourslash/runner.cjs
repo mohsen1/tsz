@@ -924,6 +924,21 @@ function patchSessionClient(SessionClient, ts) {
 
     const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
     proto.getSignatureHelpItems = function(fileName, position, options) {
+        if (options && options.triggerReason) {
+            const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+            const args = {
+                file: fileName,
+                line: lineOffset.line,
+                offset: lineOffset.offset,
+                triggerReason: options.triggerReason,
+            };
+            const request = this.processRequest("signatureHelp", args);
+            const response = this.processResponse(request);
+            if (!response.body) return undefined;
+            const { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount } = response.body;
+            if (!items || items.length === 0) return undefined;
+            return { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount };
+        }
         const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
         if (result && result.items && result.items.length === 0) {
             return undefined;

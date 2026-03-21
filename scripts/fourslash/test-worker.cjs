@@ -781,11 +781,27 @@ function patchSessionClient(SessionClient, ts) {
         return nativeResult || tszResult || [];
     };
 
-    // Override getSignatureHelpItems to return undefined when items are empty.
-    // The server always returns a body (processResponse requires it), but when
-    // the items array is empty, the harness expects undefined (no signature help).
+    // Override getSignatureHelpItems to:
+    // 1. Forward triggerReason to the server protocol request
+    // 2. Return undefined when items are empty (harness expects undefined for "no help")
     const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
     proto.getSignatureHelpItems = function(fileName, position, options) {
+        // Intercept: forward triggerReason to the server by augmenting the request
+        if (options && options.triggerReason) {
+            const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+            const args = {
+                file: fileName,
+                line: lineOffset.line,
+                offset: lineOffset.offset,
+                triggerReason: options.triggerReason,
+            };
+            const request = this.processRequest("signatureHelp", args);
+            const response = this.processResponse(request);
+            if (!response.body) return undefined;
+            const { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount } = response.body;
+            if (!items || items.length === 0) return undefined;
+            return { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount };
+        }
         const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
         if (result && result.items && result.items.length === 0) {
             return undefined;
