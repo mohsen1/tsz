@@ -141,7 +141,6 @@ fn ts2774_required_function_param_in_if() {
 }
 
 #[test]
-#[ignore = "TS2774 optional function param handling changed after merge"]
 fn ts2774_no_error_for_optional_function_param() {
     let diags = check_strict("function test(fn?: () => boolean) {\n    if (fn) {}\n}\n");
     assert!(
