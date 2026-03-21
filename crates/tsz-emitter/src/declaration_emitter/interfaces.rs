@@ -32,7 +32,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        if is_exported {
+        if is_exported && self.should_emit_export_keyword() {
             self.write("export ");
         }
         self.write("interface ");
