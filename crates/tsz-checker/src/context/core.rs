@@ -252,8 +252,7 @@ impl<'a> CheckerContext<'a> {
                 self.global_declared_modules = Some(Arc::new(dm));
             }
             if self.global_expando_index.is_none() {
-                let mut expando_index: FxHashMap<String, FxHashSet<String>> =
-                    FxHashMap::default();
+                let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
                 for binder in binders.iter() {
                     for (obj_key, props) in binder.expando_properties.iter() {
                         expando_index
