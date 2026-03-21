@@ -3,6 +3,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -961,10 +962,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.is_catch_clause_variable_declaration(idx) {
-            if self.ctx.use_unknown_in_catch_variables() {
-                return TypeId::UNKNOWN;
-            }
-            return TypeId::ANY;
+            // Route through the flow observation boundary for centralized
+            // catch-variable typing policy.
+            return flow_boundary::resolve_catch_variable_type(
+                self.ctx.use_unknown_in_catch_variables(),
+            );
         }
 
         // For-in variables are always typed as `string`
