@@ -327,9 +327,17 @@ impl<'a> CheckerState<'a> {
 
     /// Check if definite assignment checking should be skipped for a given type.
     /// TypeScript skips TS2454 when the declared type is `any`, `unknown`, or includes `undefined`.
+    /// It also skips TS2454 entirely when `strictNullChecks` is disabled, because
+    /// without strict null checks all types implicitly include `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
         use tsz_solver::type_contains_undefined;
+
+        // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
+        // includes undefined/null, so an uninitialized variable is always valid.
+        if !self.ctx.strict_null_checks() {
+            return true;
+        }
 
         // Skip for any/unknown/error - these types allow uninitialized usage
         if declared_type == TypeId::ANY
@@ -601,10 +609,19 @@ impl<'a> CheckerState<'a> {
                 if !is_for_in_of_var {
                     let has_type_annotation =
                         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                            self.ctx
+                            let has_ts_annotation = self
+                                .ctx
                                 .arena
                                 .get_variable_declaration(decl_node)
-                                .is_some_and(|vd| vd.type_annotation.is_some())
+                                .is_some_and(|vd| vd.type_annotation.is_some());
+                            // In JS files with checkJs/@ts-check, a JSDoc @type tag
+                            // on a `var` declaration acts as a type annotation. tsc
+                            // emits TS2454 for `/** @type {X} */ var v;` the same way
+                            // it does for `var v: X;`.
+                            has_ts_annotation
+                                || self
+                                    .jsdoc_type_annotation_for_node(decl_id_to_check)
+                                    .is_some()
                         } else {
                             false
                         };

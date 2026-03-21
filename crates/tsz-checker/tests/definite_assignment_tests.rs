@@ -920,9 +920,11 @@ fn test_ts2454_skipped_for_undefined_type() {
 }
 
 /// TS2454 should not fire when `strictNullChecks` is off.
+/// Without strict null checks, all types implicitly include `undefined` and `null`,
+/// so uninitialized variables are always valid. Verified against tsc conformance
+/// data: zero tests with `strictNullChecks: false` expect TS2454.
 #[test]
-fn test_ts2454_emitted_even_without_strict_null_checks() {
-    // tsc 6.0: TS2454 fires regardless of strictNullChecks
+fn test_ts2454_not_emitted_without_strict_null_checks() {
     let source = r"
         var a: number;
         var b = a;
@@ -934,12 +936,13 @@ fn test_ts2454_emitted_even_without_strict_null_checks() {
             ..Default::default()
         },
     );
-    assert!(
+    assert_eq!(
         count_code(
             &diags,
             diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
-        ) > 0,
-        "tsc 6.0 emits TS2454 even without strictNullChecks, got: {diags:?}"
+        ),
+        0,
+        "TS2454 should not fire without strictNullChecks, got: {diags:?}"
     );
 }
 
