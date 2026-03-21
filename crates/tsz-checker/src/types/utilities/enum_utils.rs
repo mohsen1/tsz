@@ -433,7 +433,9 @@ impl<'a> CheckerState<'a> {
             return None; // Circular — treat as non-constant
         }
         let result = self.evaluate_constant_expression(member_data.initializer);
-        EVAL_VISITED.with(|v| { v.borrow_mut().remove(&member_decl); });
+        EVAL_VISITED.with(|v| {
+            v.borrow_mut().remove(&member_decl);
+        });
         result
     }
 
