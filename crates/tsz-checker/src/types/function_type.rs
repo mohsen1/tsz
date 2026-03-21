@@ -1909,7 +1909,7 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.preserve_literal_types = true;
                             }
                             if body_request.is_empty() {
-                                self.clear_type_cache_recursive(body);
+                                self.invalidate_expression_for_contextual_retry(body);
                             }
                             let t = self.get_type_of_node_with_request(body, &body_request);
                             self.ctx.preserve_literal_types = prev_preserve_literals;
