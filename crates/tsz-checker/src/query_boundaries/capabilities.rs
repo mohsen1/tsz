@@ -483,68 +483,92 @@ mod tests {
 
     #[test]
     fn test_import_attributes_feature_gate() {
-        let mut opts = tsz_common::checker_options::CheckerOptions::default();
-
         // ESNext supports import attributes
-        opts.module = ModuleKind::ESNext;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::ESNext,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(caps.feature_available(FeatureGate::ImportAttributes));
 
         // CommonJS does not
-        opts.module = ModuleKind::CommonJS;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.feature_available(FeatureGate::ImportAttributes));
 
         // Preserve supports it
-        opts.module = ModuleKind::Preserve;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::Preserve,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(caps.feature_available(FeatureGate::ImportAttributes));
     }
 
     #[test]
     fn test_top_level_await_using_gate() {
-        let mut opts = tsz_common::checker_options::CheckerOptions::default();
-
         // ES2022 module + ESNext target → supported
-        opts.module = ModuleKind::ES2022;
-        opts.target = ScriptTarget::ESNext;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(caps.feature_available(FeatureGate::TopLevelAwaitUsing));
 
         // CommonJS + ESNext target → not supported (wrong module)
-        opts.module = ModuleKind::CommonJS;
-        opts.target = ScriptTarget::ESNext;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.feature_available(FeatureGate::TopLevelAwaitUsing));
 
         // ESNext module + ES5 target → not supported (wrong target)
-        opts.module = ModuleKind::ESNext;
-        opts.target = ScriptTarget::ES5;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.feature_available(FeatureGate::TopLevelAwaitUsing));
     }
 
     #[test]
     fn test_resolve_json_module_compatibility() {
-        let mut opts = tsz_common::checker_options::CheckerOptions::default();
-
         // CommonJS is compatible
-        opts.module = ModuleKind::CommonJS;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(caps.resolve_json_module_compatible);
 
         // None is incompatible
-        opts.module = ModuleKind::None;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::None,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.resolve_json_module_compatible);
 
         // System is incompatible
-        opts.module = ModuleKind::System;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::System,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.resolve_json_module_compatible);
 
         // UMD is incompatible
-        opts.module = ModuleKind::UMD;
+        let opts = tsz_common::CheckerOptions {
+            module: ModuleKind::UMD,
+            ..Default::default()
+        };
         let caps = EnvironmentCapabilities::from_options(&opts, true);
         assert!(!caps.resolve_json_module_compatible);
     }

@@ -184,7 +184,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_symbol(_block_sym_id)
-                    .map_or(false, |block_sym| {
+                    .is_some_and(|block_sym| {
                         block_sym.declarations.iter().any(|&block_decl_idx| {
                             block_decl_idx.is_some()
                                 && self.ctx.arena.get(block_decl_idx).is_some()
@@ -200,14 +200,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_symbol(_block_sym_id)
-                    .map_or(false, |block_sym| {
+                    .is_some_and(|block_sym| {
                         block_sym.declarations.iter().any(|&block_decl_idx| {
                             block_decl_idx.is_some()
                                 && self
                                     .ctx
                                     .arena
                                     .get(block_decl_idx)
-                                    .map_or(false, |n| n.pos < var_pos)
+                                    .is_some_and(|n| n.pos < var_pos)
                         })
                     });
 

@@ -707,9 +707,9 @@ impl<'a> CheckerState<'a> {
                 CapabilityDiagnostic::MissingNodeGlobal { .. } => {
                     // Special cases: private-name access and "module" with parse errors
                     // fall through to TS2304 instead of TS2591.
-                    if self.is_private_name_access_base(idx) {
-                        // Fall through to TS2304
-                    } else if name == "module" && self.has_parse_errors() {
+                    if self.is_private_name_access_base(idx)
+                        || (name == "module" && self.has_parse_errors())
+                    {
                         // Fall through to TS2304
                     } else {
                         self.error_cannot_find_name_install_node_types(name, idx);
