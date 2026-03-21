@@ -37,8 +37,8 @@ pub fn stack_overflow_tripped() -> bool {
     STACK_OVERFLOW_TRIPPED.get()
 }
 
-/// Trip the stack overflow breaker.  Called from guards in dispatch.rs and
-/// state/type_analysis/core.rs when `stacker::remaining_stack()` reports
+/// Trip the stack overflow breaker.  Called from guards in `dispatch.rs` and
+/// `state/type_analysis/core.rs` when `stacker::remaining_stack()` reports
 /// < 256 KB remaining.
 pub fn trip_stack_overflow() {
     STACK_OVERFLOW_TRIPPED.set(true);

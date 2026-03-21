@@ -44,7 +44,8 @@ mod types_domain;
 
 pub use checkers_domain::{
     accessor_checker, call_checker, enum_checker, generic_checker, iterable_checker, jsx_checker,
-    parameter_checker, promise_checker, property_checker, signature_builder,
+    parameter_checker, promise_checker, property_checker, reset_stack_overflow_flag,
+    signature_builder,
 };
 
 pub use assignability_domain::{

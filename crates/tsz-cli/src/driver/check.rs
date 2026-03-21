@@ -924,6 +924,7 @@ pub(super) fn collect_diagnostics(
             if !options.no_check {
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
+                tsz::checker::reset_stack_overflow_flag();
                 checker.check_source_file(file.source_file);
 
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -1277,6 +1278,7 @@ pub(super) fn check_file_for_parallel<'a>(
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
     if !no_check {
+        tsz::checker::reset_stack_overflow_flag();
         checker.check_source_file(file.source_file);
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
         let effective_options = ResolvedCompilerOptions {
