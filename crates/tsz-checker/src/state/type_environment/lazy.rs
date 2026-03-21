@@ -206,7 +206,15 @@ impl<'a> CheckerState<'a> {
             result
         };
 
-        let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
+        // Second pass with CheckerContext as resolver: the first pass uses
+        // TypeEnvironment which has limited Lazy resolution. If the result still
+        // contains unresolved IndexAccess or Mapped types, retry with the full
+        // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
+        // get_type_of_symbol. This eliminates the need for checker-side mapped
+        // type expansion in many cases.
+        let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
+            || (result != type_id && query::mapped_type_id(self.ctx.types, result).is_some());
+        let final_result = if needs_resolver_pass {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
             if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();

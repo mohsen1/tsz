@@ -482,8 +482,10 @@ impl<'a> CheckerState<'a> {
         let evaluated_result = self.evaluate_application_type(instantiated);
         let result = self.prune_impossible_object_union_members_with_env(evaluated_result);
 
-        // If the result is a Mapped type, try to evaluate it with symbol resolution
-        let result = self.evaluate_mapped_type_with_resolution(result);
+        // Mapped types in the result are now evaluated by the solver's TypeEvaluator
+        // via evaluate_type_with_env, which has a second-pass with CheckerContext
+        // resolver that can resolve Lazy(DefId) types on the fly. This eliminates
+        // the need for checker-side mapped type expansion here.
 
         // Preserve instantiated discriminated object intersections in their deferred
         // intersection form. Eager env evaluation collapses these into distributed
