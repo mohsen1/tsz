@@ -154,13 +154,17 @@ impl Server {
             (None, None)
         };
 
-        let project_env = ProjectEnv {
+        let mut project_env = ProjectEnv {
             lib_contexts,
             all_arenas,
             all_binders,
             skeleton_declared_modules,
             skeleton_expando_index,
             symbol_file_targets: Arc::new(Vec::new()),
+            global_file_locals_index: None,
+            global_module_exports_index: None,
+            global_module_augmentations_index: None,
+            global_augmentation_targets_index: None,
             resolved_module_paths: Arc::new(resolved_module_paths),
             resolved_module_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -168,6 +172,7 @@ impl Server {
             typescript_dom_replacement_globals: (false, false, false),
             has_deprecation_diagnostics: false,
         };
+        project_env.build_global_indices();
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -497,13 +502,17 @@ impl Server {
         // Build project-level shared environment for all checkers.
         // NOTE: lib_contexts here includes both lib AND user file contexts,
         // so we override actual_lib_file_count after apply_to.
-        let project_env = ProjectEnv {
+        let mut project_env = ProjectEnv {
             lib_contexts: all_contexts,
             all_arenas,
             all_binders,
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             symbol_file_targets: Arc::new(Vec::new()),
+            global_file_locals_index: None,
+            global_module_exports_index: None,
+            global_module_augmentations_index: None,
+            global_augmentation_targets_index: None,
             resolved_module_paths: Arc::new(resolved_module_paths),
             resolved_module_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -511,6 +520,7 @@ impl Server {
             typescript_dom_replacement_globals: (false, false, false),
             has_deprecation_diagnostics: false,
         };
+        project_env.build_global_indices();
 
         // PHASE 4: Type check all files
         let query_cache = QueryCache::new(&type_interner);

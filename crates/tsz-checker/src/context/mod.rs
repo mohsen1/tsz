@@ -1044,6 +1044,21 @@ pub struct ProjectEnv {
     pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
     /// Pre-computed symbol-to-file ownership targets.
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
+    /// Pre-computed global file_locals index: name -> Vec<(file_idx, SymbolId)>.
+    /// Built once from all binders; shared across all checkers via `Arc`.
+    pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
+    /// Pre-computed global module_exports index: (specifier, export_name) -> Vec<(file_idx, SymbolId)>.
+    /// Built once from all binders; shared across all checkers via `Arc`.
+    pub global_module_exports_index:
+        Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
+    /// Pre-computed global module augmentations index: specifier -> Vec<(file_idx, ModuleAugmentation)>.
+    /// Built once from all binders; shared across all checkers via `Arc`.
+    pub global_module_augmentations_index:
+        Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
+    /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, file_idx)>.
+    /// Built once from all binders; shared across all checkers via `Arc`.
+    pub global_augmentation_targets_index:
+        Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
@@ -1083,6 +1098,20 @@ impl ProjectEnv {
         if let Some(ref ei) = self.skeleton_expando_index {
             ctx.set_expando_index_from_skeleton(Arc::clone(ei));
         }
+        // Pre-install global indices before set_all_binders so it can skip
+        // re-computing them. This avoids O(N) binder scans per checker.
+        if let Some(ref idx) = self.global_file_locals_index {
+            ctx.global_file_locals_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_module_exports_index {
+            ctx.global_module_exports_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_module_augmentations_index {
+            ctx.global_module_augmentations_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_augmentation_targets_index {
+            ctx.global_augmentation_targets_index = Some(Arc::clone(idx));
+        }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         {
             let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
@@ -1094,5 +1123,104 @@ impl ProjectEnv {
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
+    }
+
+    /// Build the 4 global binder indices from `all_binders`.
+    ///
+    /// This is the same computation that `set_all_binders` does, but factored out
+    /// so drivers can compute it once and share via `Arc` across all checkers.
+    /// When these fields are `Some`, `set_all_binders` skips re-computing them.
+    pub fn build_global_indices(&mut self) {
+        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> =
+            FxHashMap::default();
+        let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
+            FxHashMap::default();
+        let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
+            FxHashMap::default();
+        let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> =
+            FxHashMap::default();
+
+        // Also build declared_modules if not already from skeleton.
+        let mut declared_modules = if self.skeleton_declared_modules.is_some() {
+            None
+        } else {
+            Some(GlobalDeclaredModules::default())
+        };
+
+        for (file_idx, binder) in self.all_binders.iter().enumerate() {
+            for (name, &sym_id) in binder.file_locals.iter() {
+                file_locals_index
+                    .entry(name.to_string())
+                    .or_default()
+                    .push((file_idx, sym_id));
+            }
+            for (module_spec, exports) in binder.module_exports.iter() {
+                for (export_name, &sym_id) in exports.iter() {
+                    module_exports_index
+                        .entry((module_spec.clone(), export_name.to_string()))
+                        .or_default()
+                        .push((file_idx, sym_id));
+                }
+                if let Some(ref mut dm) = declared_modules {
+                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                    if normalized.contains('*') {
+                        dm.patterns.push(normalized.to_string());
+                    } else {
+                        dm.exact.insert(normalized.to_string());
+                    }
+                }
+            }
+            if let Some(ref mut dm) = declared_modules {
+                for name in binder
+                    .declared_modules
+                    .iter()
+                    .chain(binder.shorthand_ambient_modules.iter())
+                {
+                    let normalized = name.trim_matches('"').trim_matches('\'');
+                    if normalized.contains('*') {
+                        dm.patterns.push(normalized.to_string());
+                    } else {
+                        dm.exact.insert(normalized.to_string());
+                    }
+                }
+            }
+            for (module_spec, augmentations) in binder.module_augmentations.iter() {
+                module_augs_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .extend(augmentations.iter().map(|aug| (file_idx, aug.clone())));
+            }
+            for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
+                aug_targets_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push((sym_id, file_idx));
+            }
+        }
+
+        // Build expando index if not already from skeleton.
+        if self.skeleton_expando_index.is_none() {
+            let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+            for binder in self.all_binders.iter() {
+                for (obj_key, props) in binder.expando_properties.iter() {
+                    expando_index
+                        .entry(obj_key.clone())
+                        .or_default()
+                        .extend(props.iter().cloned());
+                }
+            }
+            self.skeleton_expando_index = Some(Arc::new(expando_index));
+        }
+
+        if let Some(mut dm) = declared_modules {
+            dm.patterns.sort();
+            dm.patterns.dedup();
+            self.skeleton_declared_modules = Some(Arc::new(dm));
+        }
+
+        self.global_file_locals_index = Some(Arc::new(file_locals_index));
+        self.global_module_exports_index = Some(Arc::new(module_exports_index));
+        self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
+        self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
     }
 }
