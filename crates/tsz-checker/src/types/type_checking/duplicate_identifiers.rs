@@ -1192,16 +1192,15 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Determine TS2451 vs TS2300:
-                // tsc uses TS2451 ("Cannot redeclare block-scoped variable")
-                // whenever ANY declaration in the conflict set is a block-scoped
-                // variable (let/const). This applies uniformly regardless of
-                // whether the conflict is cross-file or single-file, and
-                // regardless of whether conflicting declarations are at the
-                // same scope level. Only when NO block-scoped variable is
-                // involved does tsc use TS2300 ("Duplicate identifier").
+                // Determine TS2451 vs TS2300 for the mixed case (has_non_block_scoped
+                // is true, so at least one declaration is not block-scoped).
                 //
-                // For non-block-scoped conflicts that span different scopes
+                // For mixed var + let/const conflicts:
+                //   - Cross-file: always TS2451
+                //   - Same-file: TS2451 if first declaration is block-scoped,
+                //     TS2300 if first declaration is non-block-scoped (var)
+                //
+                // For purely non-block-scoped conflicts that span different scopes
                 // (e.g., var hoisted from a child block to conflict with a
                 // function at the parent level), we fall back to scope-based
                 // analysis to choose TS2451 vs TS2300.
@@ -1210,8 +1209,27 @@ impl<'a> CheckerState<'a> {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
-                let use_ts2451 = if has_block_scoped_conflict {
+                let use_ts2451 = if has_remote_declaration && has_block_scoped_conflict {
+                    // Cross-file mixed conflicts always use TS2451.
                     true
+                } else if has_block_scoped_conflict {
+                    // Same-file mixed case: check if the first (earliest) local
+                    // declaration is block-scoped. If so, TS2451; otherwise TS2300.
+                    declarations
+                        .iter()
+                        .filter(|(decl_idx, _, is_local, _, _)| {
+                            *is_local && conflicts.contains(decl_idx)
+                        })
+                        .min_by_key(|(decl_idx, _, _, _, _)| {
+                            self.ctx
+                                .arena
+                                .get(*decl_idx)
+                                .map_or(u32::MAX, |node| node.pos)
+                        })
+                        .map(|(_, flags, _, _, _)| {
+                            (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                        })
+                        .unwrap_or(false)
                 } else if has_remote_declaration {
                     false
                 } else {
