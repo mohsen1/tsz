@@ -154,6 +154,7 @@ pub struct DeclarationEmitter<'a> {
     /// Set for node16/nodenext module modes where module resolution already
     /// enforces portability via the exports map (TS2307).
     pub(super) skip_portability_check: bool,
+    pub(super) strict_null_checks: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -242,6 +243,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
             skip_portability_check: false,
+            strict_null_checks: false,
         }
     }
 
@@ -312,6 +314,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_synthetic_dependency_symbols: FxHashSet::default(),
             diagnostics: Vec::new(),
             skip_portability_check: false,
+            strict_null_checks: false,
         }
     }
 
@@ -383,6 +386,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// enforces portability via the exports map.
     pub const fn set_skip_portability_check(&mut self, skip: bool) {
         self.skip_portability_check = skip;
+    }
+
+    pub const fn set_strict_null_checks(&mut self, strict: bool) {
+        self.strict_null_checks = strict;
     }
 
     /// Take diagnostics collected during declaration emit (e.g., TS2883).
