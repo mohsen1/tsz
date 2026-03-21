@@ -49,6 +49,19 @@ pub(crate) struct PropertyClassification {
     pub target_is_global_object_or_function: bool,
     /// Whether the target is an empty object type `{}` (accepts anything).
     pub target_is_empty_object: bool,
+    /// Whether ALL properties that exist in both source and target have
+    /// compatible (assignable) types. When `true` and `excess_properties`
+    /// is non-empty, the relation failure is caused ONLY by excess properties.
+    /// This enables `should_skip_weak_union_error` to make its decision
+    /// without re-enumerating properties and re-checking assignability.
+    pub all_matching_compatible: bool,
+    /// Whether a trimmed source (only matching properties) would be assignable
+    /// to the target. `false` when structural factors beyond property names
+    /// (e.g., deferred conditionals) prevent assignability.
+    pub trimmed_source_assignable: bool,
+    /// Whether any target member has a number index signature.
+    /// Used to suppress EPC for numeric property names.
+    pub target_has_number_index: bool,
 }
 
 /// Checker-facing classification of a relation failure.

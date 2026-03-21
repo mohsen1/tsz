@@ -140,6 +140,9 @@ mod overload_modifier_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "../tests/relation_boundary_tests.rs"]
+mod relation_boundary_tests;
+#[cfg(test)]
 #[path = "../tests/rest_parameter_tests.rs"]
 mod rest_parameter_tests;
 #[cfg(test)]
