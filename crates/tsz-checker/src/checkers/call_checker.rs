@@ -1911,8 +1911,11 @@ impl<'a> CheckerState<'a> {
         // matches, TypeScript reports the overload failure and suppresses these
         // nested callback/body diagnostics.
         self.ctx.node_types = Default::default();
+        // Clear the contextual resolution cache once before the loop — the cache
+        // is shared and needs clearing before any arg is re-evaluated, but clearing
+        // it per-arg was redundant (empty after the first iteration).
+        self.clear_contextual_resolution_cache();
         for &arg_idx in &contextual_refresh_args {
-            self.clear_contextual_resolution_cache();
             self.invalidate_expression_for_contextual_retry(arg_idx);
         }
         let union_callable_ctx = CallableContext::new(union_contextual);
