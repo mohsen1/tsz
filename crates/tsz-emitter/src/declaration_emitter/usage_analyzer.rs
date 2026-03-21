@@ -1154,6 +1154,20 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
 
+            // Template literal type: `hello${T}world`
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                if let Some(tlt) = self.arena.get_template_literal_type(type_node) {
+                    for &span_idx in &tlt.template_spans.nodes {
+                        // Spans reuse TemplateSpanData — expression field holds the type
+                        if let Some(span_node) = self.arena.get(span_idx)
+                            && let Some(span) = self.arena.get_template_span(span_node)
+                        {
+                            self.analyze_type_node(span.expression);
+                        }
+                    }
+                }
+            }
+
             // Import type: import("mod").T — handled by walk_inferred_type
             k if k == syntax_kind_ext::IMPORT_TYPE => {}
 
