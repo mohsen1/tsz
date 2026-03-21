@@ -724,15 +724,21 @@ impl<'a> CheckerState<'a> {
         // Evaluate the constraint to get concrete keys
         let keys = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
-        // Preserve the solver's tuple/array mapped-type semantics for homomorphic
-        // cases like `{ [K in keyof T]: T[K] }` over tuple/array sources. The
-        // checker-local object expansion below is correct for object members, but
-        // it loses tuple/array identity and causes rest parameters to stop being
-        // recognized as array-like.
-        if self.mapped_constraint_source_needs_array_like_preservation(mapped.constraint) {
-            let evaluated = self.evaluate_type_with_env(type_id);
-            if evaluated != type_id {
-                return evaluated;
+        // Use solver classification to decide whether to preserve array/tuple identity.
+        // This replaces the checker-local `mapped_constraint_source_needs_array_like_preservation`
+        // with a solver-owned query, keeping structural classification behind the boundary.
+        if let query::MappedConstraintKind::KeyOf(source) =
+            query::classify_mapped_constraint(self.ctx.types, mapped.constraint)
+        {
+            let resolved_source = self.evaluate_type_with_resolution(source);
+            let source_kind = query::classify_mapped_source(self.ctx.types, resolved_source);
+            if !matches!(source_kind, query::MappedSourceKind::Object) {
+                // Source is array/tuple-like — delegate to the solver's evaluator
+                // which preserves the structural identity.
+                let evaluated = self.evaluate_type_with_env(type_id);
+                if evaluated != type_id {
+                    return evaluated;
+                }
             }
         }
 
@@ -768,95 +774,48 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        // For homomorphic mapped types with `-?`, collect source properties so we
-        // can use their raw type_id (without implicit undefined from optionality).
-        // This distinguishes `{ a?: string }` (raw type = string) from
-        // `{ a?: string | undefined }` (raw type = string | undefined).
-        let is_remove_optional =
-            mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove);
-        let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, TypeId)> =
-            if is_remove_optional {
-                if let Some(source) =
-                    tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
-                {
-                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
-                        .map(|shape| {
-                            shape
-                                .properties
-                                .iter()
-                                .map(|p| (p.name, (p.optional, p.type_id)))
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    Default::default()
-                }
+        // Detect homomorphic source and collect source property info via solver helpers.
+        // This centralizes both the homomorphic detection and property collection
+        // behind the type-environment boundary instead of inline checker logic.
+        let is_homomorphic_source = tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
+        let is_homomorphic = is_homomorphic_source.is_some();
+
+        let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
+            if let Some(source) = is_homomorphic_source {
+                query::collect_homomorphic_source_properties(self.ctx.types, source)
             } else {
                 Default::default()
             };
 
-        // Build the resulting object properties
+        // Build the resulting object properties using solver-centralized modifier logic.
         let mut properties = Vec::new();
         for key_name in string_keys {
+            // Use env-evaluated template instantiation (needed for Lazy/DefId resolution).
             let mut property_type =
                 self.instantiate_mapped_property_template_with_env(&mapped, key_name);
 
-            // When `-?` removes optionality from a homomorphic mapped type, use the
-            // source property's raw type_id instead of the template-evaluated type.
-            // The template evaluation (T[K]) adds `| undefined` for optional properties,
-            // but the raw type_id preserves the distinction between implicit undefined
-            // (from `a?: string` → raw type `string`) and explicit undefined
-            // (from `a?: string | undefined` → raw type `string | undefined`).
-            // This matches tsc's `removeMissingType` which only strips the implicit part.
-            if is_remove_optional
-                && let Some(&(source_optional, raw_type)) = source_prop_map.get(&key_name)
+            // Look up source property info for modifier computation
+            let source_info = source_prop_map.get(&key_name);
+            let (source_optional, source_readonly) =
+                source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
+
+            // Use solver-centralized modifier computation
+            let (optional, readonly) = query::compute_mapped_modifiers(
+                &mapped,
+                is_homomorphic,
+                source_optional,
+                source_readonly,
+            );
+
+            // For homomorphic mapped types with optional source properties, use the
+            // source property's declared type to avoid double-encoding undefined.
+            // This matches the solver's evaluate_mapped behavior.
+            if is_homomorphic
                 && source_optional
+                && let Some((_, _, declared_type)) = source_info
             {
-                property_type = raw_type;
+                property_type = *declared_type;
             }
-
-            // For homomorphic mapped types (constraint is `keyof T`), preserve
-            // source property modifiers when the mapped type doesn't explicitly
-            // add/remove them. This matches the solver's evaluate_mapped behavior.
-            // Without this, `Readonly<TP>` where TP has optional props would
-            // lose the optional modifier (producing `{ readonly a: number }` instead
-            // of `{ readonly a?: number }`), causing false TS2403 errors.
-            let is_homomorphic_source =
-                tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
-            let source_modifiers: Option<(bool, bool)> = is_homomorphic_source.and_then(|source| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
-                    .and_then(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .find(|p| p.name == key_name)
-                            .map(|p| (p.optional, p.readonly))
-                    })
-            });
-            let (source_optional, source_readonly) = source_modifiers.unwrap_or((false, false));
-
-            let optional = match mapped.optional_modifier {
-                Some(tsz_solver::MappedModifier::Add) => true,
-                Some(tsz_solver::MappedModifier::Remove) => false,
-                None => {
-                    if is_homomorphic_source.is_some() {
-                        source_optional
-                    } else {
-                        false
-                    }
-                }
-            };
-            let readonly = match mapped.readonly_modifier {
-                Some(tsz_solver::MappedModifier::Add) => true,
-                Some(tsz_solver::MappedModifier::Remove) => false,
-                None => {
-                    if is_homomorphic_source.is_some() {
-                        source_readonly
-                    } else {
-                        false
-                    }
-                }
-            };
 
             properties.push(PropertyInfo {
                 name: key_name,
@@ -914,41 +873,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.evaluate_type_with_env(property_type)
-    }
-
-    fn mapped_constraint_source_needs_array_like_preservation(
-        &mut self,
-        constraint: TypeId,
-    ) -> bool {
-        let query::MappedConstraintKind::KeyOf(source) =
-            query::classify_mapped_constraint(self.ctx.types, constraint)
-        else {
-            return false;
-        };
-
-        let source = self.evaluate_type_with_resolution(source);
-        self.is_array_like_mapped_source(source)
-    }
-
-    fn is_array_like_mapped_source(&mut self, type_id: TypeId) -> bool {
-        if crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id).is_some()
-            || crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
-                .is_some()
-        {
-            return true;
-        }
-
-        let Some(constraint) = crate::query_boundaries::state::checking::type_parameter_constraint(
-            self.ctx.types,
-            type_id,
-        ) else {
-            return false;
-        };
-
-        let constraint = self.evaluate_type_with_resolution(constraint);
-        crate::query_boundaries::common::tuple_elements(self.ctx.types, constraint).is_some()
-            || crate::query_boundaries::common::array_element_type(self.ctx.types, constraint)
-                .is_some()
     }
 
     /// Evaluate a mapped type constraint with symbol resolution.

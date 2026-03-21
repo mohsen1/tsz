@@ -2331,6 +2331,255 @@ pub fn get_deferred_mapped_property_type(
     get_finite_mapped_property_type(db, mapped_id, property_name)
 }
 
+// =============================================================================
+// Mapped-Type Source Classification and Expansion Helpers
+// =============================================================================
+
+/// Classification of a mapped type's source for structural preservation decisions.
+///
+/// When a homomorphic mapped type maps over `keyof T`, this classifies what `T`
+/// resolves to, so callers can decide whether to preserve array/tuple identity
+/// or expand to a plain object.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MappedSourceKind {
+    /// Source is an array type (`T[]`) — preserve as array after mapping.
+    Array(TypeId),
+    /// Source is a tuple type — preserve as tuple after mapping.
+    Tuple(crate::types::TupleListId),
+    /// Source is a readonly array (ObjectWithIndex with readonly number index).
+    ReadonlyArray(TypeId),
+    /// Source is a regular object or other non-array/tuple type.
+    Object,
+    /// Source is a type parameter with an array/tuple constraint.
+    TypeParamWithArrayConstraint(TypeId),
+}
+
+/// Classify a resolved mapped-type source for array/tuple preservation.
+///
+/// Given the resolved source type from a homomorphic mapped type's `keyof T`
+/// constraint, returns the structural kind. The checker/boundary can use this
+/// to decide whether to delegate to the solver's tuple/array mapped evaluation
+/// or use the standard object expansion path.
+pub fn classify_mapped_source(db: &dyn TypeDatabase, source: TypeId) -> MappedSourceKind {
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
+    classify_mapped_source_inner(db, evaluated)
+}
+
+fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> MappedSourceKind {
+    match db.lookup(source) {
+        Some(TypeData::Array(element_type)) => MappedSourceKind::Array(element_type),
+        Some(TypeData::Tuple(tuple_id)) => MappedSourceKind::Tuple(tuple_id),
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            if let Some(ref idx) = shape.number_index {
+                if idx.readonly && idx.key_type == TypeId::NUMBER {
+                    return MappedSourceKind::ReadonlyArray(idx.value_type);
+                }
+            }
+            MappedSourceKind::Object
+        }
+        Some(TypeData::TypeParameter(info)) => {
+            if let Some(constraint) = info.constraint {
+                let resolved = crate::evaluation::evaluate::evaluate_type(db, constraint);
+                match classify_mapped_source_inner(db, resolved) {
+                    MappedSourceKind::Object => MappedSourceKind::Object,
+                    _ => MappedSourceKind::TypeParamWithArrayConstraint(constraint),
+                }
+            } else {
+                MappedSourceKind::Object
+            }
+        }
+        _ => MappedSourceKind::Object,
+    }
+}
+
+/// Check if a mapped type's `as` clause is identity-preserving (no remapping).
+///
+/// Returns `true` when there's no `as` clause, or when the `as` clause maps
+/// to the same type parameter (e.g., `{ [K in keyof T as K]: T[K] }`).
+pub fn is_identity_name_mapping(db: &dyn TypeDatabase, mapped: &crate::types::MappedType) -> bool {
+    match mapped.name_type {
+        None => true,
+        Some(nt) => matches!(
+            db.lookup(nt),
+            Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
+        ),
+    }
+}
+
+/// Compute modifier values for a mapped type property given the source property's
+/// original modifiers and the mapped type's modifier directives.
+///
+/// This centralizes the `-?`, `+?`, `-readonly`, `+readonly` logic that was
+/// previously duplicated between the solver's `evaluate_mapped` and the checker's
+/// `evaluate_mapped_type_with_resolution_inner`.
+pub fn compute_mapped_modifiers(
+    mapped: &crate::types::MappedType,
+    is_homomorphic: bool,
+    source_optional: bool,
+    source_readonly: bool,
+) -> (bool, bool) {
+    let optional = match mapped.optional_modifier {
+        Some(MappedModifier::Add) => true,
+        Some(MappedModifier::Remove) => false,
+        None => {
+            if is_homomorphic {
+                source_optional
+            } else {
+                false
+            }
+        }
+    };
+    let readonly = match mapped.readonly_modifier {
+        Some(MappedModifier::Add) => true,
+        Some(MappedModifier::Remove) => false,
+        None => {
+            if is_homomorphic {
+                source_readonly
+            } else {
+                false
+            }
+        }
+    };
+    (optional, readonly)
+}
+
+/// Collect source property info from a homomorphic mapped type's source object.
+///
+/// For a mapped type `{ [K in keyof T]: ... }`, this resolves `T` and collects
+/// its properties into a map of `(optional, readonly, declared_type)` tuples.
+/// This is used by `expand_mapped_type_to_properties` to compute modifiers and
+/// for `-?` to preserve the distinction between implicit and explicit undefined.
+pub fn collect_homomorphic_source_properties(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+) -> FxHashMap<Atom, (bool, bool, TypeId)> {
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
+    let mut props = FxHashMap::default();
+    match db.lookup(evaluated) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            props.reserve(shape.properties.len());
+            for prop in &shape.properties {
+                props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
+            }
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            props.reserve(shape.properties.len());
+            for prop in &shape.properties {
+                props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
+            }
+        }
+        _ => {}
+    }
+    props
+}
+
+/// Expand a mapped type with resolved finite keys into a list of `PropertyInfo`.
+///
+/// This takes:
+/// - `db`: type database
+/// - `mapped`: the mapped type definition
+/// - `string_keys`: pre-collected finite key atoms (already resolved from constraint)
+/// - `source_props`: optional map of source property info for homomorphic types
+///   (maps key atom → (optional, readonly, declared_type))
+/// - `is_homomorphic`: whether this is a homomorphic mapped type (keyof T pattern)
+///
+/// Returns the expanded properties with correct modifiers and template instantiation.
+/// Does NOT handle array/tuple preservation — callers should check `classify_mapped_source`
+/// and use the solver's `evaluate_mapped_array`/`evaluate_mapped_tuple` for those cases.
+pub fn expand_mapped_type_to_properties(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    string_keys: &[Atom],
+    source_props: &FxHashMap<Atom, (bool, bool, TypeId)>,
+    is_homomorphic: bool,
+) -> Vec<PropertyInfo> {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    let is_remove_optional = mapped.optional_modifier == Some(MappedModifier::Remove);
+    let mut properties = Vec::with_capacity(string_keys.len());
+    let mut subst = TypeSubstitution::new();
+
+    for &key_name in string_keys {
+        let key_literal = db.literal_string_atom(key_name);
+
+        // Handle name remapping
+        let remapped = remap_mapped_property_key(db, mapped, key_literal);
+        if remapped == TypeId::NEVER {
+            continue;
+        }
+
+        // Extract property name(s) from remapped key
+        let remapped_names: smallvec::SmallVec<[Atom; 1]> =
+            if let Some(name) = crate::visitor::literal_string(db, remapped) {
+                smallvec::smallvec![name]
+            } else if let Some(TypeData::Union(list_id)) = db.lookup(remapped) {
+                let members = db.type_list(list_id);
+                let names: smallvec::SmallVec<[Atom; 1]> = members
+                    .iter()
+                    .filter_map(|&m| crate::visitor::literal_string(db, m))
+                    .collect();
+                if names.is_empty() {
+                    continue;
+                }
+                names
+            } else {
+                // Can't resolve name — skip this key
+                continue;
+            };
+
+        // Instantiate template with this key
+        subst.clear();
+        subst.insert(mapped.type_param.name, key_literal);
+        let instantiated = instantiate_type(db, mapped.template, &subst);
+        let mut property_type = crate::evaluation::evaluate::evaluate_type(db, instantiated);
+
+        // Look up source property info for modifier computation
+        let source_info = source_props.get(&key_name);
+        let (source_optional, source_readonly) =
+            source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
+
+        let (optional, readonly) =
+            compute_mapped_modifiers(mapped, is_homomorphic, source_optional, source_readonly);
+
+        // For homomorphic mapped types with `-?` and optional source properties,
+        // use the declared type (without implicit undefined from optionality).
+        if is_homomorphic
+            && is_remove_optional
+            && source_optional
+            && let Some((_, _, declared_type)) = source_info
+        {
+            property_type = *declared_type;
+        } else if is_homomorphic
+            && source_optional
+            && let Some((_, _, declared_type)) = source_info
+        {
+            // For homomorphic types preserving optionality, use declared type
+            // to avoid double-encoding undefined from indexed access.
+            property_type = *declared_type;
+        }
+
+        for remapped_name in remapped_names {
+            properties.push(PropertyInfo {
+                name: remapped_name,
+                type_id: property_type,
+                write_type: property_type,
+                optional,
+                readonly,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: crate::types::Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            });
+        }
+    }
+
+    properties
+}
+
 /// Find the private brand name for a type.
 ///
 /// Private members in TypeScript classes use a "brand" property for nominal typing.
