@@ -4,6 +4,7 @@
 //! typeof/instanceof/in guards, and boolean comparison narrowing.
 
 use super::FlowAnalyzer;
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::{common::union_members, flow_analysis::is_unit_type};
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
@@ -609,10 +610,10 @@ impl<'a> FlowAnalyzer<'a> {
                                 _ => effective_sense,
                             };
                             if chain_completed {
-                                let narrowed =
-                                    narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                                let narrowed =
-                                    narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                                let narrowed = flow_boundary::narrow_optional_chain(
+                                    self.interner.as_type_database(),
+                                    type_id,
+                                );
                                 // Fall through to narrow_by_binary_expr with the pre-narrowed type
                                 return self.narrow_by_binary_expr(
                                     narrowed,
@@ -686,8 +687,10 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.contains_optional_chain(guard_target)
                         && self.is_optional_chain_prefix(guard_target, target)
                     {
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                        return flow_boundary::narrow_optional_chain(
+                            self.interner.as_type_database(),
+                            type_id,
+                        );
                     }
                 }
 
@@ -704,16 +707,20 @@ impl<'a> FlowAnalyzer<'a> {
                         let optional_call =
                             (cond_node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0;
                         if optional_call && self.is_matching_reference(call.expression, target) {
-                            let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                            return flow_boundary::narrow_optional_chain(
+                                self.interner.as_type_database(),
+                                type_id,
+                            );
                         }
                         if let Some(callee_node) = self.arena.get(call.expression)
                             && let Some(access) = self.arena.get_access_expr(callee_node)
                             && self.access_expr_is_optional_chain(callee_node, access)
                             && self.is_matching_reference(access.expression, target)
                         {
-                            let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                            return flow_boundary::narrow_optional_chain(
+                                self.interner.as_type_database(),
+                                type_id,
+                            );
                         }
                     }
                 }
@@ -748,9 +755,10 @@ impl<'a> FlowAnalyzer<'a> {
                         && (self.is_matching_reference(access.expression, target)
                             || self.is_optional_chain_prefix(condition_idx, target))
                     {
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                        return narrowed;
+                        return flow_boundary::narrow_optional_chain(
+                            self.interner.as_type_database(),
+                            type_id,
+                        );
                     }
                 }
                 // Handle truthiness discriminant narrowing for properties
@@ -1169,8 +1177,8 @@ impl<'a> FlowAnalyzer<'a> {
             is_strict,
             effective_truth,
         ) {
-            type_id = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-            type_id = narrowing.narrow_excluding_type(type_id, TypeId::UNDEFINED);
+            type_id =
+                flow_boundary::narrow_optional_chain(self.interner.as_type_database(), type_id);
         }
 
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
@@ -1274,8 +1282,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return nullish_union;
             }
 
-            let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            return flow_boundary::narrow_optional_chain(self.interner.as_type_database(), type_id);
         }
 
         if is_strict {
@@ -1306,8 +1313,10 @@ impl<'a> FlowAnalyzer<'a> {
                     let optional_undefined_truthy =
                         is_optional && literal_type == TypeId::UNDEFINED && effective_truth;
                     if is_optional && effective_truth && !optional_undefined_truthy {
-                        let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
-                        base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                        base_type = flow_boundary::narrow_optional_chain(
+                            self.interner.as_type_database(),
+                            base_type,
+                        );
                     }
                     let narrowed = narrowing.narrow_by_discriminant_for_type(
                         base_type,
