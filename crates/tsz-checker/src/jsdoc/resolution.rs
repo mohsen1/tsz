@@ -1,13 +1,18 @@
 //! JSDoc type annotation resolution — converting JSDoc type expressions to `TypeId`.
 //!
-//! This module owns:
+//! This module owns the **authoritative JSDoc reference-resolution kernel**:
+//!
+//! - `resolve_jsdoc_reference` — the ONE canonical entry point for resolving
+//!   any JSDoc type expression to a `TypeId`. All callers should use this
+//!   instead of re-deriving the resolution chain.
+//!
+//! Internal resolution components (called by the kernel, not directly):
 //! - Type expression parsing (`jsdoc_type_from_expression`)
-//! - Type name resolution (`resolve_jsdoc_type_str`, `resolve_jsdoc_type_name`)
+//! - Type name resolution (`resolve_jsdoc_type_name`)
 //! - Typedef resolution (`resolve_jsdoc_typedef_type`, `type_from_jsdoc_typedef`)
 //! - Symbol resolution (`resolve_jsdoc_symbol_type`, `resolve_jsdoc_entity_name_symbol`)
-//! - Annotation extraction from AST nodes (`jsdoc_type_annotation_for_node`, etc.)
 //! - Generic instantiation (`resolve_jsdoc_generic_type`)
-//! - Metadata queries (`jsdoc_has_readonly_tag`, `jsdoc_access_level`)
+//! - Import type resolution (`resolve_jsdoc_import_type_reference`)
 
 use super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::state::CheckerState;
@@ -26,53 +31,33 @@ impl<'a> CheckerState<'a> {
     pub(super) fn jsdoc_concrete_callable_type_from_expr(
         &mut self,
         type_expr: &str,
-        anchor_pos: u32,
-        comments: &[tsz_common::comments::CommentRange],
-        source_text: &str,
+        _anchor_pos: u32,
+        _comments: &[tsz_common::comments::CommentRange],
+        _source_text: &str,
     ) -> Option<TypeId> {
         let type_expr = type_expr.trim();
         if type_expr.is_empty() || Self::jsdoc_type_expr_is_broad_function(type_expr) {
             return None;
         }
 
-        let mut candidates = Vec::new();
+        // Use the authoritative resolution kernel instead of duplicating
+        // the resolution chain (expression → typedef → import → file_locals).
+        let ty = self.resolve_jsdoc_reference(type_expr)?;
 
-        if let Some(ty) = self.jsdoc_type_from_expression(type_expr) {
-            candidates.push(ty);
-            candidates.push(self.judge_evaluate(ty));
-            candidates.push(self.evaluate_contextual_type(ty));
-        }
+        // Try multiple evaluation strategies to find a callable shape
+        let candidates = [
+            ty,
+            self.judge_evaluate(ty),
+            self.evaluate_contextual_type(ty),
+        ];
 
-        if let Some(ty) =
-            self.resolve_jsdoc_typedef_type(type_expr, anchor_pos, comments, source_text)
-        {
-            candidates.push(ty);
-            candidates.push(self.judge_evaluate(ty));
-            candidates.push(self.evaluate_contextual_type(ty));
-        }
-
-        if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
-            candidates.push(resolved);
-            candidates.push(self.judge_evaluate(resolved));
-            candidates.push(self.evaluate_contextual_type(resolved));
-        }
-
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            if !matches!(resolved, TypeId::ERROR | TypeId::UNKNOWN) {
-                candidates.push(resolved);
-                candidates.push(self.judge_evaluate(resolved));
-                candidates.push(self.evaluate_contextual_type(resolved));
-            }
-        }
-
-        for ty in candidates {
-            let ty = self.evaluate_application_type(ty);
-            if tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
-                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
+        for candidate in candidates {
+            let candidate = self.evaluate_application_type(candidate);
+            if tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, candidate)
                     .is_some_and(|sigs| !sigs.is_empty())
             {
-                return Some(ty);
+                return Some(candidate);
             }
         }
 
@@ -724,38 +709,78 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a JSDoc type expression string to a `TypeId`, trying all strategies.
-    pub(crate) fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
+    /// **Authoritative JSDoc reference-resolution kernel.**
+    ///
+    /// This is the ONE canonical entry point for resolving any JSDoc type expression
+    /// string to a `TypeId`. All JSDoc callers (annotation lookup, callable type
+    /// resolution, param type resolution) must use this function instead of
+    /// re-deriving the resolution chain.
+    ///
+    /// Resolution order:
+    /// 1. Structural parse (`jsdoc_type_from_expression`): unions, intersections,
+    ///    arrays, tuples, primitives, literals, arrows, `function(...)`, generics,
+    ///    `import("...")` references, `keyof typeof`, type parameter scope lookup.
+    /// 2. Object literal parse: `{prop: Type, ...}`.
+    /// 3. Type name resolution (`resolve_jsdoc_type_name`):
+    ///    a. Qualified names (`A.B.C`) via module/namespace member walk.
+    ///    b. File-local symbols (classes, interfaces, type aliases, enums).
+    ///    c. `@typedef` / `@callback` from JSDoc comments in current file.
+    ///    d. `@import` tag bindings via file-local symbol resolution.
+    ///
+    /// Callers must NOT add their own fallback chains after calling this function.
+    /// If a resolution path is missing, it should be added HERE.
+    pub(crate) fn resolve_jsdoc_reference(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
+        if type_expr.is_empty() {
+            return None;
+        }
+        // 1. Structural parse (handles unions, arrays, primitives, imports, generics, etc.)
         if let Some(ty) = self.jsdoc_type_from_expression(type_expr) {
             return Some(ty);
         }
-        //    because @param {{ x: T }} already handles nested braces separately,
-        //    and adding this to the general parser would change @param behavior.
+        // 2. Object literal types: `{prop: Type, ...}`
+        //    Note: @param {{ x: T }} handles nested braces separately,
+        //    so this is only tried for top-level object literals.
         if type_expr.starts_with('{')
             && type_expr.ends_with('}')
             && let Some(ty) = self.parse_jsdoc_object_literal_type(type_expr)
         {
             return Some(ty);
         }
-        // 3. Try file-local symbols (type aliases, classes, interfaces — includes merged lib types)
+        // 3. Type name resolution (qualified names, file-local symbols, typedefs)
         self.resolve_jsdoc_type_name(type_expr)
     }
+
+    /// Backward-compatible alias for `resolve_jsdoc_reference`.
+    ///
+    /// All internal callers within the JSDoc subsystem should prefer
+    /// `resolve_jsdoc_reference` directly. This alias exists so that
+    /// callers outside the JSDoc subsystem (e.g., `jsdoc_type_from_expression`
+    /// recursive calls) continue to work without churn.
+    pub(crate) fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
+        self.resolve_jsdoc_reference(type_expr)
+    }
+
     /// Resolve a simple type name from the symbol table or @typedef declarations.
+    ///
+    /// This is an internal helper called by `resolve_jsdoc_reference` (step 3).
+    /// Do NOT call this directly — use `resolve_jsdoc_reference` instead.
     fn resolve_jsdoc_type_name(&mut self, name: &str) -> Option<TypeId> {
+        // 3a. Qualified names (e.g., `Namespace.Type.Member`)
         if name.contains('.')
             && let Some(resolved) = self.resolve_jsdoc_qualified_type_name(name)
         {
             return Some(resolved);
         }
 
+        // 3b. File-local symbols (classes, interfaces, type aliases, enums, imports)
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             let resolved = self.resolve_jsdoc_symbol_type(sym_id);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(resolved);
             }
         }
-        // Try @typedef resolution from JSDoc comments
+        // 3c. @typedef / @callback resolution from JSDoc comments
         if let Some(sf) = self.ctx.arena.source_files.first() {
             if sf.comments.is_empty() {
                 return None;

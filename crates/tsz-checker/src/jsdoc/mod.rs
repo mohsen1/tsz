@@ -6,10 +6,24 @@
 //! |---------------|-------------------------------------------------------|
 //! | `types`       | Shared data structures (`JsdocTypedefInfo`, etc.)     |
 //! | `parsing`     | Pure string-level parsing (no `&self`/`&mut self`)    |
-//! | `resolution`  | Type expression → `TypeId` resolution                 |
+//! | `resolution`  | **Authoritative reference-resolution kernel** +       |
+//! |               | type expression → `TypeId` resolution                 |
 //! | `lookup`      | AST annotation lookup, metadata, scoping helpers      |
 //! | `params`      | `@param` tag validation, comment finding, text parse  |
 //! | `diagnostics` | Typedef/satisfies diagnostic emission                 |
+//!
+//! # Reference resolution kernel
+//!
+//! `resolution::resolve_jsdoc_reference()` is the ONE authoritative entry
+//! point for resolving JSDoc type names/expressions to `TypeId`. It handles:
+//! - typedef lookup
+//! - import type lookup (`import("module").Member`)
+//! - template parameter scope lookup
+//! - callback/typedef reference resolution
+//!
+//! **All callers must use `resolve_jsdoc_reference`** instead of re-deriving
+//! the resolution chain. The `resolve_jsdoc_type_str` alias exists for
+//! backward compatibility but delegates to the kernel.
 //!
 //! # Architecture guard
 //!
