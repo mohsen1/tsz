@@ -73,7 +73,6 @@ fn test_format_object_type_preserves_property_insertion_order() {
 }
 
 #[test]
-#[ignore = "merge behavior change"]
 fn test_format_object_type_numeric_keys_sorted_first() {
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
@@ -93,12 +92,11 @@ fn test_format_object_type_numeric_keys_sorted_first() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: number; }"
+        "{ 0: string; 1: number; length: 2; }"
     );
 }
 
 #[test]
-#[ignore = "diagnostic display format changed"]
 fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
@@ -125,7 +123,7 @@ fn test_format_object_type_same_decl_order_uses_numeric_tiebreak() {
 
     assert_eq!(
         formatter.format(obj),
-        "{ 0: string; 1: number; length: number; }"
+        "{ 0: string; 1: number; length: 2; }"
     );
 }
 
@@ -565,7 +563,6 @@ fn test_optional_property_already_has_undefined_no_duplicate() {
 }
 
 #[test]
-#[ignore = "diagnostic display format changed"]
 fn test_optional_function_param_shows_undefined() {
     // tsc displays optional function params as `name?: T` without `| undefined`.
     // The `?` already implies optionality.
@@ -603,7 +600,6 @@ fn test_optional_function_param_shows_undefined() {
 }
 
 #[test]
-#[ignore = "optional param undefined display changed"]
 fn test_optional_param_already_has_undefined_no_duplicate() {
     // If the param type already includes undefined, strip it since `?` implies it.
     let interner = TypeInterner::new();
