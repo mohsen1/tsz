@@ -931,9 +931,8 @@ impl<'a> CheckerState<'a> {
         base: TypeId,
         base_kind: tsz_solver::type_queries::InterfaceMergeKind,
     ) -> TypeId {
-        use tsz_solver::type_queries::{
-            InterfaceMergeKind, classify_for_interface_merge, get_intersection_members,
-        };
+        use crate::query_boundaries::common::intersection_members;
+        use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
 
         let factory = self.ctx.types.factory();
 
@@ -946,7 +945,7 @@ impl<'a> CheckerState<'a> {
             };
 
         // Get the intersection members
-        let Some(members) = get_intersection_members(self.ctx.types, intersection_id) else {
+        let Some(members) = intersection_members(self.ctx.types, intersection_id) else {
             return factory.intersection2(derived, base);
         };
 

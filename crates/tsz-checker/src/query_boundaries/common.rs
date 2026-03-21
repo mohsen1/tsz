@@ -5,7 +5,9 @@
 //! files. This eliminates duplicate function bodies while preserving the
 //! per-module namespace pattern that callers rely on.
 
-use tsz_solver::{CallSignature, CallableShape, ObjectShape, TupleElement, TypeDatabase, TypeId};
+use tsz_solver::{
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
+};
 
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
@@ -175,4 +177,56 @@ pub(crate) fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId)
 
 pub(crate) fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly(db, type_id)
+}
+
+// ── Type application query ──
+
+pub(crate) fn type_application(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<TypeApplication>> {
+    tsz_solver::type_queries::get_type_application(db, type_id)
+}
+
+// ── Evaluation classification ──
+
+pub(crate) use tsz_solver::type_queries::EvaluationNeeded;
+
+pub(crate) fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> EvaluationNeeded {
+    tsz_solver::type_queries::classify_for_evaluation(db, type_id)
+}
+
+// ── Predicate / narrowing classification ──
+
+pub(crate) use tsz_solver::type_queries::PredicateSignatureKind;
+
+pub(crate) fn classify_for_predicate_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> PredicateSignatureKind {
+    tsz_solver::type_queries::classify_for_predicate_signature(db, type_id)
+}
+
+pub(crate) fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::is_narrowing_literal(db, type_id)
+}
+
+pub(crate) fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    tsz_solver::type_queries::stringify_literal_type(db, type_id)
+}
+
+// ── Visitor wrappers ──
+
+pub(crate) fn collect_referenced_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> rustc_hash::FxHashSet<TypeId> {
+    tsz_solver::visitor::collect_referenced_types(db, type_id)
+}
+
+pub(crate) fn collect_enum_def_ids(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<tsz_solver::def::DefId> {
+    tsz_solver::visitor::collect_enum_def_ids(db, type_id)
 }

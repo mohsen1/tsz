@@ -1,7 +1,7 @@
 use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 
-pub(crate) use super::common::{intersection_members, union_members};
+pub(crate) use super::common::{callable_shape_for_type, intersection_members, union_members};
 
 pub(crate) fn collect_property_name_atoms_for_diagnostics(
     db: &dyn tsz_solver::TypeDatabase,
