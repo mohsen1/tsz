@@ -497,6 +497,22 @@ pub(super) fn collect_diagnostics(
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
 
+        // Build the project-wide shared environment once for all parallel checkers.
+        let project_env = tsz::checker::context::ProjectEnv {
+            lib_contexts: lib_ctx_for_parallel,
+            all_arenas: Arc::clone(&all_arenas),
+            all_binders: Arc::clone(&all_binders),
+            skeleton_declared_modules: skeleton_declared_modules.clone(),
+            skeleton_expando_index: skeleton_expando_index.clone(),
+            symbol_file_targets: Arc::clone(&symbol_file_targets),
+            resolved_module_paths: Arc::clone(&resolved_module_paths),
+            resolved_module_errors: Arc::clone(&resolved_module_errors),
+            is_external_module_by_file: Arc::clone(&is_external_module_by_file),
+            file_is_esm_map: Arc::clone(&file_is_esm_map),
+            typescript_dom_replacement_globals,
+            has_deprecation_diagnostics,
+        };
+
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
@@ -515,25 +531,14 @@ pub(super) fn collect_diagnostics(
                             binder,
                             program,
                             compiler_options: &compiler_options,
-                            lib_contexts: &lib_ctx_for_parallel,
-                            all_arenas: &all_arenas,
-                            all_binders: &all_binders,
-                            symbol_file_targets: &symbol_file_targets,
-                            resolved_module_paths: &resolved_module_paths,
+                            project_env: &project_env,
                             resolved_module_specifiers: &resolved_module_specifiers,
-                            resolved_module_errors: &resolved_module_errors,
-                            is_external_module_by_file: &is_external_module_by_file,
-                            file_is_esm_map: &file_is_esm_map,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             no_check,
                             check_js,
                             explicit_check_js_false,
                             skip_lib_check,
-                            has_deprecation_diagnostics,
-                            typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
-                            skeleton_declared_modules: skeleton_declared_modules.clone(),
-                            skeleton_expando_index: skeleton_expando_index.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -549,25 +554,14 @@ pub(super) fn collect_diagnostics(
                             binder,
                             program,
                             compiler_options: &compiler_options,
-                            lib_contexts: &lib_ctx_for_parallel,
-                            all_arenas: &all_arenas,
-                            all_binders: &all_binders,
-                            symbol_file_targets: &symbol_file_targets,
-                            resolved_module_paths: &resolved_module_paths,
+                            project_env: &project_env,
                             resolved_module_specifiers: &resolved_module_specifiers,
-                            resolved_module_errors: &resolved_module_errors,
-                            is_external_module_by_file: &is_external_module_by_file,
-                            file_is_esm_map: &file_is_esm_map,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             no_check,
                             check_js,
                             explicit_check_js_false,
                             skip_lib_check,
-                            has_deprecation_diagnostics,
-                            typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
-                            skeleton_declared_modules: skeleton_declared_modules.clone(),
-                            skeleton_expando_index: skeleton_expando_index.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -586,22 +580,13 @@ pub(super) fn collect_diagnostics(
                         binder,
                         program,
                         compiler_options: &compiler_options,
-                        lib_contexts: &lib_ctx_for_parallel,
-                        all_arenas: &all_arenas,
-                        all_binders: &all_binders,
-                        symbol_file_targets: &symbol_file_targets,
-                        resolved_module_paths: &resolved_module_paths,
+                        project_env: &project_env,
                         resolved_module_specifiers: &resolved_module_specifiers,
-                        resolved_module_errors: &resolved_module_errors,
-                        is_external_module_by_file: &is_external_module_by_file,
-                        file_is_esm_map: &file_is_esm_map,
                         shared_lib_cache: Arc::clone(&shared_lib_cache),
                         no_check,
                         check_js,
                         explicit_check_js_false,
                         skip_lib_check,
-                        has_deprecation_diagnostics,
-                        typescript_dom_replacement_globals,
                         program_has_real_syntax_errors,
                     };
                     check_file_for_parallel(context)
@@ -997,16 +982,12 @@ pub(super) struct CheckFileForParallelContext<'a> {
     binder: BinderState,
     program: &'a MergedProgram,
     compiler_options: &'a tsz_common::CheckerOptions,
-    lib_contexts: &'a [LibContext],
-    all_arenas: &'a Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
-    all_binders: &'a Arc<Vec<Arc<BinderState>>>,
-    symbol_file_targets: &'a Arc<Vec<(tsz::binder::SymbolId, usize)>>,
-    resolved_module_paths: &'a Arc<FxHashMap<(usize, String), usize>>,
+    /// Project-wide shared environment — replaces individual lib_contexts, all_arenas,
+    /// all_binders, skeleton indices, symbol_file_targets, resolved_module_paths/errors,
+    /// is_external_module_by_file, file_is_esm_map, typescript_dom_replacement_globals,
+    /// and has_deprecation_diagnostics fields.
+    project_env: &'a tsz::checker::context::ProjectEnv,
     resolved_module_specifiers: &'a Arc<FxHashSet<(usize, String)>>,
-    resolved_module_errors:
-        &'a Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
-    is_external_module_by_file: &'a Arc<FxHashMap<String, bool>>,
-    file_is_esm_map: &'a Arc<FxHashMap<String, bool>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     no_check: bool,
     check_js: bool,
@@ -1015,14 +996,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `plainJSErrors` allowlist that would otherwise survive the filter.
     explicit_check_js_false: bool,
     skip_lib_check: bool,
-    /// When true, skip lib type resolution in the checker (TS5107/TS5101 mode).
-    has_deprecation_diagnostics: bool,
-    typescript_dom_replacement_globals: (bool, bool, bool),
     program_has_real_syntax_errors: bool,
-    /// Pre-computed declared modules from skeleton index, shared across all checkers.
-    skeleton_declared_modules: Option<Arc<tsz::checker::context::GlobalDeclaredModules>>,
-    /// Pre-computed expando index from skeleton index, shared across all checkers.
-    skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
 }
 
 /// Check a single file for the parallel checking path.
@@ -1039,25 +1013,14 @@ pub(super) fn check_file_for_parallel<'a>(
         binder,
         program,
         compiler_options,
-        lib_contexts,
-        all_arenas,
-        all_binders,
-        symbol_file_targets,
-        resolved_module_paths,
+        project_env,
         resolved_module_specifiers,
-        resolved_module_errors,
-        is_external_module_by_file,
-        file_is_esm_map,
         shared_lib_cache,
         no_check,
         check_js,
         explicit_check_js_false,
         skip_lib_check,
-        has_deprecation_diagnostics,
-        typescript_dom_replacement_globals,
         program_has_real_syntax_errors,
-        skeleton_declared_modules,
-        skeleton_expando_index,
     } = context;
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
@@ -1074,7 +1037,9 @@ pub(super) fn check_file_for_parallel<'a>(
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
         .filter(|(specifier, _, _)| {
-            resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
+            project_env
+                .resolved_module_paths
+                .contains_key(&(file_idx, specifier.clone()))
                 || resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
         })
         .map(|(specifier, _, _)| specifier.clone())
@@ -1089,46 +1054,13 @@ pub(super) fn check_file_for_parallel<'a>(
     );
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-    checker
-        .ctx
-        .set_has_deprecation_diagnostics(has_deprecation_diagnostics);
 
-    if !lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-    }
-    checker.ctx.set_typescript_dom_replacement_globals(
-        typescript_dom_replacement_globals.0,
-        typescript_dom_replacement_globals.1,
-        typescript_dom_replacement_globals.2,
-    );
+    // Apply all project-level shared state in one call.
+    project_env.apply_to(&mut checker.ctx);
 
-    checker.ctx.set_all_arenas(Arc::clone(all_arenas));
-    if let Some(ref dm) = skeleton_declared_modules {
-        checker
-            .ctx
-            .set_declared_modules_from_skeleton(Arc::clone(dm));
-    }
-    if let Some(ref ei) = skeleton_expando_index {
-        checker.ctx.set_expando_index_from_skeleton(Arc::clone(ei));
-    }
-    checker.ctx.set_all_binders(Arc::clone(all_binders));
-    {
-        let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
-        for (sym_id, owner_idx) in symbol_file_targets.iter() {
-            targets.insert(*sym_id, *owner_idx);
-        }
-    }
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::clone(resolved_module_paths));
-    checker
-        .ctx
-        .set_resolved_module_errors(Arc::clone(resolved_module_errors));
+    // Per-file state that varies across files:
     checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
-    checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
-    checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
+    checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
     // Exclude grammar checks that don't affect AST structure from

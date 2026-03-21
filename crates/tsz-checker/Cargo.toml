@@ -163,5 +163,9 @@ path = "tests/lib_resolution_identity_tests.rs"
 name = "stable_identity_helpers_tests"
 path = "tests/stable_identity_helpers_tests.rs"
 
+[[test]]
+name = "project_env_tests"
+path = "tests/project_env_tests.rs"
+
 [lints]
 workspace = true

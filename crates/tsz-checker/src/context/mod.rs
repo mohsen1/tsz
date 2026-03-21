@@ -1021,3 +1021,78 @@ pub struct LibContext {
     /// The binder state with symbols from this lib file.
     pub binder: Arc<BinderState>,
 }
+
+/// Project-wide shared environment for multi-file type checking.
+///
+/// Captures all the state that is identical across every per-file `CheckerContext`
+/// in a project check run. Drivers (CLI, LSP) build one `ProjectEnv` after merge
+/// and call [`ProjectEnv::apply_to`] on each checker instead of repeating 10+
+/// setter calls per file.
+///
+/// This struct is `Clone`-cheap because every field is either `Arc`-wrapped or `Copy`.
+#[derive(Clone)]
+pub struct ProjectEnv {
+    /// Lib file contexts for global type resolution.
+    pub lib_contexts: Vec<LibContext>,
+    /// All AST arenas for cross-file resolution (indexed by file_idx).
+    pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
+    /// All binders for cross-file resolution (indexed by file_idx).
+    pub all_binders: Arc<Vec<Arc<BinderState>>>,
+    /// Pre-computed declared modules from skeleton index.
+    pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
+    /// Pre-computed expando index from skeleton index.
+    pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
+    /// Pre-computed symbol-to-file ownership targets.
+    pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
+    /// Resolved module paths: (source_file_idx, specifier) -> target_file_idx.
+    pub resolved_module_paths: Arc<ResolvedModulePathMap>,
+    /// Resolved module errors: (source_file_idx, specifier) -> error details.
+    pub resolved_module_errors: Arc<ResolvedModuleErrorMap>,
+    /// Per-file external module status.
+    pub is_external_module_by_file: Arc<FxHashMap<String, bool>>,
+    /// Per-file ESM/CJS determination.
+    pub file_is_esm_map: Arc<FxHashMap<String, bool>>,
+    /// Whether a @typescript/lib-dom replacement was loaded, and its window/self globals.
+    pub typescript_dom_replacement_globals: (bool, bool, bool),
+    /// Whether TS5107/TS5101 deprecation diagnostics are present.
+    pub has_deprecation_diagnostics: bool,
+}
+
+impl ProjectEnv {
+    /// Apply all project-level shared state to a checker context.
+    ///
+    /// This replaces the 10+ individual setter calls that drivers previously
+    /// repeated at every checker creation site. The order of operations matches
+    /// the original driver pattern: skeleton indices are set before `set_all_binders`
+    /// so the binder scan can be skipped for declared_modules and expando.
+    pub fn apply_to(&self, ctx: &mut CheckerContext<'_>) {
+        if !self.lib_contexts.is_empty() {
+            ctx.set_lib_contexts(self.lib_contexts.clone());
+            ctx.set_actual_lib_file_count(self.lib_contexts.len());
+        }
+        ctx.set_typescript_dom_replacement_globals(
+            self.typescript_dom_replacement_globals.0,
+            self.typescript_dom_replacement_globals.1,
+            self.typescript_dom_replacement_globals.2,
+        );
+        ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
+        ctx.set_all_arenas(Arc::clone(&self.all_arenas));
+        if let Some(ref dm) = self.skeleton_declared_modules {
+            ctx.set_declared_modules_from_skeleton(Arc::clone(dm));
+        }
+        if let Some(ref ei) = self.skeleton_expando_index {
+            ctx.set_expando_index_from_skeleton(Arc::clone(ei));
+        }
+        ctx.set_all_binders(Arc::clone(&self.all_binders));
+        {
+            let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
+            for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
+                targets.insert(sym_id, owner_idx);
+            }
+        }
+        ctx.set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
+        ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
+        ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
+        ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
+    }
+}
