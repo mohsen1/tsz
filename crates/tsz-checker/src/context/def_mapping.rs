@@ -440,12 +440,6 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            // Verify the symbol actually exists in our binder
-            let symbol = match self.binder.symbols.get(sym_id) {
-                Some(s) => s,
-                None => continue,
-            };
-
             // Convert binder's SemanticDefKind to solver's DefKind
             let kind = match entry.kind {
                 tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
@@ -455,8 +449,11 @@ impl<'a> CheckerContext<'a> {
                 tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
             };
 
-            let name = self.types.intern_string(&symbol.escaped_name);
-            let span = symbol.declarations.first().map(|n| (n.0, n.0));
+            // Use the SemanticDefEntry's self-contained data (name, file_id,
+            // span_start) instead of looking up the symbol table. This makes
+            // pre-population independent of full symbol residency, which is a
+            // prerequisite for file-skeleton decomposition (Phase 2).
+            let name = self.types.intern_string(&entry.name);
 
             let info = DefinitionInfo {
                 kind,
@@ -469,14 +466,14 @@ impl<'a> CheckerContext<'a> {
                 implements: Vec::new(),
                 enum_members: Vec::new(),
                 exports: Vec::new(),
-                file_id: Some(symbol.decl_file_idx),
-                span,
+                file_id: Some(entry.file_id),
+                span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
             };
 
             let def_id = self.definition_store.register(info);
             trace!(
-                symbol_name = %symbol.escaped_name,
+                symbol_name = %entry.name,
                 symbol_id = %sym_id.0,
                 def_id = %def_id.0,
                 kind = ?kind,
@@ -488,7 +485,7 @@ impl<'a> CheckerContext<'a> {
             // duplicates. This closes the gap where pre-populated DefIds
             // were only in the local cache but invisible to the shared store.
             self.definition_store
-                .register_symbol_mapping(sym_id.0, symbol.decl_file_idx, def_id);
+                .register_symbol_mapping(sym_id.0, entry.file_id, def_id);
 
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
