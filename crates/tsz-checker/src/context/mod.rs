@@ -408,6 +408,11 @@ pub struct CheckerContext<'a> {
     /// Populated by `NS_CONSTRUCT` in `compute_type_of_symbol`.
     pub namespace_module_names: FxHashMap<TypeId, String>,
 
+    /// Cache for synthesized JS/CommonJS export surfaces per file index.
+    /// Avoids redundant re-derivation of export shapes across multiple consumers.
+    pub js_export_surface_cache:
+        FxHashMap<usize, crate::query_boundaries::js_exports::JsExportSurface>,
+
     /// Maps `file_id` -> module specifier for import-qualified type display.
     /// When a type is defined in a module file, the formatter qualifies its name
     /// as `import("specifier").TypeName` to match tsc's behavior.

@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    fn infer_commonjs_export_rhs_type(
+    pub(crate) fn infer_commonjs_export_rhs_type(
         &mut self,
         target_file_idx: usize,
         rhs_expr: NodeIndex,
@@ -789,7 +789,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().callable(new_shape)
     }
 
-    fn direct_commonjs_module_export_assignment_rhs(
+    pub(crate) fn direct_commonjs_module_export_assignment_rhs(
         &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
@@ -1387,16 +1387,18 @@ impl<'a> CheckerState<'a> {
             return Some(namespace_type);
         }
 
-        let direct_type =
-            self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx);
-        let namespace_type =
-            self.commonjs_define_property_namespace_type(module_name, source_file_idx);
-
-        match (direct_type, namespace_type) {
-            (Some(dt), Some(ns)) => Some(factory.intersection2(dt, ns)),
-            (Some(dt), None) => Some(dt),
-            (None, Some(ns)) => Some(ns),
-            (None, None) => None,
+        // Use the unified JS export surface for the no-export-table fallback.
+        // This synthesizes module.exports, exports.foo, Object.defineProperty,
+        // and prototype assignments through one authority.
+        if let Some(surface) =
+            self.resolve_js_export_surface_for_module(module_name, source_file_idx)
+        {
+            if surface.has_commonjs_exports {
+                let display_name = self.imported_namespace_display_module_name(module_name);
+                return surface.to_type_id_with_display_name(self, Some(display_name));
+            }
         }
+
+        None
     }
 }

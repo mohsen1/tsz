@@ -140,6 +140,10 @@ name = "commonjs_require_value_tests"
 path = "tests/commonjs_require_value_tests.rs"
 
 [[test]]
+name = "js_export_surface_tests"
+path = "tests/js_export_surface_tests.rs"
+
+[[test]]
 name = "speculation_rollback_tests"
 path = "tests/speculation_rollback_tests.rs"
 

@@ -1366,20 +1366,20 @@ impl<'a> CheckerState<'a> {
 
                         return (namespace_type, Vec::new());
                     }
-                    if let Some(module_export_type) = self
-                        .resolve_direct_commonjs_module_export_type(
-                            &module_specifier,
-                            Some(self.ctx.current_file_idx),
-                        )
-                    {
-                        return (module_export_type, Vec::new());
-                    }
-                    // Module not found - emit TS2307 error and return ANY
-                    // TypeScript treats unresolved imports as `any` to avoid cascading errors
-                    if let Some(namespace_type) =
-                        self.commonjs_define_property_namespace_type(&module_specifier, None)
-                    {
-                        return (namespace_type, Vec::new());
+                    // Use unified JS export surface for CommonJS fallback
+                    if let Some(surface) = self.resolve_js_export_surface_for_module(
+                        &module_specifier,
+                        Some(self.ctx.current_file_idx),
+                    ) {
+                        if surface.has_commonjs_exports {
+                            let display_name =
+                                self.imported_namespace_display_module_name(&module_specifier);
+                            if let Some(type_id) =
+                                surface.to_type_id_with_display_name(self, Some(display_name))
+                            {
+                                return (type_id, Vec::new());
+                            }
+                        }
                     }
                     self.emit_module_not_found_error(&module_specifier, value_decl);
                     return (TypeId::ANY, Vec::new());
