@@ -412,21 +412,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             ResolutionFailureKind::WrongMeaning { actual_meaning, .. } => {
-                match actual_meaning {
-                    NameLookupKind::Type => {
-                        // TS2693: only refers to a type, but is used as a value
-                        self.error_type_only_value_at(request.name, request.idx);
-                    }
-                    NameLookupKind::Namespace => {
-                        // TS2708: cannot use namespace as a value
-                        self.error_namespace_used_as_value_at(request.name, request.idx);
-                    }
-                    NameLookupKind::Value => {
-                        // TS2749: refers to a value, but is used as a type
-                        self.error_value_only_type_at(request.name, request.idx);
-                    }
-                    NameLookupKind::ExportedMember => {}
-                }
+                self.report_wrong_meaning_diagnostic(request.name, request.idx, *actual_meaning);
             }
             ResolutionFailureKind::ExportedMemberMissing { parent_name, .. } => {
                 if failure.has_suggestions() {
@@ -449,11 +435,59 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Emit a wrong-meaning diagnostic based on the actual meaning of the symbol.
+    ///
+    /// This centralizes the mapping from `NameLookupKind` (what the symbol
+    /// actually is) to the appropriate TS diagnostic:
+    /// - Type → TS2693 (type used as value)
+    /// - Namespace → TS2708 (namespace used as value)
+    /// - Value → TS2749 (value used as type)
+    pub(crate) fn report_wrong_meaning_diagnostic(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        actual_meaning: NameLookupKind,
+    ) {
+        match actual_meaning {
+            NameLookupKind::Type => {
+                // TS2693: only refers to a type, but is used as a value
+                self.error_type_only_value_at(name, idx);
+            }
+            NameLookupKind::Namespace => {
+                // TS2708: cannot use namespace as a value
+                self.error_namespace_used_as_value_at(name, idx);
+            }
+            NameLookupKind::Value => {
+                // TS2749: refers to a value, but is used as a type
+                self.error_value_only_type_at(name, idx);
+            }
+            NameLookupKind::ExportedMember => {}
+        }
+    }
+
+    /// Convenience: resolve a name and report any failure in one call.
+    ///
+    /// Returns `Some(ResolvedName)` on success, or `None` after emitting
+    /// the appropriate diagnostic for the failure.
+    pub(crate) fn resolve_and_report(
+        &mut self,
+        request: &NameResolutionRequest<'_>,
+    ) -> Option<ResolvedName> {
+        match self.resolve_name_structured(request) {
+            Ok(resolved) => Some(resolved),
+            Err(failure) => {
+                self.report_name_resolution_failure(request, &failure);
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::check_source_diagnostics;
 
     #[test]
     fn name_resolution_request_constructors() {
@@ -497,5 +531,163 @@ mod tests {
             vec!["member1".to_string()],
         );
         assert!(f.has_suggestions());
+    }
+
+    // =========================================================================
+    // Phase-2 regression tests: wrong-meaning, spelling, exported-member
+    // =========================================================================
+
+    /// TS2693: type used as value — routed through boundary
+    #[test]
+    fn type_used_as_value_emits_ts2693() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface Foo { x: number; }
+const a = Foo;
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for interface used as value, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2693: type alias used as value — routed through boundary
+    #[test]
+    fn type_alias_used_as_value_emits_ts2693() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type MyType = string | number;
+const a = MyType;
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for type alias used as value, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2749: value used as type — routed through boundary
+    #[test]
+    fn value_used_as_type_emits_ts2749() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+const myValue = 42;
+let x: myValue;
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2749),
+            "Expected TS2749 for value used as type, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2708: namespace used as value — routed through boundary
+    #[test]
+    fn namespace_used_as_value_emits_ts2708() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+namespace MyNs {
+    export interface I { x: number; }
+}
+const a = MyNs;
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2708),
+            "Expected TS2708 for namespace used as value, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2693: primitive type keyword used as value — routed through boundary
+    #[test]
+    fn primitive_type_keyword_as_value_emits_ts2693() {
+        let diagnostics = check_source_diagnostics("const a = number;");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for 'number' used as value, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2749 in type-literal context: value symbol in type position
+    #[test]
+    fn value_used_as_type_in_type_literal_emits_ts2749() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+function myFunc() {}
+type T = { x: myFunc };
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2749),
+            "Expected TS2749 for function used as type, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2693 in new expression: type used with `new`
+    #[test]
+    fn type_in_new_expression_emits_ts2693() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface Foo { x: number; }
+const a = new Foo();
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for interface in new expression, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2693 in assignment: type used in assignment target
+    #[test]
+    fn type_in_assignment_emits_ts2693() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface Foo { x: number; }
+Foo = 42;
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2693),
+            "Expected TS2693 for type in assignment, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2304 in type position: unknown name in type reference
+    #[test]
+    fn unknown_name_in_type_position_emits_ts2304() {
+        let diagnostics = check_source_diagnostics("let x: NonExistentType;");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2304),
+            "Expected TS2304 for unknown type name, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// TS2708: namespace in extends clause — routed through boundary
+    #[test]
+    fn namespace_in_extends_clause_emits_ts2708() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+namespace NS {
+    export interface I {}
+}
+class C extends NS {}
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2708),
+            "Expected TS2708 for namespace in extends, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
     }
 }
