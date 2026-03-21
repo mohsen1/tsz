@@ -1750,8 +1750,11 @@ impl<'a> Printer<'a> {
             // Both instance and static private methods are extracted.
             for method in &private_methods {
                 if let Some(body_idx) = method.body {
-                    self.pending_private_method_defs
-                        .push((method.fn_var_name.clone(), body_idx));
+                    self.pending_private_method_defs.push((
+                        method.fn_var_name.clone(),
+                        body_idx,
+                        method.parameters.clone(),
+                    ));
                 }
             }
 
@@ -3085,15 +3088,27 @@ impl<'a> Printer<'a> {
             }
 
             // Private method function definitions:
-            // _C_method = function _C_method() { ... }
-            for (var_name, body_idx) in &method_defs {
+            // _C_method = function _C_method(params) { ... }
+            for (var_name, body_idx, params) in &method_defs {
                 if !first {
                     self.write(", ");
                 }
                 self.write(var_name);
                 self.write(" = function ");
                 self.write(var_name);
-                self.write("() ");
+                self.write("(");
+                for (i, &param_idx) in params.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    // Emit parameter name (identifier or pattern)
+                    if let Some(param_node) = self.arena.get(param_idx) {
+                        if let Some(param_data) = self.arena.get_parameter(param_node) {
+                            self.emit(param_data.name);
+                        }
+                    }
+                }
+                self.write(") ");
                 self.emit_single_line_block(*body_idx);
                 first = false;
             }
