@@ -94,25 +94,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             (false, false)
         };
 
-        let optional = match mapped.optional_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => {
-                // For homomorphic types with no explicit modifier, preserve original
-                if is_homomorphic { source_mods.0 } else { false }
-            }
-        };
-
-        let readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => {
-                // For homomorphic types with no explicit modifier, preserve original
-                if is_homomorphic { source_mods.1 } else { false }
-            }
-        };
-
-        (optional, readonly)
+        // Delegate to centralized modifier computation in type_queries.
+        crate::type_queries::compute_mapped_modifiers(
+            mapped,
+            is_homomorphic,
+            source_mods.0,
+            source_mods.1,
+        )
     }
 
     /// Evaluate a mapped type: { [K in Keys]: Template }
@@ -393,33 +381,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
+            // Delegate to centralized modifier computation in type_queries.
             let source_info = source_prop_map.get(&key_name);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
 
-            let optional = match mapped.optional_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => {
-                    if is_homomorphic {
-                        source_optional
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            let readonly = match mapped.readonly_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => {
-                    if is_homomorphic {
-                        source_readonly
-                    } else {
-                        false
-                    }
-                }
-            };
+            let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
+                mapped,
+                is_homomorphic,
+                source_optional,
+                source_readonly,
+            );
 
             // TypeScript homomorphic mapped type behavior: the template `T[P]` evaluates
             // via IndexAccess which adds `| undefined` for optional source properties.

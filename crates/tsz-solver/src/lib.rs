@@ -344,6 +344,9 @@ mod interface_comprehensive_tests;
 #[path = "../tests/keyof_comprehensive_tests.rs"]
 mod keyof_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/mapped_architecture_tests.rs"]
+mod mapped_architecture_tests;
+#[cfg(test)]
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
 #[cfg(test)]
