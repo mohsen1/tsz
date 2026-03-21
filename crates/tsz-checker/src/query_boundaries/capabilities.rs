@@ -1,4 +1,9 @@
-#![allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms, clippy::doc_markdown)]
+#![allow(
+    dead_code,
+    clippy::missing_const_for_fn,
+    clippy::match_same_arms,
+    clippy::doc_markdown
+)]
 
 //! Environment capabilities boundary for lib/config/feature-gate diagnostics.
 //!
