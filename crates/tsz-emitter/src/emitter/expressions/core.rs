@@ -953,6 +953,9 @@ impl<'a> Printer<'a> {
         self.emit(cond.condition);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+        // The true/false branches of a conditional don't need yield parens
+        // because the ternary operator has very low precedence.
+        self.ctx.flags.in_binary_operand = false;
 
         if newline_before_question {
             // Check if `?` is on the condition line (Case A) or the next line (Case B).
