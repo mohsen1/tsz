@@ -97,11 +97,17 @@ impl<'a> CheckerState<'a> {
         {
             let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => sym_id,
-                TypeSymbolResolution::ValueOnly(_) => {
+                TypeSymbolResolution::ValueOnly(sym_id) => {
                     let name = self
                         .entity_name_text(type_name_idx)
                         .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_value_only_type_at(&name, type_name_idx);
+                    self.report_wrong_meaning(
+                        &name,
+                        type_name_idx,
+                        sym_id,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
                     return TypeId::ERROR;
                 }
                 TypeSymbolResolution::NotFound => {
@@ -194,8 +200,14 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
                 let sym_id = match type_resolution {
                     TypeSymbolResolution::Type(sym_id) => Some(sym_id),
-                    TypeSymbolResolution::ValueOnly(_) => {
-                        self.error_value_only_type_at(name, type_name_idx);
+                    TypeSymbolResolution::ValueOnly(sym_id) => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
                         return TypeId::ERROR;
                     }
                     TypeSymbolResolution::NotFound => None,
@@ -251,7 +263,8 @@ impl<'a> CheckerState<'a> {
                     if self.is_unresolved_import_symbol(type_name_idx) {
                         return TypeId::ANY;
                     }
-                    self.error_cannot_find_name_at(name, type_name_idx);
+                    // Route through boundary for TS2304/TS2552 with spelling suggestions
+                    let _ = self.resolve_type_name_or_report(name, type_name_idx);
                     return TypeId::ERROR;
                 }
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
@@ -350,10 +363,16 @@ impl<'a> CheckerState<'a> {
             }
 
             if name != "Array"
-                && let TypeSymbolResolution::ValueOnly(_) =
+                && let TypeSymbolResolution::ValueOnly(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                self.error_value_only_type_at(name, type_name_idx);
+                self.report_wrong_meaning(
+                    name,
+                    type_name_idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return TypeId::ERROR;
             }
 
@@ -401,7 +420,8 @@ impl<'a> CheckerState<'a> {
             if self.is_unresolved_import_symbol(type_name_idx) {
                 return TypeId::ANY;
             }
-            self.error_cannot_find_name_at(name, type_name_idx);
+            // Route through boundary for TS2304/TS2552 with spelling suggestions
+            let _ = self.resolve_type_name_or_report(name, type_name_idx);
             return TypeId::ERROR;
         }
 

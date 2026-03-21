@@ -317,13 +317,31 @@ impl<'a> CheckerState<'a> {
                 // ("only refers to a type") instead of TS2708 ("cannot use
                 // namespace as a value").
                 if self.import_equals_export_is_pure_type(idx) {
-                    self.error_type_only_value_at(name, idx);
+                    self.report_wrong_meaning(
+                        name,
+                        idx,
+                        sym_id,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    );
                 } else {
-                    self.error_namespace_used_as_value_at(name, idx);
+                    self.report_wrong_meaning(
+                        name,
+                        idx,
+                        sym_id,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    );
                     if let Some(sym_id) = self.resolve_identifier_symbol(idx)
                         && self.alias_resolves_to_type_only(sym_id)
                     {
-                        self.error_type_only_value_at(name, idx);
+                        self.report_wrong_meaning(
+                            name,
+                            idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                     }
                 }
                 return TypeId::ERROR;
@@ -361,7 +379,13 @@ impl<'a> CheckerState<'a> {
                 if self.is_in_ambient_computed_property_context() {
                     return TypeId::ERROR;
                 }
-                self.error_type_only_value_at(name, idx);
+                self.report_wrong_meaning(
+                    name,
+                    idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
                 // Return the actual resolved type instead of ERROR so that
                 // downstream checks (e.g., TS2349 for non-callable expressions)
                 // can still fire. TSC emits TS1362 during name resolution but
@@ -546,7 +570,13 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                     }
-                    self.error_namespace_used_as_value_at(name, idx);
+                    self.report_wrong_meaning(
+                        name,
+                        idx,
+                        sym_id,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    );
                     return TypeId::ERROR;
                 }
             }
@@ -638,7 +668,13 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                self.error_type_only_value_at(name, idx);
+                self.report_wrong_meaning(
+                    name,
+                    idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
                 return TypeId::ERROR;
             }
 
@@ -672,7 +708,13 @@ impl<'a> CheckerState<'a> {
                         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                             return self.check_flow_usage(idx, value_type, sym_id);
                         }
-                        self.error_type_only_value_at(name, idx);
+                        self.report_wrong_meaning(
+                            name,
+                            idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                         return TypeId::ERROR;
                     }
                 }
