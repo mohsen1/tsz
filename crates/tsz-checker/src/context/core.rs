@@ -338,18 +338,19 @@ impl<'a> CheckerContext<'a> {
         skeleton_patterns: &[String],
     ) {
         if cfg!(debug_assertions)
-            && let Some(ref binder_built) = self.global_declared_modules {
-                // Exact names must match.
-                assert_eq!(
-                    &binder_built.exact, skeleton_exact,
-                    "skeleton declared_modules exact set differs from binder-built"
-                );
-                // Patterns must match (both are sorted+deduped).
-                assert_eq!(
-                    &binder_built.patterns, skeleton_patterns,
-                    "skeleton declared_modules patterns differ from binder-built"
-                );
-            }
+            && let Some(ref binder_built) = self.global_declared_modules
+        {
+            // Exact names must match.
+            assert_eq!(
+                &binder_built.exact, skeleton_exact,
+                "skeleton declared_modules exact set differs from binder-built"
+            );
+            // Patterns must match (both are sorted+deduped).
+            assert_eq!(
+                &binder_built.patterns, skeleton_patterns,
+                "skeleton declared_modules patterns differ from binder-built"
+            );
+        }
     }
 
     /// Validate that skeleton-derived expando index matches the binder-built one.
