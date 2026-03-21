@@ -1700,6 +1700,30 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
+            if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+                // Ensure inner type references of keyof/unique/readonly go through
+                // the checker's constraint validation path (TS2344). The lowering
+                // handles TYPE_OPERATOR via lower_type_operator which calls lower_type
+                // on the inner type without going through get_type_from_type_reference.
+                // This means `keyof Shared<X, Y>` skips constraint validation on Shared.
+                //
+                // Only process TYPE_REFERENCE inner types to avoid side effects:
+                // processing non-reference types (e.g., plain identifiers, unions)
+                // through the checker path can change how keyof types are resolved
+                // and printed in diagnostics.
+                if let Some(op) = self.ctx.arena.get_type_operator(node)
+                    && let Some(inner_node) = self.ctx.arena.get(op.type_node)
+                    && inner_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && self.ctx.arena.get_type_ref(inner_node).is_some_and(|tr| {
+                        tr.type_arguments
+                            .as_ref()
+                            .is_some_and(|args| !args.nodes.is_empty())
+                    })
+                {
+                    let _ = self.get_type_from_type_node(op.type_node);
+                }
+                // Fall through to TypeNodeChecker for the actual lowering
+            }
             if node.kind == syntax_kind_ext::ARRAY_TYPE {
                 // Route array types through CheckerState so the element type reference
                 // goes through get_type_from_type_node (which checks TS2314 for generics).

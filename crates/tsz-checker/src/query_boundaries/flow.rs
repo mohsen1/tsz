@@ -25,7 +25,7 @@
 //! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
 //!   and other falsy constituents.
 
-use tsz_solver::{TypeDatabase, TypeId, type_contains_undefined};
+use tsz_solver::{TypeDatabase, TypeId};
 
 /// Syntactic observation the checker extracts from flow analysis.
 ///
@@ -62,22 +62,6 @@ pub(crate) enum FlowObservation {
         /// true = truthy branch (remove falsy), false = falsy branch (keep falsy)
         is_true_branch: bool,
     },
-
-    /// When `strictNullChecks` is off, standalone `null | undefined` types
-    /// widen to `any` for mutable bindings (var/let) and destructuring.
-    NullUndefinedWidening {
-        /// Whether strictNullChecks is enabled.
-        strict_null_checks: bool,
-    },
-
-    /// Add `undefined` to a destructured element type when
-    /// `noUncheckedIndexedAccess` is enabled and the element position
-    /// is beyond known tuple boundaries.
-    UncheckedIndexedAccess,
-
-    /// Remove nullish types from a for-in expression before computing
-    /// `keyof` for the iteration variable type.
-    ForInExpressionNullish,
 }
 
 /// Apply a [`FlowObservation`] to produce a narrowed type.
@@ -139,40 +123,12 @@ pub(crate) fn apply_flow_observation(
             // the binding's type comes from iteration.
             *iterable_type
         }
-
-        FlowObservation::NullUndefinedWidening { strict_null_checks } => {
-            if *strict_null_checks {
-                base_type
-            } else if tsz_solver::type_queries::is_only_null_or_undefined(db, base_type) {
-                TypeId::ANY
-            } else {
-                base_type
-            }
-        }
-
-        FlowObservation::UncheckedIndexedAccess => {
-            if type_contains_undefined(db, base_type) {
-                base_type
-            } else {
-                db.union2(base_type, TypeId::UNDEFINED)
-            }
-        }
-
-        FlowObservation::ForInExpressionNullish => tsz_solver::remove_nullish(db, base_type),
     }
 }
 
 /// Apply optional-chain non-nullish narrowing through the solver.
 /// Convenience wrapper used by the checker's flow analyzer.
 pub(crate) fn narrow_optional_chain(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, base_type)
-}
-
-/// Apply non-null assertion (`!` postfix operator) narrowing through the solver.
-/// Strips null and undefined from the type.  Semantically equivalent to
-/// optional-chain narrowing but kept as a distinct entry-point so callers
-/// express the observation kind that triggered the narrowing.
-pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
     tsz_solver::remove_nullish(db, base_type)
 }
 
@@ -185,15 +141,15 @@ pub(crate) const fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     }
 }
 
-/// Resolve the base type for typeof narrowing of a catch variable.
-///
-/// Catch variables declared as `unknown` (via `useUnknownInCatchVariables`)
-/// should use `unknown` as the typeof narrowing base so that typeof guards
-/// produce the expected narrow types (e.g. `typeof e === "string"` → `string`).
-/// For non-catch variables the incoming type is returned unchanged.
+/// For catch variables in typeof narrowing, the typeof check should narrow
+/// from the catch variable's declared base type (any/unknown) rather than
+/// the already-narrowed flow type.  Non-catch variables pass through unchanged.
 pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
-    if is_catch_var && type_id.0 == TypeId::UNKNOWN.0 {
-        TypeId::UNKNOWN
+    if is_catch_var {
+        // Catch variables are typed as `any` (or `unknown` with strict flag),
+        // but in typeof guards, tsc always widens back to `any` so the typeof
+        // narrowing starts from a clean slate.
+        TypeId::ANY
     } else {
         type_id
     }
@@ -217,42 +173,6 @@ pub(crate) fn narrow_destructuring_default(
         return element_type;
     }
     tsz_solver::remove_undefined(db, element_type)
-}
-
-/// Widen standalone `null | undefined` types to `any` when `strictNullChecks`
-/// is off.  Centralizes the widening policy for mutable bindings and
-/// destructuring elements.
-pub(crate) fn widen_null_undefined_to_any(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    strict_null_checks: bool,
-) -> TypeId {
-    if strict_null_checks {
-        return type_id;
-    }
-    if tsz_solver::type_queries::is_only_null_or_undefined(db, type_id) {
-        TypeId::ANY
-    } else {
-        type_id
-    }
-}
-
-/// Add `undefined` to a type for `noUncheckedIndexedAccess`.  Applied when
-/// destructuring accesses array elements beyond known tuple boundaries.
-pub(crate) fn add_undefined_for_indexed_access(
-    db: &dyn TypeDatabase,
-    element_type: TypeId,
-) -> TypeId {
-    if type_contains_undefined(db, element_type) {
-        element_type
-    } else {
-        db.union2(element_type, TypeId::UNDEFINED)
-    }
-}
-
-/// Remove nullish types from a for-in expression before computing `keyof`.
-pub(crate) fn remove_nullish_for_iteration(db: &dyn TypeDatabase, expr_type: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, expr_type)
 }
 
 /// Determine the catch variable type based on compiler options and any
@@ -297,57 +217,5 @@ mod tests {
     fn catch_variable_type_without_annotation_uses_flag() {
         assert_eq!(catch_variable_type(None, true), TypeId::UNKNOWN);
         assert_eq!(catch_variable_type(None, false), TypeId::ANY);
-    }
-
-    #[test]
-    fn widen_null_undefined_returns_any_when_strict_off() {
-        let db = tsz_solver::TypeInterner::new();
-        let undef = TypeId::UNDEFINED;
-        assert_eq!(widen_null_undefined_to_any(&db, undef, false), TypeId::ANY);
-    }
-
-    #[test]
-    fn widen_null_undefined_passthrough_when_strict_on() {
-        let db = tsz_solver::TypeInterner::new();
-        let undef = TypeId::UNDEFINED;
-        assert_eq!(
-            widen_null_undefined_to_any(&db, undef, true),
-            TypeId::UNDEFINED
-        );
-    }
-
-    #[test]
-    fn widen_null_undefined_passthrough_for_non_null() {
-        let db = tsz_solver::TypeInterner::new();
-        assert_eq!(
-            widen_null_undefined_to_any(&db, TypeId::STRING, false),
-            TypeId::STRING
-        );
-    }
-
-    #[test]
-    fn add_undefined_for_indexed_access_adds_when_missing() {
-        let db = tsz_solver::TypeInterner::new();
-        let result = add_undefined_for_indexed_access(&db, TypeId::STRING);
-        // Should be a union containing STRING and UNDEFINED
-        assert_ne!(result, TypeId::STRING);
-        assert_ne!(result, TypeId::UNDEFINED);
-    }
-
-    #[test]
-    fn add_undefined_for_indexed_access_noop_when_present() {
-        let db = tsz_solver::TypeInterner::new();
-        let result = add_undefined_for_indexed_access(&db, TypeId::UNDEFINED);
-        assert_eq!(result, TypeId::UNDEFINED);
-    }
-
-    #[test]
-    fn remove_nullish_for_iteration_strips_nullish() {
-        let db = tsz_solver::TypeInterner::new();
-        // Non-nullish types pass through
-        assert_eq!(
-            remove_nullish_for_iteration(&db, TypeId::STRING),
-            TypeId::STRING
-        );
     }
 }
