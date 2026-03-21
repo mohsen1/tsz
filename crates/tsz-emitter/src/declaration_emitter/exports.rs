@@ -1100,10 +1100,22 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&n.to_string());
             }
             EnumValue::String(s) => {
-                self.write(&format!(
-                    "\"{}\"",
-                    s.replace('\\', "\\\\").replace('"', "\\\"")
-                ));
+                self.write("\"");
+                for ch in s.chars() {
+                    match ch {
+                        '\\' => self.write("\\\\"),
+                        '"' => self.write("\\\""),
+                        '\n' => self.write("\\n"),
+                        '\r' => self.write("\\r"),
+                        '\t' => self.write("\\t"),
+                        '\0' => self.write("\\0"),
+                        _ => {
+                            let mut buf = [0u8; 4];
+                            self.write(ch.encode_utf8(&mut buf));
+                        }
+                    }
+                }
+                self.write("\"");
             }
             EnumValue::Float(f) => {
                 self.write(&Self::format_js_number(*f));

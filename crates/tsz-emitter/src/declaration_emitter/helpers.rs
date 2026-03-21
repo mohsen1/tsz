@@ -107,10 +107,34 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
-                // tsc normalizes initializer string literals to double quotes
+                // tsc normalizes initializer string literals to double quotes.
+                // The scanner stores cooked text, so we must re-escape
+                // backslashes, double quotes, and control characters.
                 if let Some(lit) = self.arena.get_literal(expr_node) {
                     self.write("\"");
-                    self.write(&lit.text);
+                    let needs_escape = lit.text.contains('\\')
+                        || lit.text.contains('"')
+                        || lit.text.contains('\n')
+                        || lit.text.contains('\r')
+                        || lit.text.contains('\t')
+                        || lit.text.contains('\0');
+                    if needs_escape {
+                        let mut escaped = String::with_capacity(lit.text.len() + 4);
+                        for ch in lit.text.chars() {
+                            match ch {
+                                '\\' => escaped.push_str("\\\\"),
+                                '"' => escaped.push_str("\\\""),
+                                '\n' => escaped.push_str("\\n"),
+                                '\r' => escaped.push_str("\\r"),
+                                '\t' => escaped.push_str("\\t"),
+                                '\0' => escaped.push_str("\\0"),
+                                c => escaped.push(c),
+                            }
+                        }
+                        self.write(&escaped);
+                    } else {
+                        self.write(&lit.text);
+                    }
                     self.write("\"");
                 }
             }
@@ -184,21 +208,34 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
                     let quote = self.original_quote_char(node);
+                    let quote_char = if quote == "'" { '\'' } else { '"' };
                     self.write(quote);
-                    // Escape special characters that can't appear raw in string literals
-                    // (e.g., template literals produce cooked text with actual newlines)
-                    if lit.text.contains('\n')
+                    // The scanner stores cooked (unescaped) text, so we must
+                    // re-escape characters that cannot appear raw in string
+                    // literals: backslashes, the surrounding quote character,
+                    // newlines, carriage returns, tabs, and null bytes.
+                    let needs_escape = lit.text.contains('\\')
+                        || lit.text.contains(quote_char)
+                        || lit.text.contains('\n')
                         || lit.text.contains('\r')
                         || lit.text.contains('\t')
-                        || lit.text.contains('\0')
-                    {
-                        let escaped = lit
-                            .text
-                            .replace('\\', "\\\\")
-                            .replace('\n', "\\n")
-                            .replace('\r', "\\r")
-                            .replace('\t', "\\t")
-                            .replace('\0', "\\0");
+                        || lit.text.contains('\0');
+                    if needs_escape {
+                        let mut escaped = String::with_capacity(lit.text.len() + 4);
+                        for ch in lit.text.chars() {
+                            match ch {
+                                '\\' => escaped.push_str("\\\\"),
+                                '\n' => escaped.push_str("\\n"),
+                                '\r' => escaped.push_str("\\r"),
+                                '\t' => escaped.push_str("\\t"),
+                                '\0' => escaped.push_str("\\0"),
+                                c if c == quote_char => {
+                                    escaped.push('\\');
+                                    escaped.push(c);
+                                }
+                                c => escaped.push(c),
+                            }
+                        }
                         self.write(&escaped);
                     } else {
                         self.write(&lit.text);
