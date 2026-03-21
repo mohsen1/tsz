@@ -1747,55 +1747,49 @@ impl<'a> Printer<'a> {
             }
 
             // Prepare private method function defs for after the class body
+            // Both instance and static private methods are extracted.
             for method in &private_methods {
-                if !method.is_static {
-                    if let Some(body_idx) = method.body {
-                        self.pending_private_method_defs
-                            .push((method.fn_var_name.clone(), body_idx));
-                    }
+                if let Some(body_idx) = method.body {
+                    self.pending_private_method_defs
+                        .push((method.fn_var_name.clone(), body_idx));
                 }
             }
 
             // Prepare private accessor function defs for after the class body
+            // Both instance and static private accessors are extracted.
             for accessor in &private_accessors {
-                if !accessor.is_static {
-                    if let Some(body_idx) = accessor.getter_body {
-                        if let Some(ref var_name) = accessor.get_var_name {
-                            self.pending_private_accessor_defs.push(
-                                crate::emitter::core::PrivateAccessorDef {
-                                    var_name: var_name.clone(),
-                                    body: body_idx,
-                                    param: None,
-                                    is_async: false,
-                                },
-                            );
-                        }
+                if let Some(body_idx) = accessor.getter_body {
+                    if let Some(ref var_name) = accessor.get_var_name {
+                        self.pending_private_accessor_defs.push(
+                            crate::emitter::core::PrivateAccessorDef {
+                                var_name: var_name.clone(),
+                                body: body_idx,
+                                param: None,
+                                is_async: false,
+                            },
+                        );
                     }
-                    if let Some(body_idx) = accessor.setter_body {
-                        if let Some(ref var_name) = accessor.set_var_name {
-                            self.pending_private_accessor_defs.push(
-                                crate::emitter::core::PrivateAccessorDef {
-                                    var_name: var_name.clone(),
-                                    body: body_idx,
-                                    param: accessor.setter_param,
-                                    is_async: false,
-                                },
-                            );
-                        }
+                }
+                if let Some(body_idx) = accessor.setter_body {
+                    if let Some(ref var_name) = accessor.set_var_name {
+                        self.pending_private_accessor_defs.push(
+                            crate::emitter::core::PrivateAccessorDef {
+                                var_name: var_name.clone(),
+                                body: body_idx,
+                                param: accessor.setter_param,
+                                is_async: false,
+                            },
+                        );
                     }
                 }
             }
 
-            // Mark private methods and accessors to skip from class body
+            // Mark all private methods and accessors (instance + static) to skip from class body
             for method in &private_methods {
-                if !method.is_static {
-                    self.private_members_to_skip.insert(method.name.clone());
-                }
+                self.private_members_to_skip.insert(method.name.clone());
             }
             for accessor in &private_accessors {
-                if !accessor.is_static {
-                    self.private_members_to_skip.insert(accessor.name.clone());
-                }
+                self.private_members_to_skip.insert(accessor.name.clone());
             }
         }
 
@@ -3046,32 +3040,29 @@ impl<'a> Printer<'a> {
         let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
         let private_class_alias_pair = self.pending_private_class_alias.take();
 
-        // Emit class alias for static private members: `_a = ClassName;`
-        // tsc emits this before WeakMap inits and static field value inits.
-        if let Some((ref alias, ref cls_name)) = private_class_alias_pair
-            && (has_weakmap_inits || !static_private_inits.is_empty())
-        {
-            self.write_line();
-            self.write(alias);
-            self.write(" = ");
-            self.write(cls_name);
-            self.write(";");
-        }
-
         // Emit combined initialization line after class body.
-        // tsc joins WeakSet init, WeakMap inits, and private method/accessor defs
+        // tsc joins class alias, WeakMap inits, WeakSet init, and private method/accessor defs
         // with commas on a single line, e.g.:
-        // _A_instances = new WeakSet(), _A_foo = new WeakMap(), _A_m = function _A_m() { };
+        // _a = A, _A_foo = new WeakMap(), _A_instances = new WeakSet(), _A_m = function _A_m() { };
         let instances_ws = self.pending_instances_weakset_add.clone();
         let method_defs = std::mem::take(&mut self.pending_private_method_defs);
         let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
-        let has_post_class_inits = has_weakmap_inits
+        let has_post_class_inits = private_class_alias_pair.is_some()
+            || has_weakmap_inits
             || instances_ws.is_some()
             || !method_defs.is_empty()
             || !accessor_defs.is_empty();
         if has_post_class_inits {
             self.write_line();
             let mut first = true;
+
+            // Class alias: _a = ClassName
+            if let Some((ref alias, ref cls_name)) = private_class_alias_pair {
+                self.write(alias);
+                self.write(" = ");
+                self.write(cls_name);
+                first = false;
+            }
 
             // WeakMap inits first (tsc order): _X_field = new WeakMap()
             let weakmap_inits = self.pending_weakmap_inits.clone();
