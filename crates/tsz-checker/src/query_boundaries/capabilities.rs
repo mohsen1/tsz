@@ -24,17 +24,17 @@ pub(crate) enum FeatureGate {
     ImportAttributes,
     /// `using` declaration (requires Disposable global)
     UsingDeclaration,
-    /// `await using` declaration (requires AsyncDisposable global)
+    /// `await using` declaration (requires `AsyncDisposable` global)
     AwaitUsingDeclaration,
     /// Top-level `await using` (requires specific module + target)
     TopLevelAwaitUsing,
     /// `resolveJsonModule` option validity
     ResolveJsonModule,
-    /// Generator functions (requires IterableIterator)
+    /// Generator functions (requires `IterableIterator`)
     Generators,
-    /// Async generator functions (requires AsyncIterableIterator)
+    /// Async generator functions (requires `AsyncIterableIterator`)
     AsyncGenerators,
-    /// Experimental decorators (requires TypedPropertyDescriptor)
+    /// Experimental decorators (requires `TypedPropertyDescriptor`)
     ExperimentalDecorators,
     /// Async functions in ES5 (requires Promise constructor)
     AsyncFunctionEs5,
@@ -82,7 +82,7 @@ pub(crate) struct EnvironmentCapabilities {
     pub target: ScriptTarget,
 
     // --- Feature gates (precomputed from module + target) ---
-    /// Import attributes supported: module in {ESNext, Node18, Node20, NodeNext, Preserve}
+    /// Import attributes supported: module in {`ESNext`, Node18, Node20, `NodeNext`, Preserve}
     pub import_attributes_supported: bool,
     /// Top-level await using supported: requires specific module AND target >= ES2017
     pub top_level_await_using_supported: bool,
@@ -98,7 +98,7 @@ pub(crate) struct EnvironmentCapabilities {
 
 impl EnvironmentCapabilities {
     /// Build capabilities from compiler options and lib state.
-    pub fn from_options(
+    pub const fn from_options(
         options: &tsz_common::checker_options::CheckerOptions,
         has_lib: bool,
     ) -> Self {
@@ -152,7 +152,7 @@ impl EnvironmentCapabilities {
     }
 
     /// Check whether a feature gate is satisfied by the current environment.
-    pub fn feature_available(&self, gate: FeatureGate) -> bool {
+    pub const fn feature_available(&self, gate: FeatureGate) -> bool {
         match gate {
             FeatureGate::ImportAttributes => self.import_attributes_supported,
             FeatureGate::TopLevelAwaitUsing => self.top_level_await_using_supported,
@@ -205,7 +205,7 @@ impl EnvironmentCapabilities {
     }
 
     /// Get the required global type name for a feature gate.
-    pub fn required_global_type(gate: FeatureGate) -> Option<&'static str> {
+    pub const fn required_global_type(gate: FeatureGate) -> Option<&'static str> {
         match gate {
             FeatureGate::UsingDeclaration => Some("Disposable"),
             FeatureGate::AwaitUsingDeclaration => Some("AsyncDisposable"),

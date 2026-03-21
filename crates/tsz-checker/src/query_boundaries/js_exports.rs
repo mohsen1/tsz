@@ -37,7 +37,7 @@ pub struct JsExportSurface {
 }
 
 impl JsExportSurface {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             direct_export_type: None,
             named_exports: Vec::new(),
@@ -83,11 +83,10 @@ impl JsExportSurface {
         let type_id = self.to_type_id(checker)?;
         // Only tag with display name if we have named exports (namespace-like).
         // A bare direct export (module.exports = X) keeps the raw type display.
-        if let Some(name) = display_name {
-            if !self.named_exports.is_empty() {
+        if let Some(name) = display_name
+            && !self.named_exports.is_empty() {
                 checker.ctx.namespace_module_names.insert(type_id, name);
             }
-        }
         Some(type_id)
     }
 }
@@ -251,7 +250,7 @@ impl<'a> CheckerState<'a> {
 
         // Phase 3: Flatten into PropertyInfo entries
         let mut result = Vec::new();
-        for (_ctor_name, members) in &prototype_props {
+        for members in prototype_props.values() {
             for (idx, (member_name, member_type)) in members.iter().enumerate() {
                 let name_atom = self.ctx.types.intern_string(member_name);
                 result.push(PropertyInfo {

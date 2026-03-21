@@ -498,9 +498,7 @@ impl Server {
                         == Some(ADD_MISSING_ASYNC_FIX_ID)
                 })
             {
-                let has_1308 = error_codes
-                    .iter()
-                    .any(|c| *c == AWAIT_IN_SYNC_FUNCTION_ERROR_CODE);
+                let has_1308 = error_codes.contains(&AWAIT_IN_SYNC_FUNCTION_ERROR_CODE);
                 let has_assignability = error_codes.iter().any(|c| *c == 2322 || *c == 2345);
                 let async_fix = serde_json::json!({
                     "fixName": ADD_MISSING_ASYNC_FIX_ID,

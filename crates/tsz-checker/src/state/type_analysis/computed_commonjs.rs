@@ -1392,12 +1392,10 @@ impl<'a> CheckerState<'a> {
         // and prototype assignments through one authority.
         if let Some(surface) =
             self.resolve_js_export_surface_for_module(module_name, source_file_idx)
-        {
-            if surface.has_commonjs_exports {
+            && surface.has_commonjs_exports {
                 let display_name = self.imported_namespace_display_module_name(module_name);
                 return surface.to_type_id_with_display_name(self, Some(display_name));
             }
-        }
 
         None
     }
