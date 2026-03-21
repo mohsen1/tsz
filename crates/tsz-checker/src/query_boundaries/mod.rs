@@ -13,6 +13,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
+pub(crate) mod js_exports;
 pub(crate) mod property_access;
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod relation_types;
