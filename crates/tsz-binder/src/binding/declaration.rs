@@ -2220,7 +2220,7 @@ impl BinderState {
     /// Record a semantic definition entry for a top-level declaration.
     ///
     /// This captures stable identity information at bind time so the checker
-    /// can pre-create solver DefIds during construction rather than inventing
+    /// can pre-create solver `DefIds` during construction rather than inventing
     /// them on demand in hot paths.
     ///
     /// Only records entries for declarations at the source file scope (ScopeId(0))
