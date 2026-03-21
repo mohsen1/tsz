@@ -46,6 +46,32 @@ impl JsExportSurface {
         }
     }
 
+    /// Look up a named export by name within this surface.
+    ///
+    /// Checks `named_exports` first, then `prototype_members`.
+    /// Returns the `TypeId` if found. This is the canonical way to check
+    /// whether a specific named export exists in a CommonJS module's surface
+    /// without re-scanning the AST.
+    pub fn lookup_named_export(
+        &self,
+        name: &str,
+        types: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<TypeId> {
+        let name_atom = types.intern_string(name);
+        if let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom) {
+            return Some(prop.type_id);
+        }
+        if let Some(prop) = self.prototype_members.iter().find(|p| p.name == name_atom) {
+            return Some(prop.type_id);
+        }
+        None
+    }
+
+    /// Check whether this surface has a named export with the given name.
+    pub fn has_named_export(&self, name: &str, types: &dyn tsz_solver::TypeDatabase) -> bool {
+        self.lookup_named_export(name, types).is_some()
+    }
+
     /// Build the final TypeId for this export surface.
     /// Merges direct export type with named exports into a single type.
     pub fn to_type_id(&self, checker: &mut CheckerState<'_>) -> Option<TypeId> {
@@ -130,6 +156,57 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.resolve_import_target(module_name))?;
 
         Some(self.resolve_js_export_surface(target_file_idx))
+    }
+
+    /// Look up a single named export from a CommonJS module's export surface.
+    ///
+    /// This is the canonical replacement for `resolve_direct_commonjs_assignment_export_type`.
+    /// Instead of re-scanning the target file's AST for `exports.foo = ...` patterns,
+    /// it uses the cached `JsExportSurface` which already contains all named exports.
+    pub(crate) fn resolve_js_export_named_type(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let surface = self.resolve_js_export_surface_for_module(module_name, source_file_idx)?;
+        surface.lookup_named_export(export_name, self.ctx.types)
+    }
+
+    /// Check whether a CommonJS module has a named export (without computing its type).
+    ///
+    /// Uses the cached export surface. Canonical way to suppress TS2305 for
+    /// names that exist as `exports.foo = ...` or `module.exports.foo = ...`.
+    pub(crate) fn js_export_surface_has_export(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        self.resolve_js_export_surface_for_module(module_name, source_file_idx)
+            .is_some_and(|surface| surface.has_named_export(export_name, self.ctx.types))
+    }
+
+    /// Build the namespace type for a CommonJS file from its export surface.
+    ///
+    /// This is the canonical replacement for `commonjs_namespace_type_for_file`.
+    /// Instead of re-scanning the AST, it builds the namespace type from the
+    /// cached `JsExportSurface`.
+    pub(crate) fn js_export_surface_namespace_type(
+        &mut self,
+        target_file_idx: usize,
+    ) -> Option<TypeId> {
+        let surface = self.resolve_js_export_surface(target_file_idx);
+        if !surface.has_commonjs_exports {
+            return None;
+        }
+        let type_id = surface.to_type_id(self)?;
+        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
+            self.ctx
+                .namespace_module_names
+                .insert(type_id, specifier.clone());
+        }
+        Some(type_id)
     }
 
     /// Compute the JS export surface from scratch (uncached).
