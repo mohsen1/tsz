@@ -1034,9 +1034,9 @@ pub struct LibContext {
 pub struct ProjectEnv {
     /// Lib file contexts for global type resolution.
     pub lib_contexts: Vec<LibContext>,
-    /// All AST arenas for cross-file resolution (indexed by file_idx).
+    /// All AST arenas for cross-file resolution (indexed by `file_idx`).
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
-    /// All binders for cross-file resolution (indexed by file_idx).
+    /// All binders for cross-file resolution (indexed by `file_idx`).
     pub all_binders: Arc<Vec<Arc<BinderState>>>,
     /// Pre-computed declared modules from skeleton index.
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
@@ -1044,9 +1044,9 @@ pub struct ProjectEnv {
     pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
     /// Pre-computed symbol-to-file ownership targets.
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
-    /// Resolved module paths: (source_file_idx, specifier) -> target_file_idx.
+    /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
-    /// Resolved module errors: (source_file_idx, specifier) -> error details.
+    /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
     pub resolved_module_errors: Arc<ResolvedModuleErrorMap>,
     /// Per-file external module status.
     pub is_external_module_by_file: Arc<FxHashMap<String, bool>>,
@@ -1064,7 +1064,7 @@ impl ProjectEnv {
     /// This replaces the 10+ individual setter calls that drivers previously
     /// repeated at every checker creation site. The order of operations matches
     /// the original driver pattern: skeleton indices are set before `set_all_binders`
-    /// so the binder scan can be skipped for declared_modules and expando.
+    /// so the binder scan can be skipped for `declared_modules` and expando.
     pub fn apply_to(&self, ctx: &mut CheckerContext<'_>) {
         if !self.lib_contexts.is_empty() {
             ctx.set_lib_contexts(self.lib_contexts.clone());

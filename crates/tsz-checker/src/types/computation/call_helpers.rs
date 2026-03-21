@@ -445,11 +445,11 @@ impl<'a> CheckerState<'a> {
             // For const declarations without type annotation, preserve the literal type
             // from the initializer (matching tsc behavior where `const x = "foo"` has
             // type `"foo"`, not `string`).
-            if var_decl.initializer.is_some() && self.is_const_variable_declaration(decl_idx) {
-                if let Some(literal_type) = self.literal_type_from_initializer(var_decl.initializer)
-                {
-                    return literal_type;
-                }
+            if var_decl.initializer.is_some()
+                && self.is_const_variable_declaration(decl_idx)
+                && let Some(literal_type) = self.literal_type_from_initializer(var_decl.initializer)
+            {
+                return literal_type;
             }
             if var_decl.initializer.is_some() {
                 return self.get_type_of_node(var_decl.initializer);
