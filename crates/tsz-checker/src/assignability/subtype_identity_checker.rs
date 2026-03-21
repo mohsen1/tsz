@@ -419,18 +419,8 @@ impl<'a> CheckerState<'a> {
     fn widen_function_return_type_for_redeclaration(&self, type_id: TypeId) -> TypeId {
         use crate::query_boundaries::common;
 
-        // For Function types: widen the return type directly.
-        // Uses public solver query APIs (get_function_shape, replace_function_return_type).
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
-            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
-            if widened_return != shape.return_type {
-                return tsz_solver::type_queries::replace_function_return_type(
-                    self.ctx.types,
-                    type_id,
-                    widened_return,
-                );
-            }
-        }
+        // For Function types: widen the return type directly via boundary helper.
+        let type_id = common::widen_function_literal_return_type(self.ctx.types, type_id);
 
         // For Callable types (e.g., `{ (s: string): number }`): widen each
         // call signature's return type via boundary helper.
