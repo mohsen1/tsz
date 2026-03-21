@@ -143,5 +143,9 @@ path = "tests/commonjs_require_value_tests.rs"
 name = "speculation_rollback_tests"
 path = "tests/speculation_rollback_tests.rs"
 
+[[test]]
+name = "flow_observation_boundary_tests"
+path = "tests/flow_observation_boundary_tests.rs"
+
 [lints]
 workspace = true

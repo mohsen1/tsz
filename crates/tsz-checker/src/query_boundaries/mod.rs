@@ -6,6 +6,7 @@ pub(crate) mod common;
 pub(crate) mod definite_assignment;
 pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
+pub(crate) mod flow;
 pub(crate) mod flow_analysis;
 pub(crate) mod property_access;
 pub(crate) mod relation_types;
