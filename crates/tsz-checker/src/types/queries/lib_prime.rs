@@ -8,7 +8,11 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
             return;
         };
-        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        // Lib symbols are pre-populated at checker construction
+        // (pre_populate_def_ids_from_lib_binders); no on-demand creation needed.
+        let Some(def_id) = self.ctx.get_existing_def_id(sym_id) else {
+            return;
+        };
         if self.ctx.get_def_type_params(def_id).is_some() {
             return;
         }
@@ -51,7 +55,7 @@ impl<'a> CheckerState<'a> {
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
             resolver(node_idx)
-                .map(|found| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(found)))
+                .and_then(|found| self.ctx.get_existing_def_id(tsz_binder::SymbolId(found)))
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
             self.resolve_entity_name_text_to_def_id_for_lowering(type_name)

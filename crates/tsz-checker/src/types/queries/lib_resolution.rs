@@ -531,8 +531,9 @@ impl<'a> CheckerState<'a> {
                 // DefId resolver: NodeIndex → SymbolId (via stable helper) → DefId
                 // (via get_or_create_def_id's validated cache).
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+                    resolver(node_idx).and_then(|sym_id| {
+                        self.ctx.get_existing_def_id(tsz_binder::SymbolId(sym_id))
+                    })
                 };
 
                 // Name-based resolver: resolves identifier text directly without NodeIndex.
