@@ -4397,3 +4397,85 @@ function main() {
         "Should find 'main' as a caller of 'helper' across files, got: {caller_names:?}"
     );
 }
+
+#[test]
+fn test_project_shared_type_interner() {
+    // Verify that all files in a project share the same TypeInterner instance.
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: number = 1;".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "export const y: string = 'hello';".to_string(),
+    );
+
+    // Both files should share the same Arc<TypeInterner> (same pointer)
+    let a_interner = &project.files["a.ts"].type_interner;
+    let b_interner = &project.files["b.ts"].type_interner;
+
+    assert!(
+        std::sync::Arc::ptr_eq(a_interner, b_interner),
+        "All files in a project should share the same TypeInterner"
+    );
+
+    // The project-level interner should also be the same instance
+    let project_interner = project.type_interner();
+    assert!(
+        std::sync::Arc::ptr_eq(a_interner, &project_interner),
+        "Project-level interner should be the same instance as file interners"
+    );
+}
+
+#[test]
+fn test_project_shared_interner_survives_file_update() {
+    // Verify that updating a file preserves the shared TypeInterner.
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: number = 1;".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "export const y: string = 'hello';".to_string(),
+    );
+
+    let interner_before = project.type_interner();
+
+    // Update file a.ts with new content
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: number = 42;".to_string(),
+    );
+
+    // The interner should still be the same instance
+    let interner_after = project.type_interner();
+    assert!(
+        std::sync::Arc::ptr_eq(&interner_before, &interner_after),
+        "TypeInterner should persist across file updates"
+    );
+
+    // The updated file should still share the same interner
+    let a_interner = &project.files["a.ts"].type_interner;
+    assert!(
+        std::sync::Arc::ptr_eq(a_interner, &interner_after),
+        "Updated file should share the project's TypeInterner"
+    );
+}
+
+#[test]
+fn test_standalone_project_file_has_own_interner() {
+    // Verify that standalone ProjectFile (outside Project) creates its own interner.
+    use crate::project::ProjectFile;
+
+    let file_a = ProjectFile::new("a.ts".to_string(), "const x = 1;".to_string());
+    let file_b = ProjectFile::new("b.ts".to_string(), "const y = 2;".to_string());
+
+    assert!(
+        !std::sync::Arc::ptr_eq(&file_a.type_interner, &file_b.type_interner),
+        "Standalone ProjectFiles should have independent TypeInterners"
+    );
+}
