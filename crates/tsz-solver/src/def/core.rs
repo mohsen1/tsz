@@ -657,20 +657,11 @@ impl DefinitionStore {
     /// generic definition, enabling display of type parameters in error messages
     /// (e.g., `S18<unknown, unknown, unknown>` instead of just `S18`).
     ///
-    /// O(1) via `symbol_only_index`; falls back to linear scan for DefIds
-    /// registered before the index was populated (should not happen in practice).
+    /// O(1) via `symbol_only_index`. The index is populated by both `register()`
+    /// (when `DefinitionInfo::symbol_id` is set) and `register_symbol_mapping()`,
+    /// covering all registration paths.
     pub fn find_def_by_symbol(&self, symbol_id: u32) -> Option<DefId> {
-        // Fast path: O(1) index lookup.
-        if let Some(def_id) = self.symbol_only_index.get(&symbol_id) {
-            return Some(*def_id);
-        }
-
-        // Fallback: linear scan for backward compatibility with definitions
-        // registered without symbol_id in the index (e.g., test code).
-        self.definitions
-            .iter()
-            .find(|entry| entry.value().symbol_id == Some(symbol_id))
-            .map(|entry| *entry.key())
+        self.symbol_only_index.get(&symbol_id).map(|r| *r)
     }
 
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
@@ -683,24 +674,11 @@ impl DefinitionStore {
     /// Only matches non-generic type aliases (no type parameters) to avoid
     /// ambiguity with instantiated generics.
     ///
-    /// O(1) via `body_to_alias` index; falls back to linear scan for bodies
-    /// set before the index was populated (should not happen in practice).
+    /// O(1) via `body_to_alias` index. The index is populated by both `register()`
+    /// (for aliases created with a body) and `set_body()` (for lazily-evaluated aliases),
+    /// covering all registration paths.
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
-        // Fast path: O(1) index lookup.
-        if let Some(def_id) = self.body_to_alias.get(&type_id) {
-            return Some(*def_id);
-        }
-
-        // Fallback: linear scan for backward compatibility.
-        self.definitions
-            .iter()
-            .find(|entry| {
-                let def = entry.value();
-                def.kind == DefKind::TypeAlias
-                    && def.type_params.is_empty()
-                    && def.body == Some(type_id)
-            })
-            .map(|entry| *entry.key())
+        self.body_to_alias.get(&type_id).map(|r| *r)
     }
 }
 
