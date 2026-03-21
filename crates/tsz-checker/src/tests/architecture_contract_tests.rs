@@ -2745,3 +2745,46 @@ fn no_ambient_current_callable_type() {
         );
     }
 }
+
+/// Excess property classification logic (`ExcessPropertiesKind` pattern-matching)
+/// must stay in the canonical path: `state/state_checking/property.rs` and
+/// the `query_boundaries/assignability.rs` re-export.  Other checker files
+/// must not reimplement this classification.
+#[test]
+fn test_excess_property_classification_quarantined_to_property_rs() {
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
+
+    let forbidden = [
+        "ExcessPropertiesKind::Union",
+        "ExcessPropertiesKind::Intersection",
+        "ExcessPropertiesKind::Object(",
+        "ExcessPropertiesKind::ObjectWithIndex(",
+    ];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        let allowed = rel.ends_with("state/state_checking/property.rs")
+            || rel.ends_with("query_boundaries/assignability.rs")
+            || rel.ends_with("assignability/assignability_diagnostics.rs") // target scoring
+            || rel.ends_with("computation/object_literal_context.rs") // contextual type decomposition
+            || rel.contains("/tests/");
+        if allowed {
+            continue;
+        }
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for pattern in &forbidden {
+            if src.contains(pattern) {
+                violations.push(format!("{rel} contains {pattern}"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ExcessPropertiesKind pattern-matching must stay in state/state_checking/property.rs; violations:\n{}",
+        violations.join("\n")
+    );
+}
