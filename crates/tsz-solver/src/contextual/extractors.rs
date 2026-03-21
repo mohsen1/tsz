@@ -1397,6 +1397,26 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
             matching_call_signatures
                 .retain(|sig| !sig.params.last().is_some_and(|param| param.rest));
         }
+
+        // tsc's getIntersectedSignatures returns undefined when multiple
+        // signatures are present and ANY is generic. This prevents contextual
+        // typing when assigning arrow functions to overloaded types that have
+        // both generic and non-generic call signatures.
+        // Only apply when there's a MIX of generic and non-generic signatures
+        // (genuine overloads). When ALL signatures are generic, they likely
+        // come from union member merging and should still provide contextual types.
+        if matching_call_signatures.len() > 1 {
+            let has_generic = matching_call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty());
+            let has_non_generic = matching_call_signatures
+                .iter()
+                .any(|sig| sig.type_params.is_empty());
+            if has_generic && has_non_generic {
+                return None;
+            }
+        }
+
         for sig in matching_call_signatures {
             matched = true;
             if let Some(param_type) =
