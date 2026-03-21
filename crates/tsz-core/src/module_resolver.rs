@@ -71,6 +71,120 @@ pub const IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION: u32 = 2835;
 pub const IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED: u32 = 5097;
 pub const MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET: u32 = 6142;
 
+/// TS7016: Could not find a declaration file for module.
+/// Emitted when resolution fails but a JS file exists for the specifier
+/// and `noImplicitAny` is enabled.
+pub const COULD_NOT_FIND_DECLARATION_FILE: u32 = 7016;
+
+// ---------------------------------------------------------------------------
+// ModuleLookupRequest / ModuleLookupResult — explicit driver-facing boundary
+// ---------------------------------------------------------------------------
+
+/// Complete request for module lookup from the driver.
+///
+/// Captures the full intent of a module resolution request so that
+/// diagnostic code selection (TS2307/TS2732/TS2792/TS2834/TS2835/TS5097/TS7016)
+/// lives in the resolver, not in scattered driver branches.
+#[derive(Debug, Clone)]
+pub struct ModuleLookupRequest<'a> {
+    /// Module specifier string (e.g., `"./foo"`, `"lodash"`, `"#utils"`)
+    pub specifier: &'a str,
+    /// File containing the import statement
+    pub containing_file: &'a Path,
+    /// Span of the module specifier in source
+    pub specifier_span: Span,
+    /// Import syntax kind (ESM import, dynamic import, CJS require, re-export)
+    pub import_kind: ImportKind,
+    /// Whether `--noImplicitAny` is enabled (affects TS7016 emission)
+    pub no_implicit_any: bool,
+    /// Whether classic resolution is implied (for TS2792 vs TS2307)
+    pub implied_classic_resolution: bool,
+}
+
+/// Structured outcome of a module lookup.
+///
+/// Captures everything the driver needs to:
+/// - Map resolved paths to file indices
+/// - Record resolution errors for the checker
+/// - Track which specifiers are "resolved" (even without a target file)
+#[derive(Debug, Clone)]
+pub struct ModuleLookupResult {
+    /// Resolved file path, if resolution succeeded.
+    pub resolved_path: Option<PathBuf>,
+    /// Whether to treat this specifier as "resolved" even without a mapped path.
+    /// True for: ambient modules, untyped JS modules, JsxNotEnabled with valid file.
+    pub treat_as_resolved: bool,
+    /// Error to record for the checker, if any.
+    pub error: Option<ModuleLookupError>,
+}
+
+/// Structured error from module lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleLookupError {
+    /// Diagnostic code (e.g., 2307, 2732, 2792, 2834, 2835, 5097, 7016)
+    pub code: u32,
+    /// Diagnostic message
+    pub message: String,
+}
+
+impl ModuleLookupResult {
+    /// Resolved successfully to a file.
+    pub fn resolved(path: PathBuf) -> Self {
+        Self {
+            resolved_path: Some(path),
+            treat_as_resolved: false,
+            error: None,
+        }
+    }
+
+    /// Resolution failed with a specific error.
+    pub fn failed(code: u32, message: String) -> Self {
+        Self {
+            resolved_path: None,
+            treat_as_resolved: false,
+            error: Some(ModuleLookupError { code, message }),
+        }
+    }
+
+    /// Module is an ambient declaration — suppress TS2307 without a file target.
+    pub fn ambient() -> Self {
+        Self {
+            resolved_path: None,
+            treat_as_resolved: true,
+            error: None,
+        }
+    }
+
+    /// Resolved to a file but with an associated error (e.g., JsxNotEnabled).
+    pub fn resolved_with_error(code: u32, message: String) -> Self {
+        Self {
+            resolved_path: None,
+            treat_as_resolved: true,
+            error: Some(ModuleLookupError { code, message }),
+        }
+    }
+
+    /// Untyped JS module found. Marks as resolved; error only if `noImplicitAny`.
+    pub fn untyped_js(js_path: PathBuf, no_implicit_any: bool, specifier: &str) -> Self {
+        Self {
+            resolved_path: None,
+            treat_as_resolved: true,
+            error: if no_implicit_any {
+                Some(ModuleLookupError {
+                    code: COULD_NOT_FIND_DECLARATION_FILE,
+                    message: format!(
+                        "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                        specifier,
+                        js_path.display()
+                    ),
+                })
+            } else {
+                None
+            },
+        }
+    }
+}
+
 /// Result of module resolution
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedModule {
@@ -2417,6 +2531,153 @@ impl ModuleResolver {
             .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
 
+    /// Perform a complete module lookup, centralizing all diagnostic code selection.
+    ///
+    /// This is the primary entry point for driver-side module resolution.
+    /// It replaces the scattered driver branches that previously handled:
+    /// - Fallback resolution attempts
+    /// - Node16/NodeNext ESM extension validation on fallback paths
+    /// - JSON module without `resolveJsonModule` (TS2732)
+    /// - Classic resolution TS2792 override
+    /// - Untyped JS module handling (TS7016)
+    /// - Ambient module suppression
+    ///
+    /// The `fallback_resolve` closure lets the driver provide its legacy resolution
+    /// path. The `is_ambient_module` closure lets the driver check program-level
+    /// ambient declarations. All diagnostic code selection stays here.
+    pub fn lookup(
+        &mut self,
+        request: &ModuleLookupRequest<'_>,
+        fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
+        is_ambient_module: impl FnOnce(&str) -> bool,
+    ) -> ModuleLookupResult {
+        let specifier = request.specifier;
+        let containing_file = request.containing_file;
+        let span = request.specifier_span;
+        let import_kind = request.import_kind;
+
+        // 1. Try primary resolution
+        match self.resolve_with_kind(specifier, containing_file, span, import_kind) {
+            Ok(resolved_module) => {
+                return ModuleLookupResult::resolved(resolved_module.resolved_path);
+            }
+            Err(failure) => {
+                // JsxNotEnabled: file exists but --jsx is not set.
+                // Mark as resolved (suppress TS2307) but record the JSX error.
+                let jsx_resolved =
+                    if let ResolutionFailure::JsxNotEnabled { resolved_path, .. } = &failure {
+                        Some(resolved_path.clone())
+                    } else {
+                        None
+                    };
+
+                // 2. Try fallback resolution if this is a "soft" failure
+                if failure.should_try_fallback() {
+                    if let Some(fallback_path) = fallback_resolve(specifier, containing_file) {
+                        // 3. Validate Node16/NodeNext ESM extension requirements
+                        if self.fallback_needs_esm_extension_error(
+                            specifier,
+                            containing_file,
+                            import_kind,
+                        ) {
+                            return ModuleLookupResult::failed(
+                                CANNOT_FIND_MODULE,
+                                format!(
+                                    "Cannot find module '{specifier}' or its corresponding type declarations."
+                                ),
+                            );
+                        }
+                        return ModuleLookupResult::resolved(fallback_path);
+                    }
+                }
+
+                // Upgrade NotFound → TS2732 for .json imports without resolveJsonModule
+                let failure = if matches!(failure, ResolutionFailure::NotFound { .. })
+                    && specifier.ends_with(".json")
+                    && !self.resolve_json_module
+                {
+                    ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string_lossy().to_string(),
+                        span,
+                    }
+                } else {
+                    failure
+                };
+
+                // 4. Check ambient module declarations
+                let is_ordinary_bare = !specifier.starts_with('.')
+                    && !specifier.starts_with('/')
+                    && !specifier.contains(':');
+                if is_ordinary_bare && is_ambient_module(specifier) {
+                    return ModuleLookupResult::ambient();
+                }
+
+                // 5. Probe for untyped JS file (TS7016)
+                if matches!(
+                    failure,
+                    ResolutionFailure::NotFound { .. } | ResolutionFailure::PackageJsonError { .. }
+                ) {
+                    if let Some(js_path) =
+                        self.probe_js_file(specifier, containing_file, span, import_kind)
+                    {
+                        return ModuleLookupResult::untyped_js(
+                            js_path,
+                            request.no_implicit_any,
+                            specifier,
+                        );
+                    }
+                }
+
+                // 6. Build final error from the failure
+                let mut diag = failure.to_diagnostic();
+
+                // Classic resolution override: TS2307 → TS2792
+                if diag.code == CANNOT_FIND_MODULE && request.implied_classic_resolution {
+                    diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
+                    diag.message = format!(
+                        "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
+                    );
+                }
+
+                // If the primary resolution found the file but JSX wasn't set,
+                // mark as resolved to suppress TS2307 but record the JSX error.
+                if jsx_resolved.is_some() {
+                    return ModuleLookupResult::resolved_with_error(diag.code, diag.message);
+                }
+
+                ModuleLookupResult::failed(diag.code, diag.message)
+            }
+        }
+    }
+
+    /// Check whether a fallback-resolved file needs an ESM extension error.
+    ///
+    /// In Node16/NodeNext, ESM-context extensionless relative imports are errors
+    /// even when the file exists (because ESM requires explicit extensions).
+    fn fallback_needs_esm_extension_error(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        _import_kind: ImportKind,
+    ) -> bool {
+        let is_node16_or_next = matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        );
+        if !is_node16_or_next {
+            return false;
+        }
+
+        let importing_ext = ModuleExtension::from_path(containing_file);
+        let is_esm = importing_ext.forces_esm();
+
+        let specifier_has_extension = Path::new(specifier).extension().is_some();
+
+        // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+        is_esm && !specifier_has_extension && specifier.starts_with('.')
+    }
+
     /// Probe for a JS file that would resolve for this specifier.
     ///
     /// Used for TS7016: when normal resolution fails but a JS file exists,
@@ -4355,6 +4616,389 @@ mod tests {
             result.is_ok(),
             "CJS package subpath should resolve through directory index: {result:?}"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // ModuleLookupRequest / ModuleLookupResult tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lookup_extension_suggestion_esm() {
+        // TS2835: relative import without extension in ESM Node16 context
+        // should fail with a suggestion extension
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_lookup_ext_suggestion_esm");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/utils.ts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("src/index.mts"), "import { x } from './utils';").unwrap();
+        fs::write(dir.join("package.json"), r#"{"type": "module"}"#).unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            module_suffixes: vec![String::new()],
+            printer: crate::emitter::PrinterOptions {
+                module: crate::emitter::ModuleKind::Node16,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let request = ModuleLookupRequest {
+            specifier: "./utils",
+            containing_file: &dir.join("src/index.mts"),
+            specifier_span: Span::new(22, 30),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+        assert!(
+            result.resolved_path.is_none(),
+            "should not resolve without extension"
+        );
+        assert!(!result.treat_as_resolved, "should not treat as resolved");
+        let error = result.error.expect("should have an error");
+        assert_eq!(
+            error.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+            "should suggest extension (TS2835)"
+        );
+        assert!(
+            error.message.contains(".js'"),
+            "should suggest .js extension: {}",
+            error.message
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_cjs_esm_mismatch_classic_resolution() {
+        // TS2792: classic resolution should produce moduleResolution mismatch
+        let dir = std::env::temp_dir().join("tsz_lookup_cjs_esm_mismatch");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/index.ts"), "import 'nonexistent';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Classic),
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let request = ModuleLookupRequest {
+            specifier: "nonexistent",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 20),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: true,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+        let error = result.error.expect("should have an error");
+        assert_eq!(
+            error.code, MODULE_RESOLUTION_MODE_MISMATCH,
+            "classic resolution should produce TS2792, got TS{}",
+            error.code
+        );
+        assert!(
+            error.message.contains("'moduleResolution'"),
+            "message should suggest moduleResolution: {}",
+            error.message
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_json_module_without_flag() {
+        // TS2732: importing .json without resolveJsonModule
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_lookup_json_module");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/data.json"), r#"{"key": "value"}"#).unwrap();
+        fs::write(dir.join("src/index.ts"), "import data from './data.json';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node),
+            resolve_json_module: false,
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let request = ModuleLookupRequest {
+            specifier: "./data.json",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(18, 30),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+        let error = result.error.expect("should have an error");
+        assert_eq!(
+            error.code, JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
+            "should emit TS2732 for .json without resolveJsonModule, got TS{}",
+            error.code
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_ambient_module_suppresses_error() {
+        // Ambient module declarations should suppress resolution errors
+        let dir = std::env::temp_dir().join("tsz_lookup_ambient");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/index.ts"), "import 'my-ambient';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node),
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let request = ModuleLookupRequest {
+            specifier: "my-ambient",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 19),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient");
+
+        assert!(result.resolved_path.is_none(), "ambient has no file path");
+        assert!(
+            result.treat_as_resolved,
+            "ambient should be treated as resolved"
+        );
+        assert!(result.error.is_none(), "ambient should have no error");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_untyped_js_module_no_implicit_any() {
+        // TS7016: untyped JS module with noImplicitAny
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_lookup_untyped_js");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/untyped")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("node_modules/untyped/package.json"),
+            r#"{"name":"untyped"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules/untyped/index.js"),
+            "module.exports = {};",
+        )
+        .unwrap();
+        fs::write(dir.join("src/index.ts"), "import 'untyped';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node),
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        // With noImplicitAny: should get TS7016
+        let request = ModuleLookupRequest {
+            specifier: "untyped",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 16),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: true,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |_| false);
+        assert!(
+            result.treat_as_resolved,
+            "untyped JS should be treated as resolved"
+        );
+        let error = result.error.expect("noImplicitAny should produce TS7016");
+        assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
+
+        // Without noImplicitAny: should be resolved with no error
+        resolver.clear_cache();
+        let request_no_strict = ModuleLookupRequest {
+            specifier: "untyped",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 16),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result2 = resolver.lookup(&request_no_strict, |_, _| None, |_| false);
+        assert!(
+            result2.treat_as_resolved,
+            "untyped JS should be resolved without error"
+        );
+        assert!(
+            result2.error.is_none(),
+            "without noImplicitAny, no error expected"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_fallback_success() {
+        // Fallback resolver provides the file when primary fails
+        let dir = std::env::temp_dir().join("tsz_lookup_fallback");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/index.ts"), "import 'virtual-mod';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node),
+            module_suffixes: vec![String::new()],
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let fake_target = dir.join("src/virtual.d.ts");
+        std::fs::write(&fake_target, "export {};").unwrap();
+        let fake_target_clone = fake_target.clone();
+
+        let request = ModuleLookupRequest {
+            specifier: "virtual-mod",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 20),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false);
+
+        assert!(
+            result.resolved_path.is_some(),
+            "fallback should provide resolved path"
+        );
+        assert!(
+            result.error.is_none(),
+            "successful fallback should have no error"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_node16_esm_extensionless_fallback_error() {
+        // Node16/NodeNext: extensionless relative import in ESM context
+        // should fail even if fallback finds the file
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_lookup_n16_ext_fallback");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/utils.ts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("src/index.mts"), "import { x } from './utils';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            module_suffixes: vec![String::new()],
+            printer: crate::emitter::PrinterOptions {
+                module: crate::emitter::ModuleKind::Node16,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let fake_target = dir.join("src/utils.ts");
+        let fake_target_clone = fake_target.clone();
+
+        let request = ModuleLookupRequest {
+            specifier: "./utils",
+            containing_file: &dir.join("src/index.mts"),
+            specifier_span: Span::new(22, 30),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        // Primary resolution emits TS2835 (extension suggestion).
+        // Even if fallback would find the file, the primary error takes priority.
+        let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false);
+
+        assert!(
+            result.resolved_path.is_none(),
+            "ESM extensionless should not resolve"
+        );
+        let error = result.error.expect("should have an extension error");
+        assert!(
+            error.code == IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION
+                || error.code == IMPORT_PATH_NEEDS_EXTENSION,
+            "should be TS2834 or TS2835, got TS{}",
+            error.code
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_lookup_package_exports_subpath() {
+        // Package exports resolution via lookup
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_lookup_pkg_exports");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        fs::write(
+            dir.join("node_modules/pkg/package.json"),
+            r#"{"name":"pkg","exports":{".":"./main.js","./utils":"./utils.js"}}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("node_modules/pkg/main.d.ts"), "export {};").unwrap();
+        fs::write(
+            dir.join("node_modules/pkg/utils.d.ts"),
+            "export const u: number;",
+        )
+        .unwrap();
+        fs::write(dir.join("src/index.ts"), "import 'pkg/utils';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            module_suffixes: vec![String::new()],
+            printer: crate::emitter::PrinterOptions {
+                module: crate::emitter::ModuleKind::Node16,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let request = ModuleLookupRequest {
+            specifier: "pkg/utils",
+            containing_file: &dir.join("src/index.ts"),
+            specifier_span: Span::new(8, 19),
+            import_kind: ImportKind::EsmImport,
+            no_implicit_any: false,
+            implied_classic_resolution: false,
+        };
+        let result = resolver.lookup(&request, |_, _| None, |_| false);
+
+        assert!(
+            result.resolved_path.is_some(),
+            "package exports subpath should resolve: {:?}",
+            result.error
+        );
+        assert!(result.error.is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
