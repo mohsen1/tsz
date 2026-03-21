@@ -10,6 +10,14 @@
 //! no `NodeIndex`, `SymbolId`, or byte offsets are included. Only names, kinds, and
 //! structural relationships.
 //!
+//! # Unified semantics
+//!
+//! Both CLI (incremental compilation) and LSP (project updates) use
+//! `ExportSignatureInput` → `ExportSignature::from_input` to ensure identical
+//! hashing. The `ExportSignatureInput` is the shared contract: both systems
+//! construct it from their respective data sources (binder state or merged program)
+//! and get the same fingerprint for the same public API surface.
+//!
 //! # How it works
 //!
 //! After rebinding a file, we compute its new `ExportSignature` and compare it with
@@ -28,101 +36,160 @@ use tsz_binder::BinderState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportSignature(pub u64);
 
-impl ExportSignature {
-    /// Compute the export signature for a file from its binder state.
-    ///
-    /// The signature captures:
-    /// - Direct exports: `export function foo()`, `export class Bar`, etc.
-    /// - Named re-exports: `export { foo } from './module'`
-    /// - Wildcard re-exports: `export * from './module'`
-    /// - Global augmentations: `declare global { ... }`
-    /// - Module augmentations: `declare module 'x' { ... }`
-    ///
-    /// The signature is deterministic (sorted keys) and position-independent
-    /// (no `NodeIndex`, `SymbolId`, or byte offsets).
-    pub fn compute(binder: &BinderState, file_name: &str) -> Self {
-        let mut hasher = FxHasher::default();
+/// Normalized, sorted representation of a file's public API surface.
+///
+/// This is the shared contract between CLI and LSP for export signature computation.
+/// Both systems construct an `ExportSignatureInput` from their respective data
+/// sources and pass it to `ExportSignature::from_input` to get identical hashes.
+///
+/// All fields must be pre-sorted by their primary key for deterministic hashing.
+#[derive(Debug, Clone, Default)]
+pub struct ExportSignatureInput {
+    /// `(name, flags, is_type_only)` for direct module exports, sorted by name.
+    pub exports: Vec<(String, u32, bool)>,
+    /// `(export_name, source_module, original_name)` for named re-exports, sorted by export_name.
+    pub named_reexports: Vec<(String, String, Option<String>)>,
+    /// Wildcard re-export source module paths, sorted.
+    pub wildcard_reexports: Vec<String>,
+    /// `(augmented_name, declaration_count)` for global augmentations, sorted by name.
+    pub global_augmentations: Vec<(String, usize)>,
+    /// `(module_name, sorted_augmentation_names)` for module augmentations, sorted by module_name.
+    pub module_augmentations: Vec<(String, Vec<String>)>,
+    /// `(name, flags, is_type_only)` for exported file-local symbols, sorted by name.
+    pub exported_locals: Vec<(String, u32, bool)>,
+}
 
-        // Marker to distinguish sections
-        0u8.hash(&mut hasher);
+/// Summary of what changed between two export signatures.
+///
+/// Useful for perf analysis: shows whether dependents were invalidated and why.
+#[derive(Debug, Clone)]
+pub struct InvalidationSummary {
+    /// The file that was edited.
+    pub file: String,
+    /// Whether the public API changed (signature mismatch).
+    pub api_changed: bool,
+    /// Number of dependent files that were invalidated (0 if API unchanged).
+    pub dependents_invalidated: usize,
+    /// Old signature hash (None if file is new).
+    pub old_signature: Option<u64>,
+    /// New signature hash.
+    pub new_signature: u64,
+}
+
+impl InvalidationSummary {
+    /// Create a summary for a file whose API did not change.
+    pub fn unchanged(file: String, signature: u64) -> Self {
+        Self {
+            file,
+            api_changed: false,
+            dependents_invalidated: 0,
+            old_signature: Some(signature),
+            new_signature: signature,
+        }
+    }
+
+    /// Create a summary for a file whose API changed.
+    pub fn changed(
+        file: String,
+        old_signature: Option<u64>,
+        new_signature: u64,
+        dependents_invalidated: usize,
+    ) -> Self {
+        Self {
+            file,
+            api_changed: true,
+            dependents_invalidated,
+            old_signature,
+            new_signature,
+        }
+    }
+
+    /// Create a summary for a new file.
+    pub fn new_file(file: String, signature: u64) -> Self {
+        Self {
+            file,
+            api_changed: true,
+            dependents_invalidated: 0,
+            old_signature: None,
+            new_signature: signature,
+        }
+    }
+}
+
+impl ExportSignatureInput {
+    /// Construct from a `BinderState` (LSP path).
+    ///
+    /// Extracts exported names, flags, re-exports, and augmentations from the
+    /// binder's per-file data structures.
+    pub fn from_binder(binder: &BinderState, file_name: &str) -> Self {
+        let mut input = Self::default();
 
         // 1. Direct exports from module_exports
         if let Some(exports) = binder.module_exports.get(file_name) {
-            let mut entries: Vec<(&String, &tsz_binder::SymbolId)> = exports.iter().collect();
+            let mut entries: Vec<_> = exports.iter().collect();
             entries.sort_by_key(|(name, _)| *name);
 
-            for (name, sym_id) in &entries {
-                name.hash(&mut hasher);
-                // Hash the symbol's flags (kind: function, class, interface, etc.)
-                // and is_exported/is_type_only status — NOT the SymbolId value itself
-                if let Some(symbol) = binder.get_symbol(**sym_id) {
-                    symbol.flags.hash(&mut hasher);
-                    symbol.is_type_only.hash(&mut hasher);
+            for (name, sym_id) in entries {
+                if let Some(symbol) = binder.get_symbol(*sym_id) {
+                    input
+                        .exports
+                        .push((name.clone(), symbol.flags, symbol.is_type_only));
                 }
             }
         }
 
-        // 2. Named re-exports: export { X } from './module'
-        1u8.hash(&mut hasher);
+        // 2. Named re-exports
         if let Some(reexports) = binder.reexports.get(file_name) {
             let mut entries: Vec<_> = reexports.iter().collect();
             entries.sort_by_key(|(name, _)| *name);
 
             for (export_name, (source_module, original_name)) in entries {
-                export_name.hash(&mut hasher);
-                source_module.hash(&mut hasher);
-                original_name.hash(&mut hasher);
+                input.named_reexports.push((
+                    export_name.clone(),
+                    source_module.clone(),
+                    original_name.clone(),
+                ));
             }
         }
 
-        // 3. Wildcard re-exports: export * from './module'
-        2u8.hash(&mut hasher);
+        // 3. Wildcard re-exports
         if let Some(wildcards) = binder.wildcard_reexports.get(file_name) {
-            let mut sorted: Vec<&String> = wildcards.iter().collect();
+            let mut sorted = wildcards.clone();
             sorted.sort();
-            for module in sorted {
-                module.hash(&mut hasher);
-            }
+            input.wildcard_reexports = sorted;
         }
 
-        // 4. Global augmentations: declare global { ... }
-        3u8.hash(&mut hasher);
+        // 4. Global augmentations
         {
             let mut names: Vec<&String> = binder.global_augmentations.keys().collect();
             names.sort();
             for name in names {
-                name.hash(&mut hasher);
-                // Hash the count of augmentation declarations (structural change indicator)
-                if let Some(decls) = binder.global_augmentations.get(name.as_str()) {
-                    decls.len().hash(&mut hasher);
-                }
+                let count = binder
+                    .global_augmentations
+                    .get(name.as_str())
+                    .map_or(0, Vec::len);
+                input.global_augmentations.push((name.clone(), count));
             }
         }
 
-        // 5. Module augmentations: declare module 'x' { ... }
-        4u8.hash(&mut hasher);
+        // 5. Module augmentations
         {
             let mut modules: Vec<&String> = binder.module_augmentations.keys().collect();
             modules.sort();
             for module in modules {
-                module.hash(&mut hasher);
-                if let Some(augmentations) = binder.module_augmentations.get(module.as_str()) {
-                    // Hash augmentation names (position-independent)
-                    let mut aug_names: Vec<&String> =
-                        augmentations.iter().map(|a| &a.name).collect();
-                    aug_names.sort();
-                    for aug_name in aug_names {
-                        aug_name.hash(&mut hasher);
-                    }
-                }
+                let mut aug_names: Vec<String> = binder
+                    .module_augmentations
+                    .get(module.as_str())
+                    .map(|augs| augs.iter().map(|a| a.name.clone()).collect())
+                    .unwrap_or_default();
+                aug_names.sort();
+                input.module_augmentations.push((module.clone(), aug_names));
             }
         }
 
-        // 6. Also hash the file-level symbol flags for file_locals that are exported
-        // This catches cases like changing `const x = 1` to `function x() {}` in exports
-        5u8.hash(&mut hasher);
+        // 6. Exported file-local symbols
         {
-            let mut exported_locals: Vec<(&String, &tsz_binder::SymbolId)> = binder
+            let mut exported_locals: Vec<_> = binder
                 .file_locals
                 .iter()
                 .filter(|(_, sym_id)| binder.get_symbol(**sym_id).is_some_and(|s| s.is_exported))
@@ -130,15 +197,84 @@ impl ExportSignature {
             exported_locals.sort_by_key(|(name, _)| *name);
 
             for (name, sym_id) in exported_locals {
-                name.hash(&mut hasher);
                 if let Some(symbol) = binder.get_symbol(*sym_id) {
-                    symbol.flags.hash(&mut hasher);
-                    symbol.is_type_only.hash(&mut hasher);
+                    input
+                        .exported_locals
+                        .push((name.clone(), symbol.flags, symbol.is_type_only));
                 }
             }
         }
 
+        input
+    }
+}
+
+impl ExportSignature {
+    /// Compute the export signature from a normalized input.
+    ///
+    /// This is the single authoritative hashing implementation used by both
+    /// CLI and LSP. Both systems construct an `ExportSignatureInput` from their
+    /// respective data sources and call this method.
+    pub fn from_input(input: &ExportSignatureInput) -> Self {
+        let mut hasher = FxHasher::default();
+
+        // Section 0: Direct exports
+        0u8.hash(&mut hasher);
+        for (name, flags, is_type_only) in &input.exports {
+            name.hash(&mut hasher);
+            flags.hash(&mut hasher);
+            is_type_only.hash(&mut hasher);
+        }
+
+        // Section 1: Named re-exports
+        1u8.hash(&mut hasher);
+        for (export_name, source_module, original_name) in &input.named_reexports {
+            export_name.hash(&mut hasher);
+            source_module.hash(&mut hasher);
+            original_name.hash(&mut hasher);
+        }
+
+        // Section 2: Wildcard re-exports
+        2u8.hash(&mut hasher);
+        for module in &input.wildcard_reexports {
+            module.hash(&mut hasher);
+        }
+
+        // Section 3: Global augmentations
+        3u8.hash(&mut hasher);
+        for (name, count) in &input.global_augmentations {
+            name.hash(&mut hasher);
+            count.hash(&mut hasher);
+        }
+
+        // Section 4: Module augmentations
+        4u8.hash(&mut hasher);
+        for (module, aug_names) in &input.module_augmentations {
+            module.hash(&mut hasher);
+            for aug_name in aug_names {
+                aug_name.hash(&mut hasher);
+            }
+        }
+
+        // Section 5: Exported file-local symbols
+        5u8.hash(&mut hasher);
+        for (name, flags, is_type_only) in &input.exported_locals {
+            name.hash(&mut hasher);
+            flags.hash(&mut hasher);
+            is_type_only.hash(&mut hasher);
+        }
+
         Self(hasher.finish())
+    }
+
+    /// Compute the export signature for a file from its binder state.
+    ///
+    /// Convenience method that constructs an `ExportSignatureInput` from the
+    /// binder and delegates to `from_input`. This ensures the LSP uses the
+    /// same hashing logic as the CLI.
+    pub fn compute(binder: &BinderState, file_name: &str) -> Self {
+        let input = ExportSignatureInput::from_binder(binder, file_name);
+        Self::from_input(&input)
     }
 }
 
