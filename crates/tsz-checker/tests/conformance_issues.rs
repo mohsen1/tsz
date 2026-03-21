@@ -548,7 +548,6 @@ enum e5a { One }
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn test_constructor_parameters_rest_argument_contextually_types_object_literal_methods() {
     if !lib_files_available() {
         return;
@@ -1318,7 +1317,6 @@ function partial(x: Basic) {
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn test_const_annotated_union_initializer_reduces_for_property_reads() {
     let source = r#"
 type AOrArrA<T> = T | T[];
@@ -1542,7 +1540,6 @@ new cls3();
 }
 
 #[test]
-#[ignore = "enum display qualifier regression after merge — namespace-qualified Foo.A shown as Z.Foo.A"]
 fn test_enum_union_display_collapses_members_to_enum_name() {
     let source = r#"
 namespace X {
@@ -2594,7 +2591,6 @@ var p = x.Green;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
     let source = r#"
 namespace W {
@@ -9225,7 +9221,6 @@ import { nonExistent } from "./thisModule";
 /// Regression test: the binder's declaration vector can be reordered by var hoisting,
 /// so we must use source position to determine the first declaration.
 #[test]
-#[ignore = "TS2451 block-scoped detection changed after merge"]
 fn test_ts2451_let_before_var_emits_block_scoped_error() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -9285,7 +9280,6 @@ let x = 2;
 }
 
 #[test]
-#[ignore = "TS2300 anchor positions changed after merge"]
 fn test_block_scoped_function_duplicate_identifier_matches_catch_block_baseline() {
     let source = "\
 var v;
@@ -11588,7 +11582,6 @@ const h: Handler = (() => ({ handle: x => x.length }))();
 }
 
 #[test]
-#[ignore = "IIFE optional parameter handling changed after merge"]
 fn test_iife_optional_parameters_preserve_undefined_in_body() {
     let options = CheckerOptions {
         no_implicit_any: true,
@@ -12355,7 +12348,6 @@ type DS<TRec extends MyRecord | { [key: string]: unknown }> =
 }
 
 #[test]
-#[ignore = "Known regression: TS2344 not emitted for composite indexed-access type args"]
 fn test_ts2344_reports_for_composite_indexed_access_type_args() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -13323,7 +13315,6 @@ function ff({ a, b }: { a: string | undefined, b: () => void }) {
 }
 
 #[test]
-#[ignore = "TODO: typeof narrowing in type-literal signature parameters not yet implemented"]
 fn test_type_query_in_type_literal_signature_parameter_uses_declared_type() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14132,7 +14123,6 @@ function f54<T>(obj: T, key: keyof T) {
 }
 
 #[test]
-#[ignore = "regression: literal-preserving element write after dispatch refactor"]
 fn test_assignment_diagnostic_preserves_literal_for_literal_sensitive_element_write() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -14471,7 +14461,6 @@ namespace Editor {
 }
 
 #[test]
-#[ignore = "conditional type eager resolution regressed after solver merge"]
 fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
@@ -15197,7 +15186,6 @@ both[sym] = 'not ok';
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn test_js_global_element_access_or_fallback_uses_contextual_target() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "test.js",
@@ -15791,7 +15779,6 @@ type Guarded<V extends Foo | Bar> = V extends Foo ? Nothing<V> : never;
 }
 
 #[test]
-#[ignore = "pre-existing: requires lib contexts for global String type"]
 fn test_recursive_conditional_alias_constraint_accepts_string_literal_key() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
