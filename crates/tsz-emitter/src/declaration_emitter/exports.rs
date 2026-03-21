@@ -127,6 +127,10 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_export_default_class(export.export_clause);
                         return;
                     }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        self.emit_export_default_interface(export.export_clause);
+                        return;
+                    }
                     _ => {}
                 }
             }
@@ -329,6 +333,9 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         self.emit_export_default_class(assign.expression);
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        self.emit_export_default_interface(assign.expression);
                     }
                     _ => {
                         self.write("export default ");
@@ -559,6 +566,45 @@ impl<'a> DeclarationEmitter<'a> {
                     self.skip_comments_in_node(mn.pos, mn.end);
                 }
             }
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+    }
+
+    pub(crate) fn emit_export_default_interface(&mut self, iface_idx: NodeIndex) {
+        let Some(iface_node) = self.arena.get(iface_idx) else {
+            return;
+        };
+        let Some(iface) = self.arena.get_interface(iface_node) else {
+            return;
+        };
+
+        self.write_indent();
+        self.write("export default interface ");
+        self.emit_node(iface.name);
+
+        if let Some(ref type_params) = iface.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
+
+        if let Some(ref heritage) = iface.heritage_clauses {
+            self.emit_interface_heritage_clauses(heritage);
+        }
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for &member_idx in &iface.members.nodes {
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
+            self.emit_interface_member(member_idx);
         }
 
         self.decrease_indent();
@@ -1314,18 +1360,27 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("export ");
         }
 
-        // Determine keyword: "module" for string literals, "namespace" for identifiers
-        let use_module_keyword = self
-            .arena
-            .get(module.name)
-            .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16);
+        // Determine keyword: "module" for string literals, "global" for
+        // the `declare global` augmentation, "namespace" for other identifiers.
+        let name_node = self.arena.get(module.name);
+        let use_module_keyword =
+            name_node.is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+        let is_global_augmentation = name_node
+            .and_then(|n| self.arena.get_identifier(n))
+            .is_some_and(|ident| ident.escaped_text == "global");
 
-        self.write(if use_module_keyword {
-            "module "
+        if is_global_augmentation {
+            // `declare global { ... }` — emit just "global" without
+            // a module/namespace keyword prefix.
+            self.write("global");
         } else {
-            "namespace "
-        });
-        self.emit_node(module.name);
+            self.write(if use_module_keyword {
+                "module "
+            } else {
+                "namespace "
+            });
+            self.emit_node(module.name);
+        }
 
         // Collect dotted namespace name segments: namespace A.B.C { ... }
         // is represented as a chain of ModuleDeclaration nodes

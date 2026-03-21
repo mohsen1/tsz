@@ -2413,10 +2413,11 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Whether an exported declaration should emit its `export` keyword.
     ///
-    /// Inside an ambient (declare) namespace, `export` is only emitted when
+    /// Inside a `declare namespace` (including non-ambient namespaces that
+    /// gain `declare` in the .d.ts output), `export` is only emitted when
     /// the namespace body has a mix of exported and non-exported members
-    /// (i.e., a "scope marker" is needed).  Inside a non-ambient namespace,
-    /// `export` is always significant and must be preserved.
+    /// (i.e., a "scope marker" is present).  Outside a `declare namespace`,
+    /// `export` is always emitted.
     pub(crate) const fn should_emit_export_keyword(&self) -> bool {
         !self.inside_declare_namespace || self.ambient_module_has_scope_marker
     }
@@ -3055,6 +3056,24 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         if !self.public_api_filter_enabled() {
             return true;
+        }
+
+        // Module augmentations (`declare module "foo"` and `declare global`)
+        // must always be emitted regardless of the public API filter.
+        // They augment external module or global scope and are always part
+        // of the declaration output.
+        if let Some(name_node) = self.arena.get(name_idx) {
+            // String-literal module name: `declare module "some-module" { ... }`
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+            // `declare global { ... }` — the parser represents `global` as
+            // an Identifier node with escaped_text "global".
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                if ident.escaped_text == "global" {
+                    return true;
+                }
+            }
         }
 
         is_exported || self.should_emit_public_api_dependency(name_idx)

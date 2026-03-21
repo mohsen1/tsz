@@ -143,9 +143,13 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" & ");
                         }
                         first = false;
+                        // Union types inside an intersection need parentheses
+                        // to preserve operator precedence:
+                        // `(A | B) & C` is different from `A | B & C`.
                         let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || n.kind == syntax_kind_ext::UNION_TYPE
                         });
                         if needs_parens {
                             self.write("(");
