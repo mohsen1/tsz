@@ -1504,24 +1504,17 @@ pub fn apply_contextual_type(
         return expr_type;
     }
 
-    // If contextual type is assignable to expr_type, use contextual type (it's more specific)
-    // BUT: Skip for function/callable types — the solver's bivariant SubtypeChecker can
-    // incorrectly say that a wider function type (e.g. (x: number|string) => void) is a
-    // subtype of a narrower one (e.g. (x: number) => void), which would widen the property
-    // type and suppress valid TS2322 errors under strict function types.
-    let is_function_type = matches!(
-        interner.lookup(expr_type),
-        Some(TypeData::Function(_) | TypeData::Object(_))
-    );
-    if !is_function_type {
-        checker.reset();
-        if checker.is_subtype_of(ctx_type, expr_type) {
-            return ctx_type;
-        }
-    }
-
-    // Default: prefer the expression type (don't widen to contextual type)
-    // This prevents incorrectly widening concrete types to generic type parameters
+    // Default: prefer the expression type.
+    //
+    // When the contextual type is narrower than the expression type (e.g.,
+    // ctx = "foo", expr = string), we must NOT substitute the contextual type.
+    // The expression genuinely has the wider type at runtime, and substituting
+    // the narrower contextual type would mask real assignability errors like
+    // TS2322: Type 'string' is not assignable to type '"foo"'.
+    //
+    // The assignability checker is responsible for catching mismatches between
+    // the expression type and the target type — this function should not
+    // pre-narrow the expression type to hide those mismatches.
     expr_type
 }
 
