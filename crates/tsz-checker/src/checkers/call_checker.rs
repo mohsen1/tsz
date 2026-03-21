@@ -308,9 +308,10 @@ impl<'a> CheckerState<'a> {
     fn overload_candidate_has_hard_non_callback_arg_errors(
         &self,
         args: &[NodeIndex],
-        diagnostics_checkpoint: usize,
+        snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> bool {
-        self.ctx.diagnostics[diagnostics_checkpoint..]
+        self.ctx
+            .speculative_diagnostics_since(snap)
             .iter()
             .any(|diag| {
                 args.iter().any(|&arg_idx| {
@@ -353,10 +354,11 @@ impl<'a> CheckerState<'a> {
     fn collect_non_callback_diagnostics_between(
         &self,
         args: &[NodeIndex],
-        start: usize,
-        end: usize,
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> Vec<crate::diagnostics::Diagnostic> {
-        self.ctx.diagnostics[start..end]
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
             .iter()
             .filter(|diag| {
                 !args.iter().any(|&arg_idx| {
@@ -379,7 +381,8 @@ impl<'a> CheckerState<'a> {
         &self,
         snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> Vec<crate::diagnostics::Diagnostic> {
-        self.ctx.diagnostics[snap.diagnostics_len..]
+        self.ctx
+            .speculative_diagnostics_since(snap)
             .iter()
             .filter(|diag| Self::should_preserve_speculative_call_diagnostic(diag))
             .cloned()
@@ -1517,9 +1520,8 @@ impl<'a> CheckerState<'a> {
                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self
                         .ctx
-                        .diagnostics
+                        .speculative_diagnostics_since(&arg_snap)
                         .iter()
-                        .skip(arg_snap.diagnostics_len)
                         .any(|diag| {
                             diag.code
                                 == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
@@ -1616,14 +1618,12 @@ impl<'a> CheckerState<'a> {
                 && is_direct_function_arg
                 && let Some(n) = self.ctx.arena.get(arg_idx)
             {
-                let (s, e, snap) = (n.pos, n.end, arg_snap.diagnostics_len);
-                let before = self.ctx.diagnostics.len();
-                let mut tail: Vec<_> = self.ctx.diagnostics.drain(snap..).collect();
-                tail.retain(|d| {
+                let (s, e) = (n.pos, n.end);
+                let count_before = self.ctx.diagnostics.len();
+                self.ctx.rollback_diagnostics_filtered(&arg_snap, |d| {
                     !(matches!(d.code, 7006 | 7019 | 7031 | 7051) && d.start >= s && d.start < e)
                 });
-                self.ctx.diagnostics.extend(tail);
-                if self.ctx.diagnostics.len() < before {
+                if self.ctx.diagnostics.len() < count_before {
                     self.ctx.implicit_any_checked_closures.remove(&arg_idx);
                 }
             }
@@ -1905,7 +1905,6 @@ impl<'a> CheckerState<'a> {
         // On failure paths we roll back to this snapshot; on success paths
         // we selectively keep diagnostics via the transaction API.
         let overload_snap = self.ctx.snapshot_full();
-        let first_pass_diagnostics_checkpoint = overload_snap.diag.diagnostics_len;
 
         // Collect argument types ONCE with union contextual type.
         // Diagnostics produced during this pass are speculative: if no overload
@@ -1979,7 +1978,7 @@ impl<'a> CheckerState<'a> {
                 CallResult::Success(return_type) => {
                     if self.overload_candidate_has_hard_non_callback_arg_errors(
                         args,
-                        first_pass_diagnostics_checkpoint,
+                        &overload_snap.diag,
                     ) {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
@@ -2119,7 +2118,6 @@ impl<'a> CheckerState<'a> {
                 .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
             // Snapshot per-candidate diagnostic state so we can roll back on mismatch.
             let candidate_snap = self.ctx.snapshot_diagnostics();
-            let diagnostics_checkpoint = candidate_snap.diagnostics_len;
             let candidate_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
             self.ctx.node_types = Default::default();
             refresh_all_args(self);
@@ -2205,18 +2203,17 @@ impl<'a> CheckerState<'a> {
 
             match result {
                 CallResult::Success(return_type) => {
-                    if self.overload_candidate_has_hard_non_callback_arg_errors(
-                        args,
-                        diagnostics_checkpoint,
-                    ) {
+                    if self
+                        .overload_candidate_has_hard_non_callback_arg_errors(args, &candidate_snap)
+                    {
                         let preserved_first_pass_diags = self
                             .collect_non_callback_diagnostics_between(
                                 args,
-                                first_pass_diagnostics_checkpoint,
-                                diagnostics_checkpoint,
+                                &overload_snap.diag,
+                                &candidate_snap,
                             );
                         let kept_candidate_diags =
-                            self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                            self.ctx.take_speculative_diagnostics(&candidate_snap);
                         // Merge: preserve hard speculative call diagnostics
                         // (e.g. TS2302/TS2708), then append first-pass and
                         // candidate diagnostics without duplication.
@@ -2243,11 +2240,11 @@ impl<'a> CheckerState<'a> {
                     }
                     let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
                         args,
-                        first_pass_diagnostics_checkpoint,
-                        diagnostics_checkpoint,
+                        &overload_snap.diag,
+                        &candidate_snap,
                     );
                     let kept_candidate_diags =
-                        self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                        self.ctx.take_speculative_diagnostics(&candidate_snap);
                     // Merge: preserve hard speculative call diagnostics
                     // (e.g. TS2302/TS2708), then append first-pass and
                     // candidate diagnostics without duplication.
@@ -2347,11 +2344,11 @@ impl<'a> CheckerState<'a> {
                     }
                     let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
                         args,
-                        first_pass_diagnostics_checkpoint,
-                        diagnostics_checkpoint,
+                        &overload_snap.diag,
+                        &candidate_snap,
                     );
                     let kept_candidate_diags =
-                        self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                        self.ctx.take_speculative_diagnostics(&candidate_snap);
                     let mut merged =
                         self.preserved_speculative_call_diagnostics(&overload_snap.diag);
                     self.extend_unique_diagnostics(&mut merged, preserved_first_pass_diags);
