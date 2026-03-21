@@ -4,6 +4,7 @@
 
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::{PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest};
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -672,8 +673,12 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 type_id
-            } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables() {
-                TypeId::UNKNOWN
+            } else if is_catch_variable {
+                // Route catch variable type resolution through the flow
+                // observation boundary for centralized policy.
+                flow_boundary::resolve_catch_variable_type(
+                    checker.ctx.use_unknown_in_catch_variables(),
+                )
             } else {
                 TypeId::ANY
             };
@@ -1874,8 +1879,10 @@ impl<'a> CheckerState<'a> {
                     typing_request,
                 );
                 self.get_type_of_node_with_request(var_decl.initializer, &initializer_request)
-            } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
-                TypeId::UNKNOWN
+            } else if is_catch_variable {
+                flow_boundary::resolve_catch_variable_type(
+                    self.ctx.use_unknown_in_catch_variables(),
+                )
             } else if let Some(inferred) = self.compute_for_in_of_variable_type(decl_idx) {
                 inferred
             } else {

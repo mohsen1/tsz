@@ -1,3 +1,4 @@
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1758,9 +1759,8 @@ impl<'a> FlowAnalyzer<'a> {
         if self.contains_optional_chain(predicate_target)
             && self.is_optional_chain_prefix(predicate_target, reference)
         {
-            let narrowing = self.make_narrowing_context();
-            let narrowed = narrowing.narrow_excluding_type(pre_type, TypeId::NULL);
-            narrowed_pre_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            narrowed_pre_type =
+                flow_boundary::narrow_optional_chain(self.interner.as_type_database(), pre_type);
             applied_optional_chain_transport = true;
         }
 

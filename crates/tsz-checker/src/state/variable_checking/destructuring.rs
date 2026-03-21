@@ -2,6 +2,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::common as common_query;
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -307,12 +308,13 @@ impl<'a> CheckerState<'a> {
                 // A default value guarantees the binding won't be undefined at runtime,
                 // so strip `undefined` from the element type. This matches tsc behavior:
                 // `{ name = "default" }: { name?: string }` gives `name` type `string`.
-                if self.ctx.strict_null_checks()
-                    && element_type != TypeId::ANY
-                    && element_type != TypeId::UNKNOWN
-                    && element_type != TypeId::ERROR
-                {
-                    element_type = tsz_solver::remove_undefined(self.ctx.types, element_type);
+                // Route through flow observation boundary for centralized policy.
+                if self.ctx.strict_null_checks() {
+                    element_type = flow_boundary::narrow_destructuring_default(
+                        self.ctx.types,
+                        element_type,
+                        true,
+                    );
                 }
 
                 // Provide the element type as contextual type for the default
