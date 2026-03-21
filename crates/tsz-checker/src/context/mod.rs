@@ -783,6 +783,18 @@ pub struct CheckerContext<'a> {
     /// Enables looking up exported symbols from other files during import resolution.
     pub all_binders: Option<Arc<Vec<Arc<BinderState>>>>,
 
+    /// Pre-built global index: symbol name -> list of (file_idx, SymbolId).
+    /// Constructed once in `set_all_binders` from all binders' `file_locals`.
+    /// Eliminates O(N) scans in `resolve_identifier_symbol_from_all_binders`
+    /// and related cross-file symbol lookup hot paths.
+    pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
+
+    /// Pre-built global index: (module_specifier, export_name) -> list of (file_idx, SymbolId).
+    /// Constructed once in `set_all_binders` from all binders' `module_exports`.
+    /// Eliminates O(N) scans in `resolve_import_from_ambient_module`.
+    pub global_module_exports_index:
+        Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///

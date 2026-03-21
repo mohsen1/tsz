@@ -168,7 +168,36 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set all binders for cross-file resolution.
+    ///
+    /// Also builds the `global_file_locals_index` and `global_module_exports_index`
+    /// so that subsequent cross-file symbol lookups are O(1) instead of O(N).
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
+        // Build the global file_locals index: name -> Vec<(file_idx, SymbolId)>
+        let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> =
+            FxHashMap::default();
+        // Build the global module_exports index: (module_specifier, export_name) -> Vec<(file_idx, SymbolId)>
+        let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
+            FxHashMap::default();
+
+        for (file_idx, binder) in binders.iter().enumerate() {
+            for (name, &sym_id) in binder.file_locals.iter() {
+                file_locals_index
+                    .entry(name.to_string())
+                    .or_default()
+                    .push((file_idx, sym_id));
+            }
+            for (module_spec, exports) in binder.module_exports.iter() {
+                for (export_name, &sym_id) in exports.iter() {
+                    module_exports_index
+                        .entry((module_spec.clone(), export_name.to_string()))
+                        .or_default()
+                        .push((file_idx, sym_id));
+                }
+            }
+        }
+
+        self.global_file_locals_index = Some(Arc::new(file_locals_index));
+        self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.all_binders = Some(binders);
     }
 
@@ -443,18 +472,20 @@ impl<'a> CheckerContext<'a> {
         module_specifier: &str,
         import_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        // Check current binder first
         if let Some(exports) = self.binder.module_exports.get(module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some(sym_id);
         }
-        if let Some(all_binders) = self.all_binders.as_ref() {
-            for binder in all_binders.iter() {
-                if let Some(exports) = binder.module_exports.get(module_specifier)
-                    && let Some(sym_id) = exports.get(import_name)
-                {
-                    return Some(sym_id);
-                }
+        // Use the pre-built global module_exports index for O(1) lookup
+        if let Some(entries) = self
+            .global_module_exports_index
+            .as_ref()
+            .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+        {
+            if let Some(&(_file_idx, sym_id)) = entries.first() {
+                return Some(sym_id);
             }
         }
         None
@@ -468,18 +499,20 @@ impl<'a> CheckerContext<'a> {
         module_specifier: &str,
         import_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
+        // Check current binder first
         if let Some(exports) = self.binder.module_exports.get(module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some((sym_id, self.current_file_idx));
         }
-        if let Some(all_binders) = self.all_binders.as_ref() {
-            for (idx, binder) in all_binders.iter().enumerate() {
-                if let Some(exports) = binder.module_exports.get(module_specifier)
-                    && let Some(sym_id) = exports.get(import_name)
-                {
-                    return Some((sym_id, idx));
-                }
+        // Use the pre-built global module_exports index for O(1) lookup
+        if let Some(entries) = self
+            .global_module_exports_index
+            .as_ref()
+            .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+        {
+            if let Some(&(file_idx, sym_id)) = entries.first() {
+                return Some((sym_id, file_idx));
             }
         }
         None
