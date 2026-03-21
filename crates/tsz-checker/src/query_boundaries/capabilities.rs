@@ -229,6 +229,61 @@ pub(crate) fn is_known_node_global(name: &str) -> bool {
     )
 }
 
+/// Check if a module specifier is a known Node.js built-in module (TS2591).
+///
+/// When module resolution fails for one of these specifiers, tsc emits TS2591
+/// ("Cannot find name 'X'. Do you need to install type definitions for node?")
+/// instead of TS2307 ("Cannot find module 'X'").
+pub(crate) fn is_known_node_module(specifier: &str) -> bool {
+    // Handle `node:` prefix (e.g., `node:fs`, `node:path`)
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    matches!(
+        name,
+        "assert"
+            | "async_hooks"
+            | "buffer"
+            | "child_process"
+            | "cluster"
+            | "console"
+            | "constants"
+            | "crypto"
+            | "dgram"
+            | "diagnostics_channel"
+            | "dns"
+            | "domain"
+            | "events"
+            | "fs"
+            | "http"
+            | "http2"
+            | "https"
+            | "inspector"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "perf_hooks"
+            | "process"
+            | "punycode"
+            | "querystring"
+            | "readline"
+            | "repl"
+            | "stream"
+            | "string_decoder"
+            | "sys"
+            | "timers"
+            | "tls"
+            | "trace_events"
+            | "tty"
+            | "url"
+            | "util"
+            | "v8"
+            | "vm"
+            | "wasi"
+            | "worker_threads"
+            | "zlib"
+    )
+}
+
 /// Check if a name is a known DOM/ScriptHost global that requires 'dom' lib (TS2584).
 pub(crate) fn is_known_dom_global(name: &str) -> bool {
     matches!(

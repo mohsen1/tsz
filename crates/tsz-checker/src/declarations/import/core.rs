@@ -24,6 +24,20 @@ impl<'a> CheckerState<'a> {
     /// options), matching tsc's `getEmitModuleResolutionKind()`.
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::query_boundaries::capabilities::is_known_node_module;
+
+        // tsc emits TS2591 instead of TS2307 when the unresolved module specifier
+        // is a known Node.js built-in module, suggesting @types/node installation.
+        // This takes priority over any resolution error from the driver.
+        if is_known_node_module(module_name) {
+            return (
+                format_message(
+                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                    &[module_name],
+                ),
+                diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+            );
+        }
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             return (error.message.clone(), error.code);
