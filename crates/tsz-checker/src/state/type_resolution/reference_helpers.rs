@@ -431,7 +431,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if symbol.value_declaration.is_some() {
+        let mut decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
@@ -440,6 +440,29 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .unwrap_or(NodeIndex::NONE)
         };
+        // When the primary declaration doesn't resolve to a class in the current
+        // arena (e.g., class+interface merged symbol where value_declaration was
+        // not propagated through program-level symbol merging), search all
+        // declarations for a class node in the current arena.
+        // Guard against NodeIndex collisions: verify the class name matches
+        // the symbol name to avoid picking up an unrelated class from the arena.
+        if decl_idx.is_none() || self.ctx.arena.get_class_at(decl_idx).is_none() {
+            let expected_name = &symbol.escaped_name;
+            for &d in &symbol.declarations {
+                if d.is_some()
+                    && let Some(class) = self.ctx.arena.get_class_at(d)
+                    && self
+                        .ctx
+                        .arena
+                        .get(class.name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .is_some_and(|ident| ident.escaped_text.as_str() == expected_name)
+                {
+                    decl_idx = d;
+                    break;
+                }
+            }
+        }
         if decl_idx.is_none() {
             return None;
         }
