@@ -362,6 +362,18 @@ pub(super) fn collect_diagnostics(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
 
+    // Pre-compute declared modules from skeleton when available.
+    // This avoids re-scanning all binders for declared/ambient module names in
+    // each checker's `set_all_binders` call — the skeleton captured this data
+    // during the parallel parse/bind phase.
+    let skeleton_declared_modules: Option<Arc<tsz::checker::context::GlobalDeclaredModules>> =
+        program.skeleton_index.as_ref().map(|skel| {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            Arc::new(tsz::checker::context::GlobalDeclaredModules::from_skeleton(
+                exact, patterns,
+            ))
+        });
+
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
@@ -383,6 +395,11 @@ pub(super) fn collect_diagnostics(
             typescript_dom_replacement_globals.2,
         );
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        if let Some(ref dm) = skeleton_declared_modules {
+            checker
+                .ctx
+                .set_declared_modules_from_skeleton(Arc::clone(dm));
+        }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         {
             let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
@@ -505,6 +522,7 @@ pub(super) fn collect_diagnostics(
                             has_deprecation_diagnostics,
                             typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
+                            skeleton_declared_modules: skeleton_declared_modules.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -537,6 +555,7 @@ pub(super) fn collect_diagnostics(
                             has_deprecation_diagnostics,
                             typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
+                            skeleton_declared_modules: skeleton_declared_modules.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -658,6 +677,11 @@ pub(super) fn collect_diagnostics(
                 typescript_dom_replacement_globals.2,
             );
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            if let Some(ref dm) = skeleton_declared_modules {
+                checker
+                    .ctx
+                    .set_declared_modules_from_skeleton(Arc::clone(dm));
+            }
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             {
                 let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
@@ -980,6 +1004,8 @@ pub(super) struct CheckFileForParallelContext<'a> {
     has_deprecation_diagnostics: bool,
     typescript_dom_replacement_globals: (bool, bool, bool),
     program_has_real_syntax_errors: bool,
+    /// Pre-computed declared modules from skeleton index, shared across all checkers.
+    skeleton_declared_modules: Option<Arc<tsz::checker::context::GlobalDeclaredModules>>,
 }
 
 /// Check a single file for the parallel checking path.
@@ -1013,6 +1039,7 @@ pub(super) fn check_file_for_parallel<'a>(
         has_deprecation_diagnostics,
         typescript_dom_replacement_globals,
         program_has_real_syntax_errors,
+        skeleton_declared_modules,
     } = context;
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
@@ -1059,6 +1086,11 @@ pub(super) fn check_file_for_parallel<'a>(
     );
 
     checker.ctx.set_all_arenas(Arc::clone(all_arenas));
+    if let Some(ref dm) = skeleton_declared_modules {
+        checker
+            .ctx
+            .set_declared_modules_from_skeleton(Arc::clone(dm));
+    }
     checker.ctx.set_all_binders(Arc::clone(all_binders));
     {
         let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
@@ -1420,6 +1452,12 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             0,
         ))]);
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        if let Some(ref skel) = program.skeleton_index {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            checker.ctx.set_declared_modules_from_skeleton(Arc::new(
+                tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+            ));
+        }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker.ctx.set_current_file_idx(0);
         checker.check_source_file(program.files[0].source_file);

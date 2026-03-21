@@ -3336,18 +3336,17 @@ pub fn check_files_parallel(
                 checker_options,
             );
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-            checker.ctx.set_all_binders(Arc::clone(&all_binders));
-            checker.ctx.set_current_file_idx(file_idx);
 
-            // Validate skeleton-derived declared modules match binder-built ones.
-            // In debug builds this asserts exact equality, proving the skeleton
-            // captures all data needed for the global_declared_modules index.
+            // Use skeleton-derived declared modules when available (skips binder scan).
             if let Some(ref skel) = program.skeleton_index {
                 let (exact, patterns) = skel.build_declared_module_sets();
-                checker
-                    .ctx
-                    .validate_skeleton_declared_modules(&exact, &patterns);
+                checker.ctx.set_declared_modules_from_skeleton(Arc::new(
+                    crate::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                ));
             }
+
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker.ctx.set_current_file_idx(file_idx);
 
             {
                 let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();

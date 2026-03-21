@@ -77,6 +77,18 @@ pub struct GlobalDeclaredModules {
     pub patterns: Vec<String>,
 }
 
+impl GlobalDeclaredModules {
+    /// Build from pre-computed skeleton sets.
+    ///
+    /// `skeleton_exact` and `skeleton_patterns` come from
+    /// `SkeletonIndex::build_declared_module_sets()`. The patterns must already
+    /// be sorted and deduplicated (the skeleton builder guarantees this).
+    #[must_use]
+    pub fn from_skeleton(exact: FxHashSet<String>, patterns: Vec<String>) -> Self {
+        Self { exact, patterns }
+    }
+}
+
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
 pub struct EnclosingClassInfo {

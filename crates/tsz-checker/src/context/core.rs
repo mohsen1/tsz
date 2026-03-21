@@ -167,18 +167,48 @@ impl<'a> CheckerContext<'a> {
         path
     }
 
+    /// Pre-populate `global_declared_modules` from skeleton-derived data.
+    ///
+    /// When called before `set_all_binders`, this avoids the O(N) binder scan
+    /// for declared modules — the skeleton already captured all module_exports
+    /// keys, declared_modules, and shorthand_ambient_modules during the parallel
+    /// parse/bind phase.
+    ///
+    /// If `global_declared_modules` is already `Some` when `set_all_binders` runs,
+    /// the binder-scanning loop for declared modules is skipped entirely.
+    ///
+    /// The caller should compute `GlobalDeclaredModules` once from
+    /// `SkeletonIndex::build_declared_module_sets()` and wrap it in an `Arc` so
+    /// multiple checkers can share the same allocation.
+    pub fn set_declared_modules_from_skeleton(
+        &mut self,
+        declared_modules: Arc<super::GlobalDeclaredModules>,
+    ) {
+        self.global_declared_modules = Some(declared_modules);
+    }
+
     /// Set all binders for cross-file resolution.
     ///
     /// Also builds the `global_file_locals_index` and `global_module_exports_index`
     /// so that subsequent cross-file symbol lookups are O(1) instead of O(N).
+    ///
+    /// If `global_declared_modules` was already populated (e.g., via
+    /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
+    /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
         // Build the global file_locals index: name -> Vec<(file_idx, SymbolId)>
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         // Build the global module_exports index: (module_specifier, export_name) -> Vec<(file_idx, SymbolId)>
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();
-        // Build the global declared modules index: exact names + wildcard patterns
-        let mut declared_modules = super::GlobalDeclaredModules::default();
+
+        // If declared modules were pre-populated from skeleton, skip building from binders.
+        let has_skeleton_declared_modules = self.global_declared_modules.is_some();
+        let mut declared_modules = if has_skeleton_declared_modules {
+            None
+        } else {
+            Some(super::GlobalDeclaredModules::default())
+        };
 
         for (file_idx, binder) in binders.iter().enumerate() {
             for (name, &sym_id) in binder.file_locals.iter() {
@@ -195,25 +225,31 @@ impl<'a> CheckerContext<'a> {
                         .push((file_idx, sym_id));
                 }
                 // Also index the module_exports key itself as a declared module
-                let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                if normalized.contains('*') {
-                    declared_modules.patterns.push(normalized.to_string());
-                } else {
-                    declared_modules.exact.insert(normalized.to_string());
+                // (only when not pre-populated from skeleton)
+                if let Some(ref mut dm) = declared_modules {
+                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                    if normalized.contains('*') {
+                        dm.patterns.push(normalized.to_string());
+                    } else {
+                        dm.exact.insert(normalized.to_string());
+                    }
                 }
             }
 
             // Index declared_modules and shorthand_ambient_modules
-            for name in binder
-                .declared_modules
-                .iter()
-                .chain(binder.shorthand_ambient_modules.iter())
-            {
-                let normalized = name.trim_matches('"').trim_matches('\'');
-                if normalized.contains('*') {
-                    declared_modules.patterns.push(normalized.to_string());
-                } else {
-                    declared_modules.exact.insert(normalized.to_string());
+            // (only when not pre-populated from skeleton)
+            if let Some(ref mut dm) = declared_modules {
+                for name in binder
+                    .declared_modules
+                    .iter()
+                    .chain(binder.shorthand_ambient_modules.iter())
+                {
+                    let normalized = name.trim_matches('"').trim_matches('\'');
+                    if normalized.contains('*') {
+                        dm.patterns.push(normalized.to_string());
+                    } else {
+                        dm.exact.insert(normalized.to_string());
+                    }
                 }
             }
         }
@@ -229,9 +265,13 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Deduplicate wildcard patterns
-        declared_modules.patterns.sort();
-        declared_modules.patterns.dedup();
+        // Set declared modules from binder scan if not already from skeleton
+        if let Some(mut dm) = declared_modules {
+            // Deduplicate wildcard patterns
+            dm.patterns.sort();
+            dm.patterns.dedup();
+            self.global_declared_modules = Some(Arc::new(dm));
+        }
 
         // Build the global module augmentations index: module_specifier -> Vec<(file_idx, ModuleAugmentation)>
         let mut module_augs_index: FxHashMap<String, Vec<(usize, tsz_binder::ModuleAugmentation)>> =
@@ -256,7 +296,6 @@ impl<'a> CheckerContext<'a> {
 
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
-        self.global_declared_modules = Some(Arc::new(declared_modules));
         self.global_expando_index = Some(Arc::new(expando_index));
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
