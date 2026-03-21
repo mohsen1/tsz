@@ -1,7 +1,7 @@
 //! Generic type and comparison error reporting (TS2314, TS2344, TS2367, TS2352).
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
@@ -439,14 +439,17 @@ impl<'a> CheckerState<'a> {
         };
         let source_str = source_str.trim_end_matches(';').to_string();
         let target_str = target_str.trim_end_matches(';').to_string();
-        self.error_at_anchor(
+        let message = format_message(
+            diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+            &[&source_str, &target_str],
+        );
+        self.emit_render_request(
             idx,
-            DiagnosticAnchorKind::TypeAssertionOverlap { target_type },
-            &format_message(
-                diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
-                &[&source_str, &target_str],
+            DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::TypeAssertionOverlap { target_type },
+                diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+                message,
             ),
-            diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
         );
     }
 
