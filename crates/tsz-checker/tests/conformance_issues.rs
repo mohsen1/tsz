@@ -16016,7 +16016,6 @@ ff1 = ff4;
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn test_missing_property_messages_preserve_function_literal_return_type_display() {
     let diagnostics = compile_and_get_raw_diagnostics_named(
         "test.ts",
