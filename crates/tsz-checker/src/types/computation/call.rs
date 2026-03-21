@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
             .map(|(wrapper_fn, _)| request.read().contextual(wrapper_fn))
             .unwrap_or(*request);
         if iife_info.is_some() {
-            self.clear_type_cache_recursive(call.expression);
+            self.invalidate_expression_for_contextual_retry(call.expression);
         }
 
         // Get the type of the callee
@@ -1371,7 +1371,7 @@ impl<'a> CheckerState<'a> {
                             }
                             if sensitive_args.get(i).copied().unwrap_or(false) {
                                 self.clear_contextual_resolution_cache();
-                                self.clear_type_cache_recursive(arg_idx);
+                                self.invalidate_expression_for_contextual_retry(arg_idx);
                             }
                             let contextual_substitution = self
                                 .widen_round2_contextual_substitution(&shape, &round2_substitution);
@@ -1769,7 +1769,7 @@ impl<'a> CheckerState<'a> {
                                     arg_idx,
                                     base_contextual_param_types.get(i).copied().flatten(),
                                 ) {
-                                    self.clear_type_cache_recursive(arg_idx);
+                                    self.invalidate_expression_for_contextual_retry(arg_idx);
                                 }
                             }
                             let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
@@ -1847,7 +1847,7 @@ impl<'a> CheckerState<'a> {
                                     arg_idx,
                                     base_contextual_param_types.get(i).copied().flatten(),
                                 ) {
-                                    self.clear_type_cache_recursive(arg_idx);
+                                    self.invalidate_expression_for_contextual_retry(arg_idx);
                                 }
                             }
                             let refreshed_contextual_types = self
@@ -2095,7 +2095,7 @@ impl<'a> CheckerState<'a> {
                     arg_idx,
                     base_contextual_param_types.get(i).copied().flatten(),
                 ) {
-                    self.clear_type_cache_recursive(arg_idx);
+                    self.invalidate_expression_for_contextual_retry(arg_idx);
                 }
             }
             let refreshed_contextual_types = self

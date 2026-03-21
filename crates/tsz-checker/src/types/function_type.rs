@@ -1398,7 +1398,10 @@ impl<'a> CheckerState<'a> {
                 // and again with contextual/JSDoc parameter types during checked mode.
                 // Re-evaluate the body from the shared cached parameter types so reads like
                 // `acceptNum(b)` see the same optionality/type-tag result as the signature.
-                self.clear_type_cache_recursive(body);
+                //
+                // Targeted invalidation: clear body only (not param symbols,
+                // which were just set by cache_parameter_types above).
+                self.invalidate_function_body_for_param_retyping(body);
             }
             self.record_destructured_parameter_binding_groups(
                 &parameters.nodes,
