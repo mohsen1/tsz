@@ -8,6 +8,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
 pub(crate) mod property_access;
+pub(crate) mod relation_types;
 pub(crate) mod state;
 pub(crate) mod type_checking;
 pub(crate) mod type_checking_utilities;
