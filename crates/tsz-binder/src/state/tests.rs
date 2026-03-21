@@ -3356,3 +3356,121 @@ namespace E {}
         );
     }
 }
+
+#[test]
+fn merge_lib_contexts_propagates_semantic_defs_with_remapped_ids() {
+    // After merge_lib_contexts_into_binder, the main binder's semantic_defs
+    // should contain entries for lib symbols under the new (remapped) SymbolIds.
+    // This ensures pre_populate_def_ids_from_binder covers lib symbols, so the
+    // checker doesn't fall through to get_or_create_def_id's repair path.
+
+    // Create a "lib" binder with top-level declarations.
+    let lib_source = r"
+interface Array<T> {}
+interface String {}
+type Partial<T> = { [P in keyof T]?: T[P] };
+class Error {}
+enum Direction { Up, Down }
+";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    // Verify lib binder has semantic_defs for all 5 declarations.
+    assert!(
+        lib_binder.semantic_defs.len() >= 5,
+        "lib binder should have at least 5 semantic_defs, got {}",
+        lib_binder.semantic_defs.len()
+    );
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    // Create the main user binder and merge.
+    let user_source = "let x: number = 1;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    let pre_merge_count = main_binder.semantic_defs.len();
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // After merge, semantic_defs should have grown with lib entries.
+    let post_merge_count = main_binder.semantic_defs.len();
+    assert!(
+        post_merge_count > pre_merge_count,
+        "merge should propagate lib semantic_defs: before={pre_merge_count}, after={post_merge_count}"
+    );
+
+    // Each lib semantic_def should use a remapped SymbolId that exists in the
+    // main binder's symbol arena (not the lib binder's original IDs).
+    for (&sym_id, entry) in &main_binder.semantic_defs {
+        assert!(
+            main_binder.symbols.get(sym_id).is_some(),
+            "semantic_def for '{}' (SymbolId {}) should reference a symbol in the main arena",
+            entry.name,
+            sym_id.0,
+        );
+    }
+
+    // The expected lib type names should be findable via file_locals → semantic_defs.
+    for expected_name in &["Array", "String", "Partial", "Error", "Direction"] {
+        let sym_id = main_binder
+            .file_locals
+            .get(expected_name)
+            .unwrap_or_else(|| panic!("expected '{expected_name}' in file_locals after merge"));
+        assert!(
+            main_binder.semantic_defs.contains_key(&sym_id),
+            "expected semantic_def for '{expected_name}' (SymbolId {}) after lib merge",
+            sym_id.0,
+        );
+    }
+}
+
+#[test]
+fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
+    // If the user declares a type with the same name as a lib type,
+    // the user's semantic_def should take precedence.
+
+    let lib_source = "interface Error {}";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    // User declares their own Error class.
+    let user_source = "class Error { message: string; }";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    // User's Error should be a Class, not an Interface.
+    let user_sym_id = main_binder.file_locals.get("Error").unwrap();
+    let user_entry = main_binder.semantic_defs.get(&user_sym_id).unwrap();
+    assert_eq!(user_entry.kind, super::SemanticDefKind::Class);
+
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // After merge, the semantic_def for Error should still be the user's Class.
+    // The lib's Interface version should NOT overwrite it.
+    // Note: can_merge_symbols allows Class+Interface merging, so the file_locals
+    // entry reuses the user's SymbolId with merged flags. The semantic_def
+    // should still be the user's original entry.
+    let merged_sym_id = main_binder.file_locals.get("Error").unwrap();
+    let merged_entry = main_binder.semantic_defs.get(&merged_sym_id).unwrap();
+    assert_eq!(
+        merged_entry.kind,
+        super::SemanticDefKind::Class,
+        "user's semantic_def should not be overwritten by lib merge"
+    );
+}

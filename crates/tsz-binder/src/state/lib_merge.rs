@@ -325,6 +325,46 @@ impl BinderState {
             }
         }
 
+        // Phase 4: Propagate semantic_defs from lib binders with remapped SymbolIds.
+        //
+        // Lib binders record `semantic_defs` for their top-level declarations during
+        // binding (TypeAlias, Interface, Class, Enum, Namespace). After Phase 1
+        // remaps SymbolIds, the main binder's `semantic_defs` doesn't know about
+        // these merged lib symbols. Without this, `pre_populate_def_ids_from_binder`
+        // only covers user-declared types, and lib symbols fall through to the
+        // `get_or_create_def_id` repair path in the checker.
+        //
+        // By propagating here, the main binder's `semantic_defs` includes all
+        // merged lib symbols, so the checker's `pre_populate_def_ids_from_binder`
+        // creates stable DefIds for them at construction time.
+        for lib_ctx in lib_contexts {
+            let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
+
+            for (&old_sym_id, entry) in &lib_ctx.binder.semantic_defs {
+                if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
+                    // Don't overwrite user-declared semantic_defs (user symbols take precedence,
+                    // same policy as file_locals in Phase 3).
+                    if !self.semantic_defs.contains_key(&new_id) {
+                        // Update file_id to match the remapped symbol's decl_file_idx
+                        // so that DefinitionStore composite key lookups stay consistent.
+                        let file_id = self
+                            .symbols
+                            .get(new_id)
+                            .map_or(entry.file_id, |s| s.decl_file_idx);
+                        self.semantic_defs.insert(
+                            new_id,
+                            super::SemanticDefEntry {
+                                kind: entry.kind,
+                                name: entry.name.clone(),
+                                file_id,
+                                span_start: entry.span_start,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
         // Mark that lib symbols have been merged
         self.lib_symbols_merged = true;
     }
