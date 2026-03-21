@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
+
 use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};

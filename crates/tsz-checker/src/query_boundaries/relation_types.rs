@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
+
 //! Checker-facing structured failure types for relation queries.
 //!
 //! Wraps solver's `SubtypeFailureReason` with additional checker context
