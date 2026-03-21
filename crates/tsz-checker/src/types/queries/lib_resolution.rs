@@ -8,8 +8,8 @@
 //!
 //! 1. [`resolve_lib_node_in_arenas`] — `NodeIndex` → raw `SymbolId` value via
 //!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
-//! 2. [`CheckerContext::get_or_create_def_id`] — SymbolId → DefId via the
-//!    stable, validated, cached identity path.
+//! 2. [`CheckerContext::get_lib_def_id`] — SymbolId → DefId, preferring
+//!    pre-populated identities from `semantic_defs` with on-demand fallback.
 //!
 //! All lib-lowering resolver closures should delegate to these helpers instead
 //! of maintaining per-call caches.
@@ -593,14 +593,9 @@ impl<'a> CheckerState<'a> {
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Record type parameters for generic interfaces.
-                            // Prefer get_existing_def_id: lib symbols should be pre-populated
-                            // via semantic_defs propagation in merge_lib_contexts_into_binder.
                             let file_sym_id =
                                 self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = self
-                                .ctx
-                                .get_existing_def_id(file_sym_id)
-                                .unwrap_or_else(|| self.ctx.get_or_create_def_id(file_sym_id));
+                            let def_id = self.ctx.get_lib_def_id(file_sym_id);
                             if !params.is_empty() {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
@@ -649,10 +644,7 @@ impl<'a> CheckerState<'a> {
                                     // Cache type parameters for Application expansion.
                                     // Prefer get_existing_def_id: lib symbols should be
                                     // pre-populated via semantic_defs propagation.
-                                    let def_id = self
-                                        .ctx
-                                        .get_existing_def_id(sym_id)
-                                        .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
+                                    let def_id = self.ctx.get_lib_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
                                     // CRITICAL: Register the type body in TypeEnvironment so that
@@ -853,14 +845,11 @@ impl<'a> CheckerState<'a> {
                 };
                 // DefId resolver: delegates to the SymbolId resolver above.
                 // Prefers pre-populated DefIds from semantic_defs propagation;
-                // falls back to get_or_create_def_id for non-top-level symbols.
+                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
+                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).map(|raw_sym| {
-                        let sym_id = tsz_binder::SymbolId(raw_sym);
-                        self.ctx
-                            .get_existing_def_id(sym_id)
-                            .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id))
-                    })
+                    resolver(node_idx)
+                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
                 };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     arena_ref,
