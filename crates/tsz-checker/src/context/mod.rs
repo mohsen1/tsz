@@ -1113,6 +1113,10 @@ impl ProjectEnv {
             ctx.global_augmentation_targets_index = Some(Arc::clone(idx));
         }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
+        // Pre-populate DefIds from all cross-file binders' semantic_defs.
+        // This moves identity creation to apply_to time (deterministic, early)
+        // rather than on-demand in get_or_create_def_id's O(N) repair path.
+        ctx.pre_populate_def_ids_from_all_binders();
         {
             let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
             for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
