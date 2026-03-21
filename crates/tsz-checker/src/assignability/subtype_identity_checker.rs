@@ -417,13 +417,14 @@ impl<'a> CheckerState<'a> {
     /// Our checker may preserve the literal return type, so we widen it here
     /// before the identity comparison to avoid false TS2403 positives.
     fn widen_function_return_type_for_redeclaration(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
+        use crate::query_boundaries::common;
 
-        // For Function types: widen the return type directly
-        if let Some(shape) = type_queries::get_function_shape(self.ctx.types, type_id) {
+        // For Function types: widen the return type directly.
+        // Uses public solver query APIs (get_function_shape, replace_function_return_type).
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
             let widened_return = tsz_solver::widen_literal_type(self.ctx.types, shape.return_type);
             if widened_return != shape.return_type {
-                return type_queries::replace_function_return_type(
+                return tsz_solver::type_queries::replace_function_return_type(
                     self.ctx.types,
                     type_id,
                     widened_return,
@@ -432,32 +433,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // For Callable types (e.g., `{ (s: string): number }`): widen each
-        // call signature's return type.
-        if let Some(tsz_solver::TypeData::Callable(callable_id)) = self.ctx.types.lookup(type_id) {
-            let callable = self.ctx.types.callable_shape(callable_id);
-            let mut any_changed = false;
-            let new_call_sigs: Vec<_> = callable
-                .call_signatures
-                .iter()
-                .map(|sig| {
-                    let widened = tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
-                    if widened != sig.return_type {
-                        any_changed = true;
-                        let mut new_sig = sig.clone();
-                        new_sig.return_type = widened;
-                        new_sig
-                    } else {
-                        sig.clone()
-                    }
-                })
-                .collect();
-            if any_changed {
-                let mut new_shape = (*callable).clone();
-                new_shape.call_signatures = new_call_sigs;
-                return self.ctx.types.callable(new_shape);
-            }
-        }
-
-        type_id
+        // call signature's return type via boundary helper.
+        common::widen_callable_literal_return_types(self.ctx.types, type_id)
     }
 }
