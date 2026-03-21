@@ -396,8 +396,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         yield_star_return_type = Some(ctx_return);
                     }
                     // Collect yield* element type for unannotated generators when resolvable
-                    // (skip when async iterator info is None/fallback ANY)
-                    if self.checker.ctx.current_yield_type().is_none() && async_info.is_some() {
+                    // (skip when async iterator info is None/fallback ANY).
+                    // Always collect regardless of contextual yield type — the final
+                    // generator yield type must come from actual body yields, not context
+                    // (see function_type.rs comment on final_generator_yield_type).
+                    if async_info.is_some() {
                         self.checker.ctx.generator_yield_operand_types.push(element);
                     }
                     element
@@ -419,10 +422,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_generator_return_type_argument(expression_type);
                     }
                     // Collect yield* element type for unannotated generators when resolvable
-                    // (skip when get_iterator_info returns None/fallback ANY)
-                    if self.checker.ctx.current_yield_type().is_none()
-                        && let Some(ref i) = info
-                    {
+                    // (skip when get_iterator_info returns None/fallback ANY).
+                    // Always collect regardless of contextual yield type — the final
+                    // generator yield type must come from actual body yields, not context
+                    // (see function_type.rs comment on final_generator_yield_type).
+                    if let Some(ref i) = info {
                         self.checker
                             .ctx
                             .generator_yield_operand_types
@@ -435,14 +439,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
         };
 
-        // Collect yield operand type for unannotated generators (yield_type is None).
+        // Collect yield operand type for unannotated generators.
         // After body check, the union determines the inferred yield type for
         // TS7055/TS7025 vs TS7057 discrimination.
+        // Always collect regardless of contextual yield type — the final
+        // generator yield type must come from actual body yields, not context
+        // (see function_type.rs comment on final_generator_yield_type).
         // Only collect for regular `yield expr` (not yield*), and skip when the
         // operand is itself a yield expression — its `any` result type is the TNext
         // fallback, not a real yielded value (e.g. `yield yield` should not make
         // TYield = any).
-        if self.checker.ctx.current_yield_type().is_none() && !yield_expr.asterisk_token {
+        if !yield_expr.asterisk_token {
             let operand_is_yield = yield_expr.expression.is_some()
                 && self
                     .checker
