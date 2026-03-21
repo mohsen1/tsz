@@ -71,22 +71,6 @@ impl<'a> CheckerState<'a> {
         self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
     }
 
-    /// Legacy entry point: accepts a pre-computed weak-union-violation hint.
-    /// Delegates to `should_skip_weak_union_error_with_outcome` which uses
-    /// the full `RelationOutcome` for both weak-union detection AND property
-    /// classification. When no outcome is available, builds one from the hint.
-    #[allow(dead_code)]
-    fn should_skip_weak_union_error_with_hint(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        source_idx: NodeIndex,
-        _weak_union_hint: Option<bool>,
-    ) -> bool {
-        // Route through the canonical outcome-based path.
-        self.should_skip_weak_union_error_with_outcome(source, target, source_idx, None)
-    }
-
     /// Like `should_skip_weak_union_error`, but uses a pre-computed
     /// `RelationOutcome` from a prior boundary call to avoid redundant
     /// property enumeration and compatibility checks.
@@ -396,7 +380,7 @@ impl<'a> CheckerState<'a> {
         // assignability result and structured failure info in one boundary call.
         // The `is_assignable_to` call shares solver preparation (evaluate, env
         // resolution, variance fast-path) and the outcome's `weak_union_violation`
-        // flag feeds into `should_skip_weak_union_error_with_hint` to avoid a
+        // flag feeds into `should_skip_weak_union_error_with_outcome` to avoid a
         // second solver round-trip for failure analysis.
         if self.is_assignable_to(source, target) {
             return true;
@@ -760,18 +744,6 @@ impl<'a> CheckerState<'a> {
 
     /// Check if source object literal has properties that don't exist in target.
     ///
-    /// Delegates to the canonical excess-property algorithm in
-    /// `state/state_checking/property.rs` to avoid duplicated logic.
-    #[allow(dead_code)]
-    pub(crate) fn object_literal_has_excess_properties(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        _source_idx: NodeIndex,
-    ) -> bool {
-        self.source_has_excess_properties(source, target)
-    }
-
     pub(crate) fn analyze_assignability_failure(
         &mut self,
         source: TypeId,
