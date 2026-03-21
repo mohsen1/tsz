@@ -374,6 +374,14 @@ pub(super) fn collect_diagnostics(
             ))
         });
 
+    // Pre-compute expando index from skeleton when available.
+    // This avoids re-scanning all binders for expando property assignments.
+    let skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>> =
+        program
+            .skeleton_index
+            .as_ref()
+            .map(|skel| Arc::new(skel.expando_properties.clone()));
+
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
@@ -399,6 +407,11 @@ pub(super) fn collect_diagnostics(
             checker
                 .ctx
                 .set_declared_modules_from_skeleton(Arc::clone(dm));
+        }
+        if let Some(ref ei) = skeleton_expando_index {
+            checker
+                .ctx
+                .set_expando_index_from_skeleton(Arc::clone(ei));
         }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         {
@@ -523,6 +536,7 @@ pub(super) fn collect_diagnostics(
                             typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
                             skeleton_declared_modules: skeleton_declared_modules.clone(),
+                            skeleton_expando_index: skeleton_expando_index.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -556,6 +570,7 @@ pub(super) fn collect_diagnostics(
                             typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
                             skeleton_declared_modules: skeleton_declared_modules.clone(),
+                            skeleton_expando_index: skeleton_expando_index.clone(),
                         };
                         check_file_for_parallel(context)
                     })
@@ -681,6 +696,11 @@ pub(super) fn collect_diagnostics(
                 checker
                     .ctx
                     .set_declared_modules_from_skeleton(Arc::clone(dm));
+            }
+            if let Some(ref ei) = skeleton_expando_index {
+                checker
+                    .ctx
+                    .set_expando_index_from_skeleton(Arc::clone(ei));
             }
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             {
@@ -1006,6 +1026,8 @@ pub(super) struct CheckFileForParallelContext<'a> {
     program_has_real_syntax_errors: bool,
     /// Pre-computed declared modules from skeleton index, shared across all checkers.
     skeleton_declared_modules: Option<Arc<tsz::checker::context::GlobalDeclaredModules>>,
+    /// Pre-computed expando index from skeleton index, shared across all checkers.
+    skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
 }
 
 /// Check a single file for the parallel checking path.
@@ -1040,6 +1062,7 @@ pub(super) fn check_file_for_parallel<'a>(
         typescript_dom_replacement_globals,
         program_has_real_syntax_errors,
         skeleton_declared_modules,
+        skeleton_expando_index,
     } = context;
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
@@ -1090,6 +1113,11 @@ pub(super) fn check_file_for_parallel<'a>(
         checker
             .ctx
             .set_declared_modules_from_skeleton(Arc::clone(dm));
+    }
+    if let Some(ref ei) = skeleton_expando_index {
+        checker
+            .ctx
+            .set_expando_index_from_skeleton(Arc::clone(ei));
     }
     checker.ctx.set_all_binders(Arc::clone(all_binders));
     {
@@ -1457,6 +1485,9 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             checker.ctx.set_declared_modules_from_skeleton(Arc::new(
                 tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
             ));
+            checker
+                .ctx
+                .set_expando_index_from_skeleton(Arc::new(skel.expando_properties.clone()));
         }
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker.ctx.set_current_file_idx(0);

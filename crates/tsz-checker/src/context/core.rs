@@ -187,6 +187,22 @@ impl<'a> CheckerContext<'a> {
         self.global_declared_modules = Some(declared_modules);
     }
 
+    /// Pre-populate `global_expando_index` from skeleton-derived data.
+    ///
+    /// When called before `set_all_binders`, this avoids the O(N) binder scan
+    /// for expando property assignments — the skeleton already captured all
+    /// `expando_properties` during the parallel parse/bind phase and the
+    /// `SkeletonIndex` merged them across files.
+    ///
+    /// If `global_expando_index` is already `Some` when `set_all_binders` runs,
+    /// the binder-scanning loop for expando properties is skipped entirely.
+    pub fn set_expando_index_from_skeleton(
+        &mut self,
+        expando_index: Arc<FxHashMap<String, FxHashSet<String>>>,
+    ) {
+        self.global_expando_index = Some(expando_index);
+    }
+
     /// Set all binders for cross-file resolution.
     ///
     /// Also builds the `global_file_locals_index` and `global_module_exports_index`
@@ -255,14 +271,19 @@ impl<'a> CheckerContext<'a> {
         }
 
         // Build the global expando properties index: obj_key -> {property_names}
-        let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
-        for binder in binders.iter() {
-            for (obj_key, props) in binder.expando_properties.iter() {
-                expando_index
-                    .entry(obj_key.clone())
-                    .or_default()
-                    .extend(props.iter().cloned());
+        // If pre-populated from skeleton, skip the binder scan.
+        let has_skeleton_expando = self.global_expando_index.is_some();
+        if !has_skeleton_expando {
+            let mut expando_index: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+            for binder in binders.iter() {
+                for (obj_key, props) in binder.expando_properties.iter() {
+                    expando_index
+                        .entry(obj_key.clone())
+                        .or_default()
+                        .extend(props.iter().cloned());
+                }
             }
+            self.global_expando_index = Some(Arc::new(expando_index));
         }
 
         // Set declared modules from binder scan if not already from skeleton
@@ -296,7 +317,6 @@ impl<'a> CheckerContext<'a> {
 
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
-        self.global_expando_index = Some(Arc::new(expando_index));
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
         self.all_binders = Some(binders);
@@ -330,6 +350,26 @@ impl<'a> CheckerContext<'a> {
                     "skeleton declared_modules patterns differ from binder-built"
                 );
             }
+    }
+
+    /// Validate that skeleton-derived expando index matches the binder-built one.
+    ///
+    /// Called from the orchestration layer after `set_all_binders` when a
+    /// `SkeletonIndex` is available. In debug builds, asserts exact match between
+    /// the two construction paths. In release builds, this is a no-op.
+    pub fn validate_skeleton_expando_index(
+        &self,
+        skeleton_expando: &FxHashMap<String, FxHashSet<String>>,
+    ) {
+        if cfg!(debug_assertions) {
+            if let Some(ref built) = self.global_expando_index {
+                assert_eq!(
+                    built.as_ref(),
+                    skeleton_expando,
+                    "skeleton expando_index differs from binder-built"
+                );
+            }
+        }
     }
 
     /// Set resolved module paths map for cross-file import resolution.

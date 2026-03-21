@@ -1151,6 +1151,9 @@ pub struct FileSkeleton {
     /// These represent module specifiers that have explicit export declarations
     /// (e.g., from `declare module "xxx" { export ... }`).
     pub module_export_specifiers: Vec<String>,
+    /// Expando property assignments: maps identifier name -> set of property names
+    /// assigned via `X.prop = value` patterns. Used to suppress false TS2339 errors.
+    pub expando_properties: Vec<(String, Vec<String>)>,
     /// Binder-detected file features (generators, decorators, etc.).
     pub file_features: crate::binder::FileFeatures,
 }
@@ -1280,6 +1283,18 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     let mut module_export_specifiers: Vec<String> = result.module_exports.keys().cloned().collect();
     module_export_specifiers.sort();
 
+    // Expando properties: convert FxHashMap<String, FxHashSet<String>> to sorted Vec
+    let mut expando_properties: Vec<(String, Vec<String>)> = result
+        .expando_properties
+        .iter()
+        .map(|(obj_key, props)| {
+            let mut sorted_props: Vec<String> = props.iter().cloned().collect();
+            sorted_props.sort();
+            (obj_key.clone(), sorted_props)
+        })
+        .collect();
+    expando_properties.sort_by(|a, b| a.0.cmp(&b.0));
+
     FileSkeleton {
         file_name: result.file_name.clone(),
         is_external_module: result.is_external_module,
@@ -1291,6 +1306,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
+        expando_properties,
         file_features: result.file_features,
     }
 }
@@ -1331,6 +1347,9 @@ pub struct SkeletonIndex {
     pub shorthand_ambient_modules: FxHashSet<String>,
     /// All module export specifiers across all files (keys from `module_exports`).
     pub module_export_specifiers: FxHashSet<String>,
+    /// Merged expando property assignments across all files.
+    /// Maps identifier name -> set of property names assigned via `X.prop = value`.
+    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     /// Total number of top-level symbols across all files (before merge).
     pub total_symbol_count: usize,
     /// Total number of re-export edges across all files.
@@ -1353,6 +1372,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_export_specifiers = FxHashSet::default();
+    let mut expando_properties: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
     let mut total_symbol_count = 0usize;
     let mut total_reexport_count = 0usize;
     let mut total_wildcard_reexport_count = 0usize;
@@ -1393,6 +1413,13 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         declared_modules.extend(skeleton.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
         module_export_specifiers.extend(skeleton.module_export_specifiers.iter().cloned());
+
+        for (obj_key, props) in &skeleton.expando_properties {
+            expando_properties
+                .entry(obj_key.clone())
+                .or_default()
+                .extend(props.iter().cloned());
+        }
 
         total_reexport_count += skeleton.reexports.len();
         total_wildcard_reexport_count += skeleton.wildcard_reexports.len();
@@ -1439,6 +1466,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
+        expando_properties,
         total_symbol_count,
         total_reexport_count,
         total_wildcard_reexport_count,
@@ -1582,6 +1610,12 @@ impl FileSkeleton {
         }
         for ms in &self.module_export_specifiers {
             size += ms.capacity();
+        }
+        for (obj_key, props) in &self.expando_properties {
+            size += obj_key.capacity();
+            for prop in props {
+                size += prop.capacity();
+            }
         }
         size
     }
