@@ -1187,7 +1187,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target_instantiated =
                     self.instantiate_function_shape(&target_instantiated, &target_canonical);
             }
-
         }
 
         source_instantiated = self.normalize_rest_param_types(&source_instantiated);
