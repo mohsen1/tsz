@@ -97,13 +97,10 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         check_enum_members: bool,
     ) {
-        if !self.ctx.compiler_options.strict_null_checks {
-            return;
-        }
-
         use crate::diagnostics::diagnostic_codes;
 
-        if ty == TypeId::VOID {
+        // TS1345 (void truthiness) requires strictNullChecks
+        if self.ctx.compiler_options.strict_null_checks && ty == TypeId::VOID {
             self.error_at_node(
                 node_idx,
                 "An expression of type 'void' cannot be tested for truthiness.",
@@ -255,6 +252,16 @@ impl<'a> CheckerState<'a> {
                     return SyntacticTruthiness::AlwaysFalsy;
                 }
                 SyntacticTruthiness::Sometimes
+            }
+            // `undefined` identifier is always falsy
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(ident) = self.ctx.arena.get_identifier(node)
+                    && ident.escaped_text == "undefined"
+                {
+                    SyntacticTruthiness::AlwaysFalsy
+                } else {
+                    SyntacticTruthiness::Sometimes
+                }
             }
             // String/template literals: truthy if non-empty, falsy if empty
             k if k == SyntaxKind::StringLiteral as u16
