@@ -600,7 +600,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .copied()
             .filter(|(name, _)| !self.is_late_bound_symbol_property_name(*name))
             .collect();
-        if !non_symbol_missing.is_empty() {
+        if non_symbol_missing.is_empty() {
+            // All missing properties are late-bound symbols (e.g. [Symbol.iterator]).
+            // tsc does not list symbol-only missing properties in TS2739/TS2741 messages;
+            // clear so we fall through to property type checking or TypeMismatch.
+            missing_with_order.clear();
+        } else {
             missing_with_order = non_symbol_missing;
         }
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order

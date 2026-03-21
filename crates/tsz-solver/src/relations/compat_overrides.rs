@@ -528,6 +528,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             b_changed = b != b_norm,
             "are_types_identical_for_redeclaration: normalized"
         );
+
+        // Re-check `any` identity after normalization. Homomorphic mapped types
+        // applied to `any` evaluate to `any` (e.g., `FindConditions<any>` → `any`).
+        // The pre-normalization check at line 507 only catches literal `any` inputs;
+        // if normalization produces `any`, the bidirectional subtype check below
+        // would treat it as top/bottom at depth 0 (TopLevelOnly mode), causing a
+        // false positive. Re-applying the rule here ensures that a post-evaluation
+        // `any` is only identical to `any`.
+        if a_norm == b_norm {
+            return true;
+        }
+        if a_norm == TypeId::ANY || b_norm == TypeId::ANY {
+            return false;
+        }
+
         // 5 pre-check: Callable signature type parameter identity.
         //
         // The bidirectional subtype check below uses coinductive cycle detection,

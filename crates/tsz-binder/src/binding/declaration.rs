@@ -55,6 +55,16 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
+                // Track variable declarations inside `declare global { }` blocks
+                // as global augmentations, just like interfaces and namespaces.
+                // This enables cross-file conflict detection with UMD exports.
+                if self.in_global_augmentation {
+                    self.global_augmentations
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(crate::state::GlobalAugmentation::new(idx));
+                }
+
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 self.node_symbols.insert(decl.name.0, sym_id);
             } else {

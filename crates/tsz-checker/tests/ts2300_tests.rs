@@ -780,3 +780,34 @@ fn var_type_alias_conflict_emits_ts2300() {
         "Should NOT emit TS2451 when no block-scoped variable is involved"
     );
 }
+
+/// Test that let+var+function at the same top-level scope get TS2300.
+#[test]
+fn let_var_function_same_scope_ts2300() {
+    let diagnostics = verify_errors(
+        "let e0\nvar e0;\nfunction e0() { }",
+        &[
+            (1, 5, "Duplicate identifier 'e0'."),
+            (2, 5, "Duplicate identifier 'e0'."),
+            (3, 10, "Duplicate identifier 'e0'."),
+        ],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 3, "All three should be TS2300");
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    assert_eq!(ts2451, 0, "No TS2451 for same-scope let/var/function");
+}
+
+/// Test that var-before-let at the same scope level gets TS2300.
+#[test]
+fn var_before_let_same_scope_ts2300() {
+    let diagnostics = verify_errors(
+        "var x = 0;\nlet x = 0;",
+        &[
+            (1, 5, "Duplicate identifier 'x'."),
+            (2, 5, "Duplicate identifier 'x'."),
+        ],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 2, "var-before-let should be TS2300");
+}

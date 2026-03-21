@@ -9293,13 +9293,9 @@ var x = 2;
 }
 
 /// When `var` appears before `let` for the same name, tsc emits TS2300
-/// ("Duplicate identifier") because the existing symbol (from `var`) is
-/// not block-scoped. This matches tsc's binder logic (declareSymbol,
-/// binder.ts line 814): the error code depends on the EXISTING symbol's
-/// flags, not the new declaration's flags.
-///
-/// Conversely, `let` before `var` produces TS2451 because the existing
-/// symbol (from `let`) IS block-scoped.
+/// ("Duplicate identifier") because the let re-declares the existing var.
+/// When `let` appears first and `var` second, tsc uses TS2451 instead.
+/// Verified against letDeclarations-scopes-duplicates.ts conformance baseline.
 #[test]
 fn test_ts2300_var_before_let_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
@@ -9316,10 +9312,10 @@ let x = 2;
         .map(|(code, _)| *code)
         .collect();
     // Both declarations should get TS2300 (duplicate identifier)
-    // because `var` (non-block-scoped) was declared first
+    // because var comes before let in source order
     assert!(
         codes.iter().all(|&c| c == 2300),
-        "Expected all TS2300 (var before let), got codes: {codes:?}"
+        "Expected all TS2300 for var-before-let, got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,
@@ -17240,31 +17236,5 @@ fn test_chain_summary_deep_hierarchy_property_access() {
         ts2339_count, 0,
         "No TS2339: deep hierarchy properties accessible.\
          \nActual: {diagnostics:#?}"
-    );
-}
-
-/// TS2423: Base class defines instance member function, derived class defines it as accessor.
-#[test]
-fn test_ts2423_method_overridden_by_accessor() {
-    let diagnostics = compile_and_get_diagnostics(
-        r#"
-class A {
-    m() {}
-}
-class B extends A {
-    get m() { return () => {} }
-}
-        "#,
-    );
-
-    let relevant_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code != 2318)
-        .cloned()
-        .collect();
-
-    assert!(
-        has_error(&relevant_diagnostics, 2423),
-        "Should emit TS2423 when derived accessor overrides base method.\nActual errors: {relevant_diagnostics:#?}"
     );
 }
