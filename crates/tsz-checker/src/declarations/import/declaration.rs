@@ -654,15 +654,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(binders) = &self.ctx.all_binders
-            && binders.iter().any(|binder| {
-                binder.declared_modules.contains(module_name)
-                    || binder.shorthand_ambient_modules.contains(module_name)
-            })
+        // Use global declared modules index for O(1) lookup
         {
-            tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
-            self.ctx.import_resolution_stack.pop();
-            return;
+            let found = if let Some(declared) = &self.ctx.global_declared_modules {
+                let normalized = module_name.trim_matches('"').trim_matches('\'');
+                declared.exact.contains(normalized)
+            } else if let Some(binders) = &self.ctx.all_binders {
+                binders.iter().any(|binder| {
+                    binder.declared_modules.contains(module_name)
+                        || binder.shorthand_ambient_modules.contains(module_name)
+                })
+            } else {
+                false
+            };
+            if found {
+                tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
         }
 
         // For side-effect imports (import "module") in default mode (no_unchecked_side_effect_imports=false),

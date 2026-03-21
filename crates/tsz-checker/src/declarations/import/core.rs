@@ -1109,6 +1109,23 @@ impl<'a> CheckerState<'a> {
 
     fn any_ambient_module_declared(&self, module_name: &str) -> bool {
         let normalized = module_name.trim_matches('"').trim_matches('\'');
+
+        // Use the pre-built global index for O(1) exact lookup + small pattern scan
+        if let Some(declared) = &self.ctx.global_declared_modules {
+            // O(1) exact match
+            if declared.exact.contains(normalized) {
+                return true;
+            }
+            // Small linear scan over wildcard patterns only
+            for pattern in &declared.patterns {
+                if Self::module_name_matches_pattern_for_imports(pattern, normalized) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Fallback: scan all binders (when global index not built)
         let Some(all_binders) = &self.ctx.all_binders else {
             return false;
         };

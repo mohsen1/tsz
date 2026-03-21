@@ -424,10 +424,26 @@ impl<'a> CheckerState<'a> {
     ///
     /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
     pub(crate) fn is_ambient_module_match(&self, module_name: &str) -> bool {
+        // Check current binder first (always available)
         if self.binder_has_ambient_module(self.ctx.binder, module_name) {
             return true;
         }
 
+        // Use the pre-built global index for O(1) exact + small pattern scan
+        if let Some(declared) = &self.ctx.global_declared_modules {
+            let normalized = module_name.trim().trim_matches('"').trim_matches('\'');
+            if declared.exact.contains(normalized) {
+                return true;
+            }
+            for pattern in &declared.patterns {
+                if Self::module_name_matches_pattern(pattern, module_name) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Fallback: scan all binders
         if let Some(binders) = &self.ctx.all_binders {
             for binder in binders.iter() {
                 if self.binder_has_ambient_module(binder, module_name) {

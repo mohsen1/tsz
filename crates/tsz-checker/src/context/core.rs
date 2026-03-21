@@ -177,6 +177,8 @@ impl<'a> CheckerContext<'a> {
         // Build the global module_exports index: (module_specifier, export_name) -> Vec<(file_idx, SymbolId)>
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();
+        // Build the global declared modules index: exact names + wildcard patterns
+        let mut declared_modules = super::GlobalDeclaredModules::default();
 
         for (file_idx, binder) in binders.iter().enumerate() {
             for (name, &sym_id) in binder.file_locals.iter() {
@@ -192,11 +194,37 @@ impl<'a> CheckerContext<'a> {
                         .or_default()
                         .push((file_idx, sym_id));
                 }
+                // Also index the module_exports key itself as a declared module
+                let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                if normalized.contains('*') {
+                    declared_modules.patterns.push(normalized.to_string());
+                } else {
+                    declared_modules.exact.insert(normalized.to_string());
+                }
+            }
+
+            // Index declared_modules and shorthand_ambient_modules
+            for name in binder
+                .declared_modules
+                .iter()
+                .chain(binder.shorthand_ambient_modules.iter())
+            {
+                let normalized = name.trim_matches('"').trim_matches('\'');
+                if normalized.contains('*') {
+                    declared_modules.patterns.push(normalized.to_string());
+                } else {
+                    declared_modules.exact.insert(normalized.to_string());
+                }
             }
         }
 
+        // Deduplicate wildcard patterns
+        declared_modules.patterns.sort();
+        declared_modules.patterns.dedup();
+
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
+        self.global_declared_modules = Some(Arc::new(declared_modules));
         self.all_binders = Some(binders);
     }
 
