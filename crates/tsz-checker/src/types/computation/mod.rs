@@ -15,6 +15,9 @@
 //! - `tagged_template` — tagged template expression type resolution
 
 pub(crate) mod access;
+pub(crate) mod access_await;
+pub(crate) mod access_helpers;
+pub(crate) mod access_super;
 pub(crate) mod array_literal;
 pub(crate) mod binary;
 pub(crate) mod call;
