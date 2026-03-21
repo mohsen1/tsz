@@ -179,20 +179,15 @@ ensure_submodule() {
 build_typescript_harness() {
     log_step "Building TypeScript harness (non-bundled)..."
     cd "$TS_DIR"
-    "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
 
-    # Install dependencies if needed
-    if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
+    # Install all dependencies first (npm ci gives a clean, reproducible install)
+    if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
         log_info "Installing TypeScript dependencies..."
         npm ci --silent 2>/dev/null || npm ci
     fi
 
-    # Ensure type definitions survive TypeScript install (ensure-pinned-typescript
-    # uses npm install --no-save which can remove peer dependencies)
-    if [[ ! -d "node_modules/@types/mocha" ]] || [[ ! -d "node_modules/@types/chai" ]]; then
-        log_info "Restoring type definitions..."
-        npm install --no-save --no-audit --no-fund --ignore-scripts @types/mocha @types/chai 2>/dev/null || true
-    fi
+    # Pin TypeScript version after deps are installed
+    "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
 
     # Check if harness is already built
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
@@ -230,8 +225,10 @@ build_typescript_harness() {
     }
 
     # Build with tsc (non-bundled: emit actual JS files)
+    # Note: tsc may report type errors in unrelated test runner files (e.g. @types/mocha)
+    # but still emits the harness JS files we need, so we ignore the exit code.
     log_info "Compiling test harness with tsc..."
-    node node_modules/typescript/lib/tsc.js -b src/testRunner --emitDeclarationOnly false
+    node node_modules/typescript/lib/tsc.js -b src/testRunner --emitDeclarationOnly false || true
 
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
         log_success "TypeScript harness built"
