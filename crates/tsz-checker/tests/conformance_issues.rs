@@ -15401,7 +15401,6 @@ f2(
 }
 
 #[test]
-#[ignore = "regression: dispatch refactor"]
 fn test_generic_contextual_filter_callback_preserves_constraint() {
     let source = r"
 type Box<T> = { value: T };
