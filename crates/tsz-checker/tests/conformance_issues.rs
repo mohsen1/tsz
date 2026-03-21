@@ -9259,14 +9259,11 @@ import { nonExistent } from "./thisModule";
     }
 }
 
-/// TS2451 vs TS2300: when `let` appears before `var` for the same name, tsc emits TS2451
-/// ("Cannot redeclare block-scoped variable") rather than TS2300 ("Duplicate identifier").
-/// The distinction depends on which declaration appears first in source order.
-///
-/// Regression test: the binder's declaration vector can be reordered by var hoisting,
-/// so we must use source position to determine the first declaration.
+/// When `let` appears BEFORE `var` at the same scope, tsc uses TS2451
+/// ("Cannot redeclare block-scoped variable") because the block-scoped
+/// variable appears first in source order. This is order-dependent behavior.
 #[test]
-fn test_ts2451_let_before_var_emits_block_scoped_error() {
+fn test_ts2451_let_before_var_same_scope() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 let x = 1;
@@ -9280,10 +9277,10 @@ var x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // Both declarations should get TS2451 (block-scoped redeclaration)
+    // let first → TS2451
     assert!(
         codes.iter().all(|&c| c == 2451),
-        "Expected all TS2451, got codes: {codes:?}"
+        "Expected all TS2451 for let-first+var at same scope, got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,
@@ -9292,12 +9289,11 @@ var x = 2;
     );
 }
 
-/// When `var` appears before `let` for the same name, tsc emits TS2300
+/// When `var` appears before `let` at the same scope, tsc emits TS2300
 /// ("Duplicate identifier") because the let re-declares the existing var.
-/// When `let` appears first and `var` second, tsc uses TS2451 instead.
 /// Verified against letDeclarations-scopes-duplicates.ts conformance baseline.
 #[test]
-fn test_ts2300_var_before_let_emits_duplicate_identifier() {
+fn test_ts2300_var_before_let_same_scope_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 var x = 1;
@@ -9311,8 +9307,7 @@ let x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // Both declarations should get TS2300 (duplicate identifier)
-    // because var comes before let in source order
+    // var-before-let at same scope → TS2300
     assert!(
         codes.iter().all(|&c| c == 2300),
         "Expected all TS2300 for var-before-let, got codes: {codes:?}"
