@@ -926,10 +926,8 @@ impl<'a> CheckerState<'a> {
                 if self.type_contains_any_type_param(target_prop_type, type_param_names)
                     && tsz_solver::type_param_info(self.ctx.types, target_prop_type).is_some()
                 {
-                    let snap = self.ctx.snapshot_diagnostics();
                     let value_type =
-                        self.get_type_of_node_with_request(prop.initializer, &TypingRequest::NONE);
-                    self.ctx.rollback_diagnostics(&snap);
+                        self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
                     continue;
                 }
@@ -973,12 +971,10 @@ impl<'a> CheckerState<'a> {
                 // Use the target function type as contextual type for the lambda.
                 // Suppress diagnostics from this speculative evaluation
                 // (the params WILL get contextual types in the final pass).
-                let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_node_with_request(
+                let value_type = self.speculative_type_of_node(
                     prop.initializer,
                     &TypingRequest::with_contextual_type(target_prop_type),
                 );
-                self.ctx.rollback_diagnostics(&snap);
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -1023,12 +1019,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_function_with_request(
+                let value_type = self.speculative_type_of_function(
                     elem_idx,
                     &TypingRequest::with_contextual_type(target_prop_type),
                 );
-                self.ctx.rollback_diagnostics(&snap);
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
@@ -1101,12 +1095,10 @@ impl<'a> CheckerState<'a> {
                 .all(|param| !self.type_contains_any_type_param(param.type_id, type_param_names));
 
             if params_are_concrete {
-                let snap = self.ctx.snapshot_diagnostics();
-                let value_type = self.get_type_of_node_with_request(
+                let value_type = self.speculative_type_of_node(
                     elem_idx,
                     &TypingRequest::with_contextual_type(target_elem_type),
                 );
-                self.ctx.rollback_diagnostics(&snap);
                 elements.push(tsz_solver::TupleElement {
                     type_id: value_type,
                     optional: false,
