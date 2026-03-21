@@ -591,7 +591,15 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         };
 
-        // Walk parameters
+        // Private constructors don't emit parameters in .d.ts — skip dependency tracking
+        if self
+            .arena
+            .has_modifier(&ctor.modifiers, SyntaxKind::PrivateKeyword)
+        {
+            return;
+        }
+
+        // Walk parameters (public and protected constructors)
         for &param_idx in &ctor.parameters.nodes {
             self.analyze_parameter(param_idx);
         }
