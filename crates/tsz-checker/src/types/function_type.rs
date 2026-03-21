@@ -1097,12 +1097,25 @@ impl<'a> CheckerState<'a> {
                 // .d.ts output. check_method_declaration in ambient_signature_checks.rs
                 // handles this for the method-checking path, but get_type_of_function
                 // also processes these methods and must skip as well.
+                // Check the node's own modifiers directly rather than relying on
+                // enclosing_class (which may not be set when get_type_of_function
+                // is called outside the class member checking pass).
                 let is_ambient_private = self.ctx.is_ambient_declaration(idx)
-                    && self
+                    && (self
                         .ctx
-                        .enclosing_class
-                        .as_ref()
-                        .is_some_and(|c| c.is_declared);
+                        .arena
+                        .get_method_decl(node)
+                        .is_some_and(|m| self.has_private_modifier(&m.modifiers))
+                        || self
+                            .ctx
+                            .arena
+                            .get_accessor(node)
+                            .is_some_and(|a| self.has_private_modifier(&a.modifiers))
+                        || self
+                            .ctx
+                            .arena
+                            .get_constructor(node)
+                            .is_some_and(|c| self.has_private_modifier(&c.modifiers)));
                 // When ctx_helper's expected type is  (e.g. a mapped type property
                 // mapping excess keys to ), no param contextual types can be derived.
                 // Do not defer TS7006: the second pass will use the inferred type (possibly
