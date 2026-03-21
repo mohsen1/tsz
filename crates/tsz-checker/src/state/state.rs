@@ -1804,17 +1804,28 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
-                // Function expressions need full body clearing because cached
+                // Function expressions need body clearing because cached
                 // expressions inside the body reference parameter types (via
                 // symbol_types) that change when contextual parameter types
-                // are applied.  Clear params + body recursively.
+                // are applied.  Clear params + body.
                 self.invalidate_node_type_cache(idx);
                 self.invalidate_implicit_any_tracking(idx);
                 if let Some(func) = self.ctx.arena.get_function(node) {
                     for &param_idx in &func.parameters.nodes {
                         self.invalidate_function_param_symbols(param_idx);
                     }
-                    self.clear_type_cache_recursive(func.body);
+                    // For expression-bodied arrows (body is not a Block),
+                    // use targeted invalidation — the body is a single
+                    // expression tree, not a statement list.
+                    if let Some(body_node) = self.ctx.arena.get(func.body) {
+                        if body_node.kind == syntax_kind_ext::BLOCK {
+                            self.clear_type_cache_recursive(func.body);
+                        } else {
+                            // Expression body: targeted invalidation recurses
+                            // into the expression form without walking statements.
+                            self.invalidate_expression_for_contextual_retry(func.body);
+                        }
+                    }
                 }
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
