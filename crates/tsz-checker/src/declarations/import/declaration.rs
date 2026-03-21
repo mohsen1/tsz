@@ -253,22 +253,13 @@ impl<'a> CheckerState<'a> {
 
     /// TS2823: Check that import attributes are only used with supported module options.
     pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
-        use tsz_common::common::ModuleKind;
-
         if attributes_idx.is_none() {
             return;
         }
 
-        let supported = matches!(
-            self.ctx.compiler_options.module,
-            ModuleKind::ESNext
-                | ModuleKind::Node18
-                | ModuleKind::Node20
-                | ModuleKind::NodeNext
-                | ModuleKind::Preserve
-        );
-
-        if !supported && let Some(attr_node) = self.ctx.arena.get(attributes_idx) {
+        if !self.ctx.capabilities.import_attributes_supported
+            && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_position(
                 attr_node.pos,

@@ -109,6 +109,9 @@ mod enum_member_cache_tests;
 #[path = "../tests/enum_merge_tests.rs"]
 mod enum_merge_tests;
 #[cfg(test)]
+#[path = "../tests/environment_capabilities_tests.rs"]
+mod environment_capabilities_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]

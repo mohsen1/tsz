@@ -1204,11 +1204,12 @@ impl<'a> CheckerState<'a> {
 
     /// Emit an appropriate error when a known global is not found.
     fn emit_global_not_found_error(&mut self, idx: NodeIndex, name: &str) -> TypeId {
-        use crate::error_reporter::is_known_dom_global;
-        use tsz_binder::lib_loader;
+        use crate::query_boundaries::capabilities::MissingGlobalKind;
 
-        if !self.ctx.has_lib_loaded() {
-            if lib_loader::is_es2015_plus_type(name) {
+        if !self.ctx.capabilities.has_lib {
+            if let Some(MissingGlobalKind::Es2015PlusType) =
+                self.ctx.capabilities.classify_missing_global(name)
+            {
                 self.error_cannot_find_name_change_lib(name, idx);
             } else {
                 self.error_cannot_find_name_at(name, idx);
@@ -1216,13 +1217,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if is_known_dom_global(name) {
-            self.error_cannot_find_name_at(name, idx);
-            return TypeId::ERROR;
-        }
-        if lib_loader::is_es2015_plus_type(name) {
-            self.error_cannot_find_global_type(name, idx);
-            return TypeId::ERROR;
+        match self.ctx.capabilities.classify_missing_global(name) {
+            Some(MissingGlobalKind::DomGlobal) => {
+                self.error_cannot_find_name_at(name, idx);
+                return TypeId::ERROR;
+            }
+            Some(MissingGlobalKind::Es2015PlusType) => {
+                self.error_cannot_find_global_type(name, idx);
+                return TypeId::ERROR;
+            }
+            _ => {}
         }
 
         let first_char = name.chars().next().unwrap_or('a');

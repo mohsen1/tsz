@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
         // Skip TS2318 emission UNLESS the file declares some core global types
         // manually (indicating the user intentionally set up a minimal-lib
         // environment and expects the check to run).
-        if !self.ctx.compiler_options.no_lib && self.ctx.actual_lib_file_count == 0 {
+        if !self.ctx.capabilities.no_lib && !self.ctx.capabilities.has_lib {
             let has_any_core_type = CORE_GLOBAL_TYPES
                 .iter()
                 .any(|name| self.ctx.binder.file_locals.has(name));

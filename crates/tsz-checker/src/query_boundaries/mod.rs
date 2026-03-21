@@ -3,6 +3,7 @@
 // will be wired in as checker paths migrate to the boundary API.
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod assignability;
+pub(crate) mod capabilities;
 pub(crate) mod checkers;
 pub(crate) mod class;
 pub(crate) mod class_type;

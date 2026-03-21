@@ -662,52 +662,47 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if this is an ES2015+ type that requires a specific lib
-        // If so, emit TS2583 with a suggestion to change the lib
-        if lib_loader::is_es2015_plus_type(name) {
-            self.error_cannot_find_name_change_lib(name, idx);
-            return;
-        }
-
-        // Check if this is a known DOM/ScriptHost global that requires the 'dom' lib
-        // If so, emit TS2584 with a suggestion to include 'dom'
-        if is_known_dom_global(name) {
-            self.error_cannot_find_name_change_target_lib(name, idx);
-            return;
-        }
-
-        // Check if this is a known jQuery global → TS2592
-        if is_known_jquery_global(name) {
-            self.error_cannot_find_name_install_jquery_types(name, idx);
-            return;
-        }
-
-        // Check if this is a known Node.js global → TS2591
-        // Skip for "module" when there are parse errors — the parser likely failed to
-        // parse a module declaration and recovered `module` as an identifier.
-        if is_known_node_global(name) {
-            if self.is_private_name_access_base(idx) {
-                // In private-name access contexts (`obj.#field`), emit TS2304
-                // instead of TS2591.
-            } else if name == "module" && self.has_parse_errors() {
-                // Fall through to TS2304 instead of TS2591 — the parser likely failed
-                // to parse a module declaration and recovered `module` as an identifier.
-            } else {
-                self.error_cannot_find_name_install_node_types(name, idx);
-                return;
+        // Route through the centralized capability classifier for known globals.
+        // This replaces scattered per-global checks with one decision point.
+        use crate::query_boundaries::capabilities::MissingGlobalKind;
+        if let Some(kind) = self.ctx.capabilities.classify_missing_global(name) {
+            match kind {
+                MissingGlobalKind::Es2015PlusType => {
+                    self.error_cannot_find_name_change_lib(name, idx);
+                    return;
+                }
+                MissingGlobalKind::DomGlobal => {
+                    self.error_cannot_find_name_change_target_lib(name, idx);
+                    return;
+                }
+                MissingGlobalKind::JQueryGlobal => {
+                    self.error_cannot_find_name_install_jquery_types(name, idx);
+                    return;
+                }
+                MissingGlobalKind::NodeGlobal => {
+                    // Special cases: private-name access and "module" with parse errors
+                    // fall through to TS2304 instead of TS2591.
+                    if self.is_private_name_access_base(idx) {
+                        // Fall through to TS2304
+                    } else if name == "module" && self.has_parse_errors() {
+                        // Fall through to TS2304
+                    } else {
+                        self.error_cannot_find_name_install_node_types(name, idx);
+                        return;
+                    }
+                }
+                MissingGlobalKind::TestRunnerGlobal => {
+                    self.error_cannot_find_name_install_test_types(name, idx);
+                    return;
+                }
+                MissingGlobalKind::BunGlobal => {
+                    self.error_cannot_find_name_install_bun_types(name, idx);
+                    return;
+                }
+                // CoreGlobalType and FeatureGlobalType are handled by check_missing_global_types,
+                // not the name resolution path.
+                _ => {}
             }
-        }
-
-        // Check if this is a known test runner global → TS2593
-        if is_known_test_runner_global(name) {
-            self.error_cannot_find_name_install_test_types(name, idx);
-            return;
-        }
-
-        // Check if this is a known Bun global → TS2868
-        if name == "Bun" {
-            self.error_cannot_find_name_install_bun_types(name, idx);
-            return;
         }
 
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
@@ -1093,75 +1088,9 @@ impl<'a> CheckerState<'a> {
 }
 
 // =============================================================================
-// Known-Global Classifiers
+// Known-Global Classifiers — CANONICAL LOCATION: query_boundaries/capabilities.rs
 // =============================================================================
-
-/// Check if a name is a known DOM or `ScriptHost` global that requires the 'dom' lib.
-/// These names are well-known browser/runtime APIs that tsc suggests including
-/// the 'dom' lib for when they can't be resolved (TS2584).
-pub(crate) fn is_known_dom_global(name: &str) -> bool {
-    match name {
-        // Console
-        "console"
-        // Window/Document
-        | "window" | "document" | "self"
-        // DOM elements
-        | "HTMLElement" | "HTMLDivElement" | "HTMLSpanElement" | "HTMLInputElement"
-        | "HTMLButtonElement" | "HTMLAnchorElement" | "HTMLImageElement"
-        | "HTMLCanvasElement" | "HTMLFormElement" | "HTMLSelectElement"
-        | "HTMLTextAreaElement" | "HTMLTableElement" | "HTMLMediaElement"
-        | "HTMLVideoElement" | "HTMLAudioElement"
-        // Core DOM interfaces
-        | "Element" | "Node" | "Document" | "Event" | "EventTarget"
-        | "NodeList" | "HTMLCollection" | "DOMTokenList"
-        // Common Web APIs
-        | "XMLHttpRequest" | "fetch" | "Request" | "Response" | "Headers"
-        | "URL" | "URLSearchParams"
-        | "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
-        | "requestAnimationFrame" | "cancelAnimationFrame"
-        | "alert" | "confirm" | "prompt"
-        // Storage
-        | "localStorage" | "sessionStorage" | "Storage"
-        // Navigator/Location/History
-        | "navigator" | "Navigator" | "location" | "Location" | "history" | "History"
-        // Events
-        | "MouseEvent" | "KeyboardEvent" | "TouchEvent" | "FocusEvent"
-        | "CustomEvent" | "MessageEvent" | "ErrorEvent"
-        | "addEventListener" | "removeEventListener"
-        // Canvas/Media
-        | "CanvasRenderingContext2D" | "WebGLRenderingContext"
-        | "MediaStream" | "MediaRecorder"
-        // Workers/ServiceWorker
-        | "Worker" | "ServiceWorker" | "SharedWorker"
-        // Misc browser globals
-        | "MutationObserver" | "IntersectionObserver" | "ResizeObserver"
-        | "Performance" | "performance"
-        | "Blob" | "File" | "FileReader" | "FormData"
-        | "WebSocket" | "ClipboardEvent" | "DragEvent"
-        | "getComputedStyle" | "matchMedia"
-        | "DOMException" | "AbortController" | "AbortSignal"
-        | "TextEncoder" | "TextDecoder"
-        | "crypto" | "Crypto" | "SubtleCrypto"
-        | "queueMicrotask" | "structuredClone"
-        | "atob" | "btoa" => true,
-        _ => false,
-    }
-}
-
-/// Check if a name is a known Node.js global that requires @types/node (TS2580).
-pub(crate) fn is_known_node_global(name: &str) -> bool {
-    matches!(
-        name,
-        "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
-    )
-}
-
-/// Check if a name is a known jQuery global that requires @types/jquery (TS2592).
-pub(crate) fn is_known_jquery_global(name: &str) -> bool {
-    matches!(name, "$" | "jQuery")
-}
-
-/// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2582).
-pub(crate) fn is_known_test_runner_global(name: &str) -> bool {
-    matches!(name, "describe" | "suite" | "it" | "test")
-}
+// The classifier functions (is_known_dom_global, is_known_node_global, etc.)
+// have been consolidated in crate::query_boundaries::capabilities.
+// The EnvironmentCapabilities::classify_missing_global() method is the single
+// decision point for routing unresolved names to diagnostic families.
