@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Flow observation boundary: checker extracts syntactic observations from the
 //! CFG/AST; solver owns the semantic narrowing result.
 //!
