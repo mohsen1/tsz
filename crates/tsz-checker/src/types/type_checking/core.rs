@@ -1313,18 +1313,23 @@ impl<'a> CheckerState<'a> {
         let is_await_using = flags_u32 == node_flags::AWAIT_USING;
 
         // TS2854: Top-level 'await using' requires specific module + target options.
-        // Check when we're at the top level (function_depth == 0) and the environment
-        // doesn't support top-level await using.
-        if is_await_using
-            && self.ctx.function_depth == 0
-            && !self.ctx.capabilities.top_level_await_using_supported
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                list_idx,
-                diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-            );
+        // Routes through the environment capability boundary to determine whether
+        // a diagnostic should be emitted.
+        if is_await_using && self.ctx.function_depth == 0 {
+            use crate::query_boundaries::capabilities::FeatureGate;
+            if self
+                .ctx
+                .capabilities
+                .check_feature_gate(FeatureGate::TopLevelAwaitUsing)
+                .is_some()
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    list_idx,
+                    diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                    diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                );
+            }
         }
 
         // VariableDeclarationList uses the same VariableData structure
