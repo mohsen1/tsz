@@ -808,6 +808,12 @@ impl<'a> CheckerState<'a> {
                                 // They must survive the pre-contextual diagnostic reset.
                                 || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE
                                 || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO
+                                // Preserve TS2454 (variable used before assignment) — these
+                                // are definite-assignment errors for variables referenced
+                                // inside the initializer, not stale contextual-typing
+                                // diagnostics that need to be re-evaluated.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });
