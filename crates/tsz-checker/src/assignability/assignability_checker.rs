@@ -858,6 +858,49 @@ impl<'a> CheckerState<'a> {
         (source, target)
     }
 
+    /// Execute a `RelationRequest` through the canonical boundary, returning
+    /// a structured `RelationOutcome`.
+    ///
+    /// This is the single authoritative checker-level entry point for relation
+    /// queries that need both the assignability result AND structured failure
+    /// information. It replaces the pattern of calling `is_assignable_to` +
+    /// `analyze_assignability_failure` + `is_weak_union_violation` separately.
+    ///
+    /// The request must contain **prepared** (evaluated) source/target types.
+    pub(crate) fn execute_relation_request(
+        &mut self,
+        request: &crate::query_boundaries::assignability::RelationRequest,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        use crate::query_boundaries::assignability::execute_relation;
+
+        let flags = self.ctx.pack_relation_flags();
+        let overrides = CheckerOverrideProvider::new(self, None);
+
+        let mut outcome = execute_relation(
+            request,
+            self.ctx.types,
+            &self.ctx,
+            flags,
+            &self.ctx.inheritance_graph,
+            &overrides,
+            Some(&self.ctx),
+            self.ctx.sound_mode(),
+        );
+
+        // Checker-only post-check: the solver may say "related" but the checker
+        // can downgrade via deferred conditional types or other checker-specific
+        // semantic rules.
+        if outcome.related
+            && self
+                .checker_only_assignability_failure_reason(request.source, request.target)
+                .is_some()
+        {
+            outcome.related = false;
+        }
+
+        outcome
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout

@@ -2776,3 +2776,141 @@ fn test_excess_property_classification_quarantined_to_property_rs() {
         violations.join("\n")
     );
 }
+
+// ========================================================================
+// Canonical RelationRequest / RelationOutcome boundary tests
+// ========================================================================
+//
+// These tests enforce that the canonical `RelationRequest` / `RelationOutcome`
+// / `execute_relation` boundary is the single authoritative path for relation
+// queries that need structured failure information.
+
+/// The `query_boundaries/assignability.rs` boundary must expose the unified
+/// `execute_relation` helper and the `RelationOutcome` / `RelationRequest`
+/// types that the checker uses for single-pass relation + failure collection.
+#[test]
+fn test_relation_request_and_outcome_live_in_query_boundaries() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        boundary_source.contains("pub(crate) struct RelationRequest"),
+        "RelationRequest must be defined in query_boundaries/assignability.rs"
+    );
+    assert!(
+        boundary_source.contains("pub(crate) struct RelationOutcome"),
+        "RelationOutcome must be defined in query_boundaries/assignability.rs"
+    );
+    assert!(
+        boundary_source.contains("pub(crate) fn execute_relation"),
+        "execute_relation boundary helper must be defined in query_boundaries/assignability.rs"
+    );
+
+    // RelationRequest must encode all policy dimensions
+    assert!(
+        boundary_source.contains("pub kind: RelationKind"),
+        "RelationRequest must include a RelationKind field"
+    );
+    assert!(
+        boundary_source.contains("pub excess_property_mode: ExcessPropertyMode"),
+        "RelationRequest must include an ExcessPropertyMode field"
+    );
+    assert!(
+        boundary_source.contains("pub missing_property_mode: MissingPropertyMode"),
+        "RelationRequest must include a MissingPropertyMode field"
+    );
+    assert!(
+        boundary_source.contains("pub source_is_fresh: bool"),
+        "RelationRequest must include a source_is_fresh field"
+    );
+
+    // RelationOutcome must carry structured failure info
+    assert!(
+        boundary_source.contains("pub related: bool"),
+        "RelationOutcome must include a `related` field"
+    );
+    assert!(
+        boundary_source.contains("pub weak_union_violation: bool"),
+        "RelationOutcome must include a `weak_union_violation` field"
+    );
+}
+
+/// The `RelationFailure` enum must live in `relation_types.rs` and provide
+/// structured variant coverage for the semantic families we're unifying.
+#[test]
+fn test_relation_failure_covers_semantic_families() {
+    let source = fs::read_to_string("src/query_boundaries/relation_types.rs")
+        .expect("failed to read query_boundaries/relation_types.rs");
+
+    // Core semantic families that must be represented
+    for variant in [
+        "MissingProperty",
+        "MissingProperties",
+        "ExcessProperty",
+        "IncompatiblePropertyValue",
+        "NoApplicableSignature",
+        "TupleArityMismatch",
+        "WeakUnionViolation",
+        "TypeMismatch",
+    ] {
+        assert!(
+            source.contains(variant),
+            "RelationFailure must include the `{variant}` variant for semantic coverage"
+        );
+    }
+}
+
+/// `assignability_checker.rs` must use `execute_relation_request` as the
+/// canonical checker-level entry point for structured relation queries.
+#[test]
+fn test_assignability_checker_has_execute_relation_request() {
+    let source = fs::read_to_string("src/assignability/assignability_checker.rs")
+        .expect("failed to read assignability_checker.rs");
+
+    assert!(
+        source.contains("fn execute_relation_request("),
+        "assignability_checker must define execute_relation_request as the canonical \
+         checker-level entry point for structured relation queries"
+    );
+    assert!(
+        source.contains("execute_relation("),
+        "execute_relation_request must delegate to the query_boundaries::execute_relation helper"
+    );
+}
+
+/// `assignability_diagnostics.rs` diagnostic paths must use the relation
+/// outcome's weak_union_violation hint instead of re-calling the solver.
+#[test]
+fn test_diagnostic_paths_use_relation_outcome_hint() {
+    let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+
+    // The `check_assignable_or_report_at` method should build a RelationRequest
+    assert!(
+        source.contains("RelationRequest::assign("),
+        "check_assignable_or_report_at must build a RelationRequest::assign for the canonical path"
+    );
+    assert!(
+        source.contains("execute_relation_request("),
+        "check_assignable_or_report_at must call execute_relation_request"
+    );
+    assert!(
+        source.contains("should_skip_weak_union_error_with_hint("),
+        "diagnostic paths must use should_skip_weak_union_error_with_hint \
+         to avoid re-calling the solver for weak-union detection"
+    );
+}
+
+/// `check_argument_assignable_or_report` must use the canonical
+/// `RelationRequest::call_arg` path for call-argument relation queries.
+#[test]
+fn test_call_arg_diagnostic_uses_canonical_relation_path() {
+    let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+
+    assert!(
+        source.contains("RelationRequest::call_arg("),
+        "check_argument_assignable_or_report must build a RelationRequest::call_arg \
+         for the canonical call-argument relation path"
+    );
+}
