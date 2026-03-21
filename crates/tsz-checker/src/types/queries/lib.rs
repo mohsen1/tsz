@@ -108,10 +108,11 @@ impl<'a> CheckerState<'a> {
                     None
                 };
 
-                // Create def_id_resolver that converts SymbolIds to DefIds
+                // Lib symbols are pre-populated at checker init; use existing DefIds.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+                    resolver(node_idx).and_then(|sym_id| {
+                        self.ctx.get_existing_def_id(tsz_binder::SymbolId(sym_id))
+                    })
                 };
 
                 // Name-based resolver: resolves both simple identifiers and qualified
