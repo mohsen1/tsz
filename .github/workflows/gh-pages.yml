@@ -9,10 +9,12 @@ on:
       - 'docs/architecture.html'
       - 'AGENTS.md'
       - '.github/workflows/gh-pages.yml'
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
+  # Disabled: CI completions create a nonstop stream of deploy triggers
+  # that cancel each other. Use schedule + manual dispatch instead.
+  # workflow_run:
+  #   workflows: ["CI"]
+  #   types: [completed]
+  #   branches: [main]
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC
   workflow_dispatch:
