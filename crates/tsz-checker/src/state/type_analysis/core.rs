@@ -597,21 +597,26 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let namespace_name = self
-                .get_symbol_qualified_name(left_sym_id)
-                .or_else(|| self.entity_name_text(qn.left))
-                .unwrap_or_else(|| symbol.escaped_name.clone());
             let export_names: Vec<String> = symbol
                 .exports
                 .as_ref()
                 .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
                 .unwrap_or_default();
-            self.error_namespace_no_export_with_exports(
-                &namespace_name,
-                &right_name,
-                qn.right,
-                &export_names,
-            );
+            let req =
+                crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
+                    &right_name,
+                    qn.right,
+                    left_sym_id,
+                    export_names,
+                );
+            let failure = match self.resolve_name_structured(&req) {
+                Err(f) => f,
+                Ok(_) => {
+                    // Shouldn't happen since we already failed above, but be safe
+                    return TypeId::ERROR;
+                }
+            };
+            self.report_name_resolution_failure(&req, &failure);
             return TypeId::ERROR;
         }
 
@@ -663,21 +668,25 @@ impl<'a> CheckerState<'a> {
             }
 
             // Not found - report TS2694 or TS2724 (with spelling suggestion)
-            let namespace_name = self
-                .get_symbol_qualified_name(fallback_sym)
-                .or_else(|| self.entity_name_text(qn.left))
-                .unwrap_or_else(|| symbol.escaped_name.clone());
             let export_names: Vec<String> = symbol
                 .exports
                 .as_ref()
                 .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
                 .unwrap_or_default();
-            self.error_namespace_no_export_with_exports(
-                &namespace_name,
-                &right_name,
-                qn.right,
-                &export_names,
-            );
+            let req =
+                crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
+                    &right_name,
+                    qn.right,
+                    fallback_sym,
+                    export_names,
+                );
+            let failure = match self.resolve_name_structured(&req) {
+                Err(f) => f,
+                Ok(_) => {
+                    return TypeId::ERROR;
+                }
+            };
+            self.report_name_resolution_failure(&req, &failure);
             return TypeId::ERROR;
         }
 
@@ -759,89 +768,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_namespace_member_from_all_binders(namespace_name, member_name)
-    }
-
-    /// Build a fully qualified name from a symbol by walking its parent chain.
-    ///
-    /// For a symbol `baz` with parent `bar` whose parent is `foo`, this returns
-    /// `"foo.bar.baz"`. This is used in TS2694 diagnostics to match tsc's behavior
-    /// of showing the resolved namespace path rather than the alias name.
-    ///
-    /// Returns `None` if the symbol chain is empty or cannot be resolved.
-    fn get_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
-        let lib_binders = self.get_lib_binders();
-        let mut parts = Vec::new();
-        let mut current = sym_id;
-        let mut root_symbol_id = SymbolId::NONE;
-        // Walk up the parent chain, collecting names.
-        // Stop at SymbolId::NONE (root) or after a safety limit.
-        for _ in 0..64 {
-            if current.is_none() {
-                break;
-            }
-            let symbol = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(current, &lib_binders)?;
-            // Skip symbols that represent source files (their names are file paths
-            // or empty). Only include namespace/class/enum/interface names.
-            if symbol.escaped_name.is_empty()
-                || symbol.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::CLASS
-                        | symbol_flags::REGULAR_ENUM
-                        | symbol_flags::CONST_ENUM
-                        | symbol_flags::INTERFACE
-                        | symbol_flags::TYPE_ALIAS)
-                    == 0
-            {
-                break;
-            }
-            root_symbol_id = current;
-            parts.push(symbol.escaped_name.clone());
-            current = symbol.parent;
-        }
-
-        if parts.is_empty() {
-            return None;
-        }
-        parts.reverse();
-        let qualified = parts.join(".");
-        if let Some(root_symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(root_symbol_id, &lib_binders)
-            && root_symbol.is_exported
-            && root_symbol.parent.is_none()
-            && root_symbol.decl_file_idx != u32::MAX
-            && self
-                .ctx
-                .get_binder_for_file(root_symbol.decl_file_idx as usize)
-                .is_some_and(tsz_binder::BinderState::is_external_module)
-        {
-            let module_name = self
-                .ctx
-                .module_specifiers
-                .get(&root_symbol.decl_file_idx)
-                .cloned()
-                .or_else(|| {
-                    let arena = self.ctx.get_arena_for_file(root_symbol.decl_file_idx);
-                    let source_file = arena.source_files.first()?;
-                    let file_name = source_file.file_name.as_str();
-                    let stem = file_name
-                        .rsplit_once('.')
-                        .map(|(base, _)| base)
-                        .unwrap_or(file_name);
-                    Some(
-                        stem.rsplit_once('/')
-                            .map(|(_, name)| name)
-                            .unwrap_or(stem)
-                            .to_string(),
-                    )
-                })?;
-            return Some(format!("\"{module_name}\".{qualified}"));
-        }
-        Some(qualified)
     }
 
     /// Resolve a member from a symbol's exports, members, or re-exports.
