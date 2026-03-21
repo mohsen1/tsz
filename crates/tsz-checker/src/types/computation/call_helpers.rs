@@ -1336,13 +1336,13 @@ impl<'a> CheckerState<'a> {
                                     ) {
                                         return false;
                                     }
-                                    let before = self.ctx.diagnostics.len();
+                                    let excess_snap = self.ctx.snapshot_diagnostics();
                                     self.check_object_literal_excess_properties(
                                         arg_type,
                                         expected_param,
                                         arg_idx,
                                     );
-                                    self.ctx.diagnostics.len() > before
+                                    self.ctx.has_speculative_diagnostics(&excess_snap)
                                 })
                         } else {
                             false
