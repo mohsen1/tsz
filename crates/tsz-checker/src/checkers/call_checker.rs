@@ -1610,6 +1610,23 @@ impl<'a> CheckerState<'a> {
                     keep
                 });
             }
+            // Unresolved infer types in expected type → callback was processed without
+            // contextual types. Drop provisional implicit-any diagnostics (TS7006/TS7031).
+            if unresolved_refresh_context
+                && is_direct_function_arg
+                && let Some(n) = self.ctx.arena.get(arg_idx)
+            {
+                let (s, e, snap) = (n.pos, n.end, arg_snap.diagnostics_len);
+                let before = self.ctx.diagnostics.len();
+                let mut tail: Vec<_> = self.ctx.diagnostics.drain(snap..).collect();
+                tail.retain(|d| {
+                    !(matches!(d.code, 7006 | 7019 | 7031 | 7051) && d.start >= s && d.start < e)
+                });
+                self.ctx.diagnostics.extend(tail);
+                if self.ctx.diagnostics.len() < before {
+                    self.ctx.implicit_any_checked_closures.remove(&arg_idx);
+                }
+            }
             arg_types.push(arg_type);
 
             if check_excess_properties
