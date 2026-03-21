@@ -199,10 +199,28 @@ impl<'a> CheckerState<'a> {
             had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
         }
 
-        if self.is_assignable_to(source, target)
-            || self.should_skip_weak_union_error(source, target, source_idx)
-        {
+        if self.is_assignable_to(source, target) {
             return true;
+        }
+
+        // Build a RelationRequest so the weak-union hint is collected alongside
+        // the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            let request = RelationRequest::assign(ps, pt);
+            let outcome = self.execute_relation_request(&request);
+            if outcome.weak_union_violation
+                || self.should_skip_weak_union_error_with_outcome(
+                    source,
+                    target,
+                    source_idx,
+                    Some(&outcome),
+                )
+            {
+                return true;
+            }
         }
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
@@ -498,11 +516,30 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target)
-            || self.should_skip_weak_union_error(source, target, source_idx)
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+
+        // Build a RelationRequest so the weak-union hint is collected alongside
+        // the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            RelationRequest::assign(ps, pt)
+        };
+        let outcome = self.execute_relation_request(&request);
+        if outcome.weak_union_violation
+            || self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            )
         {
             return true;
         }
+
         if self.try_elaborate_assignment_source_error(source_idx, target) {
             return false;
         }
@@ -528,11 +565,30 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target)
-            || self.should_skip_weak_union_error(source, target, source_idx)
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+
+        // Build a RelationRequest so the weak-union hint is collected alongside
+        // the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            RelationRequest::assign(ps, pt)
+        };
+        let outcome = self.execute_relation_request(&request);
+        if outcome.weak_union_violation
+            || self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            )
         {
             return true;
         }
+
         self.error_type_not_assignable_generic_at(source, target, diag_idx);
         false
     }
