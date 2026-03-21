@@ -274,3 +274,185 @@ fn test_symbol_def_index_cleared_on_store_clear() {
     // After clear, lookup should return None
     assert_eq!(store.lookup_by_symbol(10, 0), None);
 }
+
+// =============================================================================
+// Symbol-only index tests (find_def_by_symbol O(1))
+// =============================================================================
+
+#[test]
+fn test_find_def_by_symbol_via_register() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("MyClass");
+    let mut info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    info.symbol_id = Some(42);
+    let def_id = store.register(info);
+
+    // find_def_by_symbol should return the registered DefId via O(1) index.
+    assert_eq!(store.find_def_by_symbol(42), Some(def_id));
+
+    // Non-existent symbol_id should return None.
+    assert_eq!(store.find_def_by_symbol(99), None);
+}
+
+#[test]
+fn test_find_def_by_symbol_via_register_symbol_mapping() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Iface");
+    // Register without symbol_id in DefinitionInfo.
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    let def_id = store.register(info);
+
+    // register_symbol_mapping should populate symbol_only_index.
+    store.register_symbol_mapping(77, 0, def_id);
+
+    assert_eq!(store.find_def_by_symbol(77), Some(def_id));
+}
+
+#[test]
+fn test_find_def_by_symbol_keeps_first_registered() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register two defs with the same symbol_id (different file_idx).
+    let name1 = interner.intern_string("A");
+    let mut info1 = DefinitionInfo::type_alias(name1, vec![], TypeId::NUMBER);
+    info1.symbol_id = Some(10);
+    let def1 = store.register(info1);
+
+    let name2 = interner.intern_string("A");
+    let mut info2 = DefinitionInfo::type_alias(name2, vec![], TypeId::STRING);
+    info2.symbol_id = Some(10);
+    let def2 = store.register(info2);
+
+    // The first registered DefId should be returned.
+    assert_eq!(store.find_def_by_symbol(10), Some(def1));
+    assert_ne!(def1, def2);
+}
+
+#[test]
+fn test_find_def_by_symbol_cleared() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("X");
+    let mut info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    info.symbol_id = Some(55);
+    store.register(info);
+
+    assert!(store.find_def_by_symbol(55).is_some());
+
+    store.clear();
+
+    assert_eq!(store.find_def_by_symbol(55), None);
+}
+
+// =============================================================================
+// Body-to-alias index tests (find_type_alias_by_body O(1))
+// =============================================================================
+
+#[test]
+fn test_find_type_alias_by_body_via_register() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Color");
+    let body_type = TypeId(200);
+    let info = DefinitionInfo::type_alias(name, vec![], body_type);
+    let def_id = store.register(info);
+
+    // O(1) lookup should find it.
+    assert_eq!(store.find_type_alias_by_body(body_type), Some(def_id));
+
+    // Non-matching body should return None.
+    assert_eq!(store.find_type_alias_by_body(TypeId(999)), None);
+}
+
+#[test]
+fn test_find_type_alias_by_body_via_set_body() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Alias");
+    // Register with no body initially.
+    let info = DefinitionInfo {
+        kind: DefKind::TypeAlias,
+        name,
+        type_params: vec![],
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: None,
+        span: None,
+        symbol_id: None,
+    };
+    let def_id = store.register(info);
+
+    // No body yet.
+    assert_eq!(store.find_type_alias_by_body(TypeId(300)), None);
+
+    // Set body lazily.
+    store.set_body(def_id, TypeId(300));
+
+    // Now O(1) lookup should find it.
+    assert_eq!(store.find_type_alias_by_body(TypeId(300)), Some(def_id));
+}
+
+#[test]
+fn test_find_type_alias_by_body_ignores_generic_aliases() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("GenericAlias");
+    let body_type = TypeId(400);
+    let tp = crate::types::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let info = DefinitionInfo::type_alias(name, vec![tp], body_type);
+    store.register(info);
+
+    // Generic type aliases should NOT be indexed.
+    assert_eq!(store.find_type_alias_by_body(body_type), None);
+}
+
+#[test]
+fn test_find_type_alias_by_body_ignores_non_alias_kinds() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("MyInterface");
+    let body_type = TypeId(600);
+    let mut info = DefinitionInfo::interface(name, vec![], vec![]);
+    info.body = Some(body_type);
+    store.register(info);
+
+    // Interface bodies should NOT be indexed in body_to_alias.
+    assert_eq!(store.find_type_alias_by_body(body_type), None);
+}
+
+#[test]
+fn test_find_type_alias_by_body_cleared() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("X");
+    let body = TypeId(700);
+    let info = DefinitionInfo::type_alias(name, vec![], body);
+    store.register(info);
+
+    assert!(store.find_type_alias_by_body(body).is_some());
+
+    store.clear();
+
+    assert_eq!(store.find_type_alias_by_body(body), None);
+}
