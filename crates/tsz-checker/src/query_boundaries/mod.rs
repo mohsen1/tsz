@@ -1,3 +1,7 @@
+// Allow dead code and related lints in scaffolding modules that define
+// the unified relation boundary API (NORTH_STAR.md §22). These types
+// will be wired in as checker paths migrate to the boundary API.
+#[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod assignability;
 pub(crate) mod checkers;
 pub(crate) mod class;
@@ -8,6 +12,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
 pub(crate) mod property_access;
+#[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod relation_types;
 pub(crate) mod state;
 pub(crate) mod type_checking;
