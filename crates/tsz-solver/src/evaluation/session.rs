@@ -12,7 +12,7 @@
 use std::cell::Cell;
 
 /// Maximum global instantiation depth — bounds nesting of
-/// `evaluate_application_type` calls across all CheckerContext instances.
+/// `evaluate_application_type` calls across all `CheckerContext` instances.
 const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = 50;
 
 /// Maximum global instantiation fuel — limits TOTAL non-cached
@@ -28,7 +28,7 @@ const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = 2000;
 ///
 /// Uses `Cell` for interior mutability since all access is single-threaded.
 pub struct EvaluationSession {
-    /// Cross-context instantiation depth (nesting of evaluate_application_type).
+    /// Cross-context instantiation depth (nesting of `evaluate_application_type`).
     global_instantiation_depth: Cell<u32>,
     /// Cross-context instantiation fuel (total non-cached evaluations per file).
     global_instantiation_fuel: Cell<u32>,
@@ -36,7 +36,7 @@ pub struct EvaluationSession {
 
 impl EvaluationSession {
     /// Create a new session with all counters at zero.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             global_instantiation_depth: Cell::new(0),
             global_instantiation_fuel: Cell::new(0),
@@ -45,7 +45,7 @@ impl EvaluationSession {
 
     /// Check if global instantiation limits are exceeded.
     #[inline]
-    pub fn instantiation_limits_exceeded(&self) -> bool {
+    pub const fn instantiation_limits_exceeded(&self) -> bool {
         self.global_instantiation_depth.get() >= MAX_GLOBAL_INSTANTIATION_DEPTH
             || self.global_instantiation_fuel.get() >= MAX_GLOBAL_INSTANTIATION_FUEL
     }
@@ -76,13 +76,13 @@ impl EvaluationSession {
 
     /// Get the current global instantiation depth (for diagnostics/testing).
     #[inline]
-    pub fn global_instantiation_depth(&self) -> u32 {
+    pub const fn global_instantiation_depth(&self) -> u32 {
         self.global_instantiation_depth.get()
     }
 
     /// Get the current global instantiation fuel (for diagnostics/testing).
     #[inline]
-    pub fn global_instantiation_fuel(&self) -> u32 {
+    pub const fn global_instantiation_fuel(&self) -> u32 {
         self.global_instantiation_fuel.get()
     }
 }

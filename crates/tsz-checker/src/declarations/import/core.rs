@@ -621,7 +621,7 @@ impl<'a> CheckerState<'a> {
                             )
                         } else {
                             // TS2616
-                            let quoted_spec = format!("\"{}\"", module_name);
+                            let quoted_spec = format!("\"{module_name}\"");
                             (
                                 format_message(
                                     diagnostic_messages::CAN_ONLY_BE_IMPORTED_BY_USING_IMPORT_REQUIRE_OR_A_DEFAULT_IMPORT,
