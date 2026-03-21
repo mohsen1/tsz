@@ -48,11 +48,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(ns_name) = self.entity_name_text(expr_idx) {
-            self.error_namespace_used_as_value_at(&ns_name, expr_idx);
+            self.report_wrong_meaning_diagnostic(
+                &ns_name,
+                expr_idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+            );
             if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
                 && self.alias_resolves_to_type_only(sym_id)
             {
-                self.error_type_only_value_at(&ns_name, expr_idx);
+                self.report_wrong_meaning_diagnostic(
+                    &ns_name,
+                    expr_idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
             }
         }
 

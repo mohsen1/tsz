@@ -143,7 +143,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 TypeSymbolResolution::ValueOnly(_) => {
-                    self.error_value_only_type_at(name, type_name_idx);
+                    self.report_wrong_meaning_diagnostic(
+                        name,
+                        type_name_idx,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    );
                     return TypeId::ERROR;
                 }
                 TypeSymbolResolution::NotFound => {}
@@ -176,7 +180,13 @@ impl<'a> CheckerState<'a> {
         if self.is_unresolved_import_symbol(type_name_idx) {
             return TypeId::ANY;
         }
-        self.error_cannot_find_name_at(name, type_name_idx);
+        // Route through boundary for TS2304/TS2552 with suggestion collection
+        let req = crate::query_boundaries::name_resolution::NameResolutionRequest::type_ref(
+            name,
+            type_name_idx,
+        );
+        let failure = crate::query_boundaries::name_resolution::ResolutionFailure::not_found();
+        self.report_name_resolution_failure(&req, &failure);
         TypeId::ERROR
     }
 

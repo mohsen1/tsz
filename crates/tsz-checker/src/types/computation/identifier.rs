@@ -316,14 +316,15 @@ impl<'a> CheckerState<'a> {
                 // type alias) rather than a namespace/module, tsc emits TS2693
                 // ("only refers to a type") instead of TS2708 ("cannot use
                 // namespace as a value").
+                use crate::query_boundaries::name_resolution::NameLookupKind;
                 if self.import_equals_export_is_pure_type(idx) {
-                    self.error_type_only_value_at(name, idx);
+                    self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
                 } else {
-                    self.error_namespace_used_as_value_at(name, idx);
+                    self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Namespace);
                     if let Some(sym_id) = self.resolve_identifier_symbol(idx)
                         && self.alias_resolves_to_type_only(sym_id)
                     {
-                        self.error_type_only_value_at(name, idx);
+                        self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
                     }
                 }
                 return TypeId::ERROR;
@@ -361,7 +362,11 @@ impl<'a> CheckerState<'a> {
                 if self.is_in_ambient_computed_property_context() {
                     return TypeId::ERROR;
                 }
-                self.error_type_only_value_at(name, idx);
+                self.report_wrong_meaning_diagnostic(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 // Return the actual resolved type instead of ERROR so that
                 // downstream checks (e.g., TS2349 for non-callable expressions)
                 // can still fire. TSC emits TS1362 during name resolution but
@@ -546,7 +551,11 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                     }
-                    self.error_namespace_used_as_value_at(name, idx);
+                    self.report_wrong_meaning_diagnostic(
+                        name,
+                        idx,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                    );
                     return TypeId::ERROR;
                 }
             }
@@ -638,7 +647,11 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                self.error_type_only_value_at(name, idx);
+                self.report_wrong_meaning_diagnostic(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return TypeId::ERROR;
             }
 
@@ -672,7 +685,11 @@ impl<'a> CheckerState<'a> {
                         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                             return self.check_flow_usage(idx, value_type, sym_id);
                         }
-                        self.error_type_only_value_at(name, idx);
+                        self.report_wrong_meaning_diagnostic(
+                            name,
+                            idx,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
                         return TypeId::ERROR;
                     }
                 }
@@ -1096,7 +1113,11 @@ impl<'a> CheckerState<'a> {
         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
             return value_type;
         }
-        self.error_type_only_value_at(name, idx);
+        self.report_wrong_meaning_diagnostic(
+            name,
+            idx,
+            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+        );
         TypeId::ERROR
     }
 
@@ -1273,7 +1294,11 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            self.error_type_only_value_at(name, idx);
+            self.report_wrong_meaning_diagnostic(
+                name,
+                idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
             return TypeId::ERROR;
         }
 
@@ -1347,7 +1372,11 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            self.error_type_only_value_at(name, idx);
+            self.report_wrong_meaning_diagnostic(
+                name,
+                idx,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives

@@ -547,7 +547,11 @@ impl<'a> CheckerState<'a> {
                 let full_name = self
                     .entity_name_text(idx)
                     .unwrap_or_else(|| right_name.clone());
-                self.error_value_only_type_at(&full_name, idx);
+                self.report_wrong_meaning_diagnostic(
+                    &full_name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
                 return TypeId::ERROR;
             }
             let mut member_type = self.type_reference_symbol_type(member_sym_id);
@@ -655,7 +659,11 @@ impl<'a> CheckerState<'a> {
                         let full_name = self
                             .entity_name_text(idx)
                             .unwrap_or_else(|| right_name.clone());
-                        self.error_value_only_type_at(&full_name, idx);
+                        self.report_wrong_meaning_diagnostic(
+                            &full_name,
+                            idx,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                        );
                         return TypeId::ERROR;
                     }
                 }

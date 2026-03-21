@@ -272,7 +272,11 @@ impl<'a> CheckerState<'a> {
                 factory.type_query(SymbolRef(type_sym_id))
             } else {
                 let name = name_text.as_deref().unwrap_or("<unknown>");
-                self.error_type_only_value_at(name, type_query.expr_name);
+                self.report_wrong_meaning_diagnostic(
+                    name,
+                    type_query.expr_name,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
                 return TypeId::ERROR;
             }
         } else if let Some(name) = name_text {
@@ -303,7 +307,14 @@ impl<'a> CheckerState<'a> {
                 if self.is_unresolved_import_symbol(type_query.expr_name) {
                     return TypeId::ANY;
                 }
-                self.error_cannot_find_name_at(&name, type_query.expr_name);
+                // Route through boundary for TS2304/TS2552 with suggestion collection
+                let req = crate::query_boundaries::name_resolution::NameResolutionRequest::value(
+                    &name,
+                    type_query.expr_name,
+                );
+                let failure =
+                    crate::query_boundaries::name_resolution::ResolutionFailure::not_found();
+                self.report_name_resolution_failure(&req, &failure);
                 return TypeId::ERROR;
             }
             if let Some(missing_idx) = self.missing_type_query_left(type_query.expr_name)
@@ -318,7 +329,14 @@ impl<'a> CheckerState<'a> {
                 if self.is_unresolved_import_symbol(missing_idx) {
                     return TypeId::ANY;
                 }
-                self.error_cannot_find_name_at(&missing_name, missing_idx);
+                // Route through boundary for TS2304/TS2552 with suggestion collection
+                let req = crate::query_boundaries::name_resolution::NameResolutionRequest::value(
+                    &missing_name,
+                    missing_idx,
+                );
+                let failure =
+                    crate::query_boundaries::name_resolution::ResolutionFailure::not_found();
+                self.report_name_resolution_failure(&req, &failure);
                 return TypeId::ERROR;
             }
             if self.report_type_query_missing_member(type_query.expr_name) {
