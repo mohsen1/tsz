@@ -531,19 +531,29 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         };
 
-        // Walk type annotation (explicit or inferred)
-        if prop.type_annotation.is_some() {
-            self.analyze_type_node(prop.type_annotation);
-        } else {
-            self.walk_inferred_type(prop_idx);
+        // Private properties emit as `private x;` without type — skip type dependencies.
+        // Computed property names are still tracked since the name IS emitted.
+        let is_private = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword)
+            || self.member_has_private_identifier_name(prop.name);
+
+        if !is_private {
+            // Walk type annotation (explicit or inferred)
+            if prop.type_annotation.is_some() {
+                self.analyze_type_node(prop.type_annotation);
+            } else {
+                self.walk_inferred_type(prop_idx);
+            }
         }
 
         // For computed properties, analyze the name expression to mark referenced symbols
         // (e.g., `const symb = Symbol(); class C { [symb]: boolean }` — symb needs to be tracked)
         self.analyze_computed_property_name(prop.name);
 
-        // Also walk the inferred type for computed properties
-        if let Some(name_node) = self.arena.get(prop.name)
+        // Also walk the inferred type for computed properties (non-private only)
+        if !is_private
+            && let Some(name_node) = self.arena.get(prop.name)
             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
         {
             self.walk_inferred_type(prop_idx);
@@ -1104,6 +1114,13 @@ impl<'a> UsageAnalyzer<'a> {
 
         // Restore the previous in_value_pos
         self.in_value_pos = old_in_value_pos;
+    }
+
+    /// Check if a member name is a private identifier (`#foo`).
+    fn member_has_private_identifier_name(&self, name_idx: NodeIndex) -> bool {
+        self.arena
+            .get(name_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
     }
 
     /// Analyze the expression inside a computed property name (e.g., `[symb]`).
