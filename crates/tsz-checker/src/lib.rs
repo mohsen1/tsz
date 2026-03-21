@@ -35,6 +35,7 @@ mod classes_domain;
 mod declarations_domain;
 #[path = "flow/mod.rs"]
 mod flow_domain;
+mod jsdoc;
 #[path = "state/mod.rs"]
 mod state_domain;
 #[path = "symbols/mod.rs"]
