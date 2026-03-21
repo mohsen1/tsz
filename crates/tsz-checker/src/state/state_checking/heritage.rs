@@ -340,7 +340,11 @@ impl<'a> CheckerState<'a> {
                             if is_namespace && !has_non_namespace_value {
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
                                     if is_class_declaration && is_extends_clause {
-                                        self.error_namespace_used_as_value_at(&name, expr_idx);
+                                        self.report_wrong_meaning_diagnostic(
+                                            &name,
+                                            expr_idx,
+                                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                                        );
                                     } else {
                                         self.error_namespace_used_as_type_at(&name, expr_idx);
                                     }

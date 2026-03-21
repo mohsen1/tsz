@@ -308,7 +308,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(base_node) = self.ctx.arena.get(access.expression)
                         && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
                     {
-                        self.error_type_only_value_at(&base_ident.escaped_text, access.expression);
+                        self.report_wrong_meaning_diagnostic(
+                            &base_ident.escaped_text,
+                            access.expression,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
                     }
                     return TypeId::ERROR;
                 }
@@ -988,7 +992,11 @@ impl<'a> CheckerState<'a> {
                     // This is "Cannot use namespace as a value"
                     // Get the namespace name from the left side of the access
                     if let Some(ns_name) = self.entity_name_text(access.expression) {
-                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                        self.report_wrong_meaning_diagnostic(
+                            &ns_name,
+                            access.expression,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        );
                     }
                     // tsc does NOT emit TS2693 for the type-only member
                     // when TS2708 was already emitted for the namespace.
@@ -1017,7 +1025,11 @@ impl<'a> CheckerState<'a> {
                     // tsc emits TS2708 "Cannot use namespace 'X' as a value" on the
                     // namespace identifier, not TS2339 on the property.
                     if let Some(ns_name) = self.uninstantiated_namespace_name(access.expression) {
-                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                        self.report_wrong_meaning_diagnostic(
+                            &ns_name,
+                            access.expression,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        );
                     } else {
                         self.error_property_not_exist_at(
                             property_name,
