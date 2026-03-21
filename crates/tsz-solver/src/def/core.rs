@@ -412,8 +412,8 @@ pub struct DefinitionStore {
     /// `TypeFormatter` to display interface/class names instead of structural
     /// expansions in diagnostic messages.
     ///
-    /// Keyed by a 64-bit FxHash of the `ObjectShape`. Hash collisions are
-    /// theoretically possible but astronomically unlikely with FxHash, and the
+    /// Keyed by a 64-bit `FxHash` of the `ObjectShape`. Hash collisions are
+    /// theoretically possible but astronomically unlikely with `FxHash`, and the
     /// formatter use case is best-effort diagnostic naming.
     shape_to_def: DashMap<u64, DefId>,
 }
@@ -441,7 +441,7 @@ impl DefinitionStore {
         }
     }
 
-    /// Compute a 64-bit FxHash fingerprint for an `ObjectShape`.
+    /// Compute a 64-bit `FxHash` fingerprint for an `ObjectShape`.
     fn hash_shape(shape: &ObjectShape) -> u64 {
         let mut hasher = rustc_hash::FxHasher::default();
         shape.hash(&mut hasher);
@@ -477,10 +477,11 @@ impl DefinitionStore {
         }
 
         // Populate body_to_alias for non-generic type aliases with a body.
-        if info.kind == DefKind::TypeAlias && info.type_params.is_empty() {
-            if let Some(body) = info.body {
-                self.body_to_alias.entry(body).or_insert(id);
-            }
+        if info.kind == DefKind::TypeAlias
+            && info.type_params.is_empty()
+            && let Some(body) = info.body
+        {
+            self.body_to_alias.entry(body).or_insert(id);
         }
 
         // Populate shape_to_def for definitions with an instance shape.

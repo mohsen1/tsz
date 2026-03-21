@@ -361,20 +361,19 @@ impl<'a> LoweringPass<'a> {
             let Some(n) = self.arena.get(idx) else {
                 return idx;
             };
-            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                if let Some(paren) = self.arena.get_parenthesized(n) {
-                    idx = paren.expression;
-                    continue;
-                }
-            }
-            if n.kind == syntax_kind_ext::TYPE_ASSERTION
-                || n.kind == syntax_kind_ext::AS_EXPRESSION
-                || n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.arena.get_parenthesized(n)
             {
-                if let Some(ta) = self.arena.get_type_assertion(n) {
-                    idx = ta.expression;
-                    continue;
-                }
+                idx = paren.expression;
+                continue;
+            }
+            if (n.kind == syntax_kind_ext::TYPE_ASSERTION
+                || n.kind == syntax_kind_ext::AS_EXPRESSION
+                || n.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+                && let Some(ta) = self.arena.get_type_assertion(n)
+            {
+                idx = ta.expression;
+                continue;
             }
             return idx;
         }
@@ -490,16 +489,15 @@ impl<'a> LoweringPass<'a> {
             if n.pos < start || n.end > end {
                 continue;
             }
-            if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(bin) = self.arena.get_binary_expr(n)
-                    && bin.operator_token == SyntaxKind::InKeyword as u16
-                    && self
-                        .arena
-                        .get(bin.left)
-                        .is_some_and(|l| l.kind == SyntaxKind::PrivateIdentifier as u16)
-                {
-                    return true;
-                }
+            if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.arena.get_binary_expr(n)
+                && bin.operator_token == SyntaxKind::InKeyword as u16
+                && self
+                    .arena
+                    .get(bin.left)
+                    .is_some_and(|l| l.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                return true;
             }
         }
         false
@@ -644,36 +642,32 @@ impl<'a> LoweringPass<'a> {
                     continue;
                 }
                 // Check for binary expressions with private field on LHS
-                if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                    if let Some(bin) = self.arena.get_binary_expr(n)
-                        && Self::is_assignment_operator(bin.operator_token)
-                    {
-                        let left = self.unwrap_parens(bin.left);
-                        if self.is_private_field_access(left) {
-                            let is_plain_assign =
-                                bin.operator_token == SyntaxKind::EqualsToken as u16;
-                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
-                                earliest_pos = Some(n.pos);
-                                earliest_is_write_only = is_plain_assign;
-                            }
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(n)
+                    && Self::is_assignment_operator(bin.operator_token)
+                {
+                    let left = self.unwrap_parens(bin.left);
+                    if self.is_private_field_access(left) {
+                        let is_plain_assign = bin.operator_token == SyntaxKind::EqualsToken as u16;
+                        if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
+                            earliest_pos = Some(n.pos);
+                            earliest_is_write_only = is_plain_assign;
                         }
                     }
                 }
                 // Check for unary mutation (++/--)
-                if n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                if (n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                    && let Some(unary) = self.arena.get_unary_expr(n)
+                    && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
                 {
-                    if let Some(unary) = self.arena.get_unary_expr(n)
-                        && (unary.operator == SyntaxKind::PlusPlusToken as u16
-                            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    let operand = self.unwrap_parens(unary.operand);
+                    if self.is_private_field_access(operand)
+                        && (earliest_pos.is_none() || n.pos < earliest_pos.unwrap())
                     {
-                        let operand = self.unwrap_parens(unary.operand);
-                        if self.is_private_field_access(operand) {
-                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
-                                earliest_pos = Some(n.pos);
-                                earliest_is_write_only = false; // ++/-- needs both get and set
-                            }
-                        }
+                        earliest_pos = Some(n.pos);
+                        earliest_is_write_only = false; // ++/-- needs both get and set
                     }
                 }
                 // Check for non-assignment binary expressions that read private
@@ -681,20 +675,18 @@ impl<'a> LoweringPass<'a> {
                 // LHS private field access has the same pos as the binary node
                 // and would incorrectly shadow a write-only detection above, so
                 // skip those — they're already handled.
-                if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                    if let Some(bin) = self.arena.get_binary_expr(n)
-                        && !Self::is_assignment_operator(bin.operator_token)
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(n)
+                    && !Self::is_assignment_operator(bin.operator_token)
+                {
+                    // Check if either side has a private field access
+                    let left = self.unwrap_parens(bin.left);
+                    let right = self.unwrap_parens(bin.right);
+                    if (self.is_private_field_access(left) || self.is_private_field_access(right))
+                        && (earliest_pos.is_none() || n.pos < earliest_pos.unwrap())
                     {
-                        // Check if either side has a private field access
-                        let left = self.unwrap_parens(bin.left);
-                        let right = self.unwrap_parens(bin.right);
-                        if self.is_private_field_access(left) || self.is_private_field_access(right)
-                        {
-                            if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
-                                earliest_pos = Some(n.pos);
-                                earliest_is_write_only = false;
-                            }
-                        }
+                        earliest_pos = Some(n.pos);
+                        earliest_is_write_only = false;
                     }
                 }
             }

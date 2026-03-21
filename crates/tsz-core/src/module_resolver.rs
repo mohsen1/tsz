@@ -112,7 +112,7 @@ pub struct ModuleLookupResult {
     /// Resolved file path, if resolution succeeded.
     pub resolved_path: Option<PathBuf>,
     /// Whether to treat this specifier as "resolved" even without a mapped path.
-    /// True for: ambient modules, untyped JS modules, JsxNotEnabled with valid file.
+    /// True for: ambient modules, untyped JS modules, `JsxNotEnabled` with valid file.
     pub treat_as_resolved: bool,
     /// Error to record for the checker, if any.
     pub error: Option<ModuleLookupError>,
@@ -129,7 +129,7 @@ pub struct ModuleLookupError {
 
 impl ModuleLookupResult {
     /// Resolved successfully to a file.
-    pub fn resolved(path: PathBuf) -> Self {
+    pub const fn resolved(path: PathBuf) -> Self {
         Self {
             resolved_path: Some(path),
             treat_as_resolved: false,
@@ -138,7 +138,7 @@ impl ModuleLookupResult {
     }
 
     /// Resolution failed with a specific error.
-    pub fn failed(code: u32, message: String) -> Self {
+    pub const fn failed(code: u32, message: String) -> Self {
         Self {
             resolved_path: None,
             treat_as_resolved: false,
@@ -147,7 +147,7 @@ impl ModuleLookupResult {
     }
 
     /// Module is an ambient declaration — suppress TS2307 without a file target.
-    pub fn ambient() -> Self {
+    pub const fn ambient() -> Self {
         Self {
             resolved_path: None,
             treat_as_resolved: true,
@@ -155,8 +155,8 @@ impl ModuleLookupResult {
         }
     }
 
-    /// Resolved to a file but with an associated error (e.g., JsxNotEnabled).
-    pub fn resolved_with_error(code: u32, message: String) -> Self {
+    /// Resolved to a file but with an associated error (e.g., `JsxNotEnabled`).
+    pub const fn resolved_with_error(code: u32, message: String) -> Self {
         Self {
             resolved_path: None,
             treat_as_resolved: true,
@@ -2558,9 +2558,7 @@ impl ModuleResolver {
 
         // 1. Try primary resolution
         match self.resolve_with_kind(specifier, containing_file, span, import_kind) {
-            Ok(resolved_module) => {
-                return ModuleLookupResult::resolved(resolved_module.resolved_path);
-            }
+            Ok(resolved_module) => ModuleLookupResult::resolved(resolved_module.resolved_path),
             Err(failure) => {
                 // JsxNotEnabled: file exists but --jsx is not set.
                 // Mark as resolved (suppress TS2307) but record the JSX error.
@@ -2572,23 +2570,23 @@ impl ModuleResolver {
                     };
 
                 // 2. Try fallback resolution if this is a "soft" failure
-                if failure.should_try_fallback() {
-                    if let Some(fallback_path) = fallback_resolve(specifier, containing_file) {
-                        // 3. Validate Node16/NodeNext ESM extension requirements
-                        if self.fallback_needs_esm_extension_error(
-                            specifier,
-                            containing_file,
-                            import_kind,
-                        ) {
-                            return ModuleLookupResult::failed(
-                                CANNOT_FIND_MODULE,
-                                format!(
-                                    "Cannot find module '{specifier}' or its corresponding type declarations."
-                                ),
-                            );
-                        }
-                        return ModuleLookupResult::resolved(fallback_path);
+                if failure.should_try_fallback()
+                    && let Some(fallback_path) = fallback_resolve(specifier, containing_file)
+                {
+                    // 3. Validate Node16/NodeNext ESM extension requirements
+                    if self.fallback_needs_esm_extension_error(
+                        specifier,
+                        containing_file,
+                        import_kind,
+                    ) {
+                        return ModuleLookupResult::failed(
+                            CANNOT_FIND_MODULE,
+                            format!(
+                                "Cannot find module '{specifier}' or its corresponding type declarations."
+                            ),
+                        );
                     }
+                    return ModuleLookupResult::resolved(fallback_path);
                 }
 
                 // Upgrade NotFound → TS2732 for .json imports without resolveJsonModule
@@ -2617,16 +2615,14 @@ impl ModuleResolver {
                 if matches!(
                     failure,
                     ResolutionFailure::NotFound { .. } | ResolutionFailure::PackageJsonError { .. }
-                ) {
-                    if let Some(js_path) =
-                        self.probe_js_file(specifier, containing_file, span, import_kind)
-                    {
-                        return ModuleLookupResult::untyped_js(
-                            js_path,
-                            request.no_implicit_any,
-                            specifier,
-                        );
-                    }
+                ) && let Some(js_path) =
+                    self.probe_js_file(specifier, containing_file, span, import_kind)
+                {
+                    return ModuleLookupResult::untyped_js(
+                        js_path,
+                        request.no_implicit_any,
+                        specifier,
+                    );
                 }
 
                 // 6. Build final error from the failure

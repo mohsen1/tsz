@@ -26,19 +26,18 @@ impl<'a> Printer<'a> {
         }
         let node = self.arena.get(idx)?;
         // Unwrap parenthesized expressions and type assertions
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(node) {
-                return self.try_extract_private_field_access(paren.expression);
-            }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.try_extract_private_field_access(paren.expression);
         }
         // Also unwrap type assertion expressions since these are erased in JS emit
-        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+        if (node.kind == syntax_kind_ext::TYPE_ASSERTION
             || node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(ta) = self.arena.get_type_assertion(node)
         {
-            if let Some(ta) = self.arena.get_type_assertion(node) {
-                return self.try_extract_private_field_access(ta.expression);
-            }
+            return self.try_extract_private_field_access(ta.expression);
         }
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
@@ -95,7 +94,7 @@ impl<'a> Printer<'a> {
     /// Emit a private field unary mutation (++ or --).
     /// `is_prefix` indicates if it's prefix (++x) or postfix (x++).
     /// `is_statement` indicates if the result value is discarded (statement context).
-    /// `operator` is PlusPlusToken or MinusMinusToken.
+    /// `operator` is `PlusPlusToken` or `MinusMinusToken`.
     fn emit_private_field_unary_mutation(
         &mut self,
         pfa: PrivateFieldAccess,
@@ -107,7 +106,7 @@ impl<'a> Printer<'a> {
         let op_text = get_operator_text(operator);
         let expression = pfa.expression;
         let weakmap_name = pfa.weakmap_name.clone();
-        let clean_name = pfa.clean_name.clone();
+        let clean_name = pfa.clean_name;
 
         // For complex receivers, create a temp var so we only evaluate once
         let receiver_temp = if needs_receiver_temp {
@@ -252,11 +251,11 @@ impl<'a> Printer<'a> {
         self.write(", \"");
         self.write(kind);
         self.write("\"");
-        if let Some(ref i) = info {
-            if let Some(ref fn_ref) = i.fn_ref {
-                self.write(", ");
-                self.write(fn_ref);
-            }
+        if let Some(ref i) = info
+            && let Some(ref fn_ref) = i.fn_ref
+        {
+            self.write(", ");
+            self.write(fn_ref);
         }
         self.write(")");
     }
@@ -296,41 +295,41 @@ impl<'a> Printer<'a> {
 
             // Handle `this.#field = value` and `(this.#field) = value` (with parens/type assertions)
             // → `__classPrivateFieldSet(this, _C_field, value, "f")`
-            if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                if let Some(pfa) = self.try_extract_private_field_access(binary.left) {
-                    self.write_helper("__classPrivateFieldSet");
-                    self.write("(");
-                    self.emit(pfa.expression);
-                    self.write(", ");
-                    if let Some(info) = self.private_member_info.get(&pfa.clean_name).cloned() {
-                        if let Some(ref state_var) = info.state_var {
-                            self.write(state_var);
-                        } else {
-                            self.write(&pfa.weakmap_name);
-                        }
-                        self.write(", ");
-                        self.emit(binary.right);
-                        self.write(", \"");
-                        self.write(info.kind);
-                        self.write("\"");
-                        if let Some(ref setter) = info.setter_ref {
-                            self.write(", ");
-                            self.write(setter);
-                        } else if info.kind == "a" {
-                            // Accessor with no setter - omit the fn ref
-                        } else if let Some(ref fn_ref) = info.fn_ref {
-                            self.write(", ");
-                            self.write(fn_ref);
-                        }
+            if binary.operator_token == SyntaxKind::EqualsToken as u16
+                && let Some(pfa) = self.try_extract_private_field_access(binary.left)
+            {
+                self.write_helper("__classPrivateFieldSet");
+                self.write("(");
+                self.emit(pfa.expression);
+                self.write(", ");
+                if let Some(info) = self.private_member_info.get(&pfa.clean_name).cloned() {
+                    if let Some(ref state_var) = info.state_var {
+                        self.write(state_var);
                     } else {
                         self.write(&pfa.weakmap_name);
-                        self.write(", ");
-                        self.emit(binary.right);
-                        self.write(", \"f\"");
                     }
-                    self.write(")");
-                    return;
+                    self.write(", ");
+                    self.emit(binary.right);
+                    self.write(", \"");
+                    self.write(info.kind);
+                    self.write("\"");
+                    if let Some(ref setter) = info.setter_ref {
+                        self.write(", ");
+                        self.write(setter);
+                    } else if info.kind == "a" {
+                        // Accessor with no setter - omit the fn ref
+                    } else if let Some(ref fn_ref) = info.fn_ref {
+                        self.write(", ");
+                        self.write(fn_ref);
+                    }
+                } else {
+                    self.write(&pfa.weakmap_name);
+                    self.write(", ");
+                    self.emit(binary.right);
+                    self.write(", \"f\"");
                 }
+                self.write(")");
+                return;
             }
 
             // Handle compound assignment: `this.#field += value` →
@@ -338,61 +337,61 @@ impl<'a> Printer<'a> {
             // For complex receivers: `A.getInstance().#field += value` →
             // `__classPrivateFieldSet(_a = A.getInstance(), _C_field, __classPrivateFieldGet(_a, _C_field, "f") + value, "f")`
             // For `**=` with ES2016 lowering: uses Math.pow() instead of **
-            if self.is_compound_assignment(binary.operator_token) {
-                if let Some(pfa) = self.try_extract_private_field_access(binary.left) {
-                    let is_exp_assign =
-                        binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16;
-                    let use_math_pow = is_exp_assign && self.ctx.needs_es2016_lowering;
-                    let base_op = if use_math_pow {
-                        String::new()
-                    } else {
-                        self.get_compound_base_operator(binary.operator_token)
-                    };
+            if self.is_compound_assignment(binary.operator_token)
+                && let Some(pfa) = self.try_extract_private_field_access(binary.left)
+            {
+                let is_exp_assign =
+                    binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16;
+                let use_math_pow = is_exp_assign && self.ctx.needs_es2016_lowering;
+                let base_op = if use_math_pow {
+                    String::new()
+                } else {
+                    self.get_compound_base_operator(binary.operator_token)
+                };
 
-                    let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
-                    let receiver_temp = if needs_receiver_temp {
-                        Some(self.make_unique_name_hoisted())
-                    } else {
-                        None
-                    };
-                    let expression = pfa.expression;
-                    let weakmap_name = pfa.weakmap_name.clone();
-                    let clean_name = pfa.clean_name.clone();
+                let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+                let receiver_temp = if needs_receiver_temp {
+                    Some(self.make_unique_name_hoisted())
+                } else {
+                    None
+                };
+                let expression = pfa.expression;
+                let weakmap_name = pfa.weakmap_name.clone();
+                let clean_name = pfa.clean_name;
 
-                    self.write_helper("__classPrivateFieldSet");
-                    self.write("(");
-                    self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                self.write_helper("__classPrivateFieldSet");
+                self.write("(");
+                self.emit_receiver_or_temp_assign(expression, receiver_temp.as_deref());
+                self.write(", ");
+                self.emit_private_state_var(&weakmap_name, &clean_name);
+                self.write(", ");
+
+                if use_math_pow {
+                    self.write("Math.pow(");
+                    self.emit_private_field_get_inline(
+                        receiver_temp.as_deref(),
+                        expression,
+                        &weakmap_name,
+                        &clean_name,
+                    );
                     self.write(", ");
-                    self.emit_private_state_var(&weakmap_name, &clean_name);
-                    self.write(", ");
-
-                    if use_math_pow {
-                        self.write("Math.pow(");
-                        self.emit_private_field_get_inline(
-                            receiver_temp.as_deref(),
-                            expression,
-                            &weakmap_name,
-                            &clean_name,
-                        );
-                        self.write(", ");
-                        self.emit(binary.right);
-                        self.write(")");
-                    } else {
-                        self.emit_private_field_get_inline(
-                            receiver_temp.as_deref(),
-                            expression,
-                            &weakmap_name,
-                            &clean_name,
-                        );
-                        self.write(" ");
-                        self.write(&base_op);
-                        self.write(" ");
-                        self.emit(binary.right);
-                    }
-
-                    self.emit_private_field_set_close(&clean_name);
-                    return;
+                    self.emit(binary.right);
+                    self.write(")");
+                } else {
+                    self.emit_private_field_get_inline(
+                        receiver_temp.as_deref(),
+                        expression,
+                        &weakmap_name,
+                        &clean_name,
+                    );
+                    self.write(" ");
+                    self.write(&base_op);
+                    self.write(" ");
+                    self.emit(binary.right);
                 }
+
+                self.emit_private_field_set_close(&clean_name);
+                return;
             }
         }
 

@@ -157,10 +157,10 @@ impl<'a> Printer<'a> {
                     return true;
                 }
                 // Destructuring pattern (name is not a simple identifier)
-                if let Some(name_node) = self.arena.get(param.name) {
-                    if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-                        return true;
-                    }
+                if let Some(name_node) = self.arena.get(param.name)
+                    && name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
+                {
+                    return true;
                 }
                 false
             });

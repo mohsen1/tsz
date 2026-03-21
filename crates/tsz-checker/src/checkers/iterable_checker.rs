@@ -845,19 +845,17 @@ impl<'a> CheckerState<'a> {
             // tsc emits TS2571 ("Object is of type 'unknown'") before TS2488 when
             // the array binding pattern has elements (e.g. `const [a, b] = f()`).
             // For empty patterns (`const [] = f()`), only TS2488 is emitted.
-            if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
-                if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
-                    if !binding_pattern.elements.nodes.is_empty() {
-                        if let Some((start, end)) = self.get_node_span(pattern_idx) {
-                            self.error(
-                                start,
-                                end.saturating_sub(start),
-                                "Object is of type 'unknown'.".to_string(),
-                                diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
-                            );
-                        }
-                    }
-                }
+            if let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
+                && let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
+                && !binding_pattern.elements.nodes.is_empty()
+                && let Some((start, end)) = self.get_node_span(pattern_idx)
+            {
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    "Object is of type 'unknown'.".to_string(),
+                    diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                );
             }
             self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
             return false;

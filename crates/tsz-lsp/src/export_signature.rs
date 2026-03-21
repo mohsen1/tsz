@@ -47,13 +47,13 @@ pub struct ExportSignature(pub u64);
 pub struct ExportSignatureInput {
     /// `(name, flags, is_type_only)` for direct module exports, sorted by name.
     pub exports: Vec<(String, u32, bool)>,
-    /// `(export_name, source_module, original_name)` for named re-exports, sorted by export_name.
+    /// `(export_name, source_module, original_name)` for named re-exports, sorted by `export_name`.
     pub named_reexports: Vec<(String, String, Option<String>)>,
     /// Wildcard re-export source module paths, sorted.
     pub wildcard_reexports: Vec<String>,
     /// `(augmented_name, declaration_count)` for global augmentations, sorted by name.
     pub global_augmentations: Vec<(String, usize)>,
-    /// `(module_name, sorted_augmentation_names)` for module augmentations, sorted by module_name.
+    /// `(module_name, sorted_augmentation_names)` for module augmentations, sorted by `module_name`.
     pub module_augmentations: Vec<(String, Vec<String>)>,
     /// `(name, flags, is_type_only)` for exported file-local symbols, sorted by name.
     pub exported_locals: Vec<(String, u32, bool)>,
@@ -78,7 +78,7 @@ pub struct InvalidationSummary {
 
 impl InvalidationSummary {
     /// Create a summary for a file whose API did not change.
-    pub fn unchanged(file: String, signature: u64) -> Self {
+    pub const fn unchanged(file: String, signature: u64) -> Self {
         Self {
             file,
             api_changed: false,
@@ -89,7 +89,7 @@ impl InvalidationSummary {
     }
 
     /// Create a summary for a file whose API changed.
-    pub fn changed(
+    pub const fn changed(
         file: String,
         old_signature: Option<u64>,
         new_signature: u64,
@@ -105,7 +105,7 @@ impl InvalidationSummary {
     }
 
     /// Create a summary for a new file.
-    pub fn new_file(file: String, signature: u64) -> Self {
+    pub const fn new_file(file: String, signature: u64) -> Self {
         Self {
             file,
             api_changed: true,

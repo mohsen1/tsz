@@ -1754,7 +1754,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // of all parameter types (rather than the intersection). This correctly
                 // handles the correlated mapped-type pattern without being unsound for
                 // truly incompatible union calls (those still fail per-member).
-                if combined.param_types.iter().any(|&p| p == TypeId::NEVER) {
+                if combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()
                         .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));

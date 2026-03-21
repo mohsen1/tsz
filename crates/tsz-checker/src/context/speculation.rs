@@ -236,7 +236,7 @@ impl CheckerContext<'_> {
     }
 
     /// Returns `true` if any diagnostics were added since the snapshot.
-    pub(crate) fn has_speculative_diagnostics(&self, snap: &DiagnosticSnapshot) -> bool {
+    pub(crate) const fn has_speculative_diagnostics(&self, snap: &DiagnosticSnapshot) -> bool {
         self.diagnostics.len() > snap.diagnostics_len
     }
 

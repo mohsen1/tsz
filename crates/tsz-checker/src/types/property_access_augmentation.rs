@@ -126,10 +126,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                 if let Some(idx) = file_locals_idx.as_ref() {
-                    if let Some(entries) = idx.get(ident_name) {
-                        if let Some(&(_, sym_id)) = entries.first() {
-                            return Some(sym_id.0);
-                        }
+                    if let Some(entries) = idx.get(ident_name)
+                        && let Some(&(_, sym_id)) = entries.first()
+                    {
+                        return Some(sym_id.0);
                     }
                 } else if let Some(binders) = all_binders.as_ref() {
                     for binder in binders.iter() {
@@ -162,10 +162,10 @@ impl<'a> CheckerState<'a> {
                 // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                 let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
                     if let Some(idx) = file_locals_idx.as_ref() {
-                        if let Some(entries) = idx.get(ident_name) {
-                            if let Some(&(_, sym_id)) = entries.first() {
-                                return Some(sym_id);
-                            }
+                        if let Some(entries) = idx.get(ident_name)
+                            && let Some(&(_, sym_id)) = entries.first()
+                        {
+                            return Some(sym_id);
                         }
                     } else if let Some(binders) = all_binders.as_ref() {
                         for binder in binders.iter() {
@@ -406,10 +406,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                 if let Some(idx) = file_locals_idx.as_ref() {
-                    if let Some(entries) = idx.get(ident_name) {
-                        if let Some(&(_, sym_id)) = entries.first() {
-                            return Some(sym_id.0);
-                        }
+                    if let Some(entries) = idx.get(ident_name)
+                        && let Some(&(_, sym_id)) = entries.first()
+                    {
+                        return Some(sym_id.0);
                     }
                 } else if let Some(binders) = all_binders.as_ref() {
                     for binder in binders.iter() {
@@ -443,10 +443,10 @@ impl<'a> CheckerState<'a> {
                     // Use global file_locals index for O(1) lookup instead of O(N) binder scan
                     let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
                         if let Some(idx) = file_locals_idx.as_ref() {
-                            if let Some(entries) = idx.get(ident_name) {
-                                if let Some(&(_, sym_id)) = entries.first() {
-                                    return Some(sym_id);
-                                }
+                            if let Some(entries) = idx.get(ident_name)
+                                && let Some(&(_, sym_id)) = entries.first()
+                            {
+                                return Some(sym_id);
                             }
                         } else if let Some(binders) = all_binders.as_ref() {
                             for binder in binders.iter() {

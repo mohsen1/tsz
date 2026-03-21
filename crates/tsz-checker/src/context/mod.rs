@@ -796,13 +796,13 @@ pub struct CheckerContext<'a> {
     /// Enables looking up exported symbols from other files during import resolution.
     pub all_binders: Option<Arc<Vec<Arc<BinderState>>>>,
 
-    /// Pre-built global index: symbol name -> list of (file_idx, SymbolId).
+    /// Pre-built global index: symbol name -> list of (`file_idx`, SymbolId).
     /// Constructed once in `set_all_binders` from all binders' `file_locals`.
     /// Eliminates O(N) scans in `resolve_identifier_symbol_from_all_binders`
     /// and related cross-file symbol lookup hot paths.
     pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
 
-    /// Pre-built global index: (module_specifier, export_name) -> list of (file_idx, SymbolId).
+    /// Pre-built global index: (`module_specifier`, `export_name`) -> list of (`file_idx`, SymbolId).
     /// Constructed once in `set_all_binders` from all binders' `module_exports`.
     /// Eliminates O(N) scans in `resolve_import_from_ambient_module`.
     pub global_module_exports_index:
@@ -813,22 +813,22 @@ pub struct CheckerContext<'a> {
     /// Eliminates O(N*M) scans in `any_ambient_module_declared`.
     pub global_declared_modules: Option<Arc<GlobalDeclaredModules>>,
 
-    /// Pre-built global index: obj_key -> {property_names} merged from all binders'
+    /// Pre-built global index: `obj_key` -> {`property_names`} merged from all binders'
     /// `expando_properties`. Eliminates O(N) scans when checking whether an expando
-    /// property exists across any file (property_access_helpers, access computation).
+    /// property exists across any file (`property_access_helpers`, access computation).
     pub global_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
 
-    /// Pre-built global index: module_specifier -> Vec<(file_idx, ModuleAugmentation)>.
+    /// Pre-built global index: `module_specifier` -> Vec<(`file_idx`, `ModuleAugmentation`)>.
     /// Merges all binders' `module_augmentations` into a single lookup table.
     /// Eliminates O(N) scans when resolving module augmentations for interface
-    /// declaration merging (interface_type.rs, computed.rs).
+    /// declaration merging (`interface_type.rs`, computed.rs).
     pub global_module_augmentations_index:
         Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
 
-    /// Pre-built global index: module_specifier -> Vec<(SymbolId, file_idx)>.
+    /// Pre-built global index: `module_specifier` -> Vec<(SymbolId, `file_idx`)>.
     /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)
     /// into a forward lookup: module -> symbols. Eliminates O(N) scans when finding
-    /// augmentation symbols for a given module specifier (interface_type.rs).
+    /// augmentation symbols for a given module specifier (`interface_type.rs`).
     pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.

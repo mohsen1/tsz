@@ -598,6 +598,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Used by `should_skip_weak_union_error` to decide whether a weak-union
     /// mismatch should be suppressed.
+    #[allow(dead_code)]
     pub(crate) fn source_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::query_boundaries::assignability::classify_object_properties;
         use tsz_solver::relations::freshness;

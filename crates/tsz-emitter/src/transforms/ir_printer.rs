@@ -1466,23 +1466,23 @@ impl<'a> IRPrinter<'a> {
                             // Async arrows need __awaiter/__generator lowering.
                             // Delegate to the full AstPrinter which has the
                             // emit_arrow_function_es5 → emit_async_arrow_es5_inline path.
-                            if func_data.is_async {
-                                if let Some(ref transforms) = self.transforms {
-                                    let mut printer = AstPrinter::with_transforms_and_options(
-                                        arena,
-                                        transforms.clone(),
-                                        PrinterOptions {
-                                            target: crate::emitter::ScriptTarget::ES5,
-                                            ..PrinterOptions::default()
-                                        },
-                                    );
-                                    if let Some(source_text) = self.source_text {
-                                        printer.set_source_text(source_text);
-                                    }
-                                    printer.emit_expression(*idx);
-                                    self.write(printer.get_output());
-                                    return;
+                            if func_data.is_async
+                                && let Some(ref transforms) = self.transforms
+                            {
+                                let mut printer = AstPrinter::with_transforms_and_options(
+                                    arena,
+                                    transforms.clone(),
+                                    PrinterOptions {
+                                        target: crate::emitter::ScriptTarget::ES5,
+                                        ..PrinterOptions::default()
+                                    },
+                                );
+                                if let Some(source_text) = self.source_text {
+                                    printer.set_source_text(source_text);
                                 }
+                                printer.emit_expression(*idx);
+                                self.write(printer.get_output());
+                                return;
                             }
                             self.emit_arrow_function_es5_with_flags(arena, func_data);
                             return;

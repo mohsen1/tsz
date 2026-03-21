@@ -762,6 +762,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Delegates to the canonical excess-property algorithm in
     /// `state/state_checking/property.rs` to avoid duplicated logic.
+    #[allow(dead_code)]
     pub(crate) fn object_literal_has_excess_properties(
         &mut self,
         source: TypeId,

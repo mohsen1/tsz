@@ -1,8 +1,8 @@
 //! Function call error reporting (TS2345, TS2554, TS2769).
 use crate::context::TypingRequest;
 use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
+    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
+    format_message,
 };
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
