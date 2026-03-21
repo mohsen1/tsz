@@ -854,6 +854,17 @@ impl Server {
             }
             normalize_response_actions(&mut response_actions);
 
+            // Deduplicate by fixId: when both CodeActionProvider and fallback
+            // produce the same fix, keep only the first occurrence.
+            let mut dedup_seen = rustc_hash::FxHashSet::default();
+            response_actions.retain(|action| {
+                if let Some(fix_id) = action.get("fixId").and_then(serde_json::Value::as_str) {
+                    dedup_seen.insert(fix_id.to_string())
+                } else {
+                    true
+                }
+            });
+
             return TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
