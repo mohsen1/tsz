@@ -646,8 +646,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "control-flow assignment subtype checks should route through query boundaries, not direct solver helpers"
     );
     assert!(
-        control_flow_assignment_src.contains("are_types_mutually_subtype("),
-        "control-flow assignment subtype compatibility checks should route through flow_analysis boundary helpers"
+        control_flow_assignment_src.contains("is_assignable(")
+            || control_flow_assignment_src.contains("is_assignable_with_env("),
+        "control-flow assignment compatibility checks should route through flow_analysis boundary helpers (is_assignable or is_assignable_with_env)"
     );
     assert!(
         control_flow_assignment_src.contains("widen_literal_to_primitive("),

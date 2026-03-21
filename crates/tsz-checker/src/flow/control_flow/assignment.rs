@@ -8,12 +8,11 @@ use crate::query_boundaries::common::{
     TypeSubstitution, construct_signatures_for_type, instantiate_type,
 };
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype, are_types_mutually_subtype_with_env, call_signatures_for_type,
-    enum_member_domain, fallback_compound_assignment_result, function_return_type,
-    get_application_info, get_array_element_type, get_lazy_def_id, is_assignable,
-    is_compound_assignment_operator, is_promise_like_type, map_compound_assignment_to_binary,
-    tuple_elements_for_type, union_members_for_type, unwrap_promise_type_argument,
-    widen_literal_to_primitive,
+    call_signatures_for_type, enum_member_domain, fallback_compound_assignment_result,
+    function_return_type, get_application_info, get_array_element_type, get_lazy_def_id,
+    is_assignable, is_assignable_with_env, is_compound_assignment_operator, is_promise_like_type,
+    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
+    unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -304,11 +303,12 @@ impl<'a> FlowAnalyzer<'a> {
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
             if let Some(literal_type) = self.literal_type_from_node(rhs) {
-                // For destructuring contexts, widen literals to primitives to match TypeScript
-                // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
-                // Also handles default values: [x = 2] = [] widens to number
+                // For destructuring contexts, return the literal type as-is.
+                // narrow_assignment (using one-way assignability) handles the
+                // correct narrowing: `[b] = [0]` with `b: 0|1|9` narrows to `0`,
+                // while `[c] = [0]` with `c: string|number` narrows to `number`.
                 if widen_literals_for_destructuring {
-                    return Some(widen_literal_to_primitive(self.interner, literal_type));
+                    return Some(literal_type);
                 }
                 // For mutable variable declarations (let/var) without type annotations,
                 // widen literal types to their base types to match TypeScript behavior.
@@ -1193,11 +1193,23 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let pattern = self.skip_parens_and_assertions(pattern);
-        if self.is_matching_reference(pattern, target) {
-            return Some(source.ty);
-        }
 
         let node = self.arena.get(pattern)?;
+
+        // Only perform the is_matching_reference short-circuit for simple
+        // references (identifiers, property/element access). Compound pattern
+        // elements like PROPERTY_ASSIGNMENT or BINDING_ELEMENT wrap an inner
+        // reference and need further processing to extract the correct property
+        // type from the source. Without this guard, `{ x: b }` would match `b`
+        // via reference_symbol transparency and return the entire object source
+        // type instead of the property's type.
+        if node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            && node.kind != syntax_kind_ext::BINDING_ELEMENT
+            && self.is_matching_reference(pattern, target)
+        {
+            return Some(source.ty);
+        }
         match node.kind {
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(node)?;
@@ -1318,6 +1330,14 @@ impl<'a> FlowAnalyzer<'a> {
             .unwrap_or(NodeIndex::NONE);
         let ty = if literal_elements.is_some() && node.is_none() {
             TypeId::UNDEFINED
+        } else if node.is_some() {
+            // When the RHS is an array literal and we can identify the specific
+            // element node, prefer the element's own type (literal or from
+            // node_types) over the array's general element type. This preserves
+            // literal narrowing through destructuring: `[b] = [0]` should narrow
+            // `b` to literal `0`, not widen to `number`.
+            self.destructuring_source_type_from_node(node)
+                .unwrap_or_else(|| self.destructuring_numeric_access_type(source.ty, index))
         } else {
             self.destructuring_numeric_access_type(source.ty, index)
         };
@@ -1411,8 +1431,6 @@ impl<'a> FlowAnalyzer<'a> {
         source: DestructuringSource,
         name: NodeIndex,
     ) -> Option<DestructuringSource> {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
         let key = self.property_key_from_name(name).or_else(|| {
             if source.node.is_some() {
                 self.property_key_from_name_with_rhs_effects(name, source.node)
@@ -1421,11 +1439,38 @@ impl<'a> FlowAnalyzer<'a> {
             }
         })?;
 
-        let ty = match key {
-            PropertyKey::Index(index) => self.destructuring_numeric_access_type(source.ty, index),
+        let node = if source.node.is_some() {
+            self.lookup_property_in_rhs(source.node, name)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
+
+        // When the source is a literal (object/array) and we can identify the
+        // specific RHS value node, prefer the element's own type over the
+        // property-access type from the type system. This preserves literal
+        // narrowing: `({ x: b } = { x: 0 })` should narrow `b` to `0`, not
+        // widen to `number`.
+        let ty = if node.is_some() {
+            if let Some(elem_ty) = self.destructuring_source_type_from_node(node) {
+                elem_ty
+            } else {
+                self.destructuring_type_from_key(source.ty, &key)
+            }
+        } else {
+            self.destructuring_type_from_key(source.ty, &key)
+        };
+
+        Some(DestructuringSource { node, ty })
+    }
+
+    fn destructuring_type_from_key(&self, source_ty: TypeId, key: &PropertyKey) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        match key {
+            PropertyKey::Index(index) => self.destructuring_numeric_access_type(source_ty, *index),
             PropertyKey::Atom(atom) => match self.interner.resolve_property_access_with_options(
-                source.ty,
-                &self.interner.resolve_atom_ref(atom),
+                source_ty,
+                &self.interner.resolve_atom_ref(*atom),
                 self.interner.no_unchecked_indexed_access(),
             ) {
                 PropertyAccessResult::Success { type_id, .. } => type_id,
@@ -1435,16 +1480,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 PropertyAccessResult::IsUnknown => TypeId::UNKNOWN,
             },
-        };
-
-        let node = if source.node.is_some() {
-            self.lookup_property_in_rhs(source.node, name)
-                .unwrap_or(NodeIndex::NONE)
-        } else {
-            NodeIndex::NONE
-        };
-
-        Some(DestructuringSource { node, ty })
+        }
     }
 
     fn destructuring_numeric_access_type(&self, source_ty: TypeId, index: usize) -> TypeId {
@@ -2220,20 +2256,20 @@ impl<'a> FlowAnalyzer<'a> {
         // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
         let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
 
+        // Match tsc's getAssignmentReducedType: keep union members where the
+        // assigned type is assignable to the member. This is one-way
+        // assignability (`typeMaybeAssignableTo(assignedType, member)` in tsc),
+        // NOT mutual subtype. One-way is essential for cases like:
+        //   - `let b: 0|1|9; [b] = [0];` → b narrows to 0 (0 <: 0)
+        //   - `let c: string|number; c = 0;` → c narrows to number (0 <: number)
         let mut kept = Vec::new();
         for &m in &members {
-            let is_mutual = if let Some(env) = &self.type_environment {
-                are_types_mutually_subtype_with_env(
-                    self.interner,
-                    &env.borrow(),
-                    assigned_type,
-                    m,
-                    true,
-                )
+            let assignable_to_member = if let Some(env) = &self.type_environment {
+                is_assignable_with_env(self.interner, &env.borrow(), assigned_type, m, true)
             } else {
-                are_types_mutually_subtype(self.interner, assigned_type, m)
+                is_assignable(self.interner, assigned_type, m)
             };
-            if is_mutual {
+            if assignable_to_member {
                 kept.push(m);
             }
         }
