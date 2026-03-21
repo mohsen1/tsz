@@ -1916,10 +1916,19 @@ impl<'a> CheckerState<'a> {
     /// node itself and parameter symbol types are managed externally by
     /// `cache_parameter_types` (which must be called BEFORE this helper).
     pub(crate) fn invalidate_function_body_for_param_retyping(&mut self, body: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
         self.ctx.request_cache_counters.targeted_invalidation_calls += 1;
 
-        // Body needs recursive clearing because cached expressions inside
-        // reference parameter types (via symbol_types) that have changed.
+        // For expression-bodied arrows, use targeted invalidation since the
+        // body is a single expression tree. Block bodies use recursive clearing
+        // because they contain statement lists referencing changed param types.
+        if let Some(body_node) = self.ctx.arena.get(body) {
+            if body_node.kind != syntax_kind_ext::BLOCK {
+                self.invalidate_expression_for_contextual_retry(body);
+                return;
+            }
+        }
         self.clear_type_cache_recursive(body);
     }
 
@@ -1951,10 +1960,16 @@ impl<'a> CheckerState<'a> {
                         for &param_idx in &func.parameters.nodes {
                             self.invalidate_function_param_symbols(param_idx);
                         }
-                        // Body needs recursive clearing because cached
-                        // expressions reference parameter symbol types that
-                        // have changed (or will change during re-evaluation).
-                        self.clear_type_cache_recursive(func.body);
+                        // For expression-bodied arrows, use targeted invalidation.
+                        // Block bodies need recursive clearing since they contain
+                        // statements that reference the changed parameter types.
+                        if let Some(body_node) = self.ctx.arena.get(func.body) {
+                            if body_node.kind == syntax_kind_ext::BLOCK {
+                                self.clear_type_cache_recursive(func.body);
+                            } else {
+                                self.invalidate_expression_for_contextual_retry(func.body);
+                            }
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::NEW_EXPRESSION
