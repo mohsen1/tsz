@@ -159,6 +159,37 @@ pub(crate) fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)
 }
 
+/// Reconstruct a mapped type with a new constraint, preserving all other fields.
+///
+/// Used when the checker evaluates a mapped type's constraint to concrete keys
+/// and needs to create a new mapped type with the resolved constraint.
+pub(crate) fn reconstruct_mapped_with_constraint(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+    new_constraint: TypeId,
+) -> tsz_solver::MappedTypeId {
+    tsz_solver::type_queries::reconstruct_mapped_with_constraint(db, mapped_id, new_constraint)
+}
+
+/// Collect finite property names from a mapped type's resolved constraint.
+///
+/// Returns `Some(names)` if the constraint resolves to a finite set of string
+/// literal keys, `None` if the constraint is open-ended (e.g., `string`).
+pub(crate) fn collect_finite_mapped_property_names(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> Option<rustc_hash::FxHashSet<tsz_common::Atom>> {
+    tsz_solver::type_queries::collect_finite_mapped_property_names(db, mapped_id)
+}
+
+/// Extract string literal keys from a type (union of string literals).
+pub(crate) fn extract_string_literal_keys(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<tsz_common::Atom> {
+    tsz_solver::type_queries::extract_string_literal_keys(db, type_id)
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }

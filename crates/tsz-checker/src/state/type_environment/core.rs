@@ -730,16 +730,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved_mapped_id = if keys != mapped.constraint {
-            let resolved_mapped = tsz_solver::MappedType {
-                type_param: mapped.type_param,
-                constraint: keys,
-                name_type: mapped.name_type,
-                template: mapped.template,
-                readonly_modifier: mapped.readonly_modifier,
-                optional_modifier: mapped.optional_modifier,
-            };
-            tsz_solver::mapped_type_id(self.ctx.types, self.ctx.types.mapped(resolved_mapped))
-                .unwrap_or(mapped_id)
+            query::reconstruct_mapped_with_constraint(self.ctx.types, mapped_id, keys)
         } else {
             mapped_id
         };
@@ -748,13 +739,11 @@ impl<'a> CheckerState<'a> {
         // resolved. This keeps mapped expansion aligned with property access and
         // exact `keyof` key-space semantics.
         let string_keys: Vec<_> = if let Some(names) =
-            tsz_solver::type_queries::collect_finite_mapped_property_names(
-                self.ctx.types,
-                resolved_mapped_id,
-            ) {
+            query::collect_finite_mapped_property_names(self.ctx.types, resolved_mapped_id)
+        {
             names.into_iter().collect()
         } else {
-            tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys)
+            query::extract_string_literal_keys(self.ctx.types, keys)
         };
         if string_keys.is_empty() {
             // Can't evaluate - return original

@@ -2482,6 +2482,36 @@ pub fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         || crate::visitors::visitor_predicates::is_tuple_type(db, type_id)
 }
 
+/// Reconstruct a mapped type with a new constraint, preserving all other fields.
+///
+/// Used when the checker evaluates a mapped type's constraint to concrete keys
+/// and needs to create a new mapped type with the resolved constraint for
+/// further evaluation (e.g., finite key collection).
+///
+/// Returns the `MappedTypeId` of the new (or interned-existing) mapped type.
+pub fn reconstruct_mapped_with_constraint(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    new_constraint: TypeId,
+) -> crate::types::MappedTypeId {
+    let mapped = db.mapped_type(mapped_id);
+    if mapped.constraint == new_constraint {
+        return mapped_id;
+    }
+    let new_mapped = crate::types::MappedType {
+        type_param: mapped.type_param,
+        constraint: new_constraint,
+        name_type: mapped.name_type,
+        template: mapped.template,
+        readonly_modifier: mapped.readonly_modifier,
+        optional_modifier: mapped.optional_modifier,
+    };
+    // Intern via the TypeDatabase factory and extract the MappedTypeId.
+    let type_id = db.mapped(new_mapped);
+    crate::mapped_type_id(db, type_id)
+        .expect("freshly constructed mapped type should have MappedTypeId")
+}
+
 /// Compute modifier values for a mapped type property given the source property's
 /// original modifiers and the mapped type's modifier directives.
 ///
