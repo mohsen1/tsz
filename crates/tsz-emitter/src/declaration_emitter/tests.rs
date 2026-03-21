@@ -5460,3 +5460,96 @@ export class C {
         "Expected method syntax not property syntax for const enum computed method: {output}"
     );
 }
+
+#[test]
+fn test_inline_mapped_type_emits_as_clause_and_value_type() {
+    // Inline mapped types inside type literals must emit the `as` clause
+    // correctly (before `]`, not as `: `) and must emit the value type.
+    let output = emit_dts(
+        r#"
+export type Remap<T> = {
+    [K in keyof T as K extends string ? `get_${K}` : never]: T[K];
+};
+"#,
+    );
+    assert!(
+        output.contains(" as K extends string ? `get_${K}` : never]"),
+        "Expected 'as' clause for key remapping in mapped type: {output}"
+    );
+    assert!(
+        output.contains("]: T[K];"),
+        "Expected value type T[K] in mapped type: {output}"
+    );
+    assert!(
+        !output.contains("]: ;"),
+        "Must not emit empty value type in mapped type: {output}"
+    );
+}
+
+#[test]
+fn test_override_modifier_preserved_in_dts() {
+    // tsc preserves `override` on class members in .d.ts output.
+    let output = emit_dts(
+        r#"
+declare class Base {
+    method(): void;
+    prop: number;
+}
+export declare class Derived extends Base {
+    override method(): void;
+    override prop: number;
+}
+"#,
+    );
+    assert!(
+        output.contains("override method(): void;"),
+        "Expected override modifier on method in .d.ts: {output}"
+    );
+    assert!(
+        output.contains("override prop: number;"),
+        "Expected override modifier on property in .d.ts: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_class_emits_parameter_properties() {
+    // `export default class` with constructor parameter properties must emit
+    // the properties as class members, same as non-default exported classes.
+    let output = emit_dts(
+        r#"
+export default class Foo {
+    constructor(public x: number, private y: string) {}
+}
+"#,
+    );
+    assert!(
+        output.contains("x: number;"),
+        "Expected parameter property 'x' as class member in export default class: {output}"
+    );
+    assert!(
+        output.contains("private y;"),
+        "Expected private parameter property 'y' in export default class: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_class_skips_overload_implementation() {
+    // `export default class` with method overloads should skip the
+    // implementation signature, same as non-default exported classes.
+    let output = emit_dts(
+        r#"
+export default class Bar {
+    method(x: number): number;
+    method(x: string): string;
+    method(x: number | string): number | string {
+        return x;
+    }
+}
+"#,
+    );
+    let method_count = output.matches("method(").count();
+    assert_eq!(
+        method_count, 2,
+        "Expected exactly 2 overload signatures (not implementation) in export default class, got {method_count}: {output}"
+    );
+}
