@@ -1354,8 +1354,20 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.report_unresolved_imports {
             return TypeId::ANY;
         }
-        self.error_cannot_find_name_at(name, idx);
-        TypeId::ERROR
+        // Route through the unified name resolution boundary for TS2304/TS2552
+        let req = crate::query_boundaries::name_resolution::NameResolutionRequest::value(name, idx);
+        let result = self.resolve_name_structured(&req);
+        match result {
+            Ok(_) => {
+                // Symbol found — shouldn't happen since binder already failed,
+                // but avoid false diagnostic
+                TypeId::ERROR
+            }
+            Err(failure) => {
+                self.report_name_resolution_failure(&req, &failure);
+                TypeId::ERROR
+            }
+        }
     }
 
     /// Returns `true` if any cross-file binder provides a non-UMD VALUE binding for

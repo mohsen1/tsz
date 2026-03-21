@@ -1,0 +1,501 @@
+//! Name resolution boundary API.
+//!
+//! Provides a unified `NameResolutionRequest` → `NameResolutionResult` gateway
+//! so that checker code does not open-code value/type/namespace/exported-member
+//! lookup and suggestion logic.  The boundary owns:
+//!
+//! - Meaning classification (value vs type vs namespace vs exported member)
+//! - Structured failure reasons (not found, wrong meaning, missing export, etc.)
+//! - Spelling-suggestion collection (delegated to existing helpers)
+//!
+//! Diagnostic families covered: TS2304, TS2552, TS2694, TS2708, TS2305, TS2724.
+
+use tsz_binder::SymbolId;
+use tsz_parser::parser::NodeIndex;
+
+// ---------------------------------------------------------------------------
+// Request model
+// ---------------------------------------------------------------------------
+
+/// The semantic meaning the caller is looking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NameLookupKind {
+    /// Expression/value position (e.g., `let x = Foo`).
+    Value,
+    /// Type position (e.g., `let x: Foo`).
+    Type,
+    /// Namespace position (e.g., `Foo.Bar` where `Foo` is a namespace).
+    Namespace,
+    /// Exported member of an already-resolved module/namespace symbol.
+    ExportedMember,
+}
+
+/// A structured request for name resolution.
+#[derive(Debug, Clone)]
+pub(crate) struct NameResolutionRequest<'n> {
+    /// The identifier text to look up.
+    pub name: &'n str,
+    /// The AST node where the lookup originates (for scope + diagnostics).
+    pub idx: NodeIndex,
+    /// What kind of meaning the caller needs.
+    pub kind: NameLookupKind,
+    /// For `ExportedMember` lookups: the parent namespace/module symbol.
+    pub parent_symbol: Option<SymbolId>,
+    /// Optional list of export names (for spelling suggestions on exported members).
+    pub export_candidates: Option<Vec<String>>,
+}
+
+impl<'n> NameResolutionRequest<'n> {
+    /// Convenience: create a value-position lookup.
+    pub fn value(name: &'n str, idx: NodeIndex) -> Self {
+        Self {
+            name,
+            idx,
+            kind: NameLookupKind::Value,
+            parent_symbol: None,
+            export_candidates: None,
+        }
+    }
+
+    /// Convenience: create a type-position lookup.
+    pub fn type_ref(name: &'n str, idx: NodeIndex) -> Self {
+        Self {
+            name,
+            idx,
+            kind: NameLookupKind::Type,
+            parent_symbol: None,
+            export_candidates: None,
+        }
+    }
+
+    /// Convenience: create a namespace-position lookup.
+    pub fn namespace(name: &'n str, idx: NodeIndex) -> Self {
+        Self {
+            name,
+            idx,
+            kind: NameLookupKind::Namespace,
+            parent_symbol: None,
+            export_candidates: None,
+        }
+    }
+
+    /// Convenience: create an exported-member lookup.
+    pub fn exported_member(
+        name: &'n str,
+        idx: NodeIndex,
+        parent_symbol: SymbolId,
+        export_candidates: Vec<String>,
+    ) -> Self {
+        Self {
+            name,
+            idx,
+            kind: NameLookupKind::ExportedMember,
+            parent_symbol: Some(parent_symbol),
+            export_candidates: Some(export_candidates),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Result model
+// ---------------------------------------------------------------------------
+
+/// Successful name resolution.
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedName {
+    /// The symbol that was found.
+    pub symbol_id: SymbolId,
+    /// The symbol's binder flags (VALUE, TYPE, ALIAS, etc.).
+    pub flags: u32,
+    /// Whether the symbol is type-only (from `import type` / `export type`).
+    pub is_type_only: bool,
+}
+
+/// Why a name lookup failed.
+#[derive(Debug, Clone)]
+pub(crate) enum ResolutionFailureKind {
+    /// The name does not exist in any reachable scope.
+    NotFound,
+    /// The name exists but has the wrong meaning.
+    /// For example, a type used as a value, or a namespace used as a value.
+    WrongMeaning {
+        /// The symbol that was found with the wrong meaning.
+        found_symbol: SymbolId,
+        /// What meaning the symbol actually has.
+        actual_meaning: NameLookupKind,
+    },
+    /// The namespace/module does not export a member with this name.
+    ExportedMemberMissing {
+        /// The parent namespace/module symbol.
+        parent_symbol: SymbolId,
+        /// The parent namespace/module name (for diagnostics).
+        parent_name: String,
+    },
+    /// The name is ambiguous or shadowed in a way that prevents resolution.
+    Ambiguous {
+        /// The competing symbols.
+        candidates: Vec<SymbolId>,
+    },
+}
+
+/// A structured failure from name resolution.
+#[derive(Debug, Clone)]
+pub(crate) struct ResolutionFailure {
+    /// Why the lookup failed.
+    pub kind: ResolutionFailureKind,
+    /// Spelling-suggestion candidates (if any).
+    pub suggestions: Vec<String>,
+}
+
+impl ResolutionFailure {
+    /// Create a simple "not found" failure with no suggestions.
+    pub fn not_found() -> Self {
+        Self {
+            kind: ResolutionFailureKind::NotFound,
+            suggestions: Vec::new(),
+        }
+    }
+
+    /// Create a "not found" failure with spelling suggestions.
+    pub fn not_found_with_suggestions(suggestions: Vec<String>) -> Self {
+        Self {
+            kind: ResolutionFailureKind::NotFound,
+            suggestions,
+        }
+    }
+
+    /// Create a "wrong meaning" failure.
+    pub fn wrong_meaning(found_symbol: SymbolId, actual_meaning: NameLookupKind) -> Self {
+        Self {
+            kind: ResolutionFailureKind::WrongMeaning {
+                found_symbol,
+                actual_meaning,
+            },
+            suggestions: Vec::new(),
+        }
+    }
+
+    /// Create an "exported member missing" failure.
+    pub fn exported_member_missing(parent_symbol: SymbolId, parent_name: String) -> Self {
+        Self {
+            kind: ResolutionFailureKind::ExportedMemberMissing {
+                parent_symbol,
+                parent_name,
+            },
+            suggestions: Vec::new(),
+        }
+    }
+
+    /// Create an "exported member missing" failure with spelling suggestions.
+    pub fn exported_member_missing_with_suggestions(
+        parent_symbol: SymbolId,
+        parent_name: String,
+        suggestions: Vec<String>,
+    ) -> Self {
+        Self {
+            kind: ResolutionFailureKind::ExportedMemberMissing {
+                parent_symbol,
+                parent_name,
+            },
+            suggestions,
+        }
+    }
+
+    /// Whether this failure has spelling suggestions.
+    pub fn has_suggestions(&self) -> bool {
+        !self.suggestions.is_empty()
+    }
+}
+
+/// The outcome of a name resolution attempt.
+pub(crate) type NameResolutionResult = Result<ResolvedName, ResolutionFailure>;
+
+// ---------------------------------------------------------------------------
+// Resolution logic (on CheckerState)
+// ---------------------------------------------------------------------------
+
+use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
+
+impl<'a> CheckerState<'a> {
+    /// Unified name resolution gateway.
+    ///
+    /// Resolves a name according to the requested meaning (value/type/namespace/
+    /// exported-member) and returns a structured result. The checker should use
+    /// this instead of ad-hoc binder lookups + flag-checking for the diagnostic
+    /// families TS2304/TS2552/TS2694/TS2708/TS2305/TS2724.
+    pub(crate) fn resolve_name_structured(
+        &self,
+        request: &NameResolutionRequest<'_>,
+    ) -> NameResolutionResult {
+        match request.kind {
+            NameLookupKind::ExportedMember => self.resolve_exported_member(request),
+            NameLookupKind::Value | NameLookupKind::Type | NameLookupKind::Namespace => {
+                self.resolve_scoped_name(request)
+            }
+        }
+    }
+
+    /// Resolve a name through binder scope chains (value/type/namespace).
+    fn resolve_scoped_name(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
+        let sym_id = self.resolve_identifier_symbol(request.idx);
+        let Some(sym_id) = sym_id else {
+            // Not found — try spelling suggestions
+            let meaning_flags = match request.kind {
+                NameLookupKind::Value => symbol_flags::VALUE,
+                NameLookupKind::Type => symbol_flags::TYPE,
+                NameLookupKind::Namespace => symbol_flags::NAMESPACE_MODULE,
+                NameLookupKind::ExportedMember => unreachable!(),
+            };
+            let suggestions = self
+                .find_similar_identifiers(request.name, request.idx, meaning_flags)
+                .unwrap_or_default();
+            return Err(if suggestions.is_empty() {
+                ResolutionFailure::not_found()
+            } else {
+                ResolutionFailure::not_found_with_suggestions(suggestions)
+            });
+        };
+
+        // Get symbol flags
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
+        let Some(symbol) = symbol else {
+            return Err(ResolutionFailure::not_found());
+        };
+
+        let flags = symbol.flags;
+        let is_type_only = symbol.is_type_only;
+
+        // Check meaning compatibility
+        match request.kind {
+            NameLookupKind::Value => {
+                let has_value = (flags & symbol_flags::VALUE) != 0;
+                let is_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+                let has_other_value = (flags & value_flags_except_module) != 0;
+
+                if is_type_alias && !has_value {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Type,
+                    ));
+                }
+                if has_type && !has_value && (flags & symbol_flags::ALIAS) == 0 {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Type,
+                    ));
+                }
+                if is_namespace && !has_other_value {
+                    // Might be an uninstantiated namespace — caller needs to check
+                    // instantiation separately
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Namespace,
+                    ));
+                }
+            }
+            NameLookupKind::Type => {
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                let has_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
+                if !has_type && !has_type_alias {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Value,
+                    ));
+                }
+            }
+            NameLookupKind::Namespace => {
+                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                let has_type = (flags & symbol_flags::TYPE) != 0;
+                if !is_namespace && !has_type {
+                    return Err(ResolutionFailure::wrong_meaning(
+                        sym_id,
+                        NameLookupKind::Value,
+                    ));
+                }
+            }
+            NameLookupKind::ExportedMember => unreachable!(),
+        }
+
+        Ok(ResolvedName {
+            symbol_id: sym_id,
+            flags,
+            is_type_only,
+        })
+    }
+
+    /// Resolve an exported member from a known namespace/module symbol.
+    fn resolve_exported_member(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
+        let parent_sym = request
+            .parent_symbol
+            .expect("ExportedMember lookup requires parent_symbol");
+
+        let lib_binders = self.get_lib_binders();
+        let parent_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(parent_sym, &lib_binders);
+
+        let parent_name = parent_symbol
+            .map(|s| s.escaped_name.clone())
+            .unwrap_or_default();
+
+        // Look up the member in the parent's exports
+        let member_sym: Option<SymbolId> = parent_symbol
+            .and_then(|s| s.exports.as_ref())
+            .and_then(|exports| exports.get(request.name));
+
+        let Some(member_sym) = member_sym else {
+            // Not found — try spelling suggestions from export candidates
+            let export_candidates = request.export_candidates.as_deref().unwrap_or(&[]);
+
+            let suggestions = if !export_candidates.is_empty() {
+                Self::find_export_spelling_suggestion(request.name, export_candidates)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            return Err(if suggestions.is_empty() {
+                ResolutionFailure::exported_member_missing(parent_sym, parent_name)
+            } else {
+                ResolutionFailure::exported_member_missing_with_suggestions(
+                    parent_sym,
+                    parent_name,
+                    suggestions,
+                )
+            });
+        };
+
+        let member = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(member_sym, &lib_binders);
+        let flags = member.map_or(0, |s| s.flags);
+        let is_type_only = member.is_some_and(|s| s.is_type_only);
+
+        Ok(ResolvedName {
+            symbol_id: member_sym,
+            flags,
+            is_type_only,
+        })
+    }
+
+    /// Emit the appropriate diagnostic for a name resolution failure.
+    ///
+    /// This is the single diagnostic-rendering gateway for name-resolution
+    /// failures, replacing scattered `error_cannot_find_name_at` /
+    /// `error_namespace_no_export` / etc. call sites.
+    pub(crate) fn report_name_resolution_failure(
+        &mut self,
+        request: &NameResolutionRequest<'_>,
+        failure: &ResolutionFailure,
+    ) {
+        match &failure.kind {
+            ResolutionFailureKind::NotFound => {
+                if failure.has_suggestions() {
+                    self.error_cannot_find_name_with_suggestions(
+                        request.name,
+                        &failure.suggestions,
+                        request.idx,
+                    );
+                } else {
+                    self.error_cannot_find_name_at(request.name, request.idx);
+                }
+            }
+            ResolutionFailureKind::WrongMeaning { actual_meaning, .. } => {
+                match actual_meaning {
+                    NameLookupKind::Type => {
+                        // TS2693: only refers to a type, but is used as a value
+                        self.error_type_only_value_at(request.name, request.idx);
+                    }
+                    NameLookupKind::Namespace => {
+                        // TS2708: cannot use namespace as a value
+                        self.error_namespace_used_as_value_at(request.name, request.idx);
+                    }
+                    NameLookupKind::Value => {
+                        // TS2749: refers to a value, but is used as a type
+                        self.error_value_only_type_at(request.name, request.idx);
+                    }
+                    NameLookupKind::ExportedMember => {}
+                }
+            }
+            ResolutionFailureKind::ExportedMemberMissing { parent_name, .. } => {
+                if failure.has_suggestions() {
+                    // TS2724: did you mean ...?
+                    let export_candidates = request.export_candidates.as_deref().unwrap_or(&[]);
+                    self.error_namespace_no_export_with_exports(
+                        parent_name,
+                        request.name,
+                        request.idx,
+                        export_candidates,
+                    );
+                } else {
+                    // TS2694: namespace has no exported member
+                    self.error_namespace_no_export(parent_name, request.name, request.idx);
+                }
+            }
+            ResolutionFailureKind::Ambiguous { .. } => {
+                // For now, emit a generic "cannot find name" for ambiguous cases.
+                self.error_cannot_find_name_at(request.name, request.idx);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_resolution_request_constructors() {
+        let idx = NodeIndex::NONE;
+
+        let req = NameResolutionRequest::value("foo", idx);
+        assert_eq!(req.kind, NameLookupKind::Value);
+        assert_eq!(req.name, "foo");
+        assert!(req.parent_symbol.is_none());
+
+        let req = NameResolutionRequest::type_ref("Bar", idx);
+        assert_eq!(req.kind, NameLookupKind::Type);
+
+        let req = NameResolutionRequest::namespace("ns", idx);
+        assert_eq!(req.kind, NameLookupKind::Namespace);
+    }
+
+    #[test]
+    fn resolution_failure_constructors() {
+        let f = ResolutionFailure::not_found();
+        assert!(!f.has_suggestions());
+        assert!(matches!(f.kind, ResolutionFailureKind::NotFound));
+
+        let f = ResolutionFailure::not_found_with_suggestions(vec!["bar".to_string()]);
+        assert!(f.has_suggestions());
+        assert_eq!(f.suggestions, vec!["bar"]);
+
+        let sym = SymbolId(42);
+        let f = ResolutionFailure::wrong_meaning(sym, NameLookupKind::Type);
+        assert!(matches!(f.kind, ResolutionFailureKind::WrongMeaning { .. }));
+
+        let f = ResolutionFailure::exported_member_missing(sym, "MyNs".to_string());
+        assert!(matches!(
+            f.kind,
+            ResolutionFailureKind::ExportedMemberMissing { .. }
+        ));
+
+        let f = ResolutionFailure::exported_member_missing_with_suggestions(
+            sym,
+            "MyNs".to_string(),
+            vec!["member1".to_string()],
+        );
+        assert!(f.has_suggestions());
+    }
+}
