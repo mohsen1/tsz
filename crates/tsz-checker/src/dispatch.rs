@@ -547,6 +547,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
         }
 
+        // Check the contextual generator next type stack — this is populated when
+        // a generator function is contextually typed (e.g., assigned to a variable
+        // with a Generator<Y, R, N> type or passed as a callback with explicit
+        // type arguments). The next type from the contextual Generator type tells
+        // us what `.next()` will pass, so we don't need the explicit annotation.
+        if let Some(next_type) = self.checker.ctx.current_generator_next_type() {
+            return next_type;
+        }
+
         // Fallback to `any` if no generator context is available.
         // Emit TS7057 when noImplicitAny is enabled, the generator lacks a return type,
         // and the yield result is consumed (not discarded).

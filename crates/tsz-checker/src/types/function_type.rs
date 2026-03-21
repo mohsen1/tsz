@@ -1757,15 +1757,23 @@ impl<'a> CheckerState<'a> {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 let yield_type = self.get_generator_yield_type_argument(original_type);
                 self.ctx.push_yield_type(yield_type);
+                // Push the next type from the annotation for yield result typing
+                let next_type = self.get_generator_next_type_argument(original_type);
+                self.ctx.push_generator_next_type(next_type);
             } else if is_generator && early_yield_type.is_none() && !has_type_annotation {
                 // Unannotated generator: push None so dispatch.rs defers TS7057.
                 // After body check, we'll compute the inferred yield type union
                 // and emit either TS7055/TS7025 (if yield type is any) or flush
                 // deferred TS7057 diagnostics.
                 self.ctx.push_yield_type(None);
+                self.ctx.push_generator_next_type(None);
             } else if early_yield_type.is_none() {
                 // No early push was done, push None for stack balance
                 self.ctx.push_yield_type(None);
+                self.ctx.push_generator_next_type(None);
+            } else if is_generator {
+                // Contextually-typed generator: push the next type from contextual extraction
+                self.ctx.push_generator_next_type(early_gen_next_type);
             }
 
             // For expression-bodied arrows/functions, check the expression against
@@ -2192,6 +2200,7 @@ impl<'a> CheckerState<'a> {
             }
             self.pop_return_type();
             self.ctx.pop_yield_type();
+            self.ctx.pop_generator_next_type();
 
             // Exit async context
             if is_async_for_context {
