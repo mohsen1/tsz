@@ -515,6 +515,18 @@ impl<'a> CheckerContext<'a> {
 
     pub fn rebuild_emitted_diagnostics_from_current(&mut self) {
         self.emitted_diagnostics.clear();
+        // Also synchronize the TS2454 dedup set: remove entries for TS2454
+        // diagnostics that are no longer in the diagnostics list (e.g., removed
+        // by a prior `retain` call). Without this, removed TS2454 errors stay
+        // in the dedup set and cannot be re-emitted on subsequent passes.
+        let ts2454_positions: rustc_hash::FxHashSet<u32> = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 2454)
+            .map(|d| d.start)
+            .collect();
+        self.emitted_ts2454_errors
+            .retain(|&(pos, _)| ts2454_positions.contains(&pos));
         for diag in &self.diagnostics {
             let key = self.diagnostic_dedup_key(diag);
             self.emitted_diagnostics.insert(key);

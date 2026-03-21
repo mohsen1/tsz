@@ -210,6 +210,11 @@ impl<'a> CheckerState<'a> {
                     .retain(|diag| {
                         diag.start < start
                             || diag.start >= end
+                            // Preserve TS2454 (variable used before assignment).
+                            // The emitted_ts2454_errors dedup set is NOT rebuilt
+                            // by rebuild_emitted_diagnostics_from_current, so once
+                            // removed the error cannot be re-emitted.
+                            || diag.code == 2454
                             || matches!(
                                 diag.code,
                                 crate::diagnostics::diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE

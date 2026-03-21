@@ -127,6 +127,16 @@ impl CheckerContext<'_> {
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
     /// diagnostics and restoring the dedup set.
     pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        // Remove TS2454 entries from the dedup set for any discarded diagnostics.
+        // The emitted_ts2454_errors set is separate from emitted_diagnostics and
+        // is NOT restored by this rollback. Without cleanup, discarded TS2454
+        // errors remain in the dedup set and prevent re-emission later.
+        for diag in &self.diagnostics[snap.diagnostics_len..] {
+            if diag.code == 2454 {
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
+            }
+        }
         self.diagnostics.truncate(snap.diagnostics_len);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
@@ -185,6 +195,13 @@ impl CheckerContext<'_> {
                 let key = self.diagnostic_dedup_key(&diag);
                 self.emitted_diagnostics.insert(key);
                 self.diagnostics.push(diag);
+            } else if diag.code == 2454 {
+                // When a TS2454 diagnostic is discarded during rollback, also
+                // remove it from the separate emitted_ts2454_errors dedup set.
+                // Without this, the error cannot be re-emitted on a subsequent
+                // pass because the dedup set still marks it as "already reported".
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
             }
         }
     }
@@ -219,6 +236,19 @@ impl CheckerContext<'_> {
         snap: &DiagnosticSnapshot,
         replacement: Vec<Diagnostic>,
     ) {
+        // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
+        // that are not in the replacement set.
+        let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
+            .iter()
+            .filter(|d| d.code == 2454)
+            .map(|d| d.start)
+            .collect();
+        for diag in &self.diagnostics[snap.diagnostics_len..] {
+            if diag.code == 2454 && !replacement_ts2454_positions.contains(&diag.start) {
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
+            }
+        }
         self.diagnostics.truncate(snap.diagnostics_len);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
