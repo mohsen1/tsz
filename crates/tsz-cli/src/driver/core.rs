@@ -1856,6 +1856,7 @@ fn build_program_with_cache(
                     is_external_module: false, // Default to false for missing files
                     expando_properties: Default::default(),
                     alias_partners: Default::default(),
+                    file_features: Default::default(),
                 }
             }
         };
