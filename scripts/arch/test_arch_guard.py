@@ -136,7 +136,8 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
         self.arch_guard = load_arch_guard_module()
 
     def _checker_file_size_check(self):
-        for name, _base, limit in self.arch_guard.LINE_LIMIT_CHECKS:
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            name, _base, limit = entry[0], entry[1], entry[2]
             if name == "Checker boundary: src files must stay under 2000 LOC":
                 return limit
         self.fail("checker file size boundary check is missing from LINE_LIMIT_CHECKS")
@@ -196,9 +197,9 @@ class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
     def test_scan_solver_typedata_quarantine_ignores_allowlisted_interner_files(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             solver_root = pathlib.Path(temp_dir) / "crates" / "tsz-solver"
-            src_dir = solver_root / "src"
-            src_dir.mkdir(parents=True)
-            target = src_dir / "intern.rs"
+            intern_dir = solver_root / "src" / "intern"
+            intern_dir.mkdir(parents=True)
+            target = intern_dir / "mod.rs"
             target.write_text("fn ok() { interner.intern(TypeData::ThisType); }", encoding="utf-8")
 
             hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
