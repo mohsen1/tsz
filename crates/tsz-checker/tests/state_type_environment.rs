@@ -184,11 +184,11 @@ fn solver_evaluator_handles_mapped_type_with_resolver() {
     );
     // Should be an object — use solver query API to check
     assert!(
-        tsz_solver::type_queries::is_object_type(&*types, result),
+        tsz_solver::type_queries::is_object_type(&types, result),
         "Mapped type should evaluate to an Object"
     );
     // Check properties via PropertyAccessEvaluator
-    let evaluator = tsz_solver::operations::PropertyAccessEvaluator::new(&*types);
+    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(&types);
     let a_type = evaluator
         .resolve_property_access(result, "a")
         .success_type();
