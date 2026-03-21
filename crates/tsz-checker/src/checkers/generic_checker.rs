@@ -913,6 +913,24 @@ impl<'a> CheckerState<'a> {
                                         continue;
                                     }
                                 }
+                                // Check if base is a mapped type whose template is callable.
+                                // For `{ [K in keyof T]: () => unknown }`, the template
+                                // `() => unknown` is callable, so indexing yields a callable type.
+                                if let Some(template) = query::mapped_type_template(db, base) {
+                                    let template_evaluated =
+                                        self.evaluate_type_for_assignability(template);
+                                    let template_callable = query::is_callable_type(
+                                        self.ctx.types.as_type_database(),
+                                        template_evaluated,
+                                    ) || query::callable_shape_for_type(
+                                        self.ctx.types.as_type_database(),
+                                        template_evaluated,
+                                    )
+                                    .is_some();
+                                    if template_callable {
+                                        continue;
+                                    }
+                                }
                                 // Base is not callable and constraint is callable → TS2344.
                                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                                     && !self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -963,6 +981,7 @@ impl<'a> CheckerState<'a> {
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
                                 && self.is_generic_indexed_access(type_arg)
+                                && !self.indexed_access_resolves_to_callable(type_arg)
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                     arg_idx,
@@ -1055,7 +1074,15 @@ impl<'a> CheckerState<'a> {
                                         || query::is_callable_type(db, constraint_evaluated)
                                         || self.is_function_constraint(constraint)
                                         || self.is_function_constraint(constraint_resolved);
+                                // For indexed access types like `T[M]` where T's constraint
+                                // is a mapped type with a callable template, the indexed
+                                // access result is callable — skip TS2344.
+                                // Example: `ReturnType<T[M]>` where
+                                // `T extends { [K in keyof T]: () => unknown }`.
+                                let type_arg_is_callable_via_mapped = constraint_is_callable
+                                    && self.indexed_access_resolves_to_callable(type_arg);
                                 if constraint_is_callable
+                                    && !type_arg_is_callable_via_mapped
                                     && !query::is_callable_type(db, type_arg)
                                     && query::callable_shape_for_type(db, type_arg).is_none()
                                     && let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -1422,6 +1449,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For mapped types `{ [K in C]: Template }`, the indexed access value
+        // type is the template type. This handles cases like
+        // `FunctionsObj<T>[keyof T]` where FunctionsObj is `{ [K in keyof T]: () => unknown }`.
+        if let Some(template) = query::mapped_type_template(db, object_type) {
+            return Some(template);
+        }
+
         None
     }
 
@@ -1460,6 +1494,39 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         if let Some((object, _)) = query::index_access_components(db, type_id) {
             return query::contains_type_parameters(self.ctx.types, object);
+        }
+        false
+    }
+
+    /// Check if an indexed access type `T[M]` resolves to a callable type
+    /// through its constraint chain. This handles cases like:
+    /// `T[M]` where `T extends { [K in keyof T]: () => unknown }` and `M extends keyof T`.
+    /// The mapped type template `() => unknown` is callable, so `T[M]` resolves
+    /// to a callable type.
+    fn indexed_access_resolves_to_callable(&mut self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some((object, _index)) = query::index_access_components(db, type_id) else {
+            return false;
+        };
+        // Resolve the object type's constraint chain to find a mapped type
+        let object_constraint = if query::is_bare_type_parameter(db, object) {
+            let base = query::base_constraint_of_type(db, object);
+            if base != object {
+                self.evaluate_type_for_assignability(base)
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        };
+        let db = self.ctx.types.as_type_database();
+        // Check if the resolved constraint is a mapped type with callable template
+        if let Some(template) = query::mapped_type_template(db, object_constraint) {
+            let template_eval = self.evaluate_type_for_assignability(template);
+            let db2 = self.ctx.types.as_type_database();
+            return query::is_callable_type(db2, template_eval)
+                || query::callable_shape_for_type(db2, template_eval).is_some()
+                || query::is_callable_type(db2, template);
         }
         false
     }

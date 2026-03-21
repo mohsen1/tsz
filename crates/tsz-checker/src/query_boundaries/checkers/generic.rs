@@ -231,3 +231,13 @@ pub(crate) fn mapped_type_id(
 ) -> Option<tsz_solver::MappedTypeId> {
     tsz_solver::mapped_type_id(db, type_id)
 }
+
+/// Get the template (value) type of a mapped type.
+///
+/// For `{ [K in C]: T }`, returns `Some(T)`.
+/// Used during constraint checking to resolve indexed access into mapped types.
+pub(crate) fn mapped_type_template(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let mapped_id = tsz_solver::type_queries::get_mapped_type_id(db, type_id)?;
+    let mapped = db.get_mapped(mapped_id);
+    Some(mapped.template)
+}
