@@ -113,7 +113,7 @@ FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts |
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2353]
+FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/enumLiteralAssignableToEnumInsideUnion.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/erasableSyntaxOnly.ts | expected:[TS1294] actual:[TS7055]
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts | expected:[TS2339,TS2702,TS2713,TS2749] actual:[TS2694,TS2702]
@@ -773,7 +773,6 @@ FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts | expect
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts | expected:[TS2611] actual:[]
 FAIL TypeScript/tests/cases/conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts | expected:[TS1005,TS1068,TS1128] actual:[TS1005,TS1068,TS1128]
-FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideMethod.ts | expected:[TS2423] actual:[]
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts | expected:[TS1029,TS1030,TS1070,TS1243,TS1275,TS1276,TS2307,TS2882] actual:[TS1029,TS1030,TS2882]
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/constructorParameterShadowsOuterScopes2.ts | expected:[TS2304] actual:[TS2301]
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors5.ts | expected:[TS2610] actual:[]
@@ -1177,7 +1176,6 @@ FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS411
 FAIL TypeScript/tests/cases/conformance/override/override_js4.ts | expected:[TS4123] actual:[TS4122]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1212,TS1213,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts | expected:[TS1005] actual:[TS1005,TS1103,TS1431,TS1432]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
@@ -1204,7 +1202,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parse
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity3.ts | expected:[TS1499,TS2339] actual:[TS1499,TS2339]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement3.ts | expected:[TS2304] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode15-negative.ts | expected:[TS2304] actual:[TS2304]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression3.ts | expected:[TS2304,TS2339] actual:[TS2304,TS2339,TS2347]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Types/parserTypeQuery8.ts | expected:[TS2304] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parser15.4.4.14-9-2.ts | expected:[TS2345,TS2552] actual:[TS2552]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parserAdditiveExpression1.ts | expected:[TS2304] actual:[TS2304]
@@ -1423,7 +1420,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuper
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithGenericCallSignaturesWithOptionalParameters.ts | expected:[TS2430] actual:[TS2430]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithGenericConstructSignaturesWithOptionalParameters.ts | expected:[TS2430] actual:[TS2430]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers.ts | expected:[TS2416,TS2564] actual:[TS2416,TS2564]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers5.ts | expected:[TS2420,TS2559,TS2564] actual:[TS2420,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/contextualSignatureInstantiation.ts | expected:[TS2345,TS2403] actual:[]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments.ts | expected:[TS2345] actual:[TS2345]
@@ -7778,6 +7774,7 @@ PASS TypeScript/tests/cases/conformance/classes/mixinClassesMembers.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractPropertyInitializer.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessibilityModifiers.ts
+PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideMethod.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty10.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty2.ts
@@ -11139,6 +11136,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStri
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode9.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression2.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Symbols/parserES5SymbolIndexer1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Symbols/parserES5SymbolIndexer2.ts
@@ -12235,6 +12233,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuper
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers2.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers3.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers4.ts
+PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers5.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembersAccessibility.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembersAccessibility2.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembersOptionality.ts
