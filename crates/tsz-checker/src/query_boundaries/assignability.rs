@@ -599,10 +599,10 @@ pub(crate) fn classify_object_properties(
             if is_type_parameter_like(db, member) {
                 classification.target_is_type_parameter = true;
             }
-            if let Some(shape) = object_shape_for_type(db, member) {
-                if shape.string_index.is_some() || shape.number_index.is_some() {
-                    classification.target_has_index_signature = true;
-                }
+            if let Some(shape) = object_shape_for_type(db, member)
+                && (shape.string_index.is_some() || shape.number_index.is_some())
+            {
+                classification.target_has_index_signature = true;
             }
         }
     }
