@@ -322,6 +322,11 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.has_await = has_await;
         self.helpers_needed.generator = true;
 
+        // Check if body references `arguments` — if so, rewrite to `arguments_1`
+        // (the caller is responsible for emitting `var arguments_1 = arguments;`)
+        self.state.captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+
         self.build_generator_body(body_idx, has_await, &[])
     }
 

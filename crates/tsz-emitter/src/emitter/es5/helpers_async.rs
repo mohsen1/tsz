@@ -407,9 +407,20 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
+        // Check if the body references `arguments`. If so, capture it before
+        // entering the generator: `var arguments_1 = arguments;`
+        let body_captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body);
+
         self.write(") {");
         self.write_line();
         self.increase_indent();
+
+        // Emit `var arguments_1 = arguments;` before __awaiter for ES2015 path
+        if body_captures_arguments {
+            self.write("var arguments_1 = arguments;");
+            self.write_line();
+        }
 
         // return __awaiter(this, void 0, void 0, function* () {
         self.write("return ");
@@ -444,7 +455,12 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         // Emit function body with await→yield substitution
+        let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
         self.ctx.emit_await_as_yield = true;
+        if body_captures_arguments {
+            self.ctx.rewrite_arguments_to_arguments_1 = true;
+        }
         // Emit the block body's statements directly
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
@@ -458,7 +474,8 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
-        self.ctx.emit_await_as_yield = false;
+        self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
 
         self.decrease_indent();
         self.write("});");

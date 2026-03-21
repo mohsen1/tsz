@@ -981,6 +981,13 @@ impl<'a> Printer<'a> {
             self.emit_param_prologue(&param_transforms);
         }
 
+        // Check if the body references `arguments`. If so, we capture it
+        // before the __awaiter call: `var arguments_1 = arguments;`
+        let body_captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(
+                self.arena, func.body,
+            );
+
         // Build the __generator body
         let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
         // Use current indent level since __generator is placed on the same line
@@ -1004,6 +1011,10 @@ impl<'a> Printer<'a> {
 
         if has_param_transforms {
             // Multi-line path (with param prologue)
+            if body_captures_arguments {
+                self.write("var arguments_1 = arguments;");
+                self.write_line();
+            }
             self.write("return ");
             self.write_helper("__awaiter");
             self.write("(");
@@ -1026,6 +1037,61 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write_line();
             self.write("});");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+        } else if body_captures_arguments {
+            // Arguments capture path: needs multi-line to emit var declaration
+            // function () { var arguments_1 = arguments; return __awaiter(...); }
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.write("var arguments_1 = arguments;");
+            self.write_line();
+            self.write("return ");
+            self.write_helper("__awaiter");
+            self.write("(");
+            self.write(this_expr);
+            if hoisted_vars.is_empty() {
+                self.write(", void 0, void 0, function () { ");
+                if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                    self.writer.write("");
+                    let base_line = self.writer.current_line();
+                    let base_column = self.writer.current_column();
+                    self.writer
+                        .add_offset_mappings(base_line, base_column, &generator_mappings);
+                    self.writer.write(&generator_body);
+                } else {
+                    self.write(&generator_body);
+                }
+                self.write(" });");
+            } else {
+                self.write(", void 0, void 0, function () {");
+                self.write_line();
+                self.increase_indent();
+                self.write("var ");
+                for (i, var_name) in hoisted_vars.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                }
+                self.write(";");
+                self.write_line();
+                if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                    self.writer.write("");
+                    let base_line = self.writer.current_line();
+                    let base_column = self.writer.current_column();
+                    self.writer
+                        .add_offset_mappings(base_line, base_column, &generator_mappings);
+                    self.writer.write(&generator_body);
+                } else {
+                    self.write(&generator_body);
+                }
+                self.decrease_indent();
+                self.write_line();
+                self.write("});");
+            }
             self.write_line();
             self.decrease_indent();
             self.write("}");
