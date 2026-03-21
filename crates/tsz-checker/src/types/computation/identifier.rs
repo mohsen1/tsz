@@ -1326,9 +1326,10 @@ impl<'a> CheckerState<'a> {
         if self.is_known_global_value_name(name) {
             return self.emit_global_not_found_error(idx, name);
         }
-        // Always emit errors for primitive type keywords used as values,
-        // regardless of report_unresolved_imports. These are built-in language
-        // keywords, not cross-file identifiers that might be unresolved.
+        // Primitive type keywords used as values should emit TS2693 ("only
+        // refers to a type, but is being used as a value here"), not TS2304.
+        // These are built-in language keywords — they exist as types but
+        // cannot be used as runtime values.
         if matches!(
             name,
             "number"
@@ -1343,7 +1344,7 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            self.error_cannot_find_name_at(name, idx);
+            self.error_type_only_value_at(name, idx);
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives

@@ -803,6 +803,11 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.diagnostics.retain(|diag| {
                             diag.code
                                 == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                                // TS2693/TS2585: type-only keywords used as values are
+                                // structural errors, not contextual-typing artifacts.
+                                // They must survive the pre-contextual diagnostic reset.
+                                || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE
+                                || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });
