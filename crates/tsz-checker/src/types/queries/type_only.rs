@@ -690,7 +690,9 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::PROPERTY_SIGNATURE
                     || k == syntax_kind_ext::CALL_SIGNATURE
                     || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
-                    || k == syntax_kind_ext::INDEX_SIGNATURE =>
+                    || k == syntax_kind_ext::INDEX_SIGNATURE
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
                 {
                     true
                 }
