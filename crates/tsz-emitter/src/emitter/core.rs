@@ -532,9 +532,9 @@ pub struct Printer<'a> {
     pub(crate) pending_instances_weakset_add: Option<String>,
 
     /// Private method/accessor function definitions to emit after the class body.
-    /// Each entry is a string like `_C_method = function _C_method() { ... }`.
+    /// Each entry is (var_name, body_idx, params) for `_C_method = function _C_method(params) { ... }`.
     /// These are joined with the WeakMap/WeakSet inits using comma separation.
-    pub(crate) pending_private_method_defs: Vec<(String, NodeIndex)>,
+    pub(crate) pending_private_method_defs: Vec<(String, NodeIndex, Vec<NodeIndex>)>,
 
     /// Private accessor function definitions to emit after the class body.
     /// Each entry is (var_name, body_idx) for `_C_prop_get = function _C_prop_get() { ... }`.
