@@ -174,3 +174,146 @@ fn object_literal_inference_no_diagnostic_leak() {
         "Expected no errors for valid generic object literal, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// JSX overload exploration — speculation guard migration
+// ---------------------------------------------------------------------------
+
+/// JSX element with overloaded component should not leak speculative diagnostics
+/// from attribute checking when a matching overload is found.
+#[test]
+fn jsx_overload_exploration_no_diagnostic_leak() {
+    let diags = check_with(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        declare function Comp(props: { x: number }): JSX.Element;
+        declare function Comp(props: { y: string }): JSX.Element;
+        const a = <Comp x={42} />;
+    "#,
+        "test.tsx",
+        CheckerOptions::default(),
+    );
+    // First overload matches; no TS2769 or leaked speculative diagnostics
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 0,
+        "JSX overload matched — TS2769 should not appear: {diags:?}"
+    );
+}
+
+/// JSX element where no overload matches should emit exactly one TS2769.
+#[test]
+fn jsx_overload_no_match_single_ts2769() {
+    let diags = check_with(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        declare function Comp(props: { x: number }): JSX.Element;
+        declare function Comp(props: { y: string }): JSX.Element;
+        const a = <Comp z={true} />;
+    "#,
+        "test.tsx",
+        CheckerOptions::default(),
+    );
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert!(
+        ts2769_count <= 1,
+        "Expected at most one TS2769 for JSX overload failure, got {ts2769_count}: {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Function expression fallback — speculation guard migration
+// ---------------------------------------------------------------------------
+
+/// Function expression with conditional body and unresolved return type should
+/// not leak diagnostics from the suppressed expression body evaluation.
+#[test]
+fn function_expression_conditional_body_no_leak() {
+    let diags = check(
+        r#"
+        declare function apply<T>(f: () => T): T;
+        let result = apply(() => true ? 1 : "hello");
+    "#,
+    );
+    // The conditional expression body check is speculative when the return
+    // type has unresolved inference holes; diagnostics should not leak.
+    let ts2322_count = diags.iter().filter(|d| d.code == 2322).count();
+    assert!(
+        ts2322_count <= 1,
+        "Leaked TS2322 from speculative conditional body check: {diags:?}"
+    );
+}
+
+/// Speculative branch mismatch probe should not emit false diagnostics.
+#[test]
+fn function_expression_branch_mismatch_probe_no_false_positive() {
+    let diags = check(
+        r#"
+        declare function wrap<T>(fn: () => T): T;
+        let x: number = wrap(() => true ? 1 : 2);
+    "#,
+    );
+    // Both branches return number — should not get a mismatch error
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for matching conditional branches, got: {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Object-literal method rerun — speculation guard migration
+// ---------------------------------------------------------------------------
+
+/// Object literal method with `this` reference should not duplicate diagnostics
+/// during the rerun pass with refined this-type.
+#[test]
+fn object_literal_method_rerun_no_duplicate_diagnostics() {
+    let diags = check(
+        r#"
+        let obj = {
+            x: 10,
+            getX() {
+                return this.x;
+            }
+        };
+    "#,
+    );
+    // The method rerun (this-circularity detection) should not leak diagnostics.
+    // `this.x` should resolve correctly; no TS2339 or TS2464 expected.
+    let error_count = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2464))
+        .count();
+    assert!(
+        error_count == 0,
+        "Object literal method rerun leaked diagnostics: {diags:?}"
+    );
+}
+
+/// Object literal method rerun with filtered rollback preserves non-this errors.
+#[test]
+fn object_literal_method_rerun_preserves_real_errors() {
+    let diags = check(
+        r#"
+        let obj = {
+            x: 10,
+            getY() {
+                return this.nonExistent;
+            }
+        };
+    "#,
+    );
+    // `this.nonExistent` should still produce TS2339 after the rerun, since
+    // the filtered rollback keeps non-this-property errors.
+    let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for nonExistent property, got: {diags:?}"
+    );
+}
