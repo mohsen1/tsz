@@ -1245,6 +1245,7 @@ pub(super) fn create_binder_from_bound_file(
     binder.declared_modules = program.declared_modules.clone();
     // Restore is_external_module from BoundFile to preserve per-file state
     binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
     // Reconstructed program binders already contain lib symbols remapped into the
     // unified symbol arena, so preserve that invariant instead of falling back to
     // legacy raw-lib lookup paths.
