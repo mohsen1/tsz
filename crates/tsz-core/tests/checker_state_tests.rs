@@ -2061,7 +2061,6 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 }
 
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - variadic tuple param produces unexpected diagnostics"]
 fn test_overload_call_handles_variadic_tuple_param() {
     use crate::parser::ParserState;
 
@@ -6371,7 +6370,6 @@ c.hasOwnProperty("x");
 }
 
 #[test]
-#[ignore = "TS2339 for this property access in class not yet implemented"]
 fn test_ts2339_this_missing_property_in_class() {
     use crate::parser::ParserState;
 
@@ -11847,7 +11845,6 @@ interface Bar {
 /// Test that `typeof Alias.value` resolves to the correct type through
 /// namespace import aliases (`import Alias = Ns`).
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_checker_typeof_namespace_alias_member() {
     use crate::parser::ParserState;
 
@@ -11893,7 +11890,6 @@ type T = typeof Alias.value;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_checker_typeof_with_type_arguments() {
     use crate::parser::ParserState;
     use tsz_solver::{SymbolRef, TypeData};
@@ -13523,7 +13519,6 @@ const bad = Foo;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_type_query_interface_value_error() {
     use crate::parser::ParserState;
 
@@ -13559,7 +13554,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_type_query_type_alias_value_error() {
     use crate::parser::ParserState;
 
@@ -34102,7 +34096,6 @@ const x: Box<string> = { value: "hello" };
 /// showing the internal Lazy(DefId) representation.
 ///
 #[test]
-#[ignore = "stack overflow: recursive generic type alias triggers infinite recursion in DefId resolution"]
 fn test_generic_recursive_type_alias_diagnostic_display() {
     let source = r#"
 type List<T> = { value: T; next: List<T> | null };
