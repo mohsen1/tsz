@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-21T21:41:03Z",
-  "git_sha": "b116376dc38e933654a26652f7683f603c191810",
+  "timestamp": "2026-03-21T22:13:25Z",
+  "git_sha": "a0e9ebad9e37098873cb3bf3ac6eaa6dc3f93818",
   "summary": {
     "total_tests": 12581,
-    "passed": 11143,
-    "failed": 1438,
+    "passed": 11145,
+    "failed": 1436,
     "pass_rate": 88.6
   },
   "areas_by_pass_rate": [
@@ -305,9 +305,9 @@
     {
       "area": "compiler",
       "total": 6490,
-      "passed": 5799,
-      "failed": 691,
-      "pass_rate": 89.35
+      "passed": 5801,
+      "failed": 689,
+      "pass_rate": 89.38
     },
     {
       "area": "expressions/unaryOperators",
@@ -1247,11 +1247,11 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 28
+      "count": 27
     },
     {
       "code": "TS2339",
-      "count": 27
+      "count": 26
     },
     {
       "code": "TS2345",
@@ -1319,10 +1319,6 @@
     },
     {
       "code": "TS2604",
-      "count": 1
-    },
-    {
-      "code": "TS2571",
       "count": 1
     },
     {
@@ -1445,7 +1441,7 @@
   "false_positive_codes": [
     {
       "code": "TS2339",
-      "count": 28
+      "count": 27
     },
     {
       "code": "TS2322",
@@ -1536,6 +1532,10 @@
       "count": 1
     },
     {
+      "code": "TS2769",
+      "count": 1
+    },
+    {
       "code": "TS2416",
       "count": 1
     },
@@ -1557,10 +1557,6 @@
     },
     {
       "code": "TS2304",
-      "count": 1
-    },
-    {
-      "code": "TS18048",
       "count": 1
     }
   ],
@@ -1733,7 +1729,7 @@
     },
     {
       "code": "TS2339",
-      "count": 66
+      "count": 65
     },
     {
       "code": "TS2345",
@@ -1804,6 +1800,10 @@
       "count": 6
     },
     {
+      "code": "TS2769",
+      "count": 5
+    },
+    {
       "code": "TS2739",
       "count": 5
     },
@@ -1822,10 +1822,6 @@
     {
       "code": "TS2523",
       "count": 5
-    },
-    {
-      "code": "TS2769",
-      "count": 4
     },
     {
       "code": "TS2693",
@@ -1889,10 +1885,10 @@
     }
   ],
   "categories": {
-    "false_positive": 110,
+    "false_positive": 109,
     "all_missing": 185,
     "wrong_code": 486,
-    "fingerprint_only": 620,
+    "fingerprint_only": 619,
     "close_to_passing": 345
   }
 }
