@@ -815,14 +815,48 @@ impl<'a> CheckerState<'a> {
                 property_type = raw_type;
             }
 
-            let optional = matches!(
-                mapped.optional_modifier,
-                Some(tsz_solver::MappedModifier::Add)
-            );
-            let readonly = matches!(
-                mapped.readonly_modifier,
-                Some(tsz_solver::MappedModifier::Add)
-            );
+            // For homomorphic mapped types (constraint is `keyof T`), preserve
+            // source property modifiers when the mapped type doesn't explicitly
+            // add/remove them. This matches the solver's evaluate_mapped behavior.
+            // Without this, `Readonly<TP>` where TP has optional props would
+            // lose the optional modifier (producing `{ readonly a: number }` instead
+            // of `{ readonly a?: number }`), causing false TS2403 errors.
+            let is_homomorphic_source =
+                tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
+            let source_modifiers: Option<(bool, bool)> = is_homomorphic_source.and_then(|source| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
+                    .and_then(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .find(|p| p.name == key_name)
+                            .map(|p| (p.optional, p.readonly))
+                    })
+            });
+            let (source_optional, source_readonly) = source_modifiers.unwrap_or((false, false));
+
+            let optional = match mapped.optional_modifier {
+                Some(tsz_solver::MappedModifier::Add) => true,
+                Some(tsz_solver::MappedModifier::Remove) => false,
+                None => {
+                    if is_homomorphic_source.is_some() {
+                        source_optional
+                    } else {
+                        false
+                    }
+                }
+            };
+            let readonly = match mapped.readonly_modifier {
+                Some(tsz_solver::MappedModifier::Add) => true,
+                Some(tsz_solver::MappedModifier::Remove) => false,
+                None => {
+                    if is_homomorphic_source.is_some() {
+                        source_readonly
+                    } else {
+                        false
+                    }
+                }
+            };
 
             properties.push(PropertyInfo {
                 name: key_name,

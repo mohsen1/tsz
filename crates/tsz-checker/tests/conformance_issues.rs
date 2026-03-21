@@ -17238,3 +17238,263 @@ fn test_chain_summary_deep_hierarchy_property_access() {
          \nActual: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2403_false_positive_investigation() {
+    // Test patterns that might cause false TS2403 in conformance tests
+    let tests: Vec<(&str, &str, bool)> = vec![
+        // (description, source, should_have_ts2403)
+        ("same number type", "var x: number; var x: number;", false),
+        ("same string type", "var x: string; var x: string;", false),
+        (
+            "same object type",
+            "var x: { a: number }; var x: { a: number };",
+            false,
+        ),
+        (
+            "same function type",
+            "var x: (s: string) => number; var x: (s: string) => number;",
+            false,
+        ),
+        (
+            "same class type",
+            "class C { x: number; } var a: C; var a: C;",
+            false,
+        ),
+        (
+            "type assertion same type",
+            "var x: number; var x = <number>undefined;",
+            false,
+        ),
+        (
+            "for same type",
+            "for (var x: number = 1;;) {} for (var x: number = 2;;) {}",
+            false,
+        ),
+        (
+            "different types SHOULD error",
+            "var x: number; var x: string;",
+            true,
+        ),
+    ];
+
+    for (desc, source, should_have_2403) in tests {
+        let diagnostics = compile_and_get_diagnostics(source);
+        let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+        if should_have_2403 {
+            assert!(
+                !ts2403.is_empty(),
+                "{desc}: Expected TS2403 but got none. All: {diagnostics:?}"
+            );
+        } else {
+            assert!(
+                ts2403.is_empty(),
+                "{desc}: Got unexpected TS2403: {ts2403:?}. All: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_ts2403_false_positive_mapped_type_modifiers() {
+    // Reproduces the mappedTypeModifiers.ts conformance failure
+    // These patterns should NOT emit TS2403 because the types are structurally identical
+    let tests: Vec<(&str, &str)> = vec![
+        (
+            "keyof identity",
+            r#"
+type T = { a: number, b: string };
+var v00: "a" | "b";
+var v00: keyof T;
+"#,
+        ),
+        (
+            "identity mapped type",
+            r#"
+type T = { a: number, b: string };
+var v01: T;
+var v01: { [P in keyof T]: T[P] };
+"#,
+        ),
+        (
+            "optional mapped type",
+            r#"
+type T = { a: number, b: string };
+type TP = { a?: number, b?: string };
+var v02: TP;
+var v02: { [P in keyof T]?: T[P] };
+"#,
+        ),
+    ];
+
+    for (desc, source) in tests {
+        let diagnostics = compile_and_get_diagnostics(source);
+        let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+        assert!(
+            ts2403.is_empty(),
+            "{desc}: Got unexpected TS2403: {ts2403:?}\nAll: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn test_ts2403_false_positive_mapped_type_modifiers_with_lib() {
+    // Minimal reproduction: Readonly<T> applied to a type with optional props
+    // should preserve the optional modifier on output properties.
+    //
+    // Test 1: verify assignability (Readonly<TP> should be identical to TPR)
+    let source_assignability = r#"
+// @strictNullChecks: true
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+type TP = { a?: number, b?: string };
+type TPR = { readonly a?: number, readonly b?: string };
+
+// If Readonly<TP> correctly preserves optional, these should both work
+var test1: { readonly a?: number, readonly b?: string } = {} as MyReadonly<TP>;
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source_assignability,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "MyReadonly<TP> should be assignable to {{ readonly a?: number, readonly b?: string }}, got: {ts2322:?}"
+    );
+
+    // Test 2: TS2403 with redeclarations
+    let source_ts2403 = r#"
+// @strictNullChecks: true
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+type TP = { a?: number, b?: string };
+type TPR = { readonly a?: number, readonly b?: string };
+
+var v04: TPR;
+var v04: MyReadonly<TP>;
+"#;
+    let diagnostics2 = compile_and_get_diagnostics_with_options(
+        source_ts2403,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    let ts2403: Vec<_> = diagnostics2.iter().filter(|(c, _)| *c == 2403).collect();
+    assert!(
+        ts2403.is_empty(),
+        "MyReadonly<TP> should be compatible with TPR for TS2403: {ts2403:?}"
+    );
+}
+
+#[test]
+fn test_ts2403_false_positive_scope_resolution() {
+    // Reproduces scopeResolutionIdentifiers.ts conformance failure
+    // Global var s: string should not clash with namespace-scoped vars
+    let source = r#"
+// @target: es2015
+var s: string;
+namespace M1 {
+    export var s: number = 0;
+    var n = s;
+    var n: number;
+}
+namespace M2 {
+    var s: number = 0;
+    var n = s;
+    var n: number;
+}
+function fn() {
+    var s: boolean = false;
+    var n = s;
+    var n: boolean;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+    assert!(
+        ts2403.is_empty(),
+        "scopeResolutionIdentifiers: Got unexpected TS2403: {ts2403:?}"
+    );
+}
+
+#[test]
+fn test_ts2403_false_positive_valid_multiple_var_decl() {
+    // Reproduces validMultipleVariableDeclarations.ts conformance failure
+    // var x: number; var x = <number>undefined; should not emit TS2403
+    let source = r#"
+// @target: es2015
+class C { x: number; y: string; }
+var a: C;
+var a = new C();
+var a: C = new C();
+
+var b: number;
+var b = 1;
+
+var c: string;
+var c = '';
+
+var d: boolean;
+var d = true;
+
+var e: Date;
+var e = new Date();
+
+var f: any;
+var f = null;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+    assert!(
+        ts2403.is_empty(),
+        "validMultipleVariableDeclarations: Got unexpected TS2403: {ts2403:?}"
+    );
+}
+
+#[test]
+fn test_ts2403_false_positive_lib_global_collision() {
+    // Test that global variable declarations matching lib.d.ts globals
+    // don't trigger false TS2403 when they have the same type
+    let tests: Vec<(&str, &str, bool)> = vec![
+        ("var NaN same type", "var NaN: number;", false),
+        ("var Infinity same type", "var Infinity: number;", false),
+        (
+            "var undefined same type",
+            "var undefined: undefined;",
+            false,
+        ),
+        (
+            "simple var no lib clash",
+            "var myUniqueVar123: number;",
+            false,
+        ),
+        (
+            "mapped type var no clash",
+            r#"
+type Readonly2<T> = { readonly [P in keyof T]: T[P] };
+var x: Readonly2<{ a: number }>;
+"#,
+            false,
+        ),
+    ];
+
+    for (desc, source, should_have_2403) in tests {
+        let diagnostics =
+            compile_and_get_diagnostics_with_lib_and_options(source, CheckerOptions::default());
+        let ts2403: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2403).collect();
+        if should_have_2403 {
+            assert!(
+                !ts2403.is_empty(),
+                "{desc}: Expected TS2403 but got none. All: {diagnostics:?}"
+            );
+        } else {
+            assert!(
+                ts2403.is_empty(),
+                "{desc}: Got unexpected TS2403: {ts2403:?}. All diagnostics: {diagnostics:?}"
+            );
+        }
+    }
+}
