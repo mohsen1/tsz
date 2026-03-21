@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz::binder::BinderState;
-use tsz::checker::context::{CheckerOptions, LibContext};
+use tsz::checker::context::{CheckerOptions, LibContext, ProjectEnv};
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
@@ -137,8 +137,38 @@ impl Server {
             .map(|file| file.file_name.clone())
             .collect();
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-        let resolved_module_paths_arc = Arc::new(resolved_module_paths);
         let resolved_modules_arc = Arc::new(resolved_modules);
+
+        // Build skeleton indices if available
+        let (skeleton_declared_modules, skeleton_expando_index) =
+            if let Some(ref skel) = program.skeleton_index {
+                let (exact, patterns) = skel.build_declared_module_sets();
+                (
+                    Some(Arc::new(
+                        tsz::checker::context::GlobalDeclaredModules::from_skeleton(
+                            exact, patterns,
+                        ),
+                    )),
+                    Some(Arc::new(skel.expando_properties.clone())),
+                )
+            } else {
+                (None, None)
+            };
+
+        let project_env = ProjectEnv {
+            lib_contexts,
+            all_arenas,
+            all_binders,
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            symbol_file_targets: Arc::new(Vec::new()),
+            resolved_module_paths: Arc::new(resolved_module_paths),
+            resolved_module_errors: Arc::new(FxHashMap::default()),
+            is_external_module_by_file: Arc::new(FxHashMap::default()),
+            file_is_esm_map: Arc::new(FxHashMap::default()),
+            typescript_dom_replacement_globals: (false, false, false),
+            has_deprecation_diagnostics: false,
+        };
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -156,30 +186,13 @@ impl Server {
 
             let mut checker = CheckerState::new(
                 &file.arena,
-                &all_binders[file_idx],
+                &project_env.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
                 checker_options.clone(),
             );
 
-            if !lib_contexts.is_empty() {
-                checker.ctx.set_lib_contexts(lib_contexts.clone());
-            }
-            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-            if let Some(ref skel) = program.skeleton_index {
-                let (exact, patterns) = skel.build_declared_module_sets();
-                checker.ctx.set_declared_modules_from_skeleton(Arc::new(
-                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
-                ));
-                checker
-                    .ctx
-                    .set_expando_index_from_skeleton(Arc::new(skel.expando_properties.clone()));
-            }
-            checker.ctx.set_all_binders(Arc::clone(&all_binders));
-            checker
-                .ctx
-                .set_resolved_module_paths(Arc::clone(&resolved_module_paths_arc));
+            project_env.apply_to(&mut checker.ctx);
             checker
                 .ctx
                 .set_resolved_modules((*resolved_modules_arc).clone());
@@ -474,17 +487,31 @@ impl Server {
             })
             .collect();
 
+        let actual_lib_file_count = lib_contexts.len();
         let mut all_contexts = lib_contexts;
         all_contexts.extend(user_file_contexts);
-        // Wrap in Arc to avoid cloning the entire vector for every file
-        let all_contexts_arc: Arc<Vec<LibContext>> = Arc::new(all_contexts);
 
         let file_names: Vec<String> = bound_files.iter().map(|f| f.name.clone()).collect();
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-        // Wrap in Arc to avoid cloning HashMap/HashSet for every file
-        let resolved_module_paths_arc: Arc<FxHashMap<(usize, String), usize>> =
-            Arc::new(resolved_module_paths);
-        let resolved_modules_arc: Arc<rustc_hash::FxHashSet<String>> = Arc::new(resolved_modules);
+        let resolved_modules_arc = Arc::new(resolved_modules);
+
+        // Build project-level shared environment for all checkers.
+        // NOTE: lib_contexts here includes both lib AND user file contexts,
+        // so we override actual_lib_file_count after apply_to.
+        let project_env = ProjectEnv {
+            lib_contexts: all_contexts,
+            all_arenas,
+            all_binders,
+            skeleton_declared_modules: None,
+            skeleton_expando_index: None,
+            symbol_file_targets: Arc::new(Vec::new()),
+            resolved_module_paths: Arc::new(resolved_module_paths),
+            resolved_module_errors: Arc::new(FxHashMap::default()),
+            is_external_module_by_file: Arc::new(FxHashMap::default()),
+            file_is_esm_map: Arc::new(FxHashMap::default()),
+            typescript_dom_replacement_globals: (false, false, false),
+            has_deprecation_diagnostics: false,
+        };
 
         // PHASE 4: Type check all files
         let query_cache = QueryCache::new(&type_interner);
@@ -505,25 +532,9 @@ impl Server {
                 checker_options.clone(),
             );
 
-            // Clone Arc pointers (cheap) instead of entire data structures (expensive)
-            if !all_contexts_arc.is_empty() {
-                checker.ctx.set_lib_contexts((*all_contexts_arc).clone());
-            }
-            // Set the count of actual lib files (not user files) for has_lib_loaded()
-            checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-            // NOTE: Keep report_unresolved_imports = false for conformance testing.
-            // While cross-lib type merging is now implemented via unified binder,
-            // enabling full error reporting causes extra TS2304/TS2307 errors for
-            // multi-file tests that reference symbols from other files.
-            // Single-file conformance mode doesn't have full module resolution context.
-
-            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-            // No skeleton available in conformance path; binder scan builds declared_modules.
-            checker.ctx.set_all_binders(Arc::clone(&all_binders));
-            checker
-                .ctx
-                .set_resolved_module_paths(Arc::clone(&resolved_module_paths_arc));
+            project_env.apply_to(&mut checker.ctx);
+            // Override: actual lib file count excludes user file contexts
+            checker.ctx.set_actual_lib_file_count(actual_lib_file_count);
             checker
                 .ctx
                 .set_resolved_modules((*resolved_modules_arc).clone());
