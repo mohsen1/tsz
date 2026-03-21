@@ -1,12 +1,13 @@
-//! JSDoc param tag validation, JSDoc comment finding, and text parsing utilities
-//! for `CheckerState`.
+//! JSDoc parameter validation, comment finding, and text parsing utilities.
 //!
-//! Extracted from `jsdoc.rs` — contains:
+//! This module owns:
 //! - TS8024 `@param` tag name checking
-//! - JSDoc comment position/content lookup
+//! - JSDoc comment position/content lookup (ancestor walk, leading comment search)
 //! - Pure text-level JSDoc parsing helpers (param names, type expressions, etc.)
+//! - Nested `@param` object type construction
+//! - `@type` tag analysis (callable detection, broad function check)
 
-use super::jsdoc::JsdocParamTagInfo;
+use super::types::JsdocParamTagInfo;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -1836,5 +1837,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/jsdoc_params_tests.rs"]
+#[path = "../types/utilities/tests/jsdoc_params_tests.rs"]
 mod tests;
