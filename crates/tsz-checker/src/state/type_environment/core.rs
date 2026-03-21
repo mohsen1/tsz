@@ -695,6 +695,15 @@ impl<'a> CheckerState<'a> {
         // Evaluate the constraint to get concrete keys
         let keys = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
+        // Pre-resolve lazy DefIds in the template so the solver's evaluator can
+        // access them through the TypeEnvironment.  Even when we fall through to
+        // checker-local expansion below, this improves cache hit rates for
+        // subsequent evaluate_type_with_env calls on the instantiated template.
+        self.ensure_relation_input_ready(mapped.template);
+        if let Some(nt) = mapped.name_type {
+            self.ensure_relation_input_ready(nt);
+        }
+
         // Use solver classification to decide whether to preserve array/tuple identity.
         // This replaces the checker-local `mapped_constraint_source_needs_array_like_preservation`
         // with a solver-owned query, keeping structural classification behind the boundary.
@@ -742,6 +751,9 @@ impl<'a> CheckerState<'a> {
 
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
             if let Some(source) = is_homomorphic_source {
+                // Pre-resolve lazy refs in the homomorphic source so property
+                // collection sees the fully resolved object shape.
+                self.ensure_relation_input_ready(source);
                 query::collect_homomorphic_source_properties(self.ctx.types, source)
             } else {
                 Default::default()
@@ -808,15 +820,12 @@ impl<'a> CheckerState<'a> {
                 key_literal,
             );
 
+        // When the template produces an IndexAccess (e.g., T[K] → ObjType["key"]),
+        // resolve the object part through evaluate_type_with_resolution so that
+        // Lazy(DefId) references become concrete types.  Then attempt property
+        // access resolution with the resolved object.
         if let Some((obj, _idx)) = query::index_access_types(self.ctx.types, property_type) {
-            let obj_type = if let Some(def_id) = query::lazy_def_id(self.ctx.types, obj) {
-                self.ctx
-                    .def_to_symbol_id(def_id)
-                    .map(|sym_id| self.get_type_of_symbol(sym_id))
-                    .unwrap_or(obj)
-            } else {
-                obj
-            };
+            let obj_type = self.evaluate_type_with_resolution(obj);
 
             let prop_name_arc = self.ctx.types.resolve_atom_ref(key_name);
             let prop_name: &str = &prop_name_arc;
