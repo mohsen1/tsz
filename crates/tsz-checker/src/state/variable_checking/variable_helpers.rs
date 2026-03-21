@@ -123,9 +123,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if the found scope is at a function-level boundary.
-        // If so, the var hoists to the same level and this is a
-        // TS2451 duplicate (or handled by check_duplicate_identifiers),
-        // not a TS2481 initialization conflict.
+        // If so, the var hoists to the same level and this is just a
+        // TS2451 duplicate, not a TS2481 initialization conflict.
         let names_share_scope = if matches!(
             scope_kind,
             tsz_binder::ContainerKind::SourceFile
@@ -171,29 +170,67 @@ impl<'a> CheckerState<'a> {
         };
 
         if names_share_scope {
-            // When the block-scoped variable is in the same direct scope as
-            // the var (depth == 0), check_duplicate_identifiers handles all
-            // same-scope conflicts. Skip the TS2451 here to avoid duplicates.
-            // Only emit TS2451 when the var is in a nested block (depth > 0)
-            // and hoists into the block-scoped variable's scope.
-            if depth == 0 {
+            // The var hoists to the same scope as the let/const.
+            // tsc uses TS2300 ("Duplicate identifier") when the var declaration
+            // appears before the block-scoped declaration, and TS2451 ("Cannot
+            // redeclare block-scoped variable") when the block-scoped declaration
+            // comes first.
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            // Check if any block-scoped declaration appears before this var.
+            // For cross-file conflicts, skip: duplicate_identifiers handles them.
+            let var_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |n| n.pos);
+            let has_local_block_scoped =
+                self.ctx
+                    .binder
+                    .get_symbol(_block_sym_id)
+                    .map_or(false, |block_sym| {
+                        block_sym.declarations.iter().any(|&block_decl_idx| {
+                            block_decl_idx.is_some()
+                                && self.ctx.arena.get(block_decl_idx).is_some()
+                                && block_decl_idx != decl_idx
+                        })
+                    });
+            if !has_local_block_scoped {
+                // All block-scoped declarations are cross-file;
+                // duplicate_identifiers.rs handles this case.
                 return;
             }
-            // The var hoists from a nested block to the let/const's scope —
-            // emit TS2451 on both the var declaration and the block-scoped
-            // declaration, matching tsc's behavior for cases like:
-            //   function f() { let x; { var x; } }
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            let msg = crate::diagnostics::format_message(
-                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                &[var_name],
-            );
+            let block_scoped_first =
+                self.ctx
+                    .binder
+                    .get_symbol(_block_sym_id)
+                    .map_or(false, |block_sym| {
+                        block_sym.declarations.iter().any(|&block_decl_idx| {
+                            block_decl_idx.is_some()
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get(block_decl_idx)
+                                    .map_or(false, |n| n.pos < var_pos)
+                        })
+                    });
+
+            let (msg, code) = if block_scoped_first {
+                (
+                    crate::diagnostics::format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[var_name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                )
+            } else {
+                (
+                    crate::diagnostics::format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER,
+                        &[var_name],
+                    ),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                )
+            };
+
             // Error on the var declaration name
-            self.error_at_node(
-                var_decl.name,
-                &msg,
-                diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-            );
+            self.error_at_node(var_decl.name, &msg, code);
             // Error on the block-scoped declaration (let/const)
             if let Some(block_sym) = self.ctx.binder.get_symbol(_block_sym_id) {
                 for &block_decl_idx in &block_sym.declarations {
@@ -203,11 +240,7 @@ impl<'a> CheckerState<'a> {
                     let name_node = self
                         .get_declaration_name_node(block_decl_idx)
                         .unwrap_or(block_decl_idx);
-                    self.error_at_node(
-                        name_node,
-                        &msg,
-                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                    );
+                    self.error_at_node(name_node, &msg, code);
                 }
             }
         } else {
@@ -347,18 +380,6 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
         ) {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
-        }
-
-        // Function expressions and arrow functions: widen deeply including
-        // inside the function's return type. TSC widens `var fn = (s: string) => 3`
-        // to type `(s: string) => number`, so the literal `3` return type becomes
-        // `number`. Without this, TS2403 falsely fires when redeclaring with the
-        // widened type annotation `var fn: (s: string) => number`.
-        if matches!(
-            init_node.kind,
-            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
-        ) {
-            return tsz_solver::widening::widen_type_deep(self.ctx.types, fallback_type);
         }
 
         // Handle bare enum identifier: `var x = E`
