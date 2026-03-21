@@ -3274,6 +3274,83 @@ impl<'a> DeclarationEmitter<'a> {
         used.contains_key(&sym_id)
     }
 
+    /// Check if the target of a namespace-path import-equals resolves to a type-level entity.
+    ///
+    /// For `import x = a.b.c`, resolves the rightmost identifier (`c`) to a symbol and checks
+    /// if it has type-level flags (class, interface, enum, namespace, type alias, function).
+    /// When the target is a type/namespace entity, the emitted .d.ts type annotations may
+    /// reference the alias name, so the import must be preserved. When the target is a plain
+    /// variable, the type resolves to a primitive/literal and the alias is not needed.
+    pub(crate) fn import_alias_targets_type_entity(&self, module_spec_idx: NodeIndex) -> bool {
+        let Some(binder) = self.binder else {
+            return true; // conservative: preserve when we can't resolve
+        };
+
+        // Resolve the rightmost identifier in the qualified name (a.b.c -> c)
+        let rightmost_idx = self.get_rightmost_name(module_spec_idx);
+
+        // Try node_symbols first
+        if let Some(&sym_id) = binder.node_symbols.get(&rightmost_idx.0) {
+            return self.symbol_has_type_flags(binder, sym_id);
+        }
+
+        // Fall back to name-based lookup
+        let Some(name_node) = self.arena.get(rightmost_idx) else {
+            return true; // conservative
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return true; // conservative
+        };
+        let name = &name_ident.escaped_text;
+
+        // Check all resolution paths for the symbol
+        if let Some(sym_id) = binder.file_locals.get(name) {
+            return self.symbol_has_type_flags(binder, sym_id);
+        }
+        for scope in &binder.scopes {
+            if let Some(sym_id) = scope.table.get(name) {
+                return self.symbol_has_type_flags(binder, sym_id);
+            }
+        }
+
+        true // conservative: preserve when we can't resolve
+    }
+
+    /// Get the rightmost identifier from a qualified name or property access.
+    fn get_rightmost_name(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.arena.get(idx) else {
+            return idx;
+        };
+        if let Some(qn) = self.arena.get_qualified_name(node) {
+            return self.get_rightmost_name(qn.right);
+        }
+        if let Some(access) = self.arena.get_access_expr(node) {
+            return self.get_rightmost_name(access.name_or_argument);
+        }
+        idx
+    }
+
+    /// Check if a symbol has type-level flags (class, interface, enum, namespace, type alias,
+    /// or function). These are entities whose names may appear in emitted type annotations.
+    fn symbol_has_type_flags(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return true; // conservative
+        };
+        // Type-level entities: their alias names may appear in emitted type annotations
+        const TYPE_ENTITY_FLAGS: u32 = tsz_binder::symbol_flags::CLASS
+            | tsz_binder::symbol_flags::INTERFACE
+            | tsz_binder::symbol_flags::ENUM
+            | tsz_binder::symbol_flags::TYPE_ALIAS
+            | tsz_binder::symbol_flags::VALUE_MODULE
+            | tsz_binder::symbol_flags::NAMESPACE_MODULE
+            | tsz_binder::symbol_flags::FUNCTION;
+        symbol.has_any_flags(TYPE_ENTITY_FLAGS)
+    }
+
     /// Get the function/method name as a string for overload tracking
     pub(crate) fn get_function_name(&self, func_idx: NodeIndex) -> Option<String> {
         let func_node = self.arena.get(func_idx)?;
