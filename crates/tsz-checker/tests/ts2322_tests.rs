@@ -1210,7 +1210,10 @@ foo({ x: false, y: 0, z: "" });
 }
 
 #[test]
-fn test_generic_callback_return_mismatch_prefers_inner_ts2322_over_outer_ts2345() {
+fn test_generic_callback_return_mismatch_reports_ts2345_for_simple_expression_body() {
+    // tsc reports TS2345 on the whole argument for expression-bodied arrow functions
+    // with simple expression bodies (not object/array literals), rather than
+    // elaborating with TS2322 on the body expression.
     let source = r#"
 function someGenerics3<T>(producer: () => T) { }
 someGenerics3<number>(() => undefined);
@@ -1225,12 +1228,12 @@ someGenerics3<number>(() => undefined);
     });
 
     assert!(
-        has_ts2322,
-        "Expected TS2322 for the callback return mismatch, got: {diagnostics:?}"
+        has_ts2345,
+        "Expected TS2345 for simple expression-bodied callback return mismatch, got: {diagnostics:?}"
     );
     assert!(
-        !has_ts2345,
-        "Did not expect outer TS2345 once callback return elaboration applies, got: {diagnostics:?}"
+        !has_ts2322,
+        "Did not expect inner TS2322 for simple expression body, got: {diagnostics:?}"
     );
 }
 
