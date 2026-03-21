@@ -617,7 +617,10 @@ impl<'a> UsageAnalyzer<'a> {
         // Track symbols referenced in computed property names
         self.analyze_computed_property_name(accessor.name);
 
-        // Walk parameters
+        // Walk parameters (setter parameter types)
+        for &param_idx in &accessor.parameters.nodes {
+            self.analyze_parameter(param_idx);
+        }
 
         // Walk return type (for getters)
         if accessor.type_annotation.is_some() {
