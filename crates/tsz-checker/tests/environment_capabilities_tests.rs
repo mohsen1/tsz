@@ -12,7 +12,7 @@
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -331,4 +331,294 @@ fn test_capabilities_has_lib_updates() {
 
     caps.has_lib = true;
     assert!(caps.has_lib, "After setting has_lib, should be true");
+}
+
+// =============================================================================
+// CapabilityDiagnostic boundary tests (environment.rs)
+// =============================================================================
+
+#[test]
+fn test_capability_diagnostic_disposable_prerequisite() {
+    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // Without lib, using requires Disposable
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, false);
+    let diag = caps.check_feature_gate(FeatureGate::UsingDeclaration);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+            gate: FeatureGate::UsingDeclaration,
+            required_type: "Disposable",
+        }),
+        "using without lib should require Disposable"
+    );
+
+    // With lib, no diagnostic
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::UsingDeclaration),
+        None,
+        "using with lib should not produce a diagnostic"
+    );
+}
+
+#[test]
+fn test_capability_diagnostic_async_disposable_prerequisite() {
+    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // Without lib, await using requires AsyncDisposable
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, false);
+    let diag = caps.check_feature_gate(FeatureGate::AwaitUsingDeclaration);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+            gate: FeatureGate::AwaitUsingDeclaration,
+            required_type: "AsyncDisposable",
+        }),
+        "await using without lib should require AsyncDisposable"
+    );
+}
+
+#[test]
+fn test_capability_diagnostic_node_global_availability() {
+    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    let caps = EnvironmentCapabilities::from_options(&CheckerOptions::default(), true);
+
+    // Node globals produce TS2591 via diagnose_missing_name
+    for name in &["require", "process", "Buffer", "__filename", "__dirname"] {
+        let diag = caps.diagnose_missing_name(name);
+        assert!(
+            matches!(diag, Some(CapabilityDiagnostic::MissingNodeGlobal { .. })),
+            "Expected MissingNodeGlobal for '{name}', got: {diag:?}"
+        );
+        assert_eq!(diag.unwrap().code(), 2591);
+    }
+}
+
+#[test]
+fn test_capability_diagnostic_import_attributes_check() {
+    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // CommonJS → TS2823
+    let opts = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::ImportAttributes),
+        Some(CapabilityDiagnostic::ImportAttributesUnsupported),
+    );
+
+    // ES2015 → TS2823
+    let opts = CheckerOptions {
+        module: ModuleKind::ES2015,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::ImportAttributes),
+        Some(CapabilityDiagnostic::ImportAttributesUnsupported),
+    );
+
+    // ESNext → no diagnostic
+    let opts = CheckerOptions {
+        module: ModuleKind::ESNext,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(caps.check_feature_gate(FeatureGate::ImportAttributes), None);
+
+    // Node20 → no diagnostic
+    let opts = CheckerOptions {
+        module: ModuleKind::Node20,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(caps.check_feature_gate(FeatureGate::ImportAttributes), None);
+}
+
+#[test]
+fn test_capability_diagnostic_top_level_await_using() {
+    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // CommonJS + ESNext target → TS2854 (wrong module)
+    let opts = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ESNext,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::TopLevelAwaitUsing),
+        Some(CapabilityDiagnostic::TopLevelAwaitUsingUnsupported),
+    );
+
+    // ESNext + ES5 target → TS2854 (wrong target)
+    let opts = CheckerOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::TopLevelAwaitUsing),
+        Some(CapabilityDiagnostic::TopLevelAwaitUsingUnsupported),
+    );
+
+    // ES2022 + ES2017 target → supported
+    let opts = CheckerOptions {
+        module: ModuleKind::ES2022,
+        target: ScriptTarget::ES2017,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_feature_gate(FeatureGate::TopLevelAwaitUsing),
+        None
+    );
+}
+
+#[test]
+fn test_capability_diagnostic_config_compatibility() {
+    use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // resolveJsonModule + System → TS5071
+    let opts = CheckerOptions {
+        module: ModuleKind::System,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    let diags = caps.check_config_compatibility();
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        diags[0],
+        CapabilityDiagnostic::ResolveJsonModuleIncompatible
+    );
+    assert_eq!(diags[0].code(), 5071);
+
+    // resolveJsonModule + UMD → TS5071
+    let opts = CheckerOptions {
+        module: ModuleKind::UMD,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(caps.check_config_compatibility().len(), 1);
+
+    // resolveJsonModule + ESNext → compatible
+    let opts = CheckerOptions {
+        module: ModuleKind::ESNext,
+        resolve_json_module: true,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert!(caps.check_config_compatibility().is_empty());
+}
+
+#[test]
+fn test_capability_diagnostic_generator_prerequisite() {
+    use crate::query_boundaries::capabilities::{EnvironmentCapabilities, FeatureGate};
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // Without lib, generators require IterableIterator
+    let opts = CheckerOptions::default();
+    let caps = EnvironmentCapabilities::from_options(&opts, false);
+    let diag = caps.check_feature_gate(FeatureGate::Generators);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+            gate: FeatureGate::Generators,
+            required_type: "IterableIterator",
+        })
+    );
+
+    // Without lib, async generators require AsyncIterableIterator
+    let diag = caps.check_feature_gate(FeatureGate::AsyncGenerators);
+    assert_eq!(
+        diag,
+        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+            gate: FeatureGate::AsyncGenerators,
+            required_type: "AsyncIterableIterator",
+        })
+    );
+}
+
+#[test]
+fn test_capability_diagnostic_code_mapping() {
+    use crate::query_boundaries::environment::CapabilityDiagnostic;
+
+    // Verify code() returns the correct diagnostic code for each variant
+    assert_eq!(
+        CapabilityDiagnostic::MissingGlobalType {
+            name: "Array".to_string()
+        }
+        .code(),
+        2318
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingEs2015Type {
+            name: "Promise".to_string(),
+            suggested_lib: "es2015".to_string(),
+        }
+        .code(),
+        2583
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingDomGlobal {
+            name: "document".to_string()
+        }
+        .code(),
+        2584
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingNodeGlobal {
+            name: "require".to_string()
+        }
+        .code(),
+        2591
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingJQueryGlobal {
+            name: "$".to_string()
+        }
+        .code(),
+        2592
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingTestRunnerGlobal {
+            name: "describe".to_string()
+        }
+        .code(),
+        2593
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingBunGlobal {
+            name: "Bun".to_string()
+        }
+        .code(),
+        2868
+    );
+    assert_eq!(
+        CapabilityDiagnostic::ImportAttributesUnsupported.code(),
+        2823
+    );
+    assert_eq!(
+        CapabilityDiagnostic::TopLevelAwaitUsingUnsupported.code(),
+        2854
+    );
+    assert_eq!(
+        CapabilityDiagnostic::ResolveJsonModuleIncompatible.code(),
+        5071
+    );
 }
