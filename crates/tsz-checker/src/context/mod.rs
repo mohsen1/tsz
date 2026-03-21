@@ -1044,18 +1044,18 @@ pub struct ProjectEnv {
     pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
     /// Pre-computed symbol-to-file ownership targets.
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
-    /// Pre-computed global file_locals index: name -> Vec<(file_idx, SymbolId)>.
+    /// Pre-computed global `file_locals` index: name -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
-    /// Pre-computed global module_exports index: (specifier, export_name) -> Vec<(file_idx, SymbolId)>.
+    /// Pre-computed global `module_exports` index: (specifier, `export_name`) -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_exports_index:
         Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
-    /// Pre-computed global module augmentations index: specifier -> Vec<(file_idx, ModuleAugmentation)>.
+    /// Pre-computed global module augmentations index: specifier -> Vec<(`file_idx`, `ModuleAugmentation`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_augmentations_index:
         Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
-    /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, file_idx)>.
+    /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, `file_idx`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.

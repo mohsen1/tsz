@@ -451,9 +451,9 @@ impl<'a> CheckerContext<'a> {
     /// In multi-file compilation, each file has its own binder with its own
     /// `semantic_defs`. Without this, cross-file type references (e.g.,
     /// importing a class from another file) hit the O(N) `all_binders` scan
-    /// in `get_or_create_def_id` Step 3 and create DefIds on demand.
+    /// in `get_or_create_def_id` Step 3 and create `DefIds` on demand.
     ///
-    /// By pre-populating here, those SymbolIds are already registered in the
+    /// By pre-populating here, those `SymbolIds` are already registered in the
     /// `DefinitionStore`'s `symbol_only_index`, so `get_or_create_def_id`
     /// Step 2 finds them in O(1) without the repair path.
     ///

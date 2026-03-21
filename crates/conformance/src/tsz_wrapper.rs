@@ -76,7 +76,7 @@ pub fn prepare_test_dir(
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
     key_order: &[String],
-    expected_error_codes: Option<&[u32]>,
+    _expected_error_codes: Option<&[u32]>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
