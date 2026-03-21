@@ -3414,10 +3414,7 @@ fn skeleton_fingerprint_deterministic_across_rebuilds() {
 #[test]
 fn skeleton_fingerprint_changes_on_symbol_add() {
     let files_v1 = vec![("a.ts".to_string(), "let x = 1;".to_string())];
-    let files_v2 = vec![(
-        "a.ts".to_string(),
-        "let x = 1; let y = 2;".to_string(),
-    )];
+    let files_v2 = vec![("a.ts".to_string(), "let x = 1; let y = 2;".to_string())];
 
     let results_v1 = parse_and_bind_parallel(files_v1);
     let results_v2 = parse_and_bind_parallel(files_v2);
@@ -3503,8 +3500,7 @@ fn skeleton_fingerprint_changes_on_declared_module() {
     let files_v1 = vec![("a.d.ts".to_string(), "declare const x: number;".to_string())];
     let files_v2 = vec![(
         "a.d.ts".to_string(),
-        r#"declare const x: number; declare module "foo" { export const y: string; }"#
-            .to_string(),
+        r#"declare const x: number; declare module "foo" { export const y: string; }"#.to_string(),
     )];
 
     let results_v1 = parse_and_bind_parallel(files_v1);

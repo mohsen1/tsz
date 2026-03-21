@@ -427,7 +427,7 @@ impl TypeEnvironment {
     /// Called by the checker when performing relation checks inside a class
     /// scope so the solver can resolve `this` type references during
     /// subtype/identity comparisons.
-    pub fn set_this_type(&mut self, this_type: Option<TypeId>) {
+    pub const fn set_this_type(&mut self, this_type: Option<TypeId>) {
         self.this_type = this_type;
     }
 

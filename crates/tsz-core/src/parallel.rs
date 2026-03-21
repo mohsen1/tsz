@@ -1552,8 +1552,7 @@ impl SkeletonIndex {
         }
 
         // 3) Global augmentation targets (sorted for determinism).
-        let mut global_aug_keys: Vec<&String> =
-            index.global_augmentation_targets.keys().collect();
+        let mut global_aug_keys: Vec<&String> = index.global_augmentation_targets.keys().collect();
         global_aug_keys.sort();
         for key in &global_aug_keys {
             key.hash(&mut hasher);
@@ -1561,8 +1560,7 @@ impl SkeletonIndex {
         }
 
         // 4) Module augmentation targets (sorted for determinism).
-        let mut mod_aug_keys: Vec<&String> =
-            index.module_augmentation_targets.keys().collect();
+        let mut mod_aug_keys: Vec<&String> = index.module_augmentation_targets.keys().collect();
         mod_aug_keys.sort();
         for key in &mod_aug_keys {
             key.hash(&mut hasher);
