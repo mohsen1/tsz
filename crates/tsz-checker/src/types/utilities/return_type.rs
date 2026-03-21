@@ -378,14 +378,7 @@ impl<'a> CheckerState<'a> {
             if self.ctx.preserve_literal_types {
                 return result;
             }
-            let widened = self.widen_literal_type(result);
-            if !self.ctx.strict_null_checks()
-                && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
-            {
-                TypeId::ANY
-            } else {
-                widened
-            }
+            self.widen_literal_type(result)
         } else {
             result
         }
