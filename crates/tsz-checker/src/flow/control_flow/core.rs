@@ -193,6 +193,10 @@ impl<'a> FlowAnalyzer<'a> {
             return true;
         }
 
+        // Flow merge must always use strict-null-checks semantics so that
+        // `null` and `undefined` are never silently collapsed into other types.
+        // Without this, `if (x !== null) {} else {}` merges to just `number`
+        // instead of `number | null`, breaking downstream argument/assignment checks.
         if let Some(env) = &self.type_environment {
             let env = env.borrow();
             return query::is_assignable_with_env(
@@ -200,11 +204,11 @@ impl<'a> FlowAnalyzer<'a> {
                 &env,
                 candidate_sub,
                 candidate_super,
-                false,
+                true,
             );
         }
 
-        query::is_assignable(self.interner, candidate_sub, candidate_super)
+        query::is_assignable_strict_null(self.interner, candidate_sub, candidate_super)
     }
 
     fn simplify_flow_merge_types(&self, types: Vec<TypeId>) -> Vec<TypeId> {
