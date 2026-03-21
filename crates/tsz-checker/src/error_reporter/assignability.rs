@@ -4,7 +4,9 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, RelatedInformationPolicy};
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+};
 use crate::state::CheckerState;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
@@ -332,43 +334,47 @@ impl<'a> CheckerState<'a> {
                 &[&source_type, &target_type],
             );
 
-            let diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                anchor.start,
-                anchor.length,
-                message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            )
-            .with_related(
-                self.ctx.file_name.clone(),
-                anchor.start,
-                anchor.length,
-                detail,
-            );
+            let related = vec![DiagnosticRelatedInformation {
+                category: DiagnosticCategory::Error,
+                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                file: self.ctx.file_name.clone(),
+                start: anchor.start,
+                length: anchor.length,
+                message_text: detail,
+            }];
 
-            self.ctx.push_diagnostic(diag);
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    message,
+                    related,
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
             return;
         }
 
         // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
-        if self.has_exact_optional_property_mismatch(source, target)
-            && let Some(anchor) =
-                self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
-        {
+        if self.has_exact_optional_property_mismatch(source, target) {
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
-                    &[&src_str, &tgt_str],
-                );
-            self.ctx.push_diagnostic(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    anchor.start,
-                    anchor.length,
-                    message,
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                &[&src_str, &tgt_str],
+            );
+            if !self.emit_render_request(
+                anchor_idx,
+                DiagnosticRenderRequest::simple(
+                    DiagnosticAnchorKind::Exact,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
-                ));
+                    message,
+                ),
+            ) {
+                return;
+            }
             return;
         }
 
@@ -547,13 +553,10 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 };
-                self.ctx.push_diagnostic(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    anchor.start,
-                    anchor.length,
-                    message,
-                    code,
-                ));
+                self.emit_render_request_at_anchor(
+                    anchor,
+                    DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+                );
                 return;
             }
 
@@ -564,13 +567,14 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
             );
-            self.ctx.push_diagnostic(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                anchor.start,
-                anchor.length,
-                message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            ));
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::simple(
+                    DiagnosticAnchorKind::Exact,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    message,
+                ),
+            );
         }
     }
 

@@ -2,7 +2,9 @@
 //! and templated diagnostic emitters.
 
 use crate::diagnostics::{Diagnostic, format_message};
-use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInfoStrategy, ResolvedDiagnosticAnchor,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
@@ -190,5 +192,108 @@ impl<'a> CheckerState<'a> {
             // No current node - emit at start of file
             self.error_at_position(0, 0, message, code);
         }
+    }
+
+    /// Emit a diagnostic through the central render-request policy.
+    ///
+    /// This is the single entry point for semantic reporters that have
+    /// constructed a `DiagnosticRenderRequest`. It handles:
+    /// 1. Anchor resolution (via `resolve_diagnostic_anchor`)
+    /// 2. Related-info generation (from failure reason or prebuilt)
+    /// 3. Related-info normalization (dedup, limit)
+    /// 4. Diagnostic push
+    ///
+    /// Returns `true` if a diagnostic was emitted, `false` if anchor
+    /// resolution failed (no source location).
+    pub(crate) fn emit_render_request(
+        &mut self,
+        node_idx: NodeIndex,
+        request: DiagnosticRenderRequest,
+    ) -> bool {
+        let Some(anchor) = self.resolve_diagnostic_anchor(node_idx, request.anchor_kind) else {
+            return false;
+        };
+
+        let mut diag = Diagnostic::error(
+            self.ctx.file_name.clone(),
+            anchor.start,
+            anchor.length,
+            request.message,
+            request.code,
+        );
+
+        match request.related {
+            RelatedInfoStrategy::None => {}
+            RelatedInfoStrategy::FromFailureReason {
+                reason,
+                source,
+                target,
+            } => {
+                if let Some(related) =
+                    self.related_from_failure_reason(&reason, source, target, anchor.node_idx)
+                {
+                    diag.related_information = related;
+                }
+            }
+            RelatedInfoStrategy::Prebuilt(items) => {
+                diag.related_information = items;
+            }
+        }
+
+        if !diag.related_information.is_empty() {
+            diag.related_information = self.normalize_related_information(
+                std::mem::take(&mut diag.related_information),
+                request.related_policy,
+            );
+        }
+
+        self.ctx.push_diagnostic(diag);
+        true
+    }
+
+    /// Emit a diagnostic at a pre-resolved anchor.
+    ///
+    /// Use this when the caller has already resolved the anchor (e.g., to
+    /// compute related information that depends on the anchor span). This
+    /// avoids double-resolution while still centralizing the emission path.
+    pub(crate) fn emit_render_request_at_anchor(
+        &mut self,
+        anchor: ResolvedDiagnosticAnchor,
+        request: DiagnosticRenderRequest,
+    ) {
+        let mut diag = Diagnostic::error(
+            self.ctx.file_name.clone(),
+            anchor.start,
+            anchor.length,
+            request.message,
+            request.code,
+        );
+
+        match request.related {
+            RelatedInfoStrategy::None => {}
+            RelatedInfoStrategy::FromFailureReason {
+                reason,
+                source,
+                target,
+            } => {
+                if let Some(related) =
+                    self.related_from_failure_reason(&reason, source, target, anchor.node_idx)
+                {
+                    diag.related_information = related;
+                }
+            }
+            RelatedInfoStrategy::Prebuilt(items) => {
+                diag.related_information = items;
+            }
+        }
+
+        if !diag.related_information.is_empty() {
+            diag.related_information = self.normalize_related_information(
+                std::mem::take(&mut diag.related_information),
+                request.related_policy,
+            );
+        }
+
+        self.ctx.push_diagnostic(diag);
     }
 }
