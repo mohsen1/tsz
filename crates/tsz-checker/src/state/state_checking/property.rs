@@ -559,6 +559,134 @@ impl<'a> CheckerState<'a> {
         // Note: Missing property checks are handled by solver's explain_failure
     }
 
+    /// Boolean query: does a fresh source have any excess properties relative to
+    /// the target?  Uses the canonical excess-property algorithm (union=any-member,
+    /// intersection=any-member-or-index) but does NOT emit diagnostics.
+    ///
+    /// Used by `should_skip_weak_union_error` to decide whether a weak-union
+    /// mismatch should be suppressed.
+    pub(crate) fn source_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
+        use tsz_solver::relations::freshness;
+
+        if !freshness::is_fresh_object_type(self.ctx.types, source) {
+            return false;
+        }
+
+        let Some(source_shape) = query::object_shape(self.ctx.types, source) else {
+            return false;
+        };
+
+        let source_props = source_shape.properties.as_slice();
+        if source_props.is_empty() {
+            return false;
+        }
+
+        let effective_target = self.normalized_target_for_excess_properties(target);
+        let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
+
+        // Union targets: excess if not in ANY member
+        if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
+            let mut target_shapes = Vec::new();
+
+            for &member in &members {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
+                    if resolved_member == TypeId::OBJECT {
+                        return false;
+                    }
+                    if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                        continue;
+                    }
+                    continue;
+                };
+
+                if shape.properties.is_empty()
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+                {
+                    return false;
+                }
+
+                if self.is_global_object_or_function_shape(&shape) {
+                    return false;
+                }
+
+                target_shapes.push(shape.clone());
+            }
+
+            if target_shapes.is_empty() {
+                return false;
+            }
+
+            return source_props.iter().any(|source_prop| {
+                !target_shapes.iter().any(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .any(|prop| prop.name == source_prop.name)
+                })
+            });
+        }
+
+        // Intersection targets: excess if not in ANY member and no index sig
+        if let Some(members) = query::intersection_members(self.ctx.types, resolved_target) {
+            let mut target_shapes = Vec::new();
+            let mut has_index_signature = false;
+
+            for &member in members.iter() {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                    return false;
+                }
+                if tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
+                    return false;
+                }
+                if let Some(shape) = query::object_shape(self.ctx.types, resolved_member) {
+                    if shape.string_index.is_some() || shape.number_index.is_some() {
+                        has_index_signature = true;
+                    }
+                    target_shapes.push(shape.clone());
+                } else if resolved_member == TypeId::OBJECT {
+                    continue;
+                }
+            }
+
+            if target_shapes.is_empty() || has_index_signature {
+                return false;
+            }
+
+            return source_props.iter().any(|source_prop| {
+                !target_shapes.iter().any(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .any(|prop| prop.name == source_prop.name)
+                })
+            });
+        }
+
+        // Simple object target
+        if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
+            if target_shape.string_index.is_some()
+                || target_shape.number_index.is_some()
+                || target_shape.properties.is_empty()
+            {
+                return false;
+            }
+
+            if self.is_global_object_or_function_shape(&target_shape) {
+                return false;
+            }
+
+            let target_props = target_shape.properties.as_slice();
+            return source_props
+                .iter()
+                .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name));
+        }
+
+        false
+    }
+
     /// For fresh object literals assigned to discriminated union targets, detect
     /// the discriminant member and emit TS2353 for excess properties against that
     /// specific member. Returns `true` if excess properties were found and
