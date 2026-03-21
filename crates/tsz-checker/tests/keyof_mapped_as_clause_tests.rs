@@ -97,3 +97,46 @@ const x: K = "c";
         "Expected TS2322 for 'c' not in keyof simple object, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn non_homomorphic_mapped_type_solver_delegation() {
+    // Non-homomorphic mapped types (constraint is a literal union, not keyof T)
+    // should be evaluated by the solver's evaluator via evaluate_type_with_env,
+    // not by the checker's manual property expansion loop. This test verifies
+    // that the solver-first delegation path produces correct results.
+    let code = r#"
+type Keys = "a" | "b";
+type MyRecord = { [K in Keys]: number };
+const r: MyRecord = { a: 1, b: 2 };
+const x: number = r.a;
+const y: number = r.b;
+    "#;
+
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339 for property access on non-homomorphic mapped type, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for valid assignment to non-homomorphic mapped type, got: {codes:?}"
+    );
+}
+
+#[test]
+fn non_homomorphic_mapped_type_with_template_transform() {
+    // Non-homomorphic mapped type with a non-trivial template.
+    // The solver's evaluator should correctly expand { [K in "x" | "y"]: Box<K> }
+    // to { x: Box<"x">, y: Box<"y"> } (or the evaluated form).
+    let code = r#"
+type Box<T> = { value: T };
+type MyMap = { [K in "x" | "y"]: Box<K> };
+const m: MyMap = { x: { value: "x" }, y: { value: "y" } };
+    "#;
+
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for non-homomorphic mapped type with template, got: {codes:?}"
+    );
+}

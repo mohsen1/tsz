@@ -740,7 +740,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let resolved_mapped_id = if keys != mapped.constraint {
+        // Create the resolved mapped type (with resolved constraint) and capture
+        // both the TypeId and the MappedTypeId. The TypeId is needed for solver
+        // delegation below; the MappedTypeId for the manual fallback path.
+        let is_homomorphic_source = tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
+        let (resolved_type_id, resolved_mapped_id) = if keys != mapped.constraint {
             let resolved_mapped = tsz_solver::MappedType {
                 type_param: mapped.type_param,
                 constraint: keys,
@@ -749,11 +753,32 @@ impl<'a> CheckerState<'a> {
                 readonly_modifier: mapped.readonly_modifier,
                 optional_modifier: mapped.optional_modifier,
             };
-            tsz_solver::mapped_type_id(self.ctx.types, self.ctx.types.mapped(resolved_mapped))
-                .unwrap_or(mapped_id)
+            let resolved_tid = self.ctx.types.mapped(resolved_mapped);
+            let resolved_mid =
+                tsz_solver::mapped_type_id(self.ctx.types, resolved_tid).unwrap_or(mapped_id);
+            (resolved_tid, resolved_mid)
         } else {
-            mapped_id
+            (type_id, mapped_id)
         };
+
+        // Solver-first for non-homomorphic mapped types: delegate to the solver's
+        // evaluator with full TypeEnvironment resolver. The solver's evaluate_mapped
+        // handles property expansion, modifier computation, and name remapping.
+        //
+        // Homomorphic mapped types (constraint = keyof T) need special checker-local
+        // handling for: (a) optional property type overrides that avoid double-encoding
+        // undefined, and (b) Lazy(DefId) resolution in templates like T[K] where T
+        // requires binder-level symbol resolution not available in the TypeEnvironment.
+        // These cases fall through to the manual expansion below.
+        if is_homomorphic_source.is_none() {
+            let solver_result = self.evaluate_type_with_env(resolved_type_id);
+            if solver_result != resolved_type_id && solver_result != type_id {
+                return solver_result;
+            }
+        }
+
+        // Manual expansion: needed for homomorphic mapped types and as a fallback
+        // when the solver can't resolve all types in the template.
 
         // Prefer the shared finite-key collector once the constraint has been
         // resolved. This keeps mapped expansion aligned with property access and
@@ -772,10 +797,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        // Detect homomorphic source and collect source property info via solver helpers.
-        // This centralizes both the homomorphic detection and property collection
-        // behind the type-environment boundary instead of inline checker logic.
-        let is_homomorphic_source = tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint);
+        // Collect source property info for homomorphic mapped types via solver helpers.
         let is_homomorphic = is_homomorphic_source.is_some();
 
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
