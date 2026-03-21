@@ -1674,8 +1674,8 @@ mod tests {
         let name = db.intern_string("data-prop");
         let prop = PropertyInfo {
             name,
-            type_id: TypeId::BOOLEAN_TRUE,
-            write_type: TypeId::BOOLEAN_TRUE,
+            type_id: TypeId::BOOLEAN,
+            write_type: TypeId::BOOLEAN,
             optional: false,
             readonly: false,
             is_method: false,
@@ -3281,8 +3281,7 @@ mod tests {
 
     #[test]
     fn optional_param_shows_undefined() {
-        // tsc strips `| undefined` for optional params — `?` implies it:
-        // `(a?: string) => any`
+        // tsc displays optional params WITH `| undefined` in diagnostic error messages
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3302,8 +3301,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string) => any",
-            "Optional param strips '| undefined' — '?' implies it"
+            result, "(a?: string | undefined) => any",
+            "Optional param includes '| undefined' — matches tsc diagnostic display"
         );
     }
 
@@ -3330,8 +3329,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string) => any",
-            "Optional param with string | undefined strips undefined"
+            result, "(a?: string | undefined) => any",
+            "Optional param with string | undefined keeps the display"
         );
     }
 
