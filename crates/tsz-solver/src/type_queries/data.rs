@@ -109,10 +109,10 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type contains any unresolved `TypeQuery` references.
 ///
-/// TypeQuery types represent `typeof X` that haven't been resolved to concrete types yet.
-/// Evaluation results containing unresolved TypeQueries should not be cached, as the
-/// TypeQuery may resolve to a different type once the referenced symbol's type is available
-/// in the TypeEnvironment.
+/// `TypeQuery` types represent `typeof X` that haven't been resolved to concrete types yet.
+/// Evaluation results containing unresolved `TypeQuery` refs should not be cached, as the
+/// `TypeQuery` may resolve to a different type once the referenced symbol's type is available
+/// in the `TypeEnvironment`.
 pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
