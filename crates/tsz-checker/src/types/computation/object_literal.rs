@@ -1123,7 +1123,7 @@ impl<'a> CheckerState<'a> {
 
                     if method_return_this_circularity {
                         method_diag_guard.rollback(&mut self.ctx);
-                        self.clear_type_cache_recursive(elem_idx);
+                        self.invalidate_expression_for_contextual_retry(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
                             method_type,
