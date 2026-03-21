@@ -1134,6 +1134,63 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    // tsc's getTypeOfDestructuredProperty uses mapType for
+                    // unions where all non-empty members have the property.
+                    // When a union contains empty object members (`{}`), those
+                    // members naturally lack every property. In tsc, an empty
+                    // object member contributes `undefined` for any property
+                    // instead of failing the entire lookup. This commonly
+                    // arises from `x ?? {}` patterns where the right-hand
+                    // `{}` produces an empty member in the union.
+                    //
+                    // We only apply this per-member resolution when EVERY
+                    // member that lacks the property is an empty object. If a
+                    // non-empty member is missing the property, the standard
+                    // TS2339 error should still fire.
+                    if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+                        let mut member_types = Vec::new();
+                        let mut any_found = false;
+                        let mut non_empty_missing = false;
+                        for &member in &members {
+                            let member_result =
+                                self.resolve_property_access_with_env(member, prop_name_str);
+                            match member_result {
+                                PropertyAccessResult::Success { type_id, .. } => {
+                                    member_types.push(type_id);
+                                    any_found = true;
+                                }
+                                PropertyAccessResult::PossiblyNullOrUndefined {
+                                    property_type,
+                                    ..
+                                } => {
+                                    member_types.push(property_type.unwrap_or(TypeId::UNDEFINED));
+                                    any_found = true;
+                                }
+                                PropertyAccessResult::PropertyNotFound { .. } => {
+                                    if tsz_solver::is_empty_object_type(
+                                        self.ctx.types.as_type_database(),
+                                        member,
+                                    ) {
+                                        // Empty object member — contributes undefined.
+                                        member_types.push(TypeId::UNDEFINED);
+                                    } else {
+                                        // Non-empty member missing the property —
+                                        // this is a real type error.
+                                        non_empty_missing = true;
+                                        break;
+                                    }
+                                }
+                                PropertyAccessResult::IsUnknown => {
+                                    member_types.push(TypeId::UNDEFINED);
+                                }
+                            }
+                        }
+                        if any_found && !non_empty_missing {
+                            let factory = self.ctx.types.factory();
+                            return factory.union(member_types);
+                        }
+                    }
+
                     let error_node = if element_data.property_name.is_some() {
                         element_data.property_name
                     } else if element_data.name.is_some() {
