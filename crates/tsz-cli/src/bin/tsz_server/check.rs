@@ -167,6 +167,12 @@ impl Server {
             }
             checker.ctx.set_actual_lib_file_count(lib_contexts.len());
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            if let Some(ref skel) = program.skeleton_index {
+                let (exact, patterns) = skel.build_declared_module_sets();
+                checker.ctx.set_declared_modules_from_skeleton(Arc::new(
+                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                ));
+            }
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker
                 .ctx
@@ -510,6 +516,7 @@ impl Server {
             // Single-file conformance mode doesn't have full module resolution context.
 
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            // No skeleton available in conformance path; binder scan builds declared_modules.
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker
                 .ctx
