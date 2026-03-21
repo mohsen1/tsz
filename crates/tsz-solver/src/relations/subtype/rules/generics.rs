@@ -341,6 +341,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let variances = self
                     .query_db
                     .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+                    .or_else(|| self.resolver.get_type_param_variance(def_id))
                     .or_else(|| {
                         crate::relations::variance::compute_type_param_variances_with_resolver(
                             self.interner,

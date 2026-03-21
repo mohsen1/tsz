@@ -238,7 +238,6 @@ impl TypeResolver for MockVarianceResolver<'_> {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_non_interface_invariant_application_fastpath_rejects_without_structural_fallback() {
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
