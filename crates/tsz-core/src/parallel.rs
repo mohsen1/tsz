@@ -1391,6 +1391,16 @@ pub struct SkeletonIndex {
     pub total_reexport_count: usize,
     /// Total number of wildcard re-export edges across all files.
     pub total_wildcard_reexport_count: usize,
+    /// Aggregate fingerprint across all constituent file skeletons.
+    ///
+    /// Combines per-file fingerprints (in deterministic file order) with
+    /// cross-file topology (merge candidates, augmentation targets) into a
+    /// single `u64`. Two `SkeletonIndex` values with equal aggregate
+    /// fingerprints have identical merge-relevant project topology.
+    ///
+    /// Incremental drivers can compare this single value to determine whether
+    /// the entire project's merge topology has changed since the last build.
+    pub fingerprint: u64,
 }
 
 /// Deterministically reduce a set of file skeletons into a `SkeletonIndex`.
@@ -1493,7 +1503,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
     // Sort for deterministic output.
     merge_candidates.sort_by(|a, b| a.name.cmp(&b.name));
 
-    SkeletonIndex {
+    let mut index = SkeletonIndex {
         file_count: skeletons.len(),
         merge_candidates,
         global_augmentation_targets,
@@ -1505,10 +1515,102 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         total_symbol_count,
         total_reexport_count,
         total_wildcard_reexport_count,
-    }
+        fingerprint: 0, // computed below
+    };
+
+    // Compute aggregate fingerprint from per-file fingerprints + cross-file topology.
+    let file_fingerprints: Vec<u64> = skeletons.iter().map(|s| s.fingerprint).collect();
+    index.fingerprint = SkeletonIndex::compute_fingerprint(&file_fingerprints, &index);
+
+    index
 }
 
 impl SkeletonIndex {
+    /// Compute a deterministic aggregate fingerprint from all index fields.
+    ///
+    /// Combines per-file fingerprints (via `file_fingerprints`, in file order)
+    /// with cross-file topology (merge candidates, augmentation targets,
+    /// declared modules, expando properties, counters) to produce a single `u64`.
+    ///
+    /// The same project topology always yields the same fingerprint. This is
+    /// computed from already-sorted/deterministic data (merge candidates are
+    /// sorted by name, sets are iterated in sorted order).
+    #[must_use]
+    pub fn compute_fingerprint(file_fingerprints: &[u64], index: &SkeletonIndex) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+
+        // 1) Per-file fingerprints in file order (captures all per-file topology).
+        file_fingerprints.hash(&mut hasher);
+
+        // 2) Merge candidates (already sorted by name in reduce_skeletons).
+        for mc in &index.merge_candidates {
+            mc.name.hash(&mut hasher);
+            mc.merged_flags.hash(&mut hasher);
+            mc.source_files.hash(&mut hasher);
+            mc.is_valid_merge.hash(&mut hasher);
+        }
+
+        // 3) Global augmentation targets (sorted for determinism).
+        let mut global_aug_keys: Vec<&String> =
+            index.global_augmentation_targets.keys().collect();
+        global_aug_keys.sort();
+        for key in &global_aug_keys {
+            key.hash(&mut hasher);
+            index.global_augmentation_targets[*key].hash(&mut hasher);
+        }
+
+        // 4) Module augmentation targets (sorted for determinism).
+        let mut mod_aug_keys: Vec<&String> =
+            index.module_augmentation_targets.keys().collect();
+        mod_aug_keys.sort();
+        for key in &mod_aug_keys {
+            key.hash(&mut hasher);
+            index.module_augmentation_targets[*key].hash(&mut hasher);
+        }
+
+        // 5) Declared modules (sorted for determinism).
+        let mut declared: Vec<&String> = index.declared_modules.iter().collect();
+        declared.sort();
+        for d in &declared {
+            d.hash(&mut hasher);
+        }
+
+        // 6) Shorthand ambient modules (sorted for determinism).
+        let mut shorthand: Vec<&String> = index.shorthand_ambient_modules.iter().collect();
+        shorthand.sort();
+        for s in &shorthand {
+            s.hash(&mut hasher);
+        }
+
+        // 7) Module export specifiers (sorted for determinism).
+        let mut mod_exp: Vec<&String> = index.module_export_specifiers.iter().collect();
+        mod_exp.sort();
+        for m in &mod_exp {
+            m.hash(&mut hasher);
+        }
+
+        // 8) Expando properties (sorted for determinism).
+        let mut expando_keys: Vec<&String> = index.expando_properties.keys().collect();
+        expando_keys.sort();
+        for key in &expando_keys {
+            key.hash(&mut hasher);
+            let mut props: Vec<&String> = index.expando_properties[*key].iter().collect();
+            props.sort();
+            for p in &props {
+                p.hash(&mut hasher);
+            }
+        }
+
+        // 9) Aggregate counters.
+        index.file_count.hash(&mut hasher);
+        index.total_symbol_count.hash(&mut hasher);
+        index.total_reexport_count.hash(&mut hasher);
+        index.total_wildcard_reexport_count.hash(&mut hasher);
+
+        hasher.finish()
+    }
+
     /// Build the set of all known declared/ambient module names from the skeleton data.
     ///
     /// This produces the same result as the `set_all_binders` loop in the checker

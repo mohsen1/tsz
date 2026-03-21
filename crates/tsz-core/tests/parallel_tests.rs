@@ -3536,3 +3536,146 @@ fn skeleton_compute_fingerprint_matches_stored() {
         "stored fingerprint must match recomputed fingerprint"
     );
 }
+
+// =============================================================================
+// SkeletonIndex aggregate fingerprint tests
+// =============================================================================
+
+#[test]
+fn skeleton_index_fingerprint_deterministic() {
+    let files = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+    let results1 = parse_and_bind_parallel(files.clone());
+    let results2 = parse_and_bind_parallel(files);
+
+    let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
+    let skels2: Vec<_> = results2.iter().map(|r| extract_skeleton(r)).collect();
+
+    let idx1 = reduce_skeletons(&skels1);
+    let idx2 = reduce_skeletons(&skels2);
+
+    assert_eq!(
+        idx1.fingerprint, idx2.fingerprint,
+        "identical projects should produce identical aggregate fingerprints"
+    );
+    assert_ne!(
+        idx1.fingerprint, 0,
+        "aggregate fingerprint should not be zero"
+    );
+}
+
+#[test]
+fn skeleton_index_fingerprint_changes_on_file_add() {
+    let files_v1 = vec![("a.ts".to_string(), "let x = 1;".to_string())];
+    let files_v2 = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skels_v1: Vec<_> = results_v1.iter().map(|r| extract_skeleton(r)).collect();
+    let skels_v2: Vec<_> = results_v2.iter().map(|r| extract_skeleton(r)).collect();
+
+    let idx_v1 = reduce_skeletons(&skels_v1);
+    let idx_v2 = reduce_skeletons(&skels_v2);
+
+    assert_ne!(
+        idx_v1.fingerprint, idx_v2.fingerprint,
+        "adding a file should change the aggregate fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_index_fingerprint_changes_on_symbol_change() {
+    let files_v1 = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+    let files_v2 = vec![
+        ("a.ts".to_string(), "let x = 1; let z = 3;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skels_v1: Vec<_> = results_v1.iter().map(|r| extract_skeleton(r)).collect();
+    let skels_v2: Vec<_> = results_v2.iter().map(|r| extract_skeleton(r)).collect();
+
+    let idx_v1 = reduce_skeletons(&skels_v1);
+    let idx_v2 = reduce_skeletons(&skels_v2);
+
+    assert_ne!(
+        idx_v1.fingerprint, idx_v2.fingerprint,
+        "adding a symbol to one file should change the aggregate fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_index_fingerprint_stable_on_body_change() {
+    // Changing function bodies should not affect the aggregate fingerprint
+    // since skeletons only capture top-level symbol topology.
+    let files_v1 = vec![(
+        "a.ts".to_string(),
+        "function foo() { return 1; }".to_string(),
+    )];
+    let files_v2 = vec![(
+        "a.ts".to_string(),
+        "function foo() { return 999; }".to_string(),
+    )];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skels_v1: Vec<_> = results_v1.iter().map(|r| extract_skeleton(r)).collect();
+    let skels_v2: Vec<_> = results_v2.iter().map(|r| extract_skeleton(r)).collect();
+
+    let idx_v1 = reduce_skeletons(&skels_v1);
+    let idx_v2 = reduce_skeletons(&skels_v2);
+
+    assert_eq!(
+        idx_v1.fingerprint, idx_v2.fingerprint,
+        "changing function bodies should not change the aggregate fingerprint"
+    );
+}
+
+#[test]
+fn skeleton_index_fingerprint_changes_on_merge_topology() {
+    // Two script files declaring the same global name creates a merge candidate.
+    // Changing one file to not declare that name should change the fingerprint.
+    let files_v1 = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let x = 2;".to_string()),
+    ];
+    let files_v2 = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+    ];
+
+    let results_v1 = parse_and_bind_parallel(files_v1);
+    let results_v2 = parse_and_bind_parallel(files_v2);
+
+    let skels_v1: Vec<_> = results_v1.iter().map(|r| extract_skeleton(r)).collect();
+    let skels_v2: Vec<_> = results_v2.iter().map(|r| extract_skeleton(r)).collect();
+
+    let idx_v1 = reduce_skeletons(&skels_v1);
+    let idx_v2 = reduce_skeletons(&skels_v2);
+
+    // v1 has a merge candidate for `x`, v2 does not.
+    assert!(
+        idx_v1.merge_candidates.iter().any(|mc| mc.name == "x"),
+        "v1 should have merge candidate for x"
+    );
+    assert!(
+        !idx_v2.merge_candidates.iter().any(|mc| mc.name == "x"),
+        "v2 should not have merge candidate for x"
+    );
+    assert_ne!(
+        idx_v1.fingerprint, idx_v2.fingerprint,
+        "different merge topology should produce different aggregate fingerprints"
+    );
+}
