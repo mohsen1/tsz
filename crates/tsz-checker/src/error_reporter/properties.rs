@@ -963,7 +963,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| {
                 self.ctx
                     .resolve_type_to_symbol_id(type_id)
-                    .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied())
+                    .and_then(|sym_id| self.ctx.get_existing_def_id(sym_id))
             })
             && let Some(def) = self.ctx.definition_store.get(def_id)
         {
