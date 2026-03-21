@@ -723,9 +723,29 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // becomes `F<K>`. This matches tsc's behavior for indexed access on mapped types
         // with generic key types.
         let type_param_constraint_matches = {
-            let interner = self.evaluator.interner();
-            if let Some(TypeData::TypeParameter(index_tp)) = interner.lookup(self.index_type) {
-                index_tp.constraint == Some(mapped.constraint)
+            let raw_constraint = {
+                let interner = self.evaluator.interner();
+                if let Some(TypeData::TypeParameter(index_tp)) = interner.lookup(self.index_type) {
+                    index_tp.constraint
+                } else {
+                    None
+                }
+            };
+            if let Some(constraint) = raw_constraint {
+                if constraint == mapped.constraint {
+                    true
+                } else {
+                    // The constraint on the type parameter may be an unevaluated form
+                    // (e.g., IndexAccess(Options, "kind")) that evaluates to the same
+                    // type as the mapped constraint (e.g., "one" | "two"). Evaluate it
+                    // before comparing to handle cases like:
+                    //   type OptionHandlers = { [K in Options['kind']]: ... }
+                    //   function handleOption<K extends Options['kind']>(...)
+                    // where K's constraint is stored as Options['kind'] but the mapped
+                    // constraint is the evaluated union "one" | "two".
+                    let evaluated_constraint = self.evaluator.evaluate(constraint);
+                    evaluated_constraint == mapped.constraint
+                }
             } else {
                 false
             }
@@ -1167,6 +1187,64 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Pre-evaluation check for mapped type + type parameter index access.
+    ///
+    /// When the object is a mapped type like `{ [P in C]: Template<P> }` and the
+    /// index is a type parameter `K extends C`, substitute K into the template
+    /// to produce `Template<K>`. This must happen before `evaluate(object_type)`
+    /// because evaluation expands mapped types with concrete constraints into
+    /// Object types, losing the template relationship.
+    fn try_mapped_type_param_substitution(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        // Check if object is a mapped type
+        let mapped_id = match self.interner().lookup(object_type) {
+            Some(TypeData::Mapped(id)) => id,
+            _ => return None,
+        };
+
+        // Check if index is a type parameter
+        let index_constraint = match self.interner().lookup(index_type) {
+            Some(TypeData::TypeParameter(tp)) => tp.constraint?,
+            _ => return None,
+        };
+
+        let mapped = self.interner().get_mapped(MappedTypeId(mapped_id.0));
+
+        // Skip if there's a name remapping (as clause)
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        // Check if the type parameter's constraint matches the mapped constraint.
+        // The constraint may be stored in an unevaluated form (e.g., IndexAccess)
+        // that evaluates to the same type as the mapped constraint.
+        let constraint_matches = index_constraint == mapped.constraint || {
+            let evaluated = self.evaluate(index_constraint);
+            evaluated == mapped.constraint
+        };
+
+        if !constraint_matches {
+            return None;
+        }
+
+        // Substitute K into the mapped template
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, index_type);
+
+        let mut value_type =
+            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+
+        // Handle optional modifier
+        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+            value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
+        }
+
+        Some(value_type)
+    }
+
     /// Helper to recursively evaluate an index access while respecting depth limits.
     /// Creates an `IndexAccess` type and evaluates it through the main `evaluate()` method.
     pub(crate) fn recurse_index_access(
@@ -1182,6 +1260,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// This resolves property access on object types.
     pub fn evaluate_index_access(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        // Pre-evaluation check: if the object is a mapped type and the index is a type
+        // parameter whose constraint matches the mapped constraint, substitute K into
+        // the mapped template directly. This MUST happen before evaluate(object_type)
+        // because evaluation expands mapped types with concrete constraints into Object
+        // types, losing the template relationship. Without this, `MappedType[K]` where
+        // K extends the mapped constraint would produce a deferred IndexAccess(Object, K)
+        // that resolves to a union of concrete types instead of a single generic type.
+        // Example: `{ [P in "one"|"two"]: (option: T & {kind:P}) => string }[K]`
+        // should produce `(option: T & {kind:K}) => string`, not a union of functions.
+        if let Some(mapped_result) =
+            self.try_mapped_type_param_substitution(object_type, index_type)
+        {
+            return mapped_result;
+        }
+
         let evaluated_object = self.evaluate(object_type);
         let evaluated_index = self.evaluate(index_type);
         if evaluated_object != object_type || evaluated_index != index_type {
