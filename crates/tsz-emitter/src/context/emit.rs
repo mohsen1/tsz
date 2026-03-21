@@ -236,6 +236,12 @@ pub struct EmitContext {
     /// When true, `await expr` becomes `yield __await(expr)` for async generator lowering.
     pub emit_await_as_yield_await: bool,
 
+    /// When true, rewrite `arguments` identifiers to `arguments_1` inside async
+    /// generator bodies (ES2015+ path). The outer function captures arguments
+    /// with `var arguments_1 = arguments;` so the generator closure can reference
+    /// the correct scope.
+    pub rewrite_arguments_to_arguments_1: bool,
+
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
@@ -270,6 +276,7 @@ impl EmitContext {
             private_field_state: PrivateFieldState::default(),
             emit_await_as_yield: false,
             emit_await_as_yield_await: false,
+            rewrite_arguments_to_arguments_1: false,
             auto_detect_module: false,
             original_module_kind: None,
         };

@@ -226,6 +226,14 @@ impl<'a> Printer<'a> {
             "void 0"
         };
 
+        // Check if the body references `arguments`. If so, we must capture it
+        // before entering the generator: `() => { var arguments_1 = arguments; return __awaiter(...); }`
+        // However, if we're already inside a generator body that has captured arguments
+        // (rewrite_arguments_to_arguments_1 is true), don't create another capture -
+        // the references are already being rewritten to `arguments_1`.
+        let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
+            && contains_arguments_reference(self.arena, func.body);
+
         let body_node = self.arena.get(func.body);
         let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
@@ -258,6 +266,66 @@ impl<'a> Printer<'a> {
             self.write("(");
             self.write(this_arg);
             self.write(", void 0, void 0, function* () { })");
+            return;
+        }
+
+        // When capturing arguments, always use block form:
+        // `() => { var arguments_1 = arguments; return __awaiter(..., function* () { ... arguments_1 ... }); }`
+        if captures_arguments {
+            self.write(" => {");
+            self.write_line();
+            self.increase_indent();
+            self.write("var arguments_1 = arguments;");
+            self.write_line();
+            self.write("return ");
+            self.write_helper("__awaiter");
+            self.write("(");
+            self.write(this_arg);
+            self.write(", void 0, void 0, function* () {");
+
+            let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            self.ctx.emit_await_as_yield = true;
+            self.ctx.rewrite_arguments_to_arguments_1 = true;
+
+            if is_block {
+                if body_is_single_line {
+                    if let Some(body_node) = self.arena.get(func.body)
+                        && let Some(block) = self.arena.get_block(body_node)
+                    {
+                        for &stmt in &block.statements.nodes {
+                            self.write(" ");
+                            self.emit(stmt);
+                        }
+                    }
+                    self.write(" })");
+                } else {
+                    self.write_line();
+                    self.increase_indent();
+                    if let Some(body_node) = self.arena.get(func.body)
+                        && let Some(block) = self.arena.get_block(body_node)
+                    {
+                        for &stmt in &block.statements.nodes {
+                            self.emit(stmt);
+                            self.write_line();
+                        }
+                    }
+                    self.decrease_indent();
+                    self.write("})");
+                }
+            } else {
+                self.write(" return ");
+                self.emit_expression(func.body);
+                self.write("; })");
+            }
+
+            self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
             return;
         }
 
@@ -573,7 +641,11 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
+        // Regular functions have their own `arguments`, so turn off the rewrite flag
+        let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
+        self.ctx.rewrite_arguments_to_arguments_1 = false;
         self.emit(func.body);
+        self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
         self.ctx.flags.in_generator = prev_in_generator;
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();

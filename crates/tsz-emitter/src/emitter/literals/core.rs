@@ -13,6 +13,14 @@ impl<'a> Printer<'a> {
         if let Some(ident) = self.arena.get_identifier(node) {
             let original_text = &ident.escaped_text;
 
+            // In async function lowering (ES2015+), `arguments` inside the
+            // generator body must be rewritten to `arguments_1` because the
+            // outer wrapper captures it: `var arguments_1 = arguments;`
+            if self.ctx.rewrite_arguments_to_arguments_1 && original_text == "arguments" {
+                self.write("arguments_1");
+                return;
+            }
+
             // tsc preserves unicode escape sequences in identifiers verbatim.
             // When the parser detects unicode escapes (e.g., \u0041 for 'A'),
             // it stores the original source text in `original_text`. Use it
