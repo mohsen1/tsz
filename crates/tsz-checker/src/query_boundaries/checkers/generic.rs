@@ -243,3 +243,14 @@ pub(crate) fn is_mapped_template_callable(
 ) -> bool {
     tsz_solver::type_queries::is_mapped_template_callable(db, mapped_id)
 }
+
+/// Get the template (value) type of a mapped type.
+///
+/// For `{ [K in C]: T }`, returns `Some(T)`.
+/// Used during indexed access resolution and constraint checking
+/// to determine the value type that indexing into the mapped type yields.
+pub(crate) fn mapped_type_template(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let mapped_id = tsz_solver::mapped_type_id(db, type_id)?;
+    let mapped = db.mapped_type(mapped_id);
+    Some(mapped.template)
+}
