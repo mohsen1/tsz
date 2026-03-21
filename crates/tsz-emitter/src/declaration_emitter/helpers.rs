@@ -8187,7 +8187,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Like `const_literal_initializer_text` but also unwraps `as` and
     /// `satisfies` expressions to find the underlying literal.
-    fn const_literal_initializer_text_deep(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(super) fn const_literal_initializer_text_deep(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         // Try the normal path first
         if let Some(text) = self.const_literal_initializer_text(expr_idx) {
             return Some(text);

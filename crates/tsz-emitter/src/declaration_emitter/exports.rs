@@ -566,14 +566,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("declare const ");
         self.write(&var_name);
-        self.write(": ");
 
-        if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
+        // Default exports are const-like — preserve literal types for simple literals
+        if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
+            self.write(": ");
+            self.write(&literal_text);
+        } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
+            self.write(": ");
             self.write(&type_text);
         } else if let Some(type_id) = self.get_node_type(expr_idx) {
+            self.write(": ");
             self.write(&self.print_type_id(type_id));
         } else {
-            self.write("any");
+            self.write(": any");
         }
 
         self.write(";");
