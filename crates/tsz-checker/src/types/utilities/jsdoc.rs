@@ -1818,6 +1818,22 @@ impl<'a> CheckerState<'a> {
         source_text: &str,
     ) -> Option<TypeId> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        // Re-entrancy guard: recursive @typedef like `@typedef {... | Json[]} Json`
+        // causes type_from_jsdoc_typedef → jsdoc_type_from_expression →
+        // resolve_jsdoc_type_name → resolve_jsdoc_typedef_type infinite loop.
+        // If we're already resolving this typedef, return None so the caller
+        // falls through to the file_locals symbol lookup which returns a Lazy
+        // placeholder that properly defers the recursive reference.
+        if self
+            .ctx
+            .jsdoc_typedef_resolving
+            .borrow()
+            .contains(type_expr)
+        {
+            return None;
+        }
+
         let mut best_def: Option<JsdocTypedefInfo> = None;
         for comment in comments {
             if !is_jsdoc_comment(comment, source_text) {
@@ -1832,6 +1848,13 @@ impl<'a> CheckerState<'a> {
             }
         }
         let typedef_info = best_def?;
+
+        // Mark this typedef as being resolved to prevent re-entrancy.
+        self.ctx
+            .jsdoc_typedef_resolving
+            .borrow_mut()
+            .insert(type_expr.to_owned());
+
         // If the typedef's base type couldn't be resolved, return `any` as fallback.
         // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
         // post-checking phase, so we don't emit it here to avoid duplicates.
@@ -1839,6 +1862,12 @@ impl<'a> CheckerState<'a> {
             .type_from_jsdoc_typedef(typedef_info)
             .map(|(body_type, _)| body_type)
             .or(Some(TypeId::ANY));
+
+        self.ctx
+            .jsdoc_typedef_resolving
+            .borrow_mut()
+            .remove(type_expr);
+
         if let Some(ty) = result {
             self.register_jsdoc_typedef_def(type_expr, ty);
         }
