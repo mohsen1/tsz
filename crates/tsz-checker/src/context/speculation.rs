@@ -174,7 +174,10 @@ impl CheckerContext<'_> {
         snap: &DiagnosticSnapshot,
         mut keep: impl FnMut(&Diagnostic) -> bool,
     ) {
-        let speculative = self.diagnostics.split_off(snap.diagnostics_len);
+        // Clamp to current length: nested speculation or cross-path diagnostic
+        // removal can make the list shorter than the snapshot expected.
+        let split_at = snap.diagnostics_len.min(self.diagnostics.len());
+        let speculative = self.diagnostics.split_off(split_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
         for diag in speculative {
