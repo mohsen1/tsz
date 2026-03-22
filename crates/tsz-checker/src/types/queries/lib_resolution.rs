@@ -95,6 +95,24 @@ pub(crate) fn resolve_lib_fallback_arena<'a>(
         .unwrap_or(user_arena)
 }
 
+/// Resolve the fallback arena for a lib symbol within a single lib context.
+///
+/// This is used in per-lib-context iteration (e.g., `resolve_lib_type_with_params`)
+/// where each lib context is processed independently. The lookup order is:
+/// 1. Per-symbol arena from `binder.symbol_arenas`.
+/// 2. The lib context's own arena.
+pub(crate) fn resolve_lib_context_fallback_arena<'a>(
+    binder: &'a tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    lib_arena: &'a NodeArena,
+) -> &'a NodeArena {
+    binder
+        .symbol_arenas
+        .get(&sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .unwrap_or(lib_arena)
+}
+
 /// Build `(NodeIndex, &NodeArena)` pairs for a symbol's declarations.
 ///
 /// Resolves each declaration to the correct arena via `binder.declaration_arenas`,
