@@ -579,6 +579,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .binder
             .get_symbol(sym_id)
             .or_else(|| {
+                // O(1) fast-path via cross_file_symbol_targets
+                let file_idx = self
+                    .ctx
+                    .cross_file_symbol_targets
+                    .borrow()
+                    .get(&sym_id)
+                    .copied();
+                if let Some(file_idx) = file_idx
+                    && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+                    && let Some(sym) = binder.get_symbol(sym_id)
+                {
+                    return Some(sym);
+                }
                 self.ctx
                     .all_binders
                     .as_ref()
