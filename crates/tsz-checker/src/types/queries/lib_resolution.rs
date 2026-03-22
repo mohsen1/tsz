@@ -903,19 +903,6 @@ impl<'a> CheckerState<'a> {
             // Group augmentation declarations by arena.
             // Declarations with arena=None use the current file's arena.
             let current_arena: &NodeArena = self.ctx.arena;
-            let binder_ref = self.ctx.binder;
-
-            let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
-                let arenas = self.ctx.all_arenas.as_ref()?;
-                let binders = self.ctx.all_binders.as_ref()?;
-                let arena_ptr = arena_ref as *const NodeArena;
-                for (idx, arena) in arenas.iter().enumerate() {
-                    if Arc::as_ptr(arena) == arena_ptr {
-                        return binders.get(idx).map(Arc::as_ref);
-                    }
-                }
-                None
-            };
 
             // Collect declarations grouped by arena pointer identity
             let mut current_file_decls: Vec<NodeIndex> = Vec::new();
@@ -935,50 +922,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Helper: lower augmentation declarations using a given arena.
-            // Uses `resolve_augmentation_node` (the shared stable helper) instead
-            // of building per-call resolver closures with duplicated logic.
-            let global_idx = self.ctx.global_file_locals_index.as_deref();
-            let all_binders_ref = self.ctx.all_binders.as_deref();
-            let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
-                let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
-                let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    resolve_augmentation_node(
-                        decl_binder,
-                        arena_ref,
-                        node_idx,
-                        global_idx,
-                        all_binders_ref.map(|v| v.as_ref()),
-                        &lib_contexts,
-                    )
-                };
-                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
-                };
-                let lowering = TypeLowering::with_hybrid_resolver(
-                    arena_ref,
-                    self.ctx.types,
-                    &resolver,
-                    &def_id_resolver,
-                    &|_| None,
+            // Lower current-file augmentations using the shared helper.
+            if !current_file_decls.is_empty() {
+                let aug_type = self.lower_augmentation_for_arena(
+                    current_arena,
+                    &current_file_decls,
+                    &lib_contexts,
                 );
-                let aug_type = lowering.lower_interface_declarations(decls);
                 lib_type_id = if let Some(lib_type) = lib_type_id {
                     Some(factory.intersection2(lib_type, aug_type))
                 } else {
                     Some(aug_type)
                 };
-            };
-
-            // Lower current-file augmentations
-            if !current_file_decls.is_empty() {
-                lower_with_arena(current_arena, &current_file_decls);
             }
 
             // Lower cross-file augmentations (each group uses its own arena)
             for (arena, decls) in cross_file_groups.values() {
-                lower_with_arena(arena.as_ref(), decls);
+                let aug_type =
+                    self.lower_augmentation_for_arena(arena.as_ref(), decls, &lib_contexts);
+                lib_type_id = if let Some(lib_type) = lib_type_id {
+                    Some(factory.intersection2(lib_type, aug_type))
+                } else {
+                    Some(aug_type)
+                };
             }
         }
 
@@ -1091,5 +1057,54 @@ impl<'a> CheckerState<'a> {
         }
 
         lib_type_id
+    }
+
+    /// Lower augmentation declarations from a given arena and return the resulting `TypeId`.
+    ///
+    /// This is the shared implementation for global-augmentation lowering used by both
+    /// `resolve_lib_type_by_name` and `resolve_lib_type_with_params`. It builds the
+    /// standard resolver triplet (node → SymbolId, node → DefId, name → DefId) using
+    /// [`resolve_augmentation_node`] and [`CheckerContext::get_lib_def_id`], then
+    /// delegates to `TypeLowering::lower_interface_declarations`.
+    ///
+    /// Callers merge the returned type into their running `lib_type_id` via intersection.
+    pub(crate) fn lower_augmentation_for_arena(
+        &self,
+        arena_ref: &NodeArena,
+        decls: &[NodeIndex],
+        lib_contexts: &[crate::context::LibContext],
+    ) -> TypeId {
+        let binder_ref = self.ctx.binder;
+        let decl_binder = self
+            .ctx
+            .get_binder_for_arena(arena_ref)
+            .unwrap_or(binder_ref);
+        let global_idx = self.ctx.global_file_locals_index.as_deref();
+        let all_binders_slice = self.ctx.all_binders.as_ref().map(|v| v.as_slice());
+        let resolver = |node_idx: NodeIndex| -> Option<u32> {
+            resolve_augmentation_node(
+                decl_binder,
+                arena_ref,
+                node_idx,
+                global_idx,
+                all_binders_slice,
+                lib_contexts,
+            )
+        };
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+            resolver(node_idx).map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
+        };
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+        };
+        let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
+            arena_ref,
+            self.ctx.types,
+            &resolver,
+            &def_id_resolver,
+            &|_| None,
+        )
+        .with_name_def_id_resolver(&name_resolver);
+        lowering.lower_interface_declarations(decls)
     }
 }
