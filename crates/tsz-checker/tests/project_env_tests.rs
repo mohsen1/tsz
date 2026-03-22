@@ -3,7 +3,7 @@
 //! Validates that `ProjectEnv::apply_to` correctly populates a checker context
 //! with all project-level shared state in a single call.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::{BinderState, SemanticDefEntry, SemanticDefKind, SymbolId};
 use tsz_checker::context::{GlobalDeclaredModules, ProjectEnv};
@@ -538,4 +538,123 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
         1,
         "type_param_count should be preserved"
     );
+}
+
+#[test]
+fn build_global_symbol_file_index_creates_shared_map() {
+    let mut env = empty_project_env();
+    env.symbol_file_targets = Arc::new(vec![
+        (SymbolId(1), 0),
+        (SymbolId(2), 1),
+        (SymbolId(3), 0),
+    ]);
+
+    assert!(env.global_symbol_file_index.is_none());
+    env.build_global_symbol_file_index();
+    assert!(env.global_symbol_file_index.is_some());
+
+    let idx = env.global_symbol_file_index.as_ref().unwrap();
+    assert_eq!(idx.get(&SymbolId(1)), Some(&0));
+    assert_eq!(idx.get(&SymbolId(2)), Some(&1));
+    assert_eq!(idx.get(&SymbolId(3)), Some(&0));
+    assert_eq!(idx.get(&SymbolId(99)), None);
+}
+
+#[test]
+fn apply_to_installs_global_symbol_file_index() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut env = empty_project_env();
+    env.symbol_file_targets = Arc::new(vec![(SymbolId(10), 2), (SymbolId(20), 5)]);
+    env.build_global_symbol_file_index();
+    env.apply_to(&mut checker.ctx);
+
+    // The shared index should be installed on the checker context.
+    assert!(checker.ctx.global_symbol_file_index.is_some());
+    let shared = checker.ctx.global_symbol_file_index.as_ref().unwrap();
+    assert_eq!(shared.get(&SymbolId(10)), Some(&2));
+    assert_eq!(shared.get(&SymbolId(20)), Some(&5));
+}
+
+#[test]
+fn resolve_symbol_file_index_checks_local_overlay_first() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Install shared base with SymbolId(1) -> file 0
+    let mut base = FxHashMap::default();
+    base.insert(SymbolId(1), 0_usize);
+    base.insert(SymbolId(2), 1_usize);
+    checker.ctx.global_symbol_file_index = Some(Arc::new(base));
+
+    // Override SymbolId(1) in local overlay to file 5
+    checker
+        .ctx
+        .cross_file_symbol_targets
+        .borrow_mut()
+        .insert(SymbolId(1), 5);
+
+    // Local overlay wins for SymbolId(1)
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(5));
+    // Shared base provides SymbolId(2)
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(2)), Some(1));
+    // Unknown symbol returns None
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(99)), None);
+}
+
+#[test]
+fn has_symbol_file_index_checks_both_layers() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Only in shared base
+    let mut base = FxHashMap::default();
+    base.insert(SymbolId(1), 0_usize);
+    checker.ctx.global_symbol_file_index = Some(Arc::new(base));
+
+    // Only in local overlay
+    checker
+        .ctx
+        .cross_file_symbol_targets
+        .borrow_mut()
+        .insert(SymbolId(2), 1);
+
+    assert!(checker.ctx.has_symbol_file_index(SymbolId(1)));
+    assert!(checker.ctx.has_symbol_file_index(SymbolId(2)));
+    assert!(!checker.ctx.has_symbol_file_index(SymbolId(99)));
+}
+
+#[test]
+fn copy_cross_file_state_copies_global_symbol_file_index() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut parent = make_checker(&arena, &binder, &query_cache);
+
+    let mut base = FxHashMap::default();
+    base.insert(SymbolId(7), 3_usize);
+    parent.ctx.global_symbol_file_index = Some(Arc::new(base));
+
+    let mut child = make_checker(&arena, &binder, &query_cache);
+    child.ctx.copy_cross_file_state_from(&parent.ctx);
+
+    // Child should share the same Arc
+    assert!(child.ctx.global_symbol_file_index.is_some());
+    assert_eq!(child.ctx.resolve_symbol_file_index(SymbolId(7)), Some(3));
+    // Verify it's the same allocation (Arc clone, not deep copy)
+    assert!(Arc::ptr_eq(
+        child.ctx.global_symbol_file_index.as_ref().unwrap(),
+        parent.ctx.global_symbol_file_index.as_ref().unwrap(),
+    ));
 }

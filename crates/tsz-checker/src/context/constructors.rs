@@ -202,6 +202,7 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
             cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
+            global_symbol_file_index: None,
             all_arenas: None,
             all_binders: None,
             global_file_locals_index: None,

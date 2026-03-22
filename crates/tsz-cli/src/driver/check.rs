@@ -415,6 +415,8 @@ pub(super) fn collect_diagnostics(
     } else {
         project_env.build_global_indices();
     }
+    // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
+    project_env.build_global_symbol_file_index();
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.

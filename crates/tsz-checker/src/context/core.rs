@@ -93,6 +93,34 @@ impl TypeCache {
 }
 
 impl<'a> CheckerContext<'a> {
+    /// Resolve a `SymbolId` to its owning file index.
+    ///
+    /// Checks the local `cross_file_symbol_targets` overlay first (for dynamically
+    /// discovered mappings), then falls back to the shared `global_symbol_file_index`
+    /// base map (pre-built from `ProjectEnv`). Returns `None` if the symbol has no
+    /// known cross-file owner.
+    pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        // Check local overlay first (dynamically discovered during this check)
+        if let Some(&idx) = self.cross_file_symbol_targets.borrow().get(&sym_id) {
+            return Some(idx);
+        }
+        // Fall back to shared base map
+        self.global_symbol_file_index
+            .as_ref()
+            .and_then(|map| map.get(&sym_id).copied())
+    }
+
+    /// Check whether a `SymbolId` has a known cross-file owner.
+    pub fn has_symbol_file_index(&self, sym_id: SymbolId) -> bool {
+        self.cross_file_symbol_targets
+            .borrow()
+            .contains_key(&sym_id)
+            || self
+                .global_symbol_file_index
+                .as_ref()
+                .is_some_and(|map| map.contains_key(&sym_id))
+    }
+
     /// Set lib contexts for global type resolution.
     /// Note: `lib_contexts` may include both actual lib files AND user files for cross-file
     /// resolution. Use `set_actual_lib_file_count()` to track how many are actual lib files.
@@ -222,6 +250,7 @@ impl<'a> CheckerContext<'a> {
         self.global_augmentation_targets_index = parent.global_augmentation_targets_index.clone();
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
+        self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.module_specifiers = parent.module_specifiers.clone();
     }
