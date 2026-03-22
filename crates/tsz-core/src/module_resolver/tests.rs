@@ -2313,3 +2313,284 @@ fn test_classify_untyped_js_without_no_implicit_any() {
     assert!(outcome.is_resolved);
     assert!(outcome.error.is_none(), "without noImplicitAny, no error");
 }
+
+// =========================================================================
+// lookup() diagnostic code selection — additional coverage
+//
+// Tests for lookup() paths not covered by the existing suite above:
+// - TS5097 via lookup() (import with .ts/.mts extension, file not found)
+// - TS5097 non-trigger (file exists, resolution succeeds)
+// - TS6142 via lookup() (JSX not enabled, verifying classify() outcome)
+// - Successful resolution via lookup() -> classify() (happy path)
+// - Plain TS2307 via lookup() (no upgrade conditions)
+// =========================================================================
+
+#[test]
+fn test_lookup_ts5097_ts_extension_not_found() {
+    // TS5097: Import path ends with a TypeScript extension (.ts)
+    // without allowImportingTsExtensions enabled.
+    // When the specifier has an explicit .ts extension and the file is NOT found,
+    // resolve_with_kind upgrades NotFound -> ImportingTsExtensionNotAllowed.
+    // lookup() then propagates this as a TS5097 error via classify().
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_ts5097_nf");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // Only create main.ts — utils.ts does NOT exist
+    fs::write(dir.join("main.ts"), "import { foo } from './utils.ts';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        allow_importing_ts_extensions: false,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./utils.ts",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(20, 32),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    let error = outcome
+        .error
+        .expect("Expected TS5097 error for .ts extension import");
+    assert_eq!(
+        error.code, IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
+        "Expected TS5097 but got TS{}",
+        error.code
+    );
+    assert!(
+        error.message.contains("allowImportingTsExtensions"),
+        "Error message should mention allowImportingTsExtensions: {}",
+        error.message
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_ts5097_mts_extension_not_found() {
+    // TS5097 for .mts extension (not just .ts).
+    // When the specifier has an explicit .mts extension and the file is NOT found,
+    // we should get TS5097 instead of TS2307.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_ts5097_mts_nf");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.ts"), "").unwrap();
+    // utils.mts does NOT exist
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        allow_importing_ts_extensions: false,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./utils.mts",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(20, 33),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    let error = outcome
+        .error
+        .expect("Expected TS5097 error for .mts extension import");
+    assert_eq!(
+        error.code, IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
+        "Expected TS5097 for .mts but got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_ts_extension_resolves_when_file_exists() {
+    // When ./utils.ts is imported and the file EXISTS, the resolution succeeds
+    // (no TS5097 error in this case — the current implementation only upgrades
+    // NotFound to TS5097).
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_ts_ext_exists");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.ts"), "import { foo } from './utils.ts';").unwrap();
+    fs::write(dir.join("utils.ts"), "export const foo = 42;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        allow_importing_ts_extensions: false,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./utils.ts",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(20, 32),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    // When the file exists, Node resolution resolves it successfully
+    assert!(
+        outcome.resolved_path.is_some(),
+        "Should resolve when file exists even with .ts extension"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_jsx_not_enabled_classify_outcome() {
+    // When a module resolves to a .tsx file but --jsx is not set,
+    // lookup() should mark it as resolved (suppress TS2307) with a TS6142 error.
+    // This specifically tests the classify() outcome (is_resolved + error).
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_jsx_classify");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.ts"), "import Cmp from './Cmp';").unwrap();
+    fs::write(dir.join("Cmp.tsx"), "export default function Cmp() {}").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        jsx: None,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./Cmp",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(16, 23),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(
+        outcome.is_resolved,
+        "JsxNotEnabled should still mark the module as resolved"
+    );
+    let error = outcome
+        .error
+        .expect("Expected TS6142 error for JSX not enabled");
+    assert_eq!(
+        error.code, MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET,
+        "Expected TS6142 but got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_successful_resolution_classify() {
+    // Verify the full lookup() -> classify() pipeline for a successful resolution.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_success_classify");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.ts"), "import { foo } from './utils';").unwrap();
+    fs::write(dir.join("utils.ts"), "export const foo = 42;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./utils",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(20, 29),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(
+        outcome.error.is_none(),
+        "Successful resolution should have no error"
+    );
+    assert!(
+        outcome.resolved_path.is_some(),
+        "Successful resolution should have a path"
+    );
+    assert!(
+        outcome.is_resolved,
+        "Successful resolution should be resolved"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_ts2307_plain_no_upgrade() {
+    // When a relative module is not found and no upgrade conditions are met
+    // (not .json, not implied_classic_resolution, not ambient, no JS file),
+    // lookup() should produce plain TS2307.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_lookup_ts2307_plain_v2");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.ts"), "import { foo } from './nonexistent';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./nonexistent",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(20, 35),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(!outcome.is_resolved, "Not-found should not be resolved");
+    let error = outcome.error.expect("Expected TS2307 error");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 but got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
