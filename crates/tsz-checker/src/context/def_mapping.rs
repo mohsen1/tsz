@@ -189,6 +189,24 @@ impl<'a> CheckerContext<'a> {
         self.get_or_create_def_id(sym_id)
     }
 
+    /// Resolve a lib symbol's `DefId`, preferring the main binder's canonical
+    /// `SymbolId` over a per-lib-context `SymbolId`.
+    ///
+    /// Lib merging gives the main binder a unique `SymbolId` for each global
+    /// name.  Per-lib-context binders have *different* `SymbolIds` for the same
+    /// logical symbol.  Using a per-lib-context `SymbolId` with
+    /// `get_lib_def_id` can create duplicate `DefIds` or trigger collisions.
+    ///
+    /// This helper consolidates the repeated pattern:
+    /// ```text
+    /// let file_sym_id = binder.file_locals.get(name).unwrap_or(sym_id);
+    /// let def_id = ctx.get_lib_def_id(file_sym_id);
+    /// ```
+    pub fn resolve_lib_sym_def_id(&self, name: &str, fallback_sym: SymbolId) -> DefId {
+        let canonical_sym = self.binder.file_locals.get(name).unwrap_or(fallback_sym);
+        self.get_lib_def_id(canonical_sym)
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the
