@@ -315,7 +315,7 @@ impl<'a> CheckerContext<'a> {
     /// Register a `DefKind` for a `DefId` in **both** type environments.
     ///
     /// This ensures the evaluator (`type_env`) and flow-analyzer (`type_environment`)
-    /// both see the `DefKind`, which is needed for Lazy(DefId) resolution and
+    /// both see the `DefKind`, which is needed for `Lazy(DefId)` resolution and
     /// semantic queries (e.g., distinguishing class vs interface callables).
     ///
     /// Prior to this helper, pre-population and fallback paths only propagated
