@@ -28,6 +28,11 @@ impl BinderState {
                     .map(|lit| lit.text.clone())
             };
 
+            // Record the import source for dependency tracking
+            if let Some(ref spec) = module_specifier {
+                self.file_import_sources.push(spec.clone());
+            }
+
             if let Some(clause_node) = arena.get(import.import_clause)
                 && let Some(clause) = arena.get_import_clause(clause_node)
             {
@@ -182,6 +187,11 @@ impl BinderState {
                     })
                 };
 
+                // Record the import source for dependency tracking
+                if let Some(ref spec) = module_specifier {
+                    self.file_import_sources.push(spec.clone());
+                }
+
                 // Create symbol with ALIAS flag
                 let sym_id = self.declare_symbol(name, symbol_flags::ALIAS, idx, is_exported);
 
@@ -262,6 +272,15 @@ impl BinderState {
             // - NamespaceExport: export * as ns from 'mod'
             // - Declaration: export function/class/const/etc
             // - or NONE for: export * from 'mod'
+
+            // Record export-from module specifier for dependency tracking
+            if export.module_specifier.is_some() {
+                if let Some(spec_node) = arena.get(export.module_specifier) {
+                    if let Some(lit) = arena.get_literal(spec_node) {
+                        self.file_import_sources.push(lit.text.clone());
+                    }
+                }
+            }
 
             // Check if the entire export declaration is type-only: export type { ... }
             let export_type_only = export.is_type_only;

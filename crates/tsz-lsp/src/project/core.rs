@@ -1700,51 +1700,44 @@ impl Project {
         self.files.remove(file_name)
     }
 
-    /// Extract import paths from a file's AST.
+    /// Extract import paths from a file's binder data and AST.
     ///
-    /// Walks the top-level statements to find `ImportDeclaration`,
-    /// `ExportDeclaration`, and dynamic imports (`import()`, `require()`) nodes
-    /// and extracts their module specifier strings for the `DependencyGraph`.
+    /// Uses the binder's `file_import_sources` for static import/export-from
+    /// specifiers (collected during binding with zero extra AST traversal),
+    /// then supplements with dynamic `import()` / `require()` specifiers
+    /// found by walking the AST (only `CallExpression` nodes).
     fn extract_imports(&self, file_name: &str) -> Vec<String> {
-        let mut imports = Vec::new();
-
         let file = match self.files.get(file_name) {
             Some(f) => f,
-            None => return imports,
+            None => return Vec::new(),
         };
 
+        // Start with static import sources already collected by the binder.
+        // This covers: import ... from "x", export ... from "x", export * from "x",
+        // import X = require("x"), and side-effect imports.
+        let mut imports = file.binder.file_import_sources.clone();
+
+        // Supplement with dynamic import() / require() call expressions.
+        // These aren't captured by the binder because they're arbitrary
+        // call expressions that could appear anywhere in the AST.
         let arena = file.arena();
         let source_text = file.source_text();
 
-        // Walk all nodes to find ImportDeclaration, ExportDeclaration, and CallExpression
-        // In the flat NodeArena, we iterate over all nodes
         for (i, node) in arena.nodes.iter().enumerate() {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                continue;
+            }
             let node_idx = NodeIndex(i as u32);
 
-            // Get the module specifier node for imports, exports, and dynamic imports
-            let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                arena.get_import_decl(node).map(|d| d.module_specifier)
-            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                // Handle: export ... from "module" (re-exports)
-                arena.get_export_decl(node).map(|d| d.module_specifier)
-            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                // Check for dynamic imports: import("./module") or require("./module")
-                self.try_extract_dynamic_import(node_idx, arena)
-            } else {
-                None
-            };
-
-            if let Some(specifier_idx) = specifier_idx {
+            if let Some(specifier_idx) = self.try_extract_dynamic_import(node_idx, arena) {
                 if specifier_idx.is_none() {
                     continue;
                 }
 
-                let specifier_node = match arena.get(specifier_idx) {
-                    Some(n) => n,
-                    None => continue,
+                let Some(specifier_node) = arena.get(specifier_idx) else {
+                    continue;
                 };
 
-                // Extract the string text
                 let start = specifier_node.pos as usize;
                 let end = specifier_node.end as usize;
 

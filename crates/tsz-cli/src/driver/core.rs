@@ -1858,6 +1858,7 @@ fn build_program_with_cache(
                     alias_partners: Default::default(),
                     file_features: Default::default(),
                     semantic_defs: Default::default(),
+                    file_import_sources: Vec::new(),
                 }
             }
         };
