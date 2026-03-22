@@ -256,14 +256,9 @@ impl<'a> CheckerState<'a> {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     self.ctx.symbol_types.insert(sym_id, result);
                     self.ctx.symbol_instance_types.insert(sym_id, result);
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                        if type_params.is_empty() {
-                            env.insert_def(def_id, result);
-                        } else {
-                            env.insert_def_with_params(def_id, result, type_params);
-                        }
-                    }
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, result, type_params);
                 }
 
                 // For simple name type refs like `import { Foo } from "./m"; type T = Foo`,
@@ -653,15 +648,10 @@ impl<'a> CheckerState<'a> {
                             .or_else(|| self.ctx.get_def_type_params(app_def_id));
 
                         if let (Some(body), Some(params)) = (body, params) {
-                            // Also fix type_env if it's missing params
-                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-                                && env.get_def_params(app_def_id).is_none()
-                            {
-                                env.insert_def_with_params(app_def_id, body, params.clone());
-                            }
-                            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                                env.insert_def_with_params(app_def_id, body, params);
-                            }
+                            // Register in both envs so evaluator and flow
+                            // analyzer see the same Application body + params.
+                            self.ctx
+                                .register_def_with_params_in_envs(app_def_id, body, params);
                         }
                     }
                 }
@@ -832,48 +822,13 @@ impl<'a> CheckerState<'a> {
                                     body,
                                 );
                                 if augmented != body {
-                                    // Update the body in type_env so that all future
-                                    // evaluations of this Application use the augmented type.
-                                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                        if base_is_class
-                                            || env.get_class_instance_type(base_def_id).is_some()
-                                        {
-                                            env.insert_class_instance_type(base_def_id, augmented);
-                                        } else {
-                                            let params =
-                                                env.get_def_params(base_def_id).map(|s| s.to_vec());
-                                            if let Some(params) = params {
-                                                env.insert_def_with_params(
-                                                    base_def_id,
-                                                    augmented,
-                                                    params,
-                                                );
-                                            } else {
-                                                env.insert_def(base_def_id, augmented);
-                                            }
-                                        }
-                                    }
-                                    // Also update type_environment (flow analyzer snapshot)
-                                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
-                                    {
-                                        if base_is_class
-                                            || env.get_class_instance_type(base_def_id).is_some()
-                                        {
-                                            env.insert_class_instance_type(base_def_id, augmented);
-                                        } else {
-                                            let params =
-                                                env.get_def_params(base_def_id).map(|s| s.to_vec());
-                                            if let Some(params) = params {
-                                                env.insert_def_with_params(
-                                                    base_def_id,
-                                                    augmented,
-                                                    params,
-                                                );
-                                            } else {
-                                                env.insert_def(base_def_id, augmented);
-                                            }
-                                        }
-                                    }
+                                    // Update both envs so evaluator and flow
+                                    // analyzer see the augmented type.
+                                    self.ctx.register_augmented_def_in_envs(
+                                        base_def_id,
+                                        augmented,
+                                        base_is_class,
+                                    );
                                 }
                             }
                         }
