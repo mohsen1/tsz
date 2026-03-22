@@ -4503,3 +4503,231 @@ const myVar = 1;
         );
     }
 }
+
+// =============================================================================
+// Heritage capture tests
+// =============================================================================
+
+#[test]
+fn extract_heritage_names_handles_raw_identifier_refs() {
+    // Verify extract_heritage_names handles raw identifier heritage refs
+    // (no type arguments) as well as ExpressionWithTypeArguments.
+    let source = "class Child extends Base {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut found_class = false;
+
+    if let Some(root_node) = arena.get(root) {
+        if let Some(sf) = arena.get_source_file(root_node) {
+            for &stmt in &sf.statements.nodes {
+                if let Some(node) = arena.get(stmt) {
+                    if let Some(class) = arena.get_class(node) {
+                        found_class = true;
+                        let hc = class
+                            .heritage_clauses
+                            .as_ref()
+                            .expect("expected heritage clauses");
+                        let (ext, imp) =
+                            super::super::BinderState::extract_heritage_names(arena, hc);
+                        assert_eq!(ext, vec!["Base"], "extends should be ['Base'], got {ext:?}");
+                        assert!(imp.is_empty(), "implements should be empty");
+                    }
+                }
+            }
+        }
+    }
+    assert!(found_class, "did not find class node in AST");
+}
+
+#[test]
+fn semantic_defs_captures_class_extends_name() {
+    let binder = bind_source(
+        "
+class Base {}
+class Child extends Base {}
+",
+    );
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Child")
+        .expect("expected semantic def for Child");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+    assert_eq!(entry.extends_names, vec!["Base"]);
+    assert!(entry.implements_names.is_empty());
+}
+
+#[test]
+fn semantic_defs_captures_class_implements_names() {
+    let binder = bind_source(
+        "
+interface Readable { read(): void }
+interface Writable { write(data: string): void }
+class Stream implements Readable, Writable {
+    read() {}
+    write(data: string) {}
+}
+",
+    );
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Stream")
+        .expect("expected semantic def for Stream");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+    assert!(entry.extends_names.is_empty());
+    assert_eq!(entry.implements_names, vec!["Readable", "Writable"]);
+}
+
+#[test]
+fn semantic_defs_captures_class_extends_and_implements() {
+    let binder = bind_source(
+        "
+class Base {}
+interface Serializable {}
+class Derived extends Base implements Serializable {}
+",
+    );
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Derived")
+        .expect("expected semantic def for Derived");
+    assert_eq!(entry.extends_names, vec!["Base"]);
+    assert_eq!(entry.implements_names, vec!["Serializable"]);
+}
+
+#[test]
+fn semantic_defs_captures_interface_extends_names() {
+    let binder = bind_source(
+        "
+interface A { a: number }
+interface B { b: string }
+interface C extends A, B { c: boolean }
+",
+    );
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "C")
+        .expect("expected semantic def for interface C");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    assert_eq!(entry.extends_names, vec!["A", "B"]);
+    assert!(entry.implements_names.is_empty());
+}
+
+#[test]
+fn semantic_defs_heritage_stable_across_rebuild() {
+    let source = "
+class Base<T> {}
+interface Iface {}
+class Child extends Base<number> implements Iface {}
+interface Sub extends Iface {}
+";
+    let binder1 = bind_source(source);
+    let binder2 = bind_source(source);
+
+    for (_, entry1) in &binder1.semantic_defs {
+        let entry2 = binder2
+            .semantic_defs
+            .values()
+            .find(|e| e.name == entry1.name)
+            .unwrap_or_else(|| panic!("missing '{}' in second binding", entry1.name));
+        assert_eq!(
+            entry1.extends_names, entry2.extends_names,
+            "extends_names mismatch for '{}'",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.implements_names, entry2.implements_names,
+            "implements_names mismatch for '{}'",
+            entry1.name
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_heritage_empty_for_non_class_interface() {
+    let binder = bind_source(
+        "
+type Alias = string;
+enum Color { Red }
+namespace NS {}
+function foo() {}
+const x = 1;
+",
+    );
+    for entry in binder.semantic_defs.values() {
+        assert!(
+            entry.extends_names.is_empty(),
+            "extends_names should be empty for '{}' ({:?})",
+            entry.name,
+            entry.kind
+        );
+        assert!(
+            entry.implements_names.is_empty(),
+            "implements_names should be empty for '{}' ({:?})",
+            entry.name,
+            entry.kind
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_enum_member_names_captured() {
+    let binder = bind_source("enum Direction { Up, Down, Left, Right }");
+    let sym_id = binder
+        .file_locals
+        .get("Direction")
+        .expect("expected Direction");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for enum Direction");
+    assert_eq!(entry.enum_member_names, vec!["Up", "Down", "Left", "Right"]);
+}
+
+#[test]
+fn semantic_defs_heritage_survives_lib_merge() {
+    // Heritage info should survive lib merge (strings don't need remapping)
+    let lib_source = "
+interface Disposable { dispose(): void }
+class Resource implements Disposable { dispose() {} }
+";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    // Verify heritage is captured in lib binder
+    let resource_entry = lib_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Resource")
+        .expect("expected Resource in lib");
+    assert_eq!(resource_entry.implements_names, vec!["Disposable"]);
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    let mut user_binder = BinderState::new();
+    let mut user_parser = ParserState::new("test.ts".to_string(), "let x = 1;".to_string());
+    let user_root = user_parser.parse_source_file();
+    user_binder.bind_source_file(user_parser.get_arena(), user_root);
+    user_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // After merge, heritage info should be preserved
+    let merged_entry = user_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Resource")
+        .expect("expected Resource after lib merge");
+    assert_eq!(
+        merged_entry.implements_names,
+        vec!["Disposable"],
+        "heritage should survive lib merge"
+    );
+}

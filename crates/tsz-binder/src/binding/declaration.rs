@@ -601,6 +601,11 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let (extends_names, implements_names) = class
+                    .heritage_clauses
+                    .as_ref()
+                    .map(|hc| Self::extract_heritage_names(arena, hc))
+                    .unwrap_or_default();
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -611,6 +616,8 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
+                    extends_names,
+                    implements_names,
                 );
             }
 
@@ -861,13 +868,23 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
-            self.record_semantic_def(
+            let (extends_names, _) = iface
+                .heritage_clauses
+                .as_ref()
+                .map(|hc| Self::extract_heritage_names(arena, hc))
+                .unwrap_or_default();
+            self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
                 name,
                 idx,
                 tp_count,
                 is_exported,
+                Vec::new(),
+                false, // is_const
+                false, // is_abstract
+                extends_names,
+                Vec::new(), // interfaces don't implement
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -1049,6 +1066,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 false, // is_abstract
+                Vec::new(),
+                Vec::new(),
             );
 
             // Get existing exports (for namespace merging)
@@ -2390,11 +2409,14 @@ impl BinderState {
             Vec::new(),
             false,
             false,
+            Vec::new(),
+            Vec::new(),
         );
     }
 
     /// Extended version of `record_semantic_def` that also captures enriched
-    /// identity data: enum member names, const-enum flag, and abstract-class flag.
+    /// identity data: enum member names, const-enum flag, abstract-class flag,
+    /// and heritage clause names.
     ///
     /// This captures stable identity information at bind time so the checker
     /// can pre-create solver `DefIds` during construction rather than inventing
@@ -2414,6 +2436,8 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
+        extends_names: Vec<String>,
+        implements_names: Vec<String>,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2451,8 +2475,59 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
+                extends_names,
+                implements_names,
             },
         );
+    }
+
+    /// Extract heritage clause names from a heritage clause list.
+    ///
+    /// Returns `(extends_names, implements_names)` where each is a list of
+    /// identifier names from the heritage clauses. Only simple identifier
+    /// references are captured (not dotted paths or computed expressions).
+    ///
+    /// Heritage type references can appear as:
+    /// - Raw identifiers (kind=Identifier) when there are no type arguments: `extends Base`
+    /// - ExpressionWithTypeArguments when there are type args: `extends Base<T>`
+    /// - PropertyAccessExpression for dotted paths: `extends NS.Base`
+    /// Only the first two forms produce a captured name.
+    pub(crate) fn extract_heritage_names(
+        arena: &NodeArena,
+        heritage_clauses: &tsz_parser::NodeList,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut extends = Vec::new();
+        let mut implements = Vec::new();
+        for &clause_idx in &heritage_clauses.nodes {
+            if let Some(clause_node) = arena.get(clause_idx)
+                && let Some(heritage) = arena.get_heritage_clause(clause_node)
+            {
+                // ExtendsKeyword = 96
+                let is_extends = heritage.token == 96;
+                for &type_idx in &heritage.types.nodes {
+                    let name = if let Some(type_node) = arena.get(type_idx) {
+                        if let Some(expr) = arena.get_expr_type_args(type_node) {
+                            // ExpressionWithTypeArguments: `extends Base<T>`
+                            Self::get_identifier_name(arena, expr.expression)
+                        } else {
+                            // Raw identifier or other expression: `extends Base`
+                            Self::get_identifier_name(arena, type_idx)
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(name) = name {
+                        if is_extends {
+                            extends.push(name.to_string());
+                        } else {
+                            implements.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        (extends, implements)
     }
 
     fn is_global_scope(&self) -> bool {
