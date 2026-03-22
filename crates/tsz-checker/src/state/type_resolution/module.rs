@@ -1484,8 +1484,8 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a module exists for cross-file resolution.
     ///
-    /// Returns true if the module can be found via `resolved_modules` or through
-    /// the context's cross-file resolution mechanism.
+    /// Returns true if the module can be found via `resolved_modules`, through
+    /// the context's cross-file resolution mechanism, or via global binder indices.
     pub(crate) fn module_exists_cross_file(&self, module_name: &str) -> bool {
         if self.ctx.resolve_import_target(module_name).is_some() {
             return true;
@@ -1497,7 +1497,31 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        // Could add additional cross-file resolution checks here in the future
+
+        // O(1) check via global_module_binder_index: any binder with module_exports
+        // for this specifier means the module exists as an ambient declaration.
+        if self.ctx.files_for_module_specifier(module_name).is_some() {
+            return true;
+        }
+
+        // O(1) check via global_declared_modules: covers `declare module "X"` and
+        // shorthand ambient modules across all files.
+        if let Some(declared) = &self.ctx.global_declared_modules {
+            let normalized = module_name.trim().trim_matches('"').trim_matches('\'');
+            if declared.exact.contains(normalized) {
+                return true;
+            }
+            // Small linear scan over wildcard patterns only
+            for pattern in &declared.patterns {
+                let p = pattern.trim().trim_matches('"').trim_matches('\'');
+                if let Some(prefix) = p.strip_suffix('*')
+                    && normalized.starts_with(prefix)
+                {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 }
