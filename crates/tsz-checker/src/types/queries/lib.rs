@@ -4,7 +4,7 @@
 //! Type-only symbol detection has been extracted to
 //! `queries/type_only.rs`.
 
-use super::lib_resolution::{resolve_augmentation_node, resolve_lib_node_in_lib_contexts};
+use super::lib_resolution::resolve_lib_node_in_lib_contexts;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -205,7 +205,6 @@ impl<'a> CheckerState<'a> {
             && !augmentation_decls.is_empty()
         {
             let current_arena: &NodeArena = self.ctx.arena;
-            let binder_ref = self.ctx.binder;
 
             // Group augmentation declarations by arena
             let mut current_file_decls: Vec<NodeIndex> = Vec::new();
@@ -225,57 +224,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Helper: lower augmentation declarations using a given arena.
-            // Uses `resolve_augmentation_node` (the shared stable helper) instead
-            // of building per-call resolver closures with duplicated logic.
-            let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
-                let decl_binder = self
-                    .ctx
-                    .get_binder_for_arena(arena_ref)
-                    .unwrap_or(binder_ref);
-                let global_idx = self.ctx.global_file_locals_index.as_deref();
-                let all_binders_slice = self.ctx.all_binders.as_ref().map(|v| v.as_slice());
-                let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    resolve_augmentation_node(
-                        decl_binder,
-                        arena_ref,
-                        node_idx,
-                        global_idx,
-                        all_binders_slice,
-                        lib_contexts,
-                    )
-                };
-                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
-                };
-                let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
-                };
-                let lowering = TypeLowering::with_hybrid_resolver(
-                    arena_ref,
-                    self.ctx.types,
-                    &resolver,
-                    &def_id_resolver,
-                    &|_| None,
-                )
-                .with_name_def_id_resolver(&name_resolver);
-                let aug_type = lowering.lower_interface_declarations(decls);
+            // Lower current-file augmentations using the shared helper.
+            if !current_file_decls.is_empty() {
+                let aug_type = self.lower_augmentation_for_arena(
+                    current_arena,
+                    &current_file_decls,
+                    lib_contexts,
+                );
                 lib_type_id = if let Some(lib_type) = lib_type_id {
                     Some(factory.intersection2(lib_type, aug_type))
                 } else {
                     Some(aug_type)
                 };
-            };
-
-            // Lower current-file augmentations
-            if !current_file_decls.is_empty() {
-                lower_with_arena(current_arena, &current_file_decls);
             }
 
             // Lower cross-file augmentations (each group uses its own arena)
             for (arena, decls) in cross_file_groups.values() {
-                lower_with_arena(arena.as_ref(), decls);
+                let aug_type =
+                    self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
+                lib_type_id = if let Some(lib_type) = lib_type_id {
+                    Some(factory.intersection2(lib_type, aug_type))
+                } else {
+                    Some(aug_type)
+                };
             }
         }
 
