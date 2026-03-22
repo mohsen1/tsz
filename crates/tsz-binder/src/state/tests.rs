@@ -3756,7 +3756,9 @@ import "./side-effect";
         binder.file_import_sources
     );
     assert!(
-        binder.file_import_sources.contains(&"./side-effect".to_string()),
+        binder
+            .file_import_sources
+            .contains(&"./side-effect".to_string()),
         "expected './side-effect' in file_import_sources, got: {:?}",
         binder.file_import_sources
     );
@@ -3776,12 +3778,16 @@ export type { T } from "./types";
     binder.bind_source_file(parser.get_arena(), root);
 
     assert!(
-        binder.file_import_sources.contains(&"./module-a".to_string()),
+        binder
+            .file_import_sources
+            .contains(&"./module-a".to_string()),
         "expected './module-a' in file_import_sources, got: {:?}",
         binder.file_import_sources
     );
     assert!(
-        binder.file_import_sources.contains(&"./module-b".to_string()),
+        binder
+            .file_import_sources
+            .contains(&"./module-b".to_string()),
         "expected './module-b' in file_import_sources, got: {:?}",
         binder.file_import_sources
     );
@@ -3804,7 +3810,9 @@ import ts = require("typescript");
     binder.bind_source_file(parser.get_arena(), root);
 
     assert!(
-        binder.file_import_sources.contains(&"typescript".to_string()),
+        binder
+            .file_import_sources
+            .contains(&"typescript".to_string()),
         "expected 'typescript' in file_import_sources, got: {:?}",
         binder.file_import_sources
     );
@@ -3822,7 +3830,10 @@ fn file_import_sources_reset_clears() {
     assert!(!binder.file_import_sources.is_empty());
 
     binder.reset();
-    assert!(binder.file_import_sources.is_empty(), "reset should clear file_import_sources");
+    assert!(
+        binder.file_import_sources.is_empty(),
+        "reset should clear file_import_sources"
+    );
 }
 
 #[test]
