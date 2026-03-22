@@ -1666,6 +1666,8 @@ pub fn pre_populate_definition_store(
             crate::binder::SemanticDefKind::Namespace => DefKind::Namespace,
             crate::binder::SemanticDefKind::Function => DefKind::Function,
             crate::binder::SemanticDefKind::Variable => DefKind::Variable,
+            // Enum members are values; map to Variable in the solver.
+            crate::binder::SemanticDefKind::EnumMember => DefKind::Variable,
         };
 
         let name = interner.intern_string(&entry.name);
@@ -1724,6 +1726,21 @@ pub fn pre_populate_definition_store(
     // binder-owned identity that survives merge/rebind.
     for (&sym_id, entry) in semantic_defs {
         if let Some(parent_sym) = entry.parent_namespace {
+            let child_def = store.find_def_by_symbol(sym_id.0);
+            let parent_def = store.find_def_by_symbol(parent_sym.0);
+            if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                let name = interner.intern_string(&entry.name);
+                store.add_export(parent_def_id, name, child_def_id);
+            }
+        }
+    }
+
+    // Pass 3: Wire enum member → parent enum relationships.
+    //
+    // For each EnumMember entry, register an enum_parent mapping in the store
+    // so the solver can navigate member → parent enum without checker repair.
+    for (&sym_id, entry) in semantic_defs {
+        if let Some(parent_sym) = entry.parent_enum {
             let child_def = store.find_def_by_symbol(sym_id.0);
             let parent_def = store.find_def_by_symbol(parent_sym.0);
             if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
@@ -2155,6 +2172,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     remapped.parent_namespace = entry.parent_namespace.and_then(|old_parent| {
                         lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
                     });
+                    // Remap parent_enum to global SymbolId
+                    remapped.parent_enum = entry.parent_enum.and_then(|old_parent| {
+                        lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
+                    });
                     remapped
                 });
             }
@@ -2540,6 +2561,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Remap parent_namespace to global SymbolId
                 remapped_entry.parent_namespace = entry
                     .parent_namespace
+                    .and_then(|old_parent| id_remap.get(&old_parent).copied());
+                // Remap parent_enum to global SymbolId
+                remapped_entry.parent_enum = entry
+                    .parent_enum
                     .and_then(|old_parent| id_remap.get(&old_parent).copied());
                 // Collect per-file entry (always insert — no cross-file merging here)
                 file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
