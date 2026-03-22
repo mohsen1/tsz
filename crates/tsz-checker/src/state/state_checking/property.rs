@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
                     // A number index signature covers numeric property names
                     if any_member_has_number_index {
                         let name_str = self.ctx.types.resolve_atom(source_prop.name);
-                        if name_str.parse::<f64>().is_ok() {
+                        if tsz_solver::utils::is_numeric_literal_name(&name_str) {
                             continue;
                         }
                     }

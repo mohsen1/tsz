@@ -388,7 +388,7 @@ impl<'a> CheckerState<'a> {
             let is_numeric_literal_union = displays.len() > 1
                 && displays
                     .iter()
-                    .all(|display| display.parse::<f64>().is_ok());
+                    .all(|display| tsz_solver::utils::is_numeric_literal_name(display));
             if !is_numeric_literal_union {
                 return None;
             }

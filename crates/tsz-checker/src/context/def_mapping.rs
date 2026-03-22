@@ -767,7 +767,7 @@ impl<'a> CheckerContext<'a> {
     /// NOTE: Currently a no-op stub. Full implementation requires
     /// `SemanticDefEntry.extends_names`/`implements_names` fields and
     /// `DefinitionStore::set_heritage`, which are not yet landed.
-    pub fn resolve_cross_batch_heritage(&self) -> usize {
+    pub const fn resolve_cross_batch_heritage(&self) -> usize {
         // Heritage resolution via SemanticDefEntry is not yet available.
         // The checker walk resolves heritage through the normal type-checking
         // pipeline (merge_interface_heritage_types, merge_lib_interface_heritage).

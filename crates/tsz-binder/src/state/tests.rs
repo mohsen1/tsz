@@ -4593,14 +4593,14 @@ fn heritage_names_class_extends_generic() {
 fn heritage_names_empty_for_non_heritage_declarations() {
     let binder = bind_source("class Foo {} type Bar = string; enum Baz { A }");
     let foo_sym = binder.file_locals.get("Foo").expect("expected Foo");
-    let foo_entry = binder.semantic_defs.get(&foo_sym).unwrap();
+    let foo_entry = &binder.semantic_defs[&foo_sym];
     assert!(foo_entry.heritage_names.is_empty());
 
     let bar_sym = binder.file_locals.get("Bar").expect("expected Bar");
-    let bar_entry = binder.semantic_defs.get(&bar_sym).unwrap();
+    let bar_entry = &binder.semantic_defs[&bar_sym];
     assert!(bar_entry.heritage_names.is_empty());
 
     let baz_sym = binder.file_locals.get("Baz").expect("expected Baz");
-    let baz_entry = binder.semantic_defs.get(&baz_sym).unwrap();
+    let baz_entry = &binder.semantic_defs[&baz_sym];
     assert!(baz_entry.heritage_names.is_empty());
 }

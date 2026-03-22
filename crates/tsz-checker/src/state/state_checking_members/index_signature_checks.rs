@@ -858,7 +858,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            let is_numeric_property = prop_name.parse::<f64>().is_ok()
+            let is_numeric_property = tsz_solver::utils::is_numeric_literal_name(&prop_name)
                 || computed_key_type.is_some_and(|ty| matches!(ty, TypeId::NUMBER | TypeId::ANY));
 
             // TSC preserves the original text for computed names and the original
@@ -997,7 +997,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let is_numeric_property = prop_name.parse::<f64>().is_ok();
+            let is_numeric_property = tsz_solver::utils::is_numeric_literal_name(&prop_name);
 
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
