@@ -11,6 +11,9 @@ use crate::def::DefId;
 use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
 
+use super::core::is_keyof_type;
+use super::data::contains_type_parameters_db;
+
 // =============================================================================
 // Full Literal Type Classification (includes boolean)
 // =============================================================================
@@ -748,6 +751,64 @@ fn is_numeric_string_template(spans: &[crate::TemplateSpan]) -> bool {
         spans,
         [crate::TemplateSpan::Type(ty)] if *ty == TypeId::NUMBER
     )
+}
+
+/// Check if a key type matches a string index signature.
+///
+/// String index signatures accept: string, number, string literals, number literals,
+/// numeric string-like templates, and template literal strings. Unions must have
+/// all members individually match.
+///
+/// For `Other` kinds (type parameters, keyof, etc.), returns true if the key
+/// contains type parameters or is a keyof type — these are deferred to
+/// instantiation time.
+pub fn key_matches_string_index(
+    db: &dyn TypeDatabase,
+    key_type: TypeId,
+    kind: &IndexKeyKind,
+) -> bool {
+    match kind {
+        IndexKeyKind::String
+        | IndexKeyKind::Number
+        | IndexKeyKind::StringLiteral
+        | IndexKeyKind::NumberLiteral
+        | IndexKeyKind::NumericStringLike
+        | IndexKeyKind::TemplateLiteralString => true,
+        IndexKeyKind::Union(members) => members.iter().all(|&member| {
+            let member_kind = classify_index_key(db, member);
+            key_matches_string_index(db, member, &member_kind)
+        }),
+        IndexKeyKind::Other => {
+            contains_type_parameters_db(db, key_type) || is_keyof_type(db, key_type)
+        }
+    }
+}
+
+/// Check if a key type matches a number index signature.
+///
+/// Number index signatures accept: number, number literals, and numeric
+/// string-like templates. Unions must have all members individually match.
+///
+/// For `Other` kinds (type parameters, keyof, etc.), returns true if the key
+/// contains type parameters or is a keyof type.
+pub fn key_matches_number_index(
+    db: &dyn TypeDatabase,
+    key_type: TypeId,
+    kind: &IndexKeyKind,
+) -> bool {
+    match kind {
+        IndexKeyKind::Number | IndexKeyKind::NumberLiteral | IndexKeyKind::NumericStringLike => {
+            true
+        }
+        IndexKeyKind::Union(members) => members.iter().all(|&member| {
+            let member_kind = classify_index_key(db, member);
+            key_matches_number_index(db, member, &member_kind)
+        }),
+        IndexKeyKind::Other => {
+            contains_type_parameters_db(db, key_type) || is_keyof_type(db, key_type)
+        }
+        _ => false,
+    }
 }
 
 // =============================================================================
