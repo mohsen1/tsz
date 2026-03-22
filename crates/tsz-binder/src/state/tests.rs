@@ -5098,7 +5098,7 @@ interface Stable extends Extra { b: number }
 }
 
 // =============================================================================
-// FileSkeleton tests
+// BinderFileSummary tests
 // =============================================================================
 
 #[test]
@@ -5115,7 +5115,7 @@ class Internal {}
     binder.file_idx = 42;
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
 
     assert_eq!(skeleton.file_idx, 42);
     assert!(
@@ -5158,7 +5158,7 @@ export { bar } from "./helpers";
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
 
     assert!(skeleton.import_sources.contains(&"./utils".to_string()));
     assert!(skeleton.import_sources.contains(&"react".to_string()));
@@ -5176,7 +5176,7 @@ export interface FastAnimal extends Animal {}
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
 
     assert!(
         skeleton.heritage_deps.contains(&"Animal".to_string()),
@@ -5202,7 +5202,7 @@ export { c } from "./other";
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
     let specs = skeleton.dependency_specifiers();
 
     // Should deduplicate "./shared"
@@ -5224,7 +5224,7 @@ const x = 1;
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
 
     assert!(
         !skeleton.has_exports(),
@@ -5252,8 +5252,8 @@ fn file_skeleton_api_fingerprint_changes_on_export_change() {
     let mut binder_b = BinderState::new();
     binder_b.bind_source_file(parser_b.get_arena(), root_b);
 
-    let fp_a = binder_a.file_skeleton().api_fingerprint();
-    let fp_b = binder_b.file_skeleton().api_fingerprint();
+    let fp_a = binder_a.file_summary().api_fingerprint();
+    let fp_b = binder_b.file_summary().api_fingerprint();
 
     assert_ne!(
         fp_a, fp_b,
@@ -5269,8 +5269,8 @@ fn file_skeleton_api_fingerprint_stable_across_calls() {
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let fp1 = binder.file_skeleton().api_fingerprint();
-    let fp2 = binder.file_skeleton().api_fingerprint();
+    let fp1 = binder.file_summary().api_fingerprint();
+    let fp2 = binder.file_summary().api_fingerprint();
     assert_eq!(fp1, fp2, "fingerprint should be deterministic");
 }
 
@@ -5286,7 +5286,7 @@ export class Middle {}
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
     let names: Vec<&str> = skeleton
         .exported_defs
         .iter()
@@ -5312,7 +5312,7 @@ export class List<T> {}
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let skeleton = binder.file_skeleton();
+    let skeleton = binder.file_summary();
 
     for exp in &skeleton.exported_defs {
         match exp.name.as_str() {
