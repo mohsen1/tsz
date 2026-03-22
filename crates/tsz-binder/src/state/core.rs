@@ -1201,7 +1201,7 @@ impl BinderState {
 
         push_candidate(export_equals_sym_id);
         for target_name in &target_names {
-            for candidate_id in self.symbols.find_all_by_name(target_name) {
+            for &candidate_id in self.symbols.find_all_by_name(target_name) {
                 push_candidate(candidate_id);
             }
         }

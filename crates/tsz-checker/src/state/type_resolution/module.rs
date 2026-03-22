@@ -406,7 +406,7 @@ impl<'a> CheckerState<'a> {
 
         // Some binder paths keep the namespace merge partner as a distinct symbol.
         // Probe symbols with the same name and a module namespace shape.
-        for candidate_id in binder
+        for &candidate_id in binder
             .get_symbols()
             .find_all_by_name(&export_equals_symbol.escaped_name)
         {
@@ -1263,10 +1263,10 @@ impl<'a> CheckerState<'a> {
         };
 
         let lookup_by_name = |name: &str| -> Vec<tsz_binder::SymbolId> {
-            let mut result = self.ctx.binder.get_symbols().find_all_by_name(name);
+            let mut result: Vec<tsz_binder::SymbolId> = self.ctx.binder.get_symbols().find_all_by_name(name).to_vec();
             if let Some(all_binders) = self.ctx.all_binders.as_ref() {
                 for binder in all_binders.iter() {
-                    for sym_id in binder.get_symbols().find_all_by_name(name) {
+                    for &sym_id in binder.get_symbols().find_all_by_name(name) {
                         if !result.contains(&sym_id) {
                             result.push(sym_id);
                         }

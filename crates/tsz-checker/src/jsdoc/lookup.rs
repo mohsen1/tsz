@@ -271,9 +271,10 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbols()
                     .find_all_by_name(base_name)
-                    .into_iter()
-                    .find(|sym_id| {
-                        self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
+                    .iter()
+                    .copied()
+                    .find(|&sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
                             (symbol.flags
                                 & (symbol_flags::TYPE_ALIAS
                                     | symbol_flags::CLASS
