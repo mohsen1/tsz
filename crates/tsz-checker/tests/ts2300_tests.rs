@@ -794,16 +794,17 @@ fn let_var_function_same_scope_ts2300() {
     assert_eq!(ts2300, 3, "All three should be TS2300 at same scope");
 }
 
-/// Test that var-before-let at the same scope level gets TS2300.
+/// Test that var-before-let at the same scope level gets TS2451.
+/// tsc always uses TS2451 when any block-scoped variable (let/const) is involved.
 #[test]
-fn var_before_let_same_scope_ts2300() {
+fn var_before_let_same_scope_ts2451() {
     let diagnostics = verify_errors(
         "var x = 0;\nlet x = 0;",
         &[
-            (1, 5, "Duplicate identifier 'x'."),
-            (2, 5, "Duplicate identifier 'x'."),
+            (1, 5, "Cannot redeclare block-scoped variable 'x'."),
+            (2, 5, "Cannot redeclare block-scoped variable 'x'."),
         ],
     );
-    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
-    assert_eq!(ts2300, 2, "var-before-let should be TS2300");
+    let ts2451 = diagnostics.iter().filter(|d| d.code == 2451).count();
+    assert_eq!(ts2451, 2, "var-before-let should be TS2451");
 }
