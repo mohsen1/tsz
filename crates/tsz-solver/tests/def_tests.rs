@@ -1060,3 +1060,54 @@ fn estimated_size_bytes_accounts_for_type_params() {
          for the TypeParamInfo entries, but delta was only {delta}"
     );
 }
+
+#[test]
+fn test_store_statistics_includes_estimated_size() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Empty store should still have non-zero estimated size (struct overhead).
+    let empty_stats = store.statistics();
+    assert!(
+        empty_stats.estimated_size_bytes > 0,
+        "Even an empty DefinitionStore has non-zero estimated_size_bytes for struct overhead"
+    );
+
+    // Add a definition and verify the estimate grows.
+    let name = interner.intern_string("TestType");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    store.register(info);
+
+    let stats_after = store.statistics();
+    assert!(
+        stats_after.estimated_size_bytes > empty_stats.estimated_size_bytes,
+        "estimated_size_bytes should grow after adding a definition: {} vs {}",
+        stats_after.estimated_size_bytes,
+        empty_stats.estimated_size_bytes,
+    );
+    assert_eq!(stats_after.total_definitions, 1);
+
+    // The estimated_size_bytes in stats should match the live estimate.
+    assert_eq!(
+        stats_after.estimated_size_bytes,
+        store.estimated_size_bytes(),
+        "StoreStatistics::estimated_size_bytes must equal DefinitionStore::estimated_size_bytes()"
+    );
+}
+
+#[test]
+fn test_store_statistics_merge_includes_estimated_size() {
+    let mut stats_a = StoreStatistics {
+        total_definitions: 10,
+        estimated_size_bytes: 5000,
+        ..Default::default()
+    };
+    let stats_b = StoreStatistics {
+        total_definitions: 5,
+        estimated_size_bytes: 3000,
+        ..Default::default()
+    };
+    stats_a.merge(&stats_b);
+    assert_eq!(stats_a.total_definitions, 15);
+    assert_eq!(stats_a.estimated_size_bytes, 8000);
+}

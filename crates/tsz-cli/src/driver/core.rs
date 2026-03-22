@@ -96,6 +96,8 @@ pub struct CompilationResult {
     pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
     /// Number of interned types in the shared `TypeInterner` after checking.
     pub interned_types_count: usize,
+    /// Estimated heap memory of the `TypeInterner` in bytes (populated for `--extendedDiagnostics`).
+    pub interner_estimated_bytes: usize,
     /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
@@ -835,6 +837,7 @@ fn compile_inner(
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
+            interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
             invalidation_summaries: Vec::new(),
@@ -867,6 +870,7 @@ fn compile_inner(
                     file_infos: Vec::new(),
                     request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
                     interned_types_count: 0,
+                    interner_estimated_bytes: 0,
                     query_cache_stats: None,
                     def_store_stats: None,
                     invalidation_summaries: Vec::new(),
@@ -953,6 +957,7 @@ fn compile_inner(
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
+            interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
             invalidation_summaries: Vec::new(),
@@ -1023,6 +1028,7 @@ fn compile_inner(
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
+            interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
             invalidation_summaries: Vec::new(),
@@ -1464,6 +1470,7 @@ fn compile_inner(
         file_infos,
         request_cache_counters: collected.request_cache_counters,
         interned_types_count: program.type_interner.len(),
+        interner_estimated_bytes: program.type_interner.estimated_size_bytes(),
         query_cache_stats: collected.query_cache_stats,
         def_store_stats: collected.def_store_stats,
         invalidation_summaries: Vec::new(),
@@ -1481,6 +1488,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         file_infos: Vec::new(),
         request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         interned_types_count: 0,
+        interner_estimated_bytes: 0,
         query_cache_stats: None,
         def_store_stats: None,
         invalidation_summaries: Vec::new(),
