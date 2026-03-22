@@ -5128,18 +5128,15 @@ class Internal {}
         .collect();
     assert!(
         names.contains(&"Animal"),
-        "expected Animal in exported_defs, got: {:?}",
-        names
+        "expected Animal in exported_defs, got: {names:?}"
     );
     assert!(
         names.contains(&"Movable"),
-        "expected Movable in exported_defs, got: {:?}",
-        names
+        "expected Movable in exported_defs, got: {names:?}"
     );
     assert!(
         names.contains(&"ID"),
-        "expected ID in exported_defs, got: {:?}",
-        names
+        "expected ID in exported_defs, got: {names:?}"
     );
     assert!(
         !names.contains(&"Internal"),
@@ -5210,8 +5207,7 @@ export { c } from "./other";
     let shared_count = specs.iter().filter(|&&s| s == "./shared").count();
     assert_eq!(
         shared_count, 1,
-        "dependency_specifiers should deduplicate, got: {:?}",
-        specs
+        "dependency_specifiers should deduplicate, got: {specs:?}"
     );
     assert!(specs.contains(&"./other"));
 }
@@ -5321,7 +5317,7 @@ export class List<T> {}
             "Map" => assert_eq!(exp.type_param_count, 2, "Map should have 2 type params"),
             "Pair" => assert_eq!(exp.type_param_count, 2, "Pair should have 2 type params"),
             "List" => assert_eq!(exp.type_param_count, 1, "List should have 1 type param"),
-            other => panic!("unexpected export: {}", other),
+            other => panic!("unexpected export: {other}"),
         }
     }
 }
