@@ -222,6 +222,9 @@ impl<'a> CheckerState<'a> {
                     file_id: None,
                     span: None,
                     symbol_id,
+                    is_abstract: false,
+                    is_const: false,
+                    is_exported: false,
                 });
             self.ctx
                 .definition_store
