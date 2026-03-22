@@ -855,14 +855,25 @@ impl Server {
             }
             normalize_response_actions(&mut response_actions);
 
-            // Deduplicate by fixId: when both CodeActionProvider and fallback
-            // produce the same fix, keep only the first occurrence.
+            // Deduplicate by (fixId, description): when both CodeActionProvider
+            // and fallback produce the same fix, keep only the first occurrence.
+            // We key on the pair so that distinct actions sharing a fixId (e.g.
+            // "Declare method", "Declare property", "Add index signature" all
+            // under fixId "fixMissingMember") are preserved.
             let mut dedup_seen = rustc_hash::FxHashSet::default();
             response_actions.retain(|action| {
-                if let Some(fix_id) = action.get("fixId").and_then(serde_json::Value::as_str) {
-                    dedup_seen.insert(fix_id.to_string())
-                } else {
+                let fix_id = action
+                    .get("fixId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let description = action
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if fix_id.is_empty() && description.is_empty() {
                     true
+                } else {
+                    dedup_seen.insert((fix_id.to_string(), description.to_string()))
                 }
             });
 

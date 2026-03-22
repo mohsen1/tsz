@@ -358,7 +358,11 @@ fn test_convert_options_expands_explicit_strict_false() {
 }
 
 #[test]
-fn test_prepare_test_dir_uses_non_strict_baseline_for_strictness_pragmas_without_strict() {
+fn test_prepare_test_dir_does_not_inject_strict_overrides_for_source_pragmas() {
+    // TypeScript 6.0+ defaults strict-family flags to true, so the conformance
+    // wrapper no longer synthesizes a non-strict baseline.  Verify that
+    // strictness flags are NOT injected into the tsconfig when the source only
+    // uses non-strict source pragmas (like @noImplicitReturns).
     let content = r#"
 // @noImplicitReturns: true
 class C<T> {
@@ -376,31 +380,22 @@ class C<T> {
         .as_object()
         .expect("compilerOptions should be an object");
 
+    // None of these should be synthesized — TS 6.0 defaults them to true.
     for key in [
         "noImplicitAny",
         "strictNullChecks",
         "strictFunctionTypes",
         "strictBindCallApply",
         "useUnknownInCatchVariables",
+        "noImplicitThis",
+        "strict",
+        "alwaysStrict",
     ] {
-        assert_eq!(
-            compiler_options.get(key),
-            Some(&serde_json::Value::Bool(false)),
-            "Expected {key} to be forced false for stripped strictness pragmas"
+        assert!(
+            !compiler_options.contains_key(key),
+            "{key} should not be injected into tsconfig for source-pragma-only tests"
         );
     }
-    assert!(
-        !compiler_options.contains_key("noImplicitThis"),
-        "noImplicitThis should not be synthesized into the stripped-source tsconfig"
-    );
-    assert!(
-        !compiler_options.contains_key("strict"),
-        "strict should stay omitted when only source pragmas are present"
-    );
-    assert!(
-        !compiler_options.contains_key("alwaysStrict"),
-        "alwaysStrict should stay omitted when only source pragmas are present"
-    );
 }
 
 #[test]
