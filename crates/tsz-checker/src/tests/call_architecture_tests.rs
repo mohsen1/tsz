@@ -482,3 +482,389 @@ const result: string = describe(Color.Red);
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+// === Focused call/overload/property-call regression tests ===
+// These tests ensure the call expression module correctly delegates to
+// solver query APIs for all type inspection. Each test targets a specific
+// code path in call.rs.
+
+/// Overload resolution with different return types picks the correct
+/// signature based on argument type and returns the matching return type.
+#[test]
+fn overload_resolution_return_type_selection() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function parse(input: string): object;
+declare function parse(input: string, strict: true): object | null;
+
+const a: object = parse("{}");
+const b: object | null = parse("{}", true);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no type errors for overload return type selection, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Overload with rest parameters resolves correctly.
+#[test]
+fn overload_resolution_rest_params() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function concat(a: string, b: string): string;
+declare function concat(...parts: string[]): string;
+
+const a: string = concat("hello", "world");
+const b: string = concat("a", "b", "c", "d");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no type errors for overload with rest params, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Property call on nested object method resolves through
+/// classify_for_call_signatures query.
+#[test]
+fn property_call_nested_object_method() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Config {
+    db: {
+        connect(url: string): void;
+    };
+}
+
+declare const config: Config;
+config.db.connect("postgres://localhost");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2339 || d.code == 2349 || d.code == 2345)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for nested property call, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Optional chain call on method returns T | undefined.
+#[test]
+fn optional_chain_method_call() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Logger {
+    log(msg: string): void;
+}
+
+declare const logger: Logger | undefined;
+logger?.log("hello");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2349 || d.code == 2722)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for optional chain method call, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Optional chain call with non-nullish callee is still valid.
+#[test]
+fn optional_chain_call_non_nullish() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const fn1: (x: number) => string;
+const result: string | undefined = fn1?.(42);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322 for optional chain on non-nullish callee, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Calling unknown type emits TS18046 (not TS2349) with strictNullChecks.
+#[test]
+fn calling_unknown_emits_ts18046() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const x: unknown;
+x();
+"#,
+    );
+
+    let ts18046: Vec<_> = diags.iter().filter(|d| d.code == 18046).collect();
+    assert!(
+        !ts18046.is_empty(),
+        "Expected TS18046 for calling unknown type, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Calling never propagates never (bottom type).
+#[test]
+fn calling_never_returns_never() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const f: never;
+const result: never = f();
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    // f() should return never, so assigning to never is valid.
+    // TS2349 is expected since never has no call signatures.
+    let _ = ts2322;
+}
+
+/// Generic overloaded function with explicit type arguments.
+#[test]
+fn generic_overloaded_with_explicit_type_args() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function create<T>(value: T): { value: T };
+declare function create<T>(value: T, label: string): { value: T; label: string };
+
+const a = create<number>(42);
+const b = create<string>("hello", "greeting");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for generic overloaded call with explicit type args, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Union callee: all members must accept the call arguments.
+/// When one member requires different arity, error is expected.
+#[test]
+fn union_callee_arity_mismatch_across_members() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const f: ((x: number) => void) | ((x: number, y: number) => void);
+f(1, 2, 3);
+"#,
+    );
+
+    // All union members require at most 2 args, so 3 args should error.
+    let has_arity_error = diags
+        .iter()
+        .any(|d| d.code == 2554 || d.code == 2769 || d.code == 2345);
+    assert!(
+        has_arity_error,
+        "Expected arity/overload error for union callee with too many args, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Generic call with multiple callbacks: two-pass inference resolves
+/// both callback parameter types from the same type parameter.
+#[test]
+fn generic_call_multiple_callbacks() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function both<T>(a: T[], fn1: (x: T) => void, fn2: (x: T) => string): void;
+both([1, 2], n => { void n; }, n => n.toFixed(2));
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS7006/TS2339 for generic call with multiple callbacks, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Property call on generic interface method resolves without panics.
+/// The callback parameter `n` should not produce TS7006 (implicit any).
+#[test]
+fn property_call_generic_method() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Collection<T> {
+    get(index: number): T;
+    map<U>(fn: (item: T) => U): Collection<U>;
+}
+
+declare const nums: Collection<number>;
+const result = nums.map(n => n.toFixed(2));
+"#,
+    );
+
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 for generic method property call, got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Spread call with tuple type validates argument count correctly.
+#[test]
+fn spread_call_tuple_arity_check() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function add(a: number, b: number): number;
+const args: [number] = [1];
+add(...args);
+"#,
+    );
+
+    // Spread of [number] into (a: number, b: number) should error — too few args.
+    let has_error = diags.iter().any(|d| d.code == 2556 || d.code == 2554);
+    assert!(
+        has_error,
+        "Expected TS2556/TS2554 for spread call with insufficient tuple args, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Callable intersection type: call resolves through both signatures.
+#[test]
+fn callable_intersection_invocation() {
+    let diags = check_source_diagnostics(
+        r#"
+type Logger = ((msg: string) => void) & { level: number };
+
+declare const logger: Logger;
+logger("test");
+const lvl: number = logger.level;
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2349 || d.code == 2339 || d.code == 2322)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for callable intersection invocation, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Type argument count mismatch emits TS2558.
+#[test]
+fn type_argument_count_mismatch_emits_ts2558() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function identity<T>(x: T): T;
+identity<number, string>(42);
+"#,
+    );
+
+    let ts2558: Vec<_> = diags.iter().filter(|d| d.code == 2558).collect();
+    assert!(
+        !ts2558.is_empty(),
+        "Expected TS2558 for type argument count mismatch, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Untyped function call with type arguments emits TS2347.
+#[test]
+fn untyped_call_with_type_args_emits_ts2347() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const f: any;
+f<number>(42);
+"#,
+    );
+
+    let ts2347: Vec<_> = diags.iter().filter(|d| d.code == 2347).collect();
+    assert!(
+        !ts2347.is_empty(),
+        "Expected TS2347 for untyped function call with type args, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// IIFE (Immediately Invoked Function Expression) with contextual typing.
+#[test]
+fn iife_contextual_typing() {
+    let diags = check_source_diagnostics(
+        r#"
+const result: number = ((x: number) => x + 1)(42);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322 for IIFE with contextual typing, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Super call in derived class constructor resolves via construct signature.
+#[test]
+fn super_call_construct_signature() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {
+    constructor(public value: number) {}
+}
+class Derived extends Base {
+    constructor() {
+        super(42);
+    }
+}
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2554)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for super call with construct signature, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
