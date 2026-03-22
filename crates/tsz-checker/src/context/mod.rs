@@ -811,7 +811,18 @@ pub struct CheckerContext<'a> {
     /// Maps cross-file `SymbolIds` to their source file index.
     /// Populated by `resolve_cross_file_export/resolve_cross_file_namespace_exports`
     /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
+    ///
+    /// This is the local overlay for dynamically discovered mappings. For lookups,
+    /// use `resolve_symbol_file_index()` which checks this overlay first, then
+    /// falls back to the shared `global_symbol_file_index`.
     pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
+
+    /// Shared base map: `SymbolId` → owning file index (pre-built from `ProjectEnv`).
+    ///
+    /// Cloned as `Arc` (O(1)) when creating child checkers, avoiding the O(N) clone
+    /// of `cross_file_symbol_targets`. Read sites use `resolve_symbol_file_index()`
+    /// which checks the local overlay first, then this shared base.
+    pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
 
     /// All arenas for cross-file resolution (indexed by `file_idx` from `Symbol.decl_file_idx`).
     /// Set during multi-file type checking to allow resolving declarations across files.
@@ -1066,8 +1077,16 @@ pub struct ProjectEnv {
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
     /// Pre-computed expando index from skeleton index.
     pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
-    /// Pre-computed symbol-to-file ownership targets.
+    /// Pre-computed symbol-to-file ownership targets (legacy vec form).
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
+    /// Pre-built O(1) index: `SymbolId` -> owning file index.
+    ///
+    /// Built once from `symbol_file_targets` by `build_global_symbol_file_index()`.
+    /// Shared across all checkers via `Arc` — child checkers clone the `Arc`
+    /// reference (O(1)) instead of cloning the entire `FxHashMap`.
+    /// Read sites fall back to this base map when the local
+    /// `cross_file_symbol_targets` overlay has no entry.
+    pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
     /// Pre-computed global `file_locals` index: name -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
@@ -1116,6 +1135,7 @@ impl Default for ProjectEnv {
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             symbol_file_targets: Arc::new(vec![]),
+            global_symbol_file_index: None,
             global_file_locals_index: None,
             global_module_exports_index: None,
             global_module_augmentations_index: None,
@@ -1183,6 +1203,10 @@ impl ProjectEnv {
         // This moves identity creation to apply_to time (deterministic, early)
         // rather than on-demand in get_or_create_def_id's O(N) repair path.
         ctx.pre_populate_def_ids_from_all_binders();
+        // Install the shared O(1) symbol→file index. Build it lazily on first use.
+        if let Some(ref idx) = self.global_symbol_file_index {
+            ctx.global_symbol_file_index = Some(Arc::clone(idx));
+        }
         {
             let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
             for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
@@ -1313,6 +1337,20 @@ impl ProjectEnv {
             arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
         }
         self.global_arena_index = Some(Arc::new(arena_idx));
+    }
+
+    /// Build the shared `SymbolId` → file-index map from `symbol_file_targets`.
+    ///
+    /// Call this once after populating `symbol_file_targets`. The resulting
+    /// `Arc<FxHashMap>` is shared (O(1) clone) across all checkers, eliminating
+    /// the per-checker O(N) copy into `cross_file_symbol_targets`.
+    pub fn build_global_symbol_file_index(&mut self) {
+        let mut map: FxHashMap<SymbolId, usize> =
+            FxHashMap::with_capacity_and_hasher(self.symbol_file_targets.len(), Default::default());
+        for &(sym_id, file_idx) in self.symbol_file_targets.iter() {
+            map.insert(sym_id, file_idx);
+        }
+        self.global_symbol_file_index = Some(Arc::new(map));
     }
 
     /// Build global indices only when the skeleton fingerprint has changed.
