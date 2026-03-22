@@ -435,7 +435,7 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
-        if let Some(info) = tsz_solver::type_param_info(self.ctx.types, type_id) {
+        if let Some(info) = common::type_param_info(self.ctx.types, type_id) {
             return Some(format!(
                 "type_param:{}",
                 self.ctx.types.resolve_atom_ref(info.name)

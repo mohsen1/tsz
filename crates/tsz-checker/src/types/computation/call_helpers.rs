@@ -924,7 +924,7 @@ impl<'a> CheckerState<'a> {
                 // Example: make({ mutations: { foo() {} }, action: (m) => m.foo() })
                 // where mutations has target type M (a type param).
                 if self.type_contains_any_type_param(target_prop_type, type_param_names)
-                    && tsz_solver::type_param_info(self.ctx.types, target_prop_type).is_some()
+                    && common::type_param_info(self.ctx.types, target_prop_type).is_some()
                 {
                     let value_type =
                         self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
@@ -1129,7 +1129,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         type_param_names
             .iter()
-            .any(|&name| tsz_solver::contains_type_parameter_named(self.ctx.types, type_id, name))
+            .any(|&name| common::contains_type_parameter_named(self.ctx.types, type_id, name))
     }
 }
 
