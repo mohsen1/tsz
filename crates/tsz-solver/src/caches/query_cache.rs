@@ -70,6 +70,25 @@ pub struct QueryCacheStatistics {
     pub relation: RelationCacheStats,
 }
 
+impl QueryCacheStatistics {
+    /// Merge another snapshot into this one (for aggregating per-file caches in parallel builds).
+    pub fn merge(&mut self, other: &QueryCacheStatistics) {
+        self.eval_cache_entries += other.eval_cache_entries;
+        self.application_eval_cache_entries += other.application_eval_cache_entries;
+        self.element_access_cache_entries += other.element_access_cache_entries;
+        self.object_spread_cache_entries += other.object_spread_cache_entries;
+        self.property_cache_entries += other.property_cache_entries;
+        self.variance_cache_entries += other.variance_cache_entries;
+        self.canonical_cache_entries += other.canonical_cache_entries;
+        self.relation.subtype_hits += other.relation.subtype_hits;
+        self.relation.subtype_misses += other.relation.subtype_misses;
+        self.relation.subtype_entries += other.relation.subtype_entries;
+        self.relation.assignability_hits += other.relation.assignability_hits;
+        self.relation.assignability_misses += other.relation.assignability_misses;
+        self.relation.assignability_entries += other.relation.assignability_entries;
+    }
+}
+
 impl std::fmt::Display for QueryCacheStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "QueryCache statistics:")?;
