@@ -1344,6 +1344,11 @@ impl<'a> Printer<'a> {
                 self.emit_function_type(node);
             }
 
+            // Constructor type: `new (...) => T`
+            k if k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                self.emit_constructor_type(node);
+            }
+
             // Type literal
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 self.emit_type_literal(node);
