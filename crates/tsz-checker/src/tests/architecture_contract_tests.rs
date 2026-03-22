@@ -304,6 +304,14 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "context should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
+    // register_resolved_type must use dual-env helpers for DefId mappings
+    let def_mapping_src = fs::read_to_string("src/context/def_mapping.rs")
+        .expect("failed to read src/context/def_mapping.rs for architecture guard");
+    assert!(
+        def_mapping_src.contains("register_def_auto_params_in_envs("),
+        "register_resolved_type should use dual-env helper for DefId registration (not single-env insert_def)"
+    );
+
     let queries_src = fs::read_to_string("src/types/queries/core.rs")
         .expect("failed to read src/types/queries/core.rs for architecture guard");
     assert!(
