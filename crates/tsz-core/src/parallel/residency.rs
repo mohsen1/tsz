@@ -98,3 +98,166 @@ impl MergedProgram {
         }
     }
 }
+
+/// Memory pressure assessment for eviction decisions.
+///
+/// Converts raw byte estimates into actionable signals. The LSP project layer
+/// can use this to decide whether to evict parsed/bound ASTs and rely on
+/// skeletons for merge decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryPressure {
+    /// Well within budget — no action needed.
+    Low,
+    /// Approaching budget — consider evicting cold files.
+    Medium,
+    /// Over budget — should evict aggressively.
+    High,
+}
+
+/// Budget configuration for residency-based eviction.
+///
+/// Thresholds are in bytes. The defaults are conservative starting points
+/// for a language server handling medium-sized projects (~500 files).
+#[derive(Debug, Clone, Copy)]
+pub struct ResidencyBudget {
+    /// Threshold below which memory pressure is Low.
+    pub low_watermark_bytes: usize,
+    /// Threshold above which memory pressure is High.
+    pub high_watermark_bytes: usize,
+}
+
+impl Default for ResidencyBudget {
+    fn default() -> Self {
+        Self {
+            // 256 MB low watermark
+            low_watermark_bytes: 256 * 1024 * 1024,
+            // 512 MB high watermark
+            high_watermark_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
+
+impl ResidencyBudget {
+    /// Assess memory pressure from residency stats.
+    #[must_use]
+    pub fn assess(&self, stats: &MergedProgramResidencyStats) -> MemoryPressure {
+        let total = stats.pre_merge_bind_total_bytes + stats.total_bound_file_bytes;
+        if total >= self.high_watermark_bytes {
+            MemoryPressure::High
+        } else if total >= self.low_watermark_bytes {
+            MemoryPressure::Medium
+        } else {
+            MemoryPressure::Low
+        }
+    }
+
+    /// Returns whether the skeleton index alone could serve merge decisions,
+    /// allowing full BindResult eviction for memory recovery.
+    #[must_use]
+    pub fn skeleton_can_replace_full_arenas(stats: &MergedProgramResidencyStats) -> bool {
+        stats.has_skeleton_index && stats.skeleton_merge_candidate_count > 0
+    }
+
+    /// Estimate how many bytes would be freed by evicting pre-merge BindResults
+    /// and relying on the skeleton index for merge topology.
+    #[must_use]
+    pub fn eviction_savings(stats: &MergedProgramResidencyStats) -> usize {
+        if !stats.has_skeleton_index {
+            return 0;
+        }
+        // Pre-merge bind data can be freed; skeleton retains merge topology
+        stats
+            .pre_merge_bind_total_bytes
+            .saturating_sub(stats.skeleton_estimated_size_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn low_pressure_below_watermark() {
+        let budget = ResidencyBudget {
+            low_watermark_bytes: 1000,
+            high_watermark_bytes: 2000,
+        };
+        let stats = MergedProgramResidencyStats {
+            file_count: 1,
+            bound_file_arena_count: 1,
+            unique_arena_count: 1,
+            symbol_arena_count: 0,
+            declaration_arena_bucket_count: 0,
+            declaration_arena_mapping_count: 0,
+            has_skeleton_index: false,
+            skeleton_merge_candidate_count: 0,
+            skeleton_total_symbol_count: 0,
+            skeleton_estimated_size_bytes: 0,
+            pre_merge_bind_total_bytes: 300,
+            total_bound_file_bytes: 200,
+        };
+        assert_eq!(budget.assess(&stats), MemoryPressure::Low);
+    }
+
+    #[test]
+    fn high_pressure_above_watermark() {
+        let budget = ResidencyBudget {
+            low_watermark_bytes: 1000,
+            high_watermark_bytes: 2000,
+        };
+        let stats = MergedProgramResidencyStats {
+            file_count: 100,
+            bound_file_arena_count: 100,
+            unique_arena_count: 50,
+            symbol_arena_count: 100,
+            declaration_arena_bucket_count: 50,
+            declaration_arena_mapping_count: 200,
+            has_skeleton_index: true,
+            skeleton_merge_candidate_count: 10,
+            skeleton_total_symbol_count: 500,
+            skeleton_estimated_size_bytes: 50,
+            pre_merge_bind_total_bytes: 1500,
+            total_bound_file_bytes: 1000,
+        };
+        assert_eq!(budget.assess(&stats), MemoryPressure::High);
+    }
+
+    #[test]
+    fn eviction_savings_estimates_freed_bytes() {
+        let stats = MergedProgramResidencyStats {
+            file_count: 10,
+            bound_file_arena_count: 10,
+            unique_arena_count: 5,
+            symbol_arena_count: 10,
+            declaration_arena_bucket_count: 5,
+            declaration_arena_mapping_count: 20,
+            has_skeleton_index: true,
+            skeleton_merge_candidate_count: 3,
+            skeleton_total_symbol_count: 50,
+            skeleton_estimated_size_bytes: 1000,
+            pre_merge_bind_total_bytes: 50_000,
+            total_bound_file_bytes: 20_000,
+        };
+        // Savings = pre_merge - skeleton = 50000 - 1000 = 49000
+        assert_eq!(ResidencyBudget::eviction_savings(&stats), 49_000);
+    }
+
+    #[test]
+    fn no_eviction_without_skeleton() {
+        let stats = MergedProgramResidencyStats {
+            file_count: 10,
+            bound_file_arena_count: 10,
+            unique_arena_count: 5,
+            symbol_arena_count: 10,
+            declaration_arena_bucket_count: 5,
+            declaration_arena_mapping_count: 20,
+            has_skeleton_index: false,
+            skeleton_merge_candidate_count: 0,
+            skeleton_total_symbol_count: 0,
+            skeleton_estimated_size_bytes: 0,
+            pre_merge_bind_total_bytes: 50_000,
+            total_bound_file_bytes: 20_000,
+        };
+        assert_eq!(ResidencyBudget::eviction_savings(&stats), 0);
+    }
+}
