@@ -145,10 +145,7 @@ impl<'a> CheckerState<'a> {
         };
         let Some(target_idx) = self
             .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&export_sym_id)
-            .copied()
+            .resolve_symbol_file_index(export_sym_id)
             .or_else(|| self.ctx.resolve_import_target(module_name))
         else {
             return false;
@@ -225,10 +222,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
         let symbol = self.ctx.binder.get_symbol(sym_id).or_else(|| {
             self.ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .copied()
+                .resolve_symbol_file_index(sym_id)
                 .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
                 .and_then(|binder| binder.get_symbol(sym_id))
         })?;
@@ -322,10 +316,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol(resolved_sym_id)
             .or_else(|| {
                 self.ctx
-                    .cross_file_symbol_targets
-                    .borrow()
-                    .get(&resolved_sym_id)
-                    .copied()
+                    .resolve_symbol_file_index(resolved_sym_id)
                     .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
                     .and_then(|binder| binder.get_symbol(resolved_sym_id))
             })
@@ -334,12 +325,7 @@ impl<'a> CheckerState<'a> {
             & (symbol_flags::CLASS | symbol_flags::ABSTRACT))
             == (symbol_flags::CLASS | symbol_flags::ABSTRACT)
             || {
-                let target_file_idx = self
-                    .ctx
-                    .cross_file_symbol_targets
-                    .borrow()
-                    .get(&resolved_sym_id)
-                    .copied();
+                let target_file_idx = self.ctx.resolve_symbol_file_index(resolved_sym_id);
                 let target_arena = target_file_idx
                     .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
                     .unwrap_or(self.ctx.arena);
