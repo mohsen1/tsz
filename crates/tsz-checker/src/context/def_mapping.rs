@@ -750,4 +750,27 @@ impl<'a> CheckerContext<'a> {
 
         count
     }
+
+    /// Resolve heritage for definitions whose extends/implements targets were
+    /// not found during their batch's pass 2 (cross-batch heritage).
+    ///
+    /// This handles the common case where a user class extends a lib type
+    /// (e.g., `class MyError extends Error`): when `pre_populate_def_ids_from_binder`
+    /// processes the user file, the lib type's `DefId` hasn't been registered yet
+    /// (lib binders are pre-populated separately). After ALL pre-population batches
+    /// complete, this method resolves the remaining heritage using the
+    /// `DefinitionStore`'s name index, which now contains entries from all batches.
+    ///
+    /// Called once during checker construction after all `pre_populate_*` methods.
+    /// Returns the number of heritage links resolved.
+    ///
+    /// NOTE: Currently a no-op stub. Full implementation requires
+    /// `SemanticDefEntry.extends_names`/`implements_names` fields and
+    /// `DefinitionStore::set_heritage`, which are not yet landed.
+    pub fn resolve_cross_batch_heritage(&self) -> usize {
+        // Heritage resolution via SemanticDefEntry is not yet available.
+        // The checker walk resolves heritage through the normal type-checking
+        // pipeline (merge_interface_heritage_types, merge_lib_interface_heritage).
+        0
+    }
 }

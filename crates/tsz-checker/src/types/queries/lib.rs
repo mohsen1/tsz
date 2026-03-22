@@ -6,8 +6,6 @@
 
 use super::lib_resolution::resolve_lib_node_in_lib_contexts;
 use crate::state::{CheckerState, MemberAccessLevel};
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::syntax_kind_ext;
@@ -200,54 +198,9 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
-        // Merge global augmentations (same as resolve_lib_type_by_name)
-        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
-            && !augmentation_decls.is_empty()
-        {
-            let current_arena: &NodeArena = self.ctx.arena;
-
-            // Group augmentation declarations by arena
-            let mut current_file_decls: Vec<NodeIndex> = Vec::new();
-            let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
-                FxHashMap::default();
-
-            for aug in augmentation_decls {
-                if let Some(ref arena) = aug.arena {
-                    let key = Arc::as_ptr(arena) as usize;
-                    cross_file_groups
-                        .entry(key)
-                        .or_insert_with(|| (Arc::clone(arena), Vec::new()))
-                        .1
-                        .push(aug.node);
-                } else {
-                    current_file_decls.push(aug.node);
-                }
-            }
-
-            // Lower current-file augmentations using the shared helper.
-            if !current_file_decls.is_empty() {
-                let aug_type = self.lower_augmentation_for_arena(
-                    current_arena,
-                    &current_file_decls,
-                    lib_contexts,
-                );
-                lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(factory.intersection2(lib_type, aug_type))
-                } else {
-                    Some(aug_type)
-                };
-            }
-
-            // Lower cross-file augmentations (each group uses its own arena)
-            for (arena, decls) in cross_file_groups.values() {
-                let aug_type =
-                    self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
-                lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(factory.intersection2(lib_type, aug_type))
-                } else {
-                    Some(aug_type)
-                };
-            }
+        // Merge global augmentations (declare global { interface X { ... } }).
+        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
+            lib_type_id = Some(merged);
         }
 
         (lib_type_id, first_params.unwrap_or_default())

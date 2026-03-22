@@ -895,57 +895,9 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
 
-        // Check for global augmentations that should merge with this type.
-        // Augmentations may come from the current file or other files (cross-file merge).
-        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
-            && !augmentation_decls.is_empty()
-        {
-            // Group augmentation declarations by arena.
-            // Declarations with arena=None use the current file's arena.
-            let current_arena: &NodeArena = self.ctx.arena;
-
-            // Collect declarations grouped by arena pointer identity
-            let mut current_file_decls: Vec<NodeIndex> = Vec::new();
-            let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
-                FxHashMap::default();
-
-            for aug in augmentation_decls {
-                if let Some(ref arena) = aug.arena {
-                    let key = Arc::as_ptr(arena) as usize;
-                    cross_file_groups
-                        .entry(key)
-                        .or_insert_with(|| (Arc::clone(arena), Vec::new()))
-                        .1
-                        .push(aug.node);
-                } else {
-                    current_file_decls.push(aug.node);
-                }
-            }
-
-            // Lower current-file augmentations using the shared helper.
-            if !current_file_decls.is_empty() {
-                let aug_type = self.lower_augmentation_for_arena(
-                    current_arena,
-                    &current_file_decls,
-                    &lib_contexts,
-                );
-                lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(factory.intersection2(lib_type, aug_type))
-                } else {
-                    Some(aug_type)
-                };
-            }
-
-            // Lower cross-file augmentations (each group uses its own arena)
-            for (arena, decls) in cross_file_groups.values() {
-                let aug_type =
-                    self.lower_augmentation_for_arena(arena.as_ref(), decls, &lib_contexts);
-                lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(factory.intersection2(lib_type, aug_type))
-                } else {
-                    Some(aug_type)
-                };
-            }
+        // Merge global augmentations (declare global { interface X { ... } }).
+        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
+            lib_type_id = Some(merged);
         }
 
         // Process heritage clauses from global augmentations.
@@ -1106,5 +1058,69 @@ impl<'a> CheckerState<'a> {
         )
         .with_name_def_id_resolver(&name_resolver);
         lowering.lower_interface_declarations(decls)
+    }
+
+    /// Merge global augmentations for `name` into `lib_type_id`.
+    ///
+    /// This consolidates the augmentation-merge pattern that was previously
+    /// duplicated between `resolve_lib_type_by_name` and
+    /// `resolve_lib_type_with_params`. Both callers group augmentation
+    /// declarations by arena (current-file vs cross-file), lower each group
+    /// via [`lower_augmentation_for_arena`], and merge via intersection.
+    pub(crate) fn merge_global_augmentations(
+        &self,
+        name: &str,
+        lib_type_id: Option<TypeId>,
+        lib_contexts: &[crate::context::LibContext],
+    ) -> Option<TypeId> {
+        let augmentation_decls = self.ctx.binder.global_augmentations.get(name)?;
+        if augmentation_decls.is_empty() {
+            return lib_type_id;
+        }
+
+        let factory = self.ctx.types.factory();
+        let current_arena: &NodeArena = self.ctx.arena;
+        let mut result = lib_type_id;
+
+        // Group augmentation declarations by arena.
+        let mut current_file_decls: Vec<NodeIndex> = Vec::new();
+        let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
+            FxHashMap::default();
+
+        for aug in augmentation_decls {
+            if let Some(ref arena) = aug.arena {
+                let key = Arc::as_ptr(arena) as usize;
+                cross_file_groups
+                    .entry(key)
+                    .or_insert_with(|| (Arc::clone(arena), Vec::new()))
+                    .1
+                    .push(aug.node);
+            } else {
+                current_file_decls.push(aug.node);
+            }
+        }
+
+        // Lower current-file augmentations.
+        if !current_file_decls.is_empty() {
+            let aug_type =
+                self.lower_augmentation_for_arena(current_arena, &current_file_decls, lib_contexts);
+            result = Some(if let Some(lib_type) = result {
+                factory.intersection2(lib_type, aug_type)
+            } else {
+                aug_type
+            });
+        }
+
+        // Lower cross-file augmentations (each group uses its own arena).
+        for (arena, decls) in cross_file_groups.values() {
+            let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
+            result = Some(if let Some(lib_type) = result {
+                factory.intersection2(lib_type, aug_type)
+            } else {
+                aug_type
+            });
+        }
+
+        result
     }
 }
