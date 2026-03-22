@@ -9495,8 +9495,14 @@ fn fix_numeric_separator_stripped_in_type_position() {
     // tsc strips numeric separators in .d.ts output
     let output = emit_dts("export declare const x: 1_000_000;");
     println!("numeric sep:\n{output}");
-    assert!(output.contains("1000000"), "numeric separator should be stripped: {output}");
-    assert!(!output.contains("1_000_000"), "underscore should not appear: {output}");
+    assert!(
+        output.contains("1000000"),
+        "numeric separator should be stripped: {output}"
+    );
+    assert!(
+        !output.contains("1_000_000"),
+        "underscore should not appear: {output}"
+    );
 }
 
 #[test]
@@ -9504,7 +9510,10 @@ fn fix_numeric_separator_hex_with_sep() {
     // tsc converts hex with separators to decimal
     let output = emit_dts("export declare const x: 0xFF_FF;");
     println!("hex sep:\n{output}");
-    assert!(output.contains("65535"), "hex with separator should be decimal 65535: {output}");
+    assert!(
+        output.contains("65535"),
+        "hex with separator should be decimal 65535: {output}"
+    );
 }
 
 #[test]
@@ -9512,7 +9521,10 @@ fn fix_numeric_separator_preserved_no_sep() {
     // Without separators, numeric literals should be preserved as-is
     let output = emit_dts("export declare const x: 0xFF;");
     println!("hex no sep:\n{output}");
-    assert!(output.contains("0xFF"), "hex without separator preserved: {output}");
+    assert!(
+        output.contains("0xFF"),
+        "hex without separator preserved: {output}"
+    );
 }
 
 #[test]
@@ -9520,7 +9532,10 @@ fn fix_numeric_separator_decimal_no_sep() {
     // Decimal without separator preserved
     let output = emit_dts("export declare const x: 42;");
     println!("decimal no sep:\n{output}");
-    assert!(output.contains("42"), "decimal without separator preserved: {output}");
+    assert!(
+        output.contains("42"),
+        "decimal without separator preserved: {output}"
+    );
 }
 
 #[test]
@@ -9528,7 +9543,10 @@ fn fix_enum_cross_reference() {
     // tsc computes cross-enum references
     let output = emit_dts("export enum A { X = 1 }\nexport enum B { Y = A.X }");
     println!("enum cross-ref:\n{output}");
-    assert!(output.contains("Y = 1"), "cross-enum ref should be resolved to 1: {output}");
+    assert!(
+        output.contains("Y = 1"),
+        "cross-enum ref should be resolved to 1: {output}"
+    );
 }
 
 #[test]
@@ -9536,7 +9554,10 @@ fn fix_enum_cross_reference_computed() {
     // Cross-enum reference with computation
     let output = emit_dts("export enum A { X = 1, Y = 2 }\nexport enum B { Z = A.X + A.Y }");
     println!("enum cross-ref computed:\n{output}");
-    assert!(output.contains("Z = 3"), "cross-enum ref should compute to 3: {output}");
+    assert!(
+        output.contains("Z = 3"),
+        "cross-enum ref should compute to 3: {output}"
+    );
 }
 
 #[test]
@@ -9545,8 +9566,14 @@ fn fix_template_literal_escape_preserved() {
     let output = emit_dts(r#"export type T = `hello\nworld`;"#);
     println!("template escape:\n{output}");
     // Should preserve \n as escape sequence, not emit actual newline
-    assert!(output.contains(r#"`hello\nworld`"#), "escape sequence should be preserved: {output}");
-    assert!(!output.contains("hello\nworld"), "actual newline should not appear in template: {output}");
+    assert!(
+        output.contains(r#"`hello\nworld`"#),
+        "escape sequence should be preserved: {output}"
+    );
+    assert!(
+        !output.contains("hello\nworld"),
+        "actual newline should not appear in template: {output}"
+    );
 }
 
 #[test]
@@ -9554,7 +9581,10 @@ fn fix_template_literal_simple() {
     // Template literal without escapes should work as before
     let output = emit_dts("export type T = `hello world`;");
     println!("template simple:\n{output}");
-    assert!(output.contains("`hello world`"), "simple template: {output}");
+    assert!(
+        output.contains("`hello world`"),
+        "simple template: {output}"
+    );
 }
 
 #[test]
@@ -9562,7 +9592,10 @@ fn fix_template_literal_with_types() {
     // Template literal with type substitutions
     let output = emit_dts("export type T = `hello ${string}`;");
     println!("template with type:\n{output}");
-    assert!(output.contains("`hello ${string}`"), "template with type: {output}");
+    assert!(
+        output.contains("`hello ${string}`"),
+        "template with type: {output}"
+    );
 }
 
 #[test]
@@ -9570,8 +9603,14 @@ fn fix_numeric_sep_negative() {
     // Negative number with separator
     let output = emit_dts("export declare const x: -1_000;");
     println!("negative sep:\n{output}");
-    assert!(output.contains("-1000"), "negative with separator: {output}");
-    assert!(!output.contains("_"), "underscore should be stripped: {output}");
+    assert!(
+        output.contains("-1000"),
+        "negative with separator: {output}"
+    );
+    assert!(
+        !output.contains("_"),
+        "underscore should be stripped: {output}"
+    );
 }
 
 #[test]
@@ -9581,7 +9620,10 @@ fn fix_numeric_sep_binary() {
     println!("binary sep:\n{output}");
     // tsc preserves binary notation without separators
     // Actually tsc converts to decimal for non-decimal with separators
-    assert!(!output.contains("_"), "underscore should be stripped: {output}");
+    assert!(
+        !output.contains("_"),
+        "underscore should be stripped: {output}"
+    );
 }
 
 #[test]
@@ -9589,8 +9631,14 @@ fn fix_numeric_sep_bigint() {
     // BigInt with separator
     let output = emit_dts("export declare const x: 1_000n;");
     println!("bigint sep:\n{output}");
-    assert!(!output.contains("_"), "underscore should be stripped: {output}");
-    assert!(output.contains("1000n"), "bigint separator stripped: {output}");
+    assert!(
+        !output.contains("_"),
+        "underscore should be stripped: {output}"
+    );
+    assert!(
+        output.contains("1000n"),
+        "bigint separator stripped: {output}"
+    );
 }
 
 #[test]
@@ -9598,7 +9646,10 @@ fn fix_template_literal_tab_escape() {
     // Template literal with tab escape
     let output = emit_dts(r#"export type T = `hello\tworld`;"#);
     println!("template tab:\n{output}");
-    assert!(output.contains(r#"`hello\tworld`"#), "tab escape preserved: {output}");
+    assert!(
+        output.contains(r#"`hello\tworld`"#),
+        "tab escape preserved: {output}"
+    );
 }
 
 #[test]
@@ -9606,7 +9657,10 @@ fn fix_template_literal_multi_substitution() {
     // Template literal with multiple type substitutions
     let output = emit_dts("export type T = `${string}-${number}`;");
     println!("template multi sub:\n{output}");
-    assert!(output.contains("`${string}-${number}`"), "multi substitution: {output}");
+    assert!(
+        output.contains("`${string}-${number}`"),
+        "multi substitution: {output}"
+    );
 }
 
 #[test]
@@ -9614,7 +9668,10 @@ fn fix_template_literal_backtick_in_template() {
     // Template literal with escaped backtick
     let output = emit_dts(r#"export type T = `hello\`world`;"#);
     println!("template backtick:\n{output}");
-    assert!(output.contains(r"`hello\`world`"), "escaped backtick: {output}");
+    assert!(
+        output.contains(r"`hello\`world`"),
+        "escaped backtick: {output}"
+    );
 }
 
 #[test]
