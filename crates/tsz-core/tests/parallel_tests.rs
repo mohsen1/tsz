@@ -4947,3 +4947,166 @@ fn create_binder_from_bound_file_composes_per_file_and_global() {
         "Foo should have file_id 0 from per-file overlay"
     );
 }
+
+// =============================================================================
+// Declaration merging accumulation survival through merge pipeline
+// =============================================================================
+
+#[test]
+fn semantic_defs_heritage_accumulation_survives_merge() {
+    // Within-file interface merging should accumulate heritage_names,
+    // and this enriched entry should survive the merge pipeline.
+    let files = vec![(
+        "a.ts".to_string(),
+        "
+interface Merged extends A { a: string }
+interface Merged extends B { b: number }
+interface Merged extends C { c: boolean }
+"
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Merged")
+        .expect("Merged should be in semantic_defs");
+    assert!(
+        entry.heritage_names.contains(&"A".to_string()),
+        "heritage should include A after merge"
+    );
+    assert!(
+        entry.heritage_names.contains(&"B".to_string()),
+        "heritage should include B after merge"
+    );
+    assert!(
+        entry.heritage_names.contains(&"C".to_string()),
+        "heritage should include C after merge"
+    );
+}
+
+#[test]
+fn semantic_defs_enum_member_accumulation_survives_merge() {
+    // Within-file enum merging should accumulate members,
+    // and this enriched entry should survive the merge pipeline.
+    let files = vec![(
+        "a.ts".to_string(),
+        "
+enum Direction { Up, Down }
+enum Direction { Left, Right }
+"
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Direction")
+        .expect("Direction should be in semantic_defs");
+    assert_eq!(
+        entry.enum_member_names.len(),
+        4,
+        "all 4 enum members should survive merge"
+    );
+    assert!(entry.enum_member_names.contains(&"Up".to_string()));
+    assert!(entry.enum_member_names.contains(&"Down".to_string()));
+    assert!(entry.enum_member_names.contains(&"Left".to_string()));
+    assert!(entry.enum_member_names.contains(&"Right".to_string()));
+}
+
+#[test]
+fn semantic_defs_type_param_promotion_survives_merge() {
+    // Within-file interface augmentation that adds type params should
+    // have the promoted type_param_count survive merge.
+    let files = vec![(
+        "a.ts".to_string(),
+        "
+interface Container { base: string }
+interface Container<T> { extra: T }
+"
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let entry = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Container")
+        .expect("Container should be in semantic_defs");
+    assert_eq!(
+        entry.type_param_count, 1,
+        "type_param_count promotion should survive merge"
+    );
+}
+
+#[test]
+fn semantic_defs_enriched_heritage_in_bound_file() {
+    // Verify the per-file BoundFile.semantic_defs also carries
+    // the accumulated heritage_names.
+    let files = vec![(
+        "a.ts".to_string(),
+        "
+interface Extended extends Base { a: string }
+interface Extended extends Extra { b: number }
+"
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Check the per-file BoundFile
+    let file_entry = program.files[0]
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Extended")
+        .expect("Extended should be in BoundFile.semantic_defs");
+    assert!(
+        file_entry.heritage_names.contains(&"Base".to_string()),
+        "per-file entry should have Base heritage"
+    );
+    assert!(
+        file_entry.heritage_names.contains(&"Extra".to_string()),
+        "per-file entry should have Extra heritage"
+    );
+}
+
+#[test]
+fn semantic_defs_enriched_data_survives_binder_reconstruction() {
+    // The composed binder (from create_binder_from_bound_file) should
+    // preserve enriched heritage data from declaration merging.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "
+interface Composed extends A { a: string }
+interface Composed extends B { b: number }
+"
+            .to_string(),
+        ),
+        ("b.ts".to_string(), "export class Other {}".to_string()),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Reconstruct binder for file a
+    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    let entry = binder_a
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Composed")
+        .expect("Composed should be in reconstructed binder's semantic_defs");
+    assert!(
+        entry.heritage_names.contains(&"A".to_string()),
+        "reconstructed binder should preserve heritage A"
+    );
+    assert!(
+        entry.heritage_names.contains(&"B".to_string()),
+        "reconstructed binder should preserve heritage B"
+    );
+}

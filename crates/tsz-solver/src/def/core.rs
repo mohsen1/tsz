@@ -177,6 +177,18 @@ pub struct DefinitionInfo {
     /// E.g., `class Foo extends Bar` stores `["Bar"]` so that
     /// `resolve_heritage` can look up the `Bar` DefId by name.
     pub heritage_names: Vec<String>,
+
+    /// Whether this is an `abstract class` declaration.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
+    pub is_abstract: bool,
+
+    /// Whether this is a `const enum` declaration.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
+    pub is_const: bool,
+
+    /// Whether this declaration is exported.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
+    pub is_exported: bool,
 }
 
 /// Enum member value.
@@ -208,6 +220,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -244,6 +259,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -283,6 +301,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -303,6 +324,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -323,6 +347,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 

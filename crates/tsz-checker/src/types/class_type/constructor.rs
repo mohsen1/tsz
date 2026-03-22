@@ -221,6 +221,7 @@ impl<'a> CheckerState<'a> {
                     file_id: None,
                     span: None,
                     symbol_id,
+                    heritage_names: Vec::new(),
                     is_abstract: false,
                     is_const: false,
                     is_exported: false,

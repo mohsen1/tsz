@@ -2444,9 +2444,36 @@ impl BinderState {
         if !is_top_level {
             return;
         }
-        // Don't overwrite if already recorded (declaration merging case —
-        // keep the first declaration's identity stable).
-        if self.semantic_defs.contains_key(&sym_id) {
+        // Declaration merging: keep the first declaration's core identity stable
+        // (kind, name, span, file_id) but accumulate heritage_names and
+        // type_param_count from later declarations.  This ensures the
+        // pre-populated DefinitionInfo has complete heritage information
+        // (e.g., `interface A extends B {}` + `interface A extends C {}`
+        // yields heritage_names = ["B", "C"]).
+        if let Some(existing) = self.semantic_defs.get_mut(&sym_id) {
+            // Accumulate new heritage_names that aren't already present.
+            for h in &heritage_names {
+                if !existing.heritage_names.contains(h) {
+                    existing.heritage_names.push(h.clone());
+                }
+            }
+            // If the first declaration had no type params but this one does
+            // (e.g., augmentation adds generics), update the arity.
+            if existing.type_param_count == 0 && type_param_count > 0 {
+                existing.type_param_count = type_param_count;
+            }
+            // If the later declaration is exported, mark as exported.
+            if is_exported {
+                existing.is_exported = true;
+            }
+            // Accumulate enum members from later enum declarations.
+            if !enum_member_names.is_empty() {
+                for m in &enum_member_names {
+                    if !existing.enum_member_names.contains(m) {
+                        existing.enum_member_names.push(m.clone());
+                    }
+                }
+            }
             return;
         }
         self.semantic_defs.insert(
