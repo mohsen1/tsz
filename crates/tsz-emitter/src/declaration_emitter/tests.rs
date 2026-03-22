@@ -10051,9 +10051,7 @@ fn explore_intersection_type_in_union() {
 #[test]
 fn explore_function_type_in_conditional_extends() {
     // Function type in conditional extends position might need parens
-    let output = emit_dts(
-        "export type T<F> = F extends (() => infer R) ? R : never;",
-    );
+    let output = emit_dts("export type T<F> = F extends (() => infer R) ? R : never;");
     println!("fn in conditional:\n{output}");
     assert!(
         output.contains("infer R"),
@@ -10142,9 +10140,7 @@ fn explore_class_with_declare_property() {
 
 #[test]
 fn explore_async_generator() {
-    let output = emit_dts(
-        "export async function* gen(): AsyncGenerator<number> { yield 1; }",
-    );
+    let output = emit_dts("export async function* gen(): AsyncGenerator<number> { yield 1; }");
     println!("async generator:\n{output}");
     // tsc strips async and * from .d.ts
     assert!(
@@ -10186,9 +10182,8 @@ fn explore_constructor_type_with_generics() {
 
 #[test]
 fn explore_nested_generics_in_function_type() {
-    let output = emit_dts(
-        "export type T = <A, B extends Record<string, A>>(x: A, y: B) => Map<A, B>;",
-    );
+    let output =
+        emit_dts("export type T = <A, B extends Record<string, A>>(x: A, y: B) => Map<A, B>;");
     println!("nested generics:\n{output}");
     assert!(
         output.contains("<A, B extends Record<string, A>>"),
@@ -10440,9 +10435,7 @@ fn explore_interface_with_string_index_and_numeric_index() {
 
 #[test]
 fn explore_readonly_tuple_with_labels() {
-    let output = emit_dts(
-        "export type Point3D = readonly [x: number, y: number, z: number];",
-    );
+    let output = emit_dts("export type Point3D = readonly [x: number, y: number, z: number];");
     println!("readonly labeled tuple:\n{output}");
     assert!(
         output.contains("readonly [x: number, y: number, z: number]"),
@@ -10505,9 +10498,7 @@ fn explore_class_with_index_and_computed_symbol() {
 
 #[test]
 fn explore_multiple_export_as() {
-    let output = emit_dts(
-        "export { default as React } from 'react';",
-    );
+    let output = emit_dts("export { default as React } from 'react';");
     println!("export as:\n{output}");
     assert!(
         output.contains("default as React"),
@@ -10534,10 +10525,7 @@ fn explore_class_with_definite_and_optional_properties() {
         output.contains("baz: number;"),
         "definite assignment should be stripped: {output}"
     );
-    assert!(
-        !output.contains("baz!:"),
-        "! should not appear: {output}"
-    );
+    assert!(!output.contains("baz!:"), "! should not appear: {output}");
     assert!(
         output.contains("qux: boolean;"),
         "normal prop should be preserved: {output}"
@@ -10568,9 +10556,7 @@ fn explore_class_with_only_static_block() {
 
 #[test]
 fn explore_template_literal_with_multiple_spans() {
-    let output = emit_dts(
-        "export type EventKey = `${string}_${number}_${boolean}`;",
-    );
+    let output = emit_dts("export type EventKey = `${string}_${number}_${boolean}`;");
     println!("multi-span template:\n{output}");
     assert!(
         output.contains("`${string}_${number}_${boolean}`"),
@@ -10580,9 +10566,7 @@ fn explore_template_literal_with_multiple_spans() {
 
 #[test]
 fn explore_conditional_type_distributive_constraint() {
-    let output = emit_dts(
-        "export type Exclude<T, U> = T extends U ? never : T;",
-    );
+    let output = emit_dts("export type Exclude<T, U> = T extends U ? never : T;");
     println!("exclude type:\n{output}");
     let expected = "export type Exclude<T, U> = T extends U ? never : T;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
@@ -10611,16 +10595,17 @@ fn explore_class_protected_static_abstract() {
     println!("protected static abstract:\n{output}");
     // Order in tsc: protected static abstract or protected abstract static
     assert!(
-        output.contains("protected") && output.contains("static") && output.contains("abstract") && output.contains("create()"),
+        output.contains("protected")
+            && output.contains("static")
+            && output.contains("abstract")
+            && output.contains("create()"),
         "all modifiers should be present: {output}"
     );
 }
 
 #[test]
 fn explore_function_type_with_rest_and_optional() {
-    let output = emit_dts(
-        "export type Fn = (a: string, b?: number, ...rest: boolean[]) => void;",
-    );
+    let output = emit_dts("export type Fn = (a: string, b?: number, ...rest: boolean[]) => void;");
     println!("fn type rest+opt:\n{output}");
     assert!(
         output.contains("(a: string, b?: number, ...rest: boolean[]) => void"),
@@ -10663,7 +10648,8 @@ fn exact_tsc_assertion_function_simple() {
 #[test]
 fn exact_tsc_assertion_function_with_type() {
     // tsc output: export declare function assertStr(val: unknown): asserts val is string;
-    let output = emit_dts("export declare function assertStr(val: unknown): asserts val is string;");
+    let output =
+        emit_dts("export declare function assertStr(val: unknown): asserts val is string;");
     println!("assertion fn typed:\n{output}");
     let expected = "export declare function assertStr(val: unknown): asserts val is string;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
@@ -10721,7 +10707,8 @@ fn exact_tsc_construct_signatures() {
 }",
     );
     println!("construct sigs:\n{output}");
-    let expected = "export interface I2 {\n    new (x: string): object;\n    new (x: number): object;\n}\n";
+    let expected =
+        "export interface I2 {\n    new (x: string): object;\n    new (x: number): object;\n}\n";
     assert_eq!(output, expected, "Mismatch with tsc");
 }
 
@@ -10751,7 +10738,9 @@ fn exact_tsc_nonnullable() {
 
 #[test]
 fn exact_tsc_returntype() {
-    let output = emit_dts("export type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;");
+    let output = emit_dts(
+        "export type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;",
+    );
     println!("returntype:\n{output}");
     let expected = "export type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
@@ -10776,7 +10765,8 @@ fn exact_tsc_class_with_static_block() {
 
 #[test]
 fn exact_tsc_this_parameter() {
-    let output = emit_dts("export declare function handler(this: HTMLElement, event: Event): void;");
+    let output =
+        emit_dts("export declare function handler(this: HTMLElement, event: Event): void;");
     println!("this param:\n{output}");
     let expected = "export declare function handler(this: HTMLElement, event: Event): void;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
@@ -10832,15 +10822,19 @@ fn exact_tsc_recursive_type() {
 };",
     );
     println!("recursive type:\n{output}");
-    let expected = "export type LinkedList<T> = {\n    value: T;\n    next: LinkedList<T> | null;\n};\n";
+    let expected =
+        "export type LinkedList<T> = {\n    value: T;\n    next: LinkedList<T> | null;\n};\n";
     assert_eq!(output, expected, "Mismatch with tsc");
 }
 
 #[test]
 fn exact_tsc_unwrap_promise() {
-    let output = emit_dts("export type UnwrapPromise<T> = T extends Promise<infer U> ? UnwrapPromise<U> : T;");
+    let output = emit_dts(
+        "export type UnwrapPromise<T> = T extends Promise<infer U> ? UnwrapPromise<U> : T;",
+    );
     println!("unwrap promise:\n{output}");
-    let expected = "export type UnwrapPromise<T> = T extends Promise<infer U> ? UnwrapPromise<U> : T;\n";
+    let expected =
+        "export type UnwrapPromise<T> = T extends Promise<infer U> ? UnwrapPromise<U> : T;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
 }
 
@@ -10858,7 +10852,8 @@ fn exact_tsc_complex_mapped_merge() {
 
 #[test]
 fn exact_tsc_abstract_constructor_type_alias() {
-    let output = emit_dts("export type AbstractConstructor = abstract new (...args: any[]) => any;");
+    let output =
+        emit_dts("export type AbstractConstructor = abstract new (...args: any[]) => any;");
     println!("abstract ctor type:\n{output}");
     let expected = "export type AbstractConstructor = abstract new (...args: any[]) => any;\n";
     assert_eq!(output, expected, "Mismatch with tsc");
@@ -10926,6 +10921,7 @@ fn exact_tsc_class_with_instance_and_static_accessor() {
 }",
     );
     println!("accessors:\n{output}");
-    let expected = "export declare class C {\n    accessor x: number;\n    static accessor y: string;\n}\n";
+    let expected =
+        "export declare class C {\n    accessor x: number;\n    static accessor y: string;\n}\n";
     assert_eq!(output, expected, "Mismatch with tsc");
 }
