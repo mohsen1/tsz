@@ -86,6 +86,19 @@ pub struct FileInfo {
     pub reasons: Vec<FileInclusionReason>,
 }
 
+/// Module-level dependency graph statistics for `--extendedDiagnostics`.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleDependencyStats {
+    /// Number of source files in the program (excluding lib files).
+    pub file_count: usize,
+    /// Total number of resolved import edges (file A imports file B).
+    pub dependency_edges: usize,
+    /// Number of strongly-connected components with more than one file (import cycles).
+    pub import_cycles: usize,
+    /// Size of the largest import cycle (0 if no cycles).
+    pub largest_cycle_size: usize,
+}
+
 /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
 ///
 /// Matches tsc's output categories: I/O read, parse+bind, check, emit.
@@ -125,6 +138,8 @@ pub struct CompilationResult {
     pub phase_timings: PhaseTimings,
     /// Merged-program residency stats (populated for `--extendedDiagnostics`).
     pub residency_stats: Option<tsz::parallel::residency::MergedProgramResidencyStats>,
+    /// Module dependency graph statistics (populated for `--extendedDiagnostics`).
+    pub module_dep_stats: Option<ModuleDependencyStats>,
     /// Invalidation summaries for files changed in this compilation.
     ///
     /// Populated by `compile_with_cache_and_changes` (watch-mode incremental path).
@@ -865,6 +880,7 @@ fn compile_inner(
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
             residency_stats: None,
+            module_dep_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -900,6 +916,7 @@ fn compile_inner(
                     def_store_stats: None,
                     phase_timings: PhaseTimings::default(),
                     residency_stats: None,
+                    module_dep_stats: None,
                     invalidation_summaries: Vec::new(),
                 });
             }
@@ -989,6 +1006,7 @@ fn compile_inner(
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
             residency_stats: None,
+            module_dep_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1062,6 +1080,7 @@ fn compile_inner(
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
             residency_stats: None,
+            module_dep_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1518,6 +1537,7 @@ fn compile_inner(
             total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
         },
         residency_stats: Some(program.residency_stats()),
+        module_dep_stats: collected.module_dep_stats,
         invalidation_summaries: Vec::new(),
     })
 }
@@ -1538,6 +1558,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         def_store_stats: None,
         phase_timings: PhaseTimings::default(),
         residency_stats: None,
+        module_dep_stats: None,
         invalidation_summaries: Vec::new(),
     }
 }
