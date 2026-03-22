@@ -1477,6 +1477,14 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
                 rs.file_count, rs.unique_arena_count,
             );
             println!(
+                "Pre-merge bind memory:         {}KB",
+                rs.pre_merge_bind_total_bytes / 1024,
+            );
+            println!(
+                "Bound file metadata:           {}KB",
+                rs.total_bound_file_bytes / 1024,
+            );
+            println!(
                 "Symbol arena entries:           {}",
                 rs.symbol_arena_count,
             );

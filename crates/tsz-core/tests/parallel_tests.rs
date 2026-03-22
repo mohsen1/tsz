@@ -4022,3 +4022,84 @@ fn test_pre_merge_bind_total_bytes_scales_with_file_count() {
         prog1.pre_merge_bind_total_bytes
     );
 }
+
+#[test]
+fn test_bound_file_estimated_size_bytes_nonzero() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export function b(x: number) { if (x > 0) return x; return -x; }".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    for file in &program.files {
+        let size = file.estimated_size_bytes();
+        assert!(
+            size > 0,
+            "BoundFile '{}' should have nonzero estimated size",
+            file.file_name,
+        );
+    }
+}
+
+#[test]
+fn test_bound_file_estimated_size_scales_with_complexity() {
+    let files = vec![
+        ("small.ts".to_string(), "const x = 1;".to_string()),
+        (
+            "large.ts".to_string(),
+            r#"
+            export function f(x: number, y: string) {
+                if (x > 0) { return y.toUpperCase(); }
+                else if (x < 0) { return y.toLowerCase(); }
+                switch (y) {
+                    case "a": return "A";
+                    case "b": return "B";
+                    default: return y;
+                }
+            }
+            export const arr = [1, 2, 3];
+            export interface Foo { bar: string; baz: number; }
+            "#
+            .to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    let small = program.files.iter().find(|f| f.file_name.contains("small")).unwrap();
+    let large = program.files.iter().find(|f| f.file_name.contains("large")).unwrap();
+
+    assert!(
+        large.estimated_size_bytes() > small.estimated_size_bytes(),
+        "larger file ({} bytes) should have bigger estimate than small file ({} bytes)",
+        large.estimated_size_bytes(),
+        small.estimated_size_bytes(),
+    );
+}
+
+#[test]
+fn test_residency_stats_total_bound_file_bytes_nonzero() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert!(
+        stats.total_bound_file_bytes > 0,
+        "total_bound_file_bytes should be nonzero for a program with files"
+    );
+
+    // The total should equal the sum of individual file estimates
+    let manual_sum: usize = program.files.iter().map(|f| f.estimated_size_bytes()).sum();
+    assert_eq!(
+        stats.total_bound_file_bytes, manual_sum,
+        "total_bound_file_bytes should equal sum of per-file estimates"
+    );
+}

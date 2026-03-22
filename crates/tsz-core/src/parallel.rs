@@ -2066,6 +2066,93 @@ pub struct BoundFile {
     pub file_features: crate::binder::FileFeatures,
 }
 
+impl BoundFile {
+    /// Estimate the heap memory footprint of this bound file in bytes.
+    ///
+    /// Accounts for the struct itself plus all heap-allocated strings, vecs,
+    /// hash map entries, and flow arena contents. The `NodeArena` behind
+    /// `Arc` counts only the `Arc` overhead (shared data is tracked
+    /// separately via unique-arena deduplication in `MergedProgramResidencyStats`).
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // file_name
+        size += self.file_name.capacity();
+
+        // arena (Arc overhead only — shared data not double-counted)
+        size += std::mem::size_of::<NodeArena>();
+
+        // node_symbols
+        size += self.node_symbols.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
+
+        // module_declaration_exports_publicly
+        size += self.module_declaration_exports_publicly.capacity()
+            * (std::mem::size_of::<u32>() + 1 + 8);
+
+        // scopes
+        size += self.scopes.capacity() * std::mem::size_of::<Scope>();
+        for scope in &self.scopes {
+            size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
+        }
+
+        // node_scope_ids
+        size += self.node_scope_ids.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<ScopeId>() + 8);
+
+        // parse_diagnostics
+        size += self.parse_diagnostics.capacity() * std::mem::size_of::<ParseDiagnostic>();
+        for diag in &self.parse_diagnostics {
+            size += diag.message.capacity();
+        }
+
+        // global_augmentations
+        for (k, v) in &self.global_augmentations {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
+        }
+
+        // module_augmentations
+        for (k, v) in &self.module_augmentations {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
+            for aug in v {
+                size += aug.name.capacity();
+            }
+        }
+
+        // augmentation_target_modules
+        for (_, v) in &self.augmentation_target_modules {
+            size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
+        }
+
+        // flow_nodes
+        size += self.flow_nodes.len() * std::mem::size_of::<crate::binder::FlowNode>();
+        for flow_node in self.flow_nodes.iter() {
+            size += flow_node.antecedent.capacity() * std::mem::size_of::<FlowNodeId>();
+        }
+
+        // node_flow
+        size += self.node_flow.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<FlowNodeId>() + 8);
+
+        // switch_clause_to_switch
+        size += self.switch_clause_to_switch.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
+
+        // expando_properties
+        for (k, v) in &self.expando_properties {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            for s in v {
+                size += s.capacity() + std::mem::size_of::<u64>();
+            }
+        }
+
+        size
+    }
+}
+
 use tsz_solver::TypeInterner;
 
 /// Merged program state after parallel binding
@@ -2162,6 +2249,11 @@ pub struct MergedProgramResidencyStats {
     /// captured before the merge. Useful for comparing pre-merge vs post-merge
     /// memory footprint and for LSP eviction budgeting.
     pub pre_merge_bind_total_bytes: usize,
+    /// Total estimated in-memory size of all `BoundFile` entries in bytes.
+    ///
+    /// Covers per-file metadata (scopes, flow nodes, node maps, augmentations,
+    /// etc.) but not the shared `NodeArena` data behind `Arc`.
+    pub total_bound_file_bytes: usize,
 }
 
 impl MergedProgram {
@@ -2194,6 +2286,9 @@ impl MergedProgram {
                 (false, 0, 0, 0)
             };
 
+        let total_bound_file_bytes: usize =
+            self.files.iter().map(|f| f.estimated_size_bytes()).sum();
+
         MergedProgramResidencyStats {
             file_count: self.files.len(),
             bound_file_arena_count: self.files.len(),
@@ -2210,6 +2305,7 @@ impl MergedProgram {
             skeleton_total_symbol_count: skel_sym_count,
             skeleton_estimated_size_bytes: skel_size,
             pre_merge_bind_total_bytes: self.pre_merge_bind_total_bytes,
+            total_bound_file_bytes,
         }
     }
 }
