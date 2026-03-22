@@ -459,6 +459,188 @@ pub struct BindResult {
     pub file_import_sources: Vec<String>,
 }
 
+impl BindResult {
+    /// Estimate the heap memory footprint of this bind result in bytes.
+    ///
+    /// Accounts for the struct itself plus all heap-allocated strings, vecs,
+    /// hash map entries, and arena contents. Used for memory pressure tracking
+    /// and eviction decisions in the LSP.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // file_name
+        size += self.file_name.capacity();
+
+        // arena (NodeArena behind Arc — count the Arc overhead, not the shared data)
+        size += std::mem::size_of::<NodeArena>();
+
+        // symbols (SymbolArena: Vec<Symbol> + name_index)
+        size += self.symbols.len() * std::mem::size_of::<crate::binder::Symbol>();
+        for sym in self.symbols.iter() {
+            size += sym.escaped_name.capacity();
+            size += sym.declarations.capacity() * std::mem::size_of::<NodeIndex>();
+            if let Some(ref exports) = sym.exports {
+                size += std::mem::size_of::<SymbolTable>();
+                size += exports.len() * (32 + std::mem::size_of::<SymbolId>());
+            }
+            if let Some(ref members) = sym.members {
+                size += std::mem::size_of::<SymbolTable>();
+                size += members.len() * (32 + std::mem::size_of::<SymbolId>());
+            }
+            if let Some(ref s) = sym.import_module {
+                size += s.capacity();
+            }
+            if let Some(ref s) = sym.import_name {
+                size += s.capacity();
+            }
+        }
+
+        // file_locals (SymbolTable)
+        size += self.file_locals.len() * (32 + std::mem::size_of::<SymbolId>());
+
+        // declared_modules
+        for s in &self.declared_modules {
+            size += s.capacity() + std::mem::size_of::<u64>();
+        }
+
+        // module_exports
+        for (k, v) in &self.module_exports {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            size += std::mem::size_of::<SymbolTable>();
+            size += v.len() * (32 + std::mem::size_of::<SymbolId>());
+        }
+
+        // node_symbols
+        size += self.node_symbols.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
+
+        // module_declaration_exports_publicly
+        size += self.module_declaration_exports_publicly.capacity() * (std::mem::size_of::<u32>() + 1 + 8);
+
+        // symbol_arenas (map overhead; shared Arc data not counted)
+        size += self.symbol_arenas.capacity() * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<Arc<NodeArena>>() + 8);
+
+        // declaration_arenas
+        size += self.declaration_arenas.len() * (std::mem::size_of::<(SymbolId, NodeIndex)>() + 32 + 8);
+
+        // scopes
+        size += self.scopes.capacity() * std::mem::size_of::<Scope>();
+        for scope in &self.scopes {
+            size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
+        }
+
+        // node_scope_ids
+        size += self.node_scope_ids.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<ScopeId>() + 8);
+
+        // parse_diagnostics
+        size += self.parse_diagnostics.capacity() * std::mem::size_of::<ParseDiagnostic>();
+        for diag in &self.parse_diagnostics {
+            size += diag.message.capacity();
+        }
+
+        // shorthand_ambient_modules
+        for s in &self.shorthand_ambient_modules {
+            size += s.capacity() + std::mem::size_of::<u64>();
+        }
+
+        // global_augmentations
+        for (k, v) in &self.global_augmentations {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
+        }
+
+        // module_augmentations
+        for (k, v) in &self.module_augmentations {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
+            for aug in v {
+                size += aug.name.capacity();
+            }
+        }
+
+        // augmentation_target_modules
+        for (_, v) in &self.augmentation_target_modules {
+            size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
+        }
+
+        // reexports (FxHashMap<String, FxHashMap<String, (String, Option<String>)>>)
+        for (k, inner) in &self.reexports {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            for (ik, (s1, s2)) in inner {
+                size += ik.capacity() + s1.capacity() + 8;
+                if let Some(s) = s2 {
+                    size += s.capacity();
+                }
+            }
+        }
+
+        // wildcard_reexports
+        for (k, v) in &self.wildcard_reexports {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            for s in v {
+                size += s.capacity();
+            }
+        }
+
+        // wildcard_reexports_type_only
+        for (k, v) in &self.wildcard_reexports_type_only {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            for (s, _) in v {
+                size += s.capacity() + 1;
+            }
+        }
+
+        // lib_binders (Arc overhead only)
+        size += self.lib_binders.capacity() * std::mem::size_of::<Arc<BinderState>>();
+
+        // lib_arenas (Arc overhead only)
+        size += self.lib_arenas.capacity() * std::mem::size_of::<Arc<NodeArena>>();
+
+        // lib_symbol_ids
+        size += self.lib_symbol_ids.len() * (std::mem::size_of::<SymbolId>() + 8);
+
+        // lib_symbol_reverse_remap
+        size += self.lib_symbol_reverse_remap.capacity() * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<(usize, SymbolId)>() + 8);
+
+        // flow_nodes
+        size += self.flow_nodes.len() * std::mem::size_of::<crate::binder::FlowNode>();
+        for flow_node in self.flow_nodes.iter() {
+            size += flow_node.antecedent.capacity() * std::mem::size_of::<FlowNodeId>();
+        }
+
+        // node_flow
+        size += self.node_flow.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<FlowNodeId>() + 8);
+
+        // switch_clause_to_switch
+        size += self.switch_clause_to_switch.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
+
+        // expando_properties
+        for (k, v) in &self.expando_properties {
+            size += k.capacity() + std::mem::size_of::<u64>();
+            for s in v {
+                size += s.capacity() + std::mem::size_of::<u64>();
+            }
+        }
+
+        // alias_partners
+        size += self.alias_partners.capacity() * (std::mem::size_of::<SymbolId>() * 2 + 8);
+
+        // semantic_defs
+        for (_, def) in &self.semantic_defs {
+            size += std::mem::size_of::<SymbolId>() + std::mem::size_of::<crate::binder::SemanticDefEntry>() + 8;
+            size += def.name.capacity();
+        }
+
+        // file_import_sources
+        size += self.file_import_sources.capacity() * std::mem::size_of::<String>();
+        for s in &self.file_import_sources {
+            size += s.capacity();
+        }
+
+        size
+    }
+}
+
 /// Parse and bind multiple files in parallel
 ///
 /// Each file is parsed and bound independently. The binding creates
