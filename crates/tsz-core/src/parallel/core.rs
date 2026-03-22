@@ -1401,6 +1401,7 @@ impl BoundFile {
 }
 
 use tsz_solver::TypeInterner;
+use tsz_solver::def::DefinitionStore;
 
 /// Merged program state after parallel binding
 pub struct MergedProgram {
@@ -1450,6 +1451,12 @@ pub struct MergedProgram {
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver `DefIds`.
     pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    /// Shared `DefinitionStore` pre-populated with `DefId`s for all top-level
+    /// semantic definitions during the merge phase. This moves identity creation
+    /// from checker pre-population (per-file, order-dependent) to merge time
+    /// (single pass, deterministic). Checker contexts receive this via
+    /// `with_options_and_shared_def_store` and only need to warm local caches.
+    pub definition_store: std::sync::Arc<DefinitionStore>,
     /// Skeleton index computed alongside the legacy merge path.
     ///
     /// This captures the same merge-relevant topology (symbol merging, augmentation
@@ -1630,6 +1637,103 @@ fn remap_expando_properties(
             (obj_name.clone(), remapped_props)
         })
         .collect()
+}
+
+/// Pre-populate a `DefinitionStore` from the merged `semantic_defs` map.
+///
+/// This converts each `SemanticDefEntry` into a solver `DefinitionInfo`,
+/// registers it in the store, and records the `(SymbolId, file_id) → DefId`
+/// mapping. The resulting store is shared across all checker contexts so
+/// that `DefId` allocation happens once (at merge time) rather than
+/// per-file during checker pre-population.
+///
+/// The logic mirrors `CheckerContext::populate_def_ids_from_semantic_defs`
+/// but runs earlier in the pipeline without checker context dependencies.
+pub fn pre_populate_definition_store(
+    semantic_defs: &FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    interner: &TypeInterner,
+) -> DefinitionStore {
+    use tsz_solver::def::{DefKind, DefinitionInfo, EnumMemberValue};
+
+    let store = DefinitionStore::new();
+
+    for (&sym_id, entry) in semantic_defs {
+        let kind = match entry.kind {
+            crate::binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
+            crate::binder::SemanticDefKind::Interface => DefKind::Interface,
+            crate::binder::SemanticDefKind::Class => DefKind::Class,
+            crate::binder::SemanticDefKind::Enum => DefKind::Enum,
+            crate::binder::SemanticDefKind::Namespace => DefKind::Namespace,
+            crate::binder::SemanticDefKind::Function => DefKind::Function,
+            crate::binder::SemanticDefKind::Variable => DefKind::Variable,
+        };
+
+        let name = interner.intern_string(&entry.name);
+
+        // Create stub type parameter entries preserving arity.
+        // Real TypeParamInfo is filled in by the checker walk via
+        // DefinitionStore::set_type_params().
+        let type_params = if entry.type_param_count > 0 {
+            (0..entry.type_param_count)
+                .map(|_| tsz_solver::TypeParamInfo {
+                    name: tsz_common::interner::Atom(0),
+                    constraint: None,
+                    default: None,
+                    is_const: false,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let enum_members: Vec<(tsz_common::interner::Atom, EnumMemberValue)> = entry
+            .enum_member_names
+            .iter()
+            .map(|n| (interner.intern_string(n), EnumMemberValue::Computed))
+            .collect();
+
+        let info = DefinitionInfo {
+            kind,
+            name,
+            type_params,
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members,
+            exports: Vec::new(),
+            file_id: Some(entry.file_id),
+            span: Some((entry.span_start, entry.span_start)),
+            symbol_id: Some(sym_id.0),
+            heritage_names: entry.heritage_names.clone(),
+            is_abstract: entry.is_abstract,
+            is_const: entry.is_const,
+            is_exported: entry.is_exported,
+        };
+
+        let def_id = store.register(info);
+        store.register_symbol_mapping(sym_id.0, entry.file_id, def_id);
+    }
+
+    // Pass 2: Wire namespace exports from parent_namespace relationships.
+    //
+    // Now that all DefIds exist, walk entries that have a parent_namespace and
+    // add them as exports of their parent's DefinitionInfo. This moves
+    // namespace-member export identity from checker repair into stable
+    // binder-owned identity that survives merge/rebind.
+    for (&sym_id, entry) in semantic_defs {
+        if let Some(parent_sym) = entry.parent_namespace {
+            let child_def = store.find_def_by_symbol(sym_id.0);
+            let parent_def = store.find_def_by_symbol(parent_sym.0);
+            if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                let name = interner.intern_string(&entry.name);
+                store.add_export(parent_def_id, name, child_def_id);
+            }
+        }
+    }
+
+    store
 }
 
 /// Merge bind results into a unified program state
@@ -2047,6 +2151,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     remapped.file_id = global_symbols
                         .get(global_id)
                         .map_or(entry.file_id, |s| s.decl_file_idx);
+                    // Remap parent_namespace to global SymbolId
+                    remapped.parent_namespace = entry.parent_namespace.and_then(|old_parent| {
+                        lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
+                    });
                     remapped
                 });
             }
@@ -2429,6 +2537,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Update file_id to use the global file index
                 let mut remapped_entry = entry.clone();
                 remapped_entry.file_id = file_idx as u32;
+                // Remap parent_namespace to global SymbolId
+                remapped_entry.parent_namespace = entry
+                    .parent_namespace
+                    .and_then(|old_parent| id_remap.get(&old_parent).copied());
                 // Collect per-file entry (always insert — no cross-file merging here)
                 file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
                 // Only insert the first occurrence (declaration merging keeps first identity)
@@ -2812,6 +2924,15 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         );
     }
 
+    // Pre-populate a shared DefinitionStore with DefIds for all semantic definitions.
+    // This moves identity creation from the checker's per-file pre-population phase
+    // (order-dependent, per-context) to merge time (single pass, deterministic).
+    let type_interner = TypeInterner::new();
+    let definition_store = std::sync::Arc::new(pre_populate_definition_store(
+        &semantic_defs,
+        &type_interner,
+    ));
+
     MergedProgram {
         files,
         symbols: global_symbols,
@@ -2828,9 +2949,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         wildcard_reexports_type_only,
         lib_binders,
         lib_symbol_ids: global_lib_symbol_ids,
-        type_interner: TypeInterner::new(),
+        type_interner,
         alias_partners,
         semantic_defs,
+        definition_store,
         skeleton_index: Some(skeleton_index),
         pre_merge_bind_total_bytes,
     }
@@ -3066,12 +3188,13 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
-            let mut checker = CheckerState::new(
+            let mut checker = CheckerState::new_with_shared_def_store(
                 &file.arena,
                 binder.as_ref(),
                 &query_cache,
                 file.file_name.clone(),
                 compiler_options, // default options for internal operations
+                std::sync::Arc::clone(&program.definition_store),
             );
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
@@ -3169,12 +3292,13 @@ pub fn check_files_parallel(
             // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
             let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
-            let mut checker = CheckerState::with_options(
+            let mut checker = CheckerState::with_options_and_shared_def_store(
                 &file.arena,
                 binder.as_ref(),
                 &query_cache,
                 file.file_name.clone(),
                 checker_options,
+                std::sync::Arc::clone(&program.definition_store),
             );
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
 

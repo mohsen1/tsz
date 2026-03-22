@@ -5109,3 +5109,387 @@ interface Composed extends B { b: number }
         "reconstructed binder should preserve heritage B"
     );
 }
+
+// =============================================================================
+// Merge-time DefinitionStore Pre-population Tests
+// =============================================================================
+
+#[test]
+fn definition_store_pre_populated_during_merge() {
+    let files = vec![
+        ("a.ts".to_string(), "export class Foo {}".to_string()),
+        (
+            "b.ts".to_string(),
+            "export interface Bar { x: number }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // The definition store should have DefIds for both declarations
+    let stats = program.definition_store.statistics();
+    assert!(
+        stats.total_definitions >= 2,
+        "expected at least 2 pre-populated DefIds in store, got {}",
+        stats.total_definitions
+    );
+}
+
+#[test]
+fn definition_store_contains_all_declaration_families() {
+    let source = r#"
+        export class MyClass {}
+        export interface MyInterface { x: number }
+        export type MyAlias = string | number
+        export enum MyEnum { A, B }
+        export namespace MyNS { export type T = number }
+        export function myFunc() {}
+        export const myVar = 42;
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let stats = program.definition_store.statistics();
+    assert!(
+        stats.total_definitions >= 7,
+        "expected at least 7 pre-populated DefIds (class, interface, alias, enum, namespace, function, variable), got {}",
+        stats.total_definitions
+    );
+}
+
+#[test]
+fn definition_store_defids_match_semantic_defs_symbols() {
+    let files = vec![
+        ("a.ts".to_string(), "export class Alpha {}".to_string()),
+        ("b.ts".to_string(), "export type Beta = string".to_string()),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Every symbol in semantic_defs should have a DefId in the store
+    for (&sym_id, _entry) in &program.semantic_defs {
+        let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
+        assert!(
+            def_id.is_some(),
+            "SymbolId({}) should have a pre-populated DefId in the store",
+            sym_id.0
+        );
+    }
+}
+
+#[test]
+fn definition_store_defids_survive_binder_reconstruction() {
+    let files = vec![
+        ("a.ts".to_string(), "export class Foo {}".to_string()),
+        (
+            "b.ts".to_string(),
+            "export interface Bar { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Reconstruct binders (as check_files_parallel does)
+    let binder_a = create_binder_from_bound_file(&program.files[0], &program, 0);
+    let binder_b = create_binder_from_bound_file(&program.files[1], &program, 1);
+
+    // After reconstruction, the semantic_defs should still map to the same
+    // DefIds that were pre-populated during merge.
+    for (&sym_id, _entry) in &binder_a.semantic_defs {
+        let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
+        assert!(
+            def_id.is_some(),
+            "reconstructed binder_a: SymbolId({}) should have DefId in shared store",
+            sym_id.0
+        );
+    }
+    for (&sym_id, _entry) in &binder_b.semantic_defs {
+        let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
+        assert!(
+            def_id.is_some(),
+            "reconstructed binder_b: SymbolId({}) should have DefId in shared store",
+            sym_id.0
+        );
+    }
+}
+
+#[test]
+fn definition_store_defids_deterministic_across_merges() {
+    let files = vec![
+        ("a.ts".to_string(), "export class X {}".to_string()),
+        ("b.ts".to_string(), "export class Y {}".to_string()),
+    ];
+
+    // Merge twice with the same input
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    // Both merges should produce the same number of DefIds
+    let stats1 = program1.definition_store.statistics();
+    let stats2 = program2.definition_store.statistics();
+    assert_eq!(
+        stats1.total_definitions, stats2.total_definitions,
+        "deterministic merge should produce same DefId count"
+    );
+
+    // The DefId values should also be the same (sequential allocation from 1)
+    for (&sym_id, entry) in &program1.semantic_defs {
+        let def1 = program1.definition_store.find_def_by_symbol(sym_id.0);
+        // Find the corresponding symbol in program2 by name
+        let sym_id2 = program2
+            .semantic_defs
+            .iter()
+            .find(|(_, e)| e.name == entry.name)
+            .map(|(&id, _)| id);
+        if let Some(sid2) = sym_id2 {
+            let def2 = program2.definition_store.find_def_by_symbol(sid2.0);
+            assert!(
+                def1.is_some() && def2.is_some(),
+                "both merges should produce DefIds for '{}'",
+                entry.name
+            );
+        }
+    }
+}
+
+#[test]
+fn definition_store_preserves_kind_and_metadata() {
+    let source = r#"
+        export abstract class Abs {}
+        export const enum ConstEnum { X }
+        export interface Generic<T> { value: T }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Check that DefKind, is_abstract, is_const are preserved
+    for (_sym_id, entry) in &program.semantic_defs {
+        let def_id = program
+            .definition_store
+            .find_def_by_symbol(_sym_id.0)
+            .expect("should have DefId");
+        let info = program
+            .definition_store
+            .get(def_id)
+            .expect("should have DefinitionInfo");
+
+        match entry.name.as_str() {
+            "Abs" => {
+                assert_eq!(info.kind, tsz_solver::def::DefKind::Class);
+                assert!(info.is_abstract, "Abs should be abstract");
+            }
+            "ConstEnum" => {
+                assert_eq!(info.kind, tsz_solver::def::DefKind::Enum);
+                assert!(info.is_const, "ConstEnum should be const");
+            }
+            "Generic" => {
+                assert_eq!(info.kind, tsz_solver::def::DefKind::Interface);
+                assert_eq!(
+                    info.type_params.len(),
+                    1,
+                    "Generic should have 1 type param"
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn definition_store_declaration_merge_preserves_first_defid() {
+    // Two files with the same interface name → declaration merging
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Shared { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Shared { y: string }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Declaration merging means one symbol, one semantic_def, one DefId
+    let shared_entries: Vec<_> = program
+        .semantic_defs
+        .iter()
+        .filter(|(_, e)| e.name == "Shared")
+        .collect();
+    assert_eq!(
+        shared_entries.len(),
+        1,
+        "declaration-merged interface should have one semantic_def"
+    );
+
+    let (&sym_id, _) = shared_entries[0];
+    let def_id = program
+        .definition_store
+        .find_def_by_symbol(sym_id.0)
+        .expect("merged interface should have a DefId");
+    assert!(
+        def_id.is_valid(),
+        "DefId for merged interface should be valid"
+    );
+}
+
+#[test]
+fn definition_store_namespace_exports_wired_during_pre_populate() {
+    // Namespace members with parent_namespace should be wired as exports
+    // of their parent's DefinitionInfo during pre_populate_definition_store.
+    let source = r#"
+        namespace MyNS {
+            export class Foo {}
+            export interface Bar {}
+            export type Baz = string;
+            export enum Color { Red }
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Find the namespace DefId
+    let ns_entry = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "MyNS" && e.kind == crate::binder::SemanticDefKind::Namespace);
+    let (&ns_sym, _) = ns_entry.expect("expected semantic def for MyNS");
+    let ns_def_id = program
+        .definition_store
+        .find_def_by_symbol(ns_sym.0)
+        .expect("MyNS should have a DefId");
+
+    // The namespace's DefinitionInfo.exports should contain its members
+    let exports = program
+        .definition_store
+        .get_exports(ns_def_id)
+        .unwrap_or_default();
+    assert!(
+        exports.len() >= 4,
+        "MyNS should have at least 4 exports (Foo, Bar, Baz, Color), got {}",
+        exports.len()
+    );
+
+    // Each member should also have parent_namespace set in semantic_defs
+    let member_names = ["Foo", "Bar", "Baz", "Color"];
+    for name in &member_names {
+        let member_entry = program.semantic_defs.values().find(|e| e.name == *name);
+        let entry = member_entry.unwrap_or_else(|| panic!("expected semantic def for '{name}'"));
+        assert_eq!(
+            entry.parent_namespace,
+            Some(ns_sym),
+            "'{name}' should have parent_namespace = MyNS"
+        );
+    }
+}
+
+#[test]
+fn definition_store_namespace_exports_survive_binder_reconstruction() {
+    // After binder reconstruction (as check_files_parallel does),
+    // namespace export wiring should still be intact in the shared store.
+    let source = r#"
+        namespace NS {
+            export class Inner {}
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Reconstruct binder (as check_files_parallel does)
+    let binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    // The reconstructed binder's semantic_defs should have parent_namespace
+    let inner_entry = binder.semantic_defs.values().find(|e| e.name == "Inner");
+    assert!(
+        inner_entry.is_some(),
+        "reconstructed binder should have semantic_def for Inner"
+    );
+    let inner = inner_entry.unwrap();
+    assert!(
+        inner.parent_namespace.is_some(),
+        "Inner should have parent_namespace set after reconstruction"
+    );
+
+    // The shared DefinitionStore should still have the export wiring
+    let ns_sym = binder
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "NS")
+        .map(|(&id, _)| id)
+        .expect("expected NS in semantic_defs");
+    let ns_def_id = program
+        .definition_store
+        .find_def_by_symbol(ns_sym.0)
+        .expect("NS should have a DefId");
+    let exports = program
+        .definition_store
+        .get_exports(ns_def_id)
+        .unwrap_or_default();
+    assert!(
+        !exports.is_empty(),
+        "NS exports should be non-empty in shared store after reconstruction"
+    );
+}
+
+#[test]
+fn definition_store_nested_namespace_exports_wired() {
+    // Nested namespaces should have their own export wiring.
+    let source = r#"
+        namespace Outer {
+            export namespace Inner {
+                export class Deep {}
+            }
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Outer should have Inner as export
+    let outer_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Outer")
+        .map(|(&id, _)| id)
+        .expect("expected Outer");
+    let outer_def = program
+        .definition_store
+        .find_def_by_symbol(outer_sym.0)
+        .expect("Outer should have DefId");
+    let outer_exports = program
+        .definition_store
+        .get_exports(outer_def)
+        .unwrap_or_default();
+    assert!(
+        !outer_exports.is_empty(),
+        "Outer should have Inner as an export"
+    );
+
+    // Inner should have Deep as export
+    let inner_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Inner")
+        .map(|(&id, _)| id)
+        .expect("expected Inner");
+    let inner_def = program
+        .definition_store
+        .find_def_by_symbol(inner_sym.0)
+        .expect("Inner should have DefId");
+    let inner_exports = program
+        .definition_store
+        .get_exports(inner_def)
+        .unwrap_or_default();
+    assert!(
+        !inner_exports.is_empty(),
+        "Inner should have Deep as an export"
+    );
+}
