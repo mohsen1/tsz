@@ -71,6 +71,11 @@ impl<'a> CheckerState<'a> {
             // lib_contexts scan in get_or_create_def_id Step 3 on first access.
             self.ctx.pre_populate_def_ids_from_lib_binders();
 
+            // Phase 1c: resolve cross-batch heritage. Now that all DefIds from both
+            // the primary binder and lib binders are registered, resolve heritage_names
+            // (e.g., `class MyError extends Error`) to DefId-level extends/implements.
+            self.ctx.resolve_cross_batch_heritage();
+
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives

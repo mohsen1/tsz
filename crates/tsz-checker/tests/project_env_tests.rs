@@ -629,7 +629,7 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
 }
 
 #[test]
-fn heritage_names_propagated_to_definition_info() {
+fn heritage_names_resolved_to_extends_implements() {
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
     let arena = NodeArena::new();
@@ -637,6 +637,43 @@ fn heritage_names_propagated_to_definition_info() {
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
     let mut cross_binder = BinderState::new();
+
+    // Register Base class and IFoo interface first.
+    let base_sym_id = SymbolId(99);
+    cross_binder.semantic_defs.insert(
+        base_sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Base".to_string(),
+            file_id: 5,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    let ifoo_sym_id = SymbolId(98);
+    cross_binder.semantic_defs.insert(
+        ifoo_sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "IFoo".to_string(),
+            file_id: 5,
+            span_start: 50,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    // Register MyClass with heritage_names referencing Base and IFoo.
     let sym_id = SymbolId(100);
     cross_binder.semantic_defs.insert(
         sym_id,
@@ -644,7 +681,7 @@ fn heritage_names_propagated_to_definition_info() {
             kind: SemanticDefKind::Class,
             name: "MyClass".to_string(),
             file_id: 5,
-            span_start: 0,
+            span_start: 100,
             type_param_count: 0,
             is_exported: true,
             enum_member_names: Vec::new(),
@@ -670,9 +707,26 @@ fn heritage_names_propagated_to_definition_info() {
         .expect("DefId should be in store");
 
     assert_eq!(interner.resolve_atom(info.name), "MyClass");
+
+    // After resolve_cross_batch_heritage (called in apply_to), heritage_names
+    // should be resolved to extends/implements DefIds.
+    let base_def = checker
+        .ctx
+        .get_existing_def_id(base_sym_id)
+        .expect("Base should have a DefId");
+    let ifoo_def = checker
+        .ctx
+        .get_existing_def_id(ifoo_sym_id)
+        .expect("IFoo should have a DefId");
+
     assert_eq!(
-        info.heritage_names,
-        vec!["Base", "IFoo"],
-        "heritage_names from binder should be propagated to DefinitionInfo"
+        info.extends,
+        Some(base_def),
+        "MyClass should extend Base"
+    );
+    assert!(
+        info.implements.contains(&ifoo_def),
+        "MyClass should implement IFoo, got: {:?}",
+        info.implements
     );
 }
