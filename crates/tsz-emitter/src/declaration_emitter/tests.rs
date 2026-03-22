@@ -6495,7 +6495,7 @@ fn probe_const_assertion_variable() {
     println!("PROBE as const:\n{output}");
     // Should have `x: 42` not `x: number`
     // Without type inference, it may just emit `any` or the initializer
-    println!("Output: {}", output);
+    println!("Output: {output}");
 }
 
 #[test]

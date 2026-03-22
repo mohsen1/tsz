@@ -3,8 +3,8 @@
 //! These tests verify that object/property/call compatibility checks are
 //! correctly routed through the canonical relation boundary, ensuring:
 //! - Freshness / EPC (excess property checking) consistency
-//! - Missing property classification via RelationOutcome
-//! - Weak union violation detection via RelationOutcome
+//! - Missing property classification via `RelationOutcome`
+//! - Weak union violation detection via `RelationOutcome`
 //! - Property compatibility on unions/intersections
 //! - Call-argument object-literal compatibility
 

@@ -2915,7 +2915,7 @@ fn test_assignability_checker_has_execute_relation_request() {
 }
 
 /// `assignability_diagnostics.rs` diagnostic paths must use the relation
-/// outcome's weak_union_violation hint instead of re-calling the solver.
+/// outcome's `weak_union_violation` hint instead of re-calling the solver.
 #[test]
 fn test_diagnostic_paths_use_relation_outcome_hint() {
     let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
@@ -3058,7 +3058,7 @@ fn test_boundary_owns_global_object_function_shape_check() {
     );
 }
 
-/// `property.rs` must NOT contain its own OBJECT_PROTO/FUNCTION_PROTO lists.
+/// `property.rs` must NOT contain its own `OBJECT_PROTO/FUNCTION_PROTO` lists.
 /// These must be defined only in the boundary.
 #[test]
 fn test_property_rs_no_duplicate_proto_lists() {

@@ -395,8 +395,8 @@ fn jsx_discriminated_union_props_incompatible_emits_ts2322() {
 }
 
 /// Multiple JSX children should not emit TS2746 when the children type accepts arrays.
-/// This tests that union types containing an array-like member (e.g. ReactNode which
-/// includes ReactNodeArray) are correctly recognized as allowing multiple children.
+/// This tests that union types containing an array-like member (e.g. `ReactNode` which
+/// includes `ReactNodeArray`) are correctly recognized as allowing multiple children.
 #[test]
 fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     let diagnostics = check_jsx_codes(

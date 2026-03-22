@@ -9,7 +9,6 @@
 //! - Recursive type aliases
 
 use tsz_binder::BinderState;
-use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
