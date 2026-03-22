@@ -1564,6 +1564,44 @@ pub fn get_conditional_type(
     }
 }
 
+/// Classify a type body for argument preservation during application evaluation.
+///
+/// When instantiating `type Foo<T> = T extends Bar<infer U> ? U : never` with
+/// `Foo<App<number>>`, the checker must decide whether to eagerly evaluate the
+/// type argument `App<number>` to its structural form. If the body is a conditional
+/// with `infer` patterns, evaluating Application-form args would destroy the
+/// structure needed by `try_application_infer_match`.
+///
+/// Returns a classification that the checker uses to decide arg preservation policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyArgPreservation {
+    /// No special preservation needed — evaluate args normally.
+    EvaluateAll,
+    /// Body is a conditional with `infer` in extends — preserve type-parameter
+    /// and Application-form args so the solver's infer matching works correctly.
+    ConditionalInfer,
+    /// Body is a conditional with an Application containing `infer` in extends —
+    /// preserve Application-form args specifically for Application-level infer matching.
+    ConditionalApplicationInfer,
+}
+
+pub fn classify_body_for_arg_preservation(
+    db: &dyn TypeDatabase,
+    body_type: TypeId,
+) -> BodyArgPreservation {
+    let Some(cond) = get_conditional_type(db, body_type) else {
+        return BodyArgPreservation::EvaluateAll;
+    };
+    if contains_infer_types_db(db, cond.extends_type) {
+        // Check if extends type is an Application with infer (more specific case)
+        if matches!(db.lookup(cond.extends_type), Some(TypeData::Application(_))) {
+            return BodyArgPreservation::ConditionalApplicationInfer;
+        }
+        return BodyArgPreservation::ConditionalInfer;
+    }
+    BodyArgPreservation::EvaluateAll
+}
+
 /// Get the mapped type info for a mapped type.
 ///
 /// Returns None if the type is not a Mapped type.
@@ -3438,6 +3476,292 @@ mod tests {
         assert_eq!(
             super::intersect_constructor_returns(&interner, TypeId::STRING, TypeId::NUMBER),
             TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_concrete_primitive() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build: { [K in keyof T]: T[K] } where T is a type parameter
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let constraint = interner.keyof(t_param);
+        let template = interner.index_access(t_param, k_param);
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint,
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("should be a mapped type");
+
+        // Concrete primitives pass through
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::STRING),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::NUMBER),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::BOOLEAN),
+            Some(TypeId::BOOLEAN)
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_any_no_constraint() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build identity mapped type with unconstrained T
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: interner.index_access(t_param, k_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // `any` with no array constraint → produces object with index signatures (not `any`)
+        let result = super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::ANY);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_ne!(
+            result,
+            TypeId::ANY,
+            "Objectish<any> should not passthrough to any"
+        );
+
+        // unknown with no array constraint → no passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::UNKNOWN),
+            None
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_any_with_array_constraint() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build identity mapped type with T extends any[]
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let array_constraint = interner.factory().array(TypeId::ANY);
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: Some(array_constraint),
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: interner.index_access(t_param, k_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // `any` with array constraint → passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::ANY),
+            Some(TypeId::ANY)
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_non_identity() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build non-identity mapped type: { [K in keyof T]: string }
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: TypeId::STRING, // Non-identity: template is string, not T[K]
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // Non-identity mapped type → no passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::NUMBER),
+            None
+        );
+    }
+
+    #[test]
+    fn classify_body_for_arg_preservation_non_conditional() {
+        let interner = TypeInterner::new();
+
+        // Non-conditional body → EvaluateAll
+        assert_eq!(
+            super::classify_body_for_arg_preservation(&interner, TypeId::STRING),
+            BodyArgPreservation::EvaluateAll,
+        );
+        assert_eq!(
+            super::classify_body_for_arg_preservation(&interner, TypeId::NUMBER),
+            BodyArgPreservation::EvaluateAll,
+        );
+    }
+
+    #[test]
+    fn classify_body_for_arg_preservation_conditional_with_infer() {
+        let interner = TypeInterner::new();
+
+        let infer_u = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let infer_type = interner.infer(TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+
+        // Conditional with infer in extends: T extends infer U ? T : never
+        let cond_with_infer = interner.conditional(crate::types::ConditionalType {
+            check_type: infer_u,
+            extends_type: infer_type,
+            true_type: infer_u,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        });
+        assert_eq!(
+            super::classify_body_for_arg_preservation(&interner, cond_with_infer),
+            BodyArgPreservation::ConditionalInfer,
+        );
+
+        // Conditional without infer: T extends string ? T : never
+        let cond_no_infer = interner.conditional(crate::types::ConditionalType {
+            check_type: infer_u,
+            extends_type: TypeId::STRING,
+            true_type: infer_u,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        });
+        assert_eq!(
+            super::classify_body_for_arg_preservation(&interner, cond_no_infer),
+            BodyArgPreservation::EvaluateAll,
+        );
+    }
+
+    #[test]
+    fn classify_body_for_arg_preservation_conditional_application_infer() {
+        let interner = TypeInterner::new();
+
+        let param_t = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let infer_v = interner.infer(TypeParamInfo {
+            name: interner.intern_string("V"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+
+        // Application(Lazy(42), [T, infer V]) — represents Synthetic<T, infer V>
+        let base = interner.lazy(crate::def::DefId(42));
+        let app_with_infer = interner.application(base, vec![param_t, infer_v]);
+
+        // Conditional: U extends Synthetic<T, infer V> ? V : never
+        let cond_app_infer = interner.conditional(crate::types::ConditionalType {
+            check_type: param_t,
+            extends_type: app_with_infer,
+            true_type: infer_v,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        });
+        assert_eq!(
+            super::classify_body_for_arg_preservation(&interner, cond_app_infer),
+            BodyArgPreservation::ConditionalApplicationInfer,
         );
     }
 }

@@ -495,36 +495,31 @@ impl<'a> CheckerState<'a> {
         // For conditional type bodies whose extends side contains infer patterns,
         // preserve generic/type-parameter arguments so the conditional evaluator
         // can still use their original constraints during infer matching.
-        // Also preserve Application-form arguments: when a type arg like
-        // `Synthetic<number, number>` is eagerly evaluated to its structural form
-        // (e.g., an empty object `{}`), the conditional evaluator loses the ability
-        // to do Application-level infer matching (e.g., matching
-        // `Synthetic<number, number>` against `Synthetic<number, infer V>`).
-        // Preserving the Application form lets `try_application_infer_match` extract
-        // infer bindings by comparing type arguments positionally.
-        let body_has_conditional_infer = self.body_is_conditional_with_infer(body_type);
-        // When the conditional's extends_type is an Application with infer
-        // (e.g., `U extends Synthetic<T, infer V>`), also preserve Application-type
-        // args. Evaluating Application args to structural Objects would destroy
-        // the Application structure needed by `try_application_infer_match`.
-        let body_has_conditional_app_infer =
-            self.body_is_conditional_with_application_infer(body_type);
+        //
+        // The solver classifies the body to determine the arg preservation policy:
+        // - ConditionalInfer: preserve type-parameter and Application-form args
+        // - ConditionalApplicationInfer: preserve Application-form args specifically
+        // - EvaluateAll: evaluate all args normally
+        let arg_preservation = query::classify_body_for_arg_preservation(self.ctx.types, body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
-                if body_has_conditional_infer
-                    && (self.contains_type_parameters_cached(arg)
-                        || query::application_info(self.ctx.types, arg).is_some())
-                {
-                    arg
-                } else if body_has_conditional_app_infer
-                    && query::application_info(self.ctx.types, arg).is_some()
-                {
-                    // Preserve Application args so the conditional evaluator can
-                    // match at the Application level for infer pattern matching.
-                    arg
-                } else {
-                    self.evaluate_type_with_env(arg)
+                match arg_preservation {
+                    query::BodyArgPreservation::ConditionalInfer
+                        if self.contains_type_parameters_cached(arg)
+                            || query::application_info(self.ctx.types, arg).is_some() =>
+                    {
+                        arg
+                    }
+                    query::BodyArgPreservation::ConditionalInfer
+                    | query::BodyArgPreservation::ConditionalApplicationInfer
+                        if query::application_info(self.ctx.types, arg).is_some() =>
+                    {
+                        // Preserve Application args so the conditional evaluator can
+                        // match at the Application level for infer pattern matching.
+                        arg
+                    }
+                    _ => self.evaluate_type_with_env(arg),
                 }
             })
             .collect();
@@ -669,14 +664,10 @@ impl<'a> CheckerState<'a> {
         keyof_source: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
     ) -> Option<TypeId> {
-        // The keyof_source should be a TypeParameter matching one of the type_params
-        let param_info = if let Some(tsz_solver::TypeData::TypeParameter(param)) =
-            self.ctx.types.lookup(keyof_source)
-        {
-            type_params.iter().find(|p| p.name == param.name)
-        } else {
-            None
-        }?;
+        // Use the solver query to extract the type parameter name, avoiding
+        // direct TypeData pattern matching in the checker (architecture rule §4).
+        let param_info = query::type_param_name(self.ctx.types, keyof_source)
+            .and_then(|name| type_params.iter().find(|p| p.name == name))?;
 
         let constraint = param_info.constraint?;
         let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
@@ -685,26 +676,6 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
-    }
-
-    /// Check if a type body is a Conditional type whose `extends_type` contains infer patterns.
-    fn body_is_conditional_with_infer(&self, body_type: TypeId) -> bool {
-        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
-            return false;
-        };
-        query::contains_infer_types(self.ctx.types, cond.extends_type)
-    }
-
-    /// Check if a type body is a Conditional type whose `extends_type` is an Application
-    /// containing infer patterns (e.g., `U extends Synthetic<T, infer V> ? V : never`).
-    /// When true, Application-type arguments must be preserved during arg expansion
-    /// so the solver's `try_application_infer_match` can match at the Application level.
-    fn body_is_conditional_with_application_infer(&self, body_type: TypeId) -> bool {
-        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
-            return false;
-        };
-        query::application_info(self.ctx.types, cond.extends_type).is_some()
-            && query::contains_infer_types(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.
