@@ -14,6 +14,8 @@
 //!    the merged-binder path.
 //! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step `NodeIndex` → DefId via
 //!    [`resolve_lib_node_in_lib_contexts`]+(2), for per-lib-context lowering.
+//! 5. [`augmentation_def_id_from_node`] — one-step `NodeIndex` → DefId via
+//!    [`resolve_augmentation_node`]+(2), for global-augmentation lowering.
 //!
 //! All lib-lowering resolver closures should delegate to these helpers instead
 //! of maintaining per-call caches.
@@ -186,6 +188,35 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 ) -> Option<tsz_solver::DefId> {
     resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)
         .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+}
+
+/// Resolve a `NodeIndex` directly to a `DefId` via the augmentation resolution
+/// strategy.
+///
+/// This is the stable one-step helper for augmentation lowering: it combines
+/// [`resolve_augmentation_node`] (`NodeIndex` → raw SymbolId) with
+/// [`CheckerContext::get_lib_def_id`] (SymbolId → DefId).  Using this
+/// instead of inline `resolver(node_idx).map(|raw| ctx.get_lib_def_id(SymbolId(raw)))`
+/// at the callsite keeps the pattern consistent with [`lib_def_id_from_node`].
+#[allow(clippy::type_complexity)]
+pub(crate) fn augmentation_def_id_from_node(
+    ctx: &crate::context::CheckerContext<'_>,
+    binder: &tsz_binder::BinderState,
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
+    all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
+    lib_contexts: &[crate::context::LibContext],
+) -> Option<tsz_solver::DefId> {
+    resolve_augmentation_node(
+        binder,
+        arena,
+        node_idx,
+        global_file_locals_index,
+        all_binders,
+        lib_contexts,
+    )
+    .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
 }
 
 /// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
@@ -1081,7 +1112,15 @@ impl<'a> CheckerState<'a> {
             )
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-            resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+            augmentation_def_id_from_node(
+                &self.ctx,
+                decl_binder,
+                arena_ref,
+                node_idx,
+                global_idx,
+                all_binders_slice,
+                lib_contexts,
+            )
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
             self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
