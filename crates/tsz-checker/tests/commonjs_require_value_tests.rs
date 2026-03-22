@@ -78,7 +78,7 @@ fn check_js_require_value_diagnostics(
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(2);
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();

@@ -2451,6 +2451,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
             },
         );
     }

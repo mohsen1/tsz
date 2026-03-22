@@ -494,6 +494,17 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
+    /// Heritage clause: names of extended types (e.g., `["Error"]` for `class MyError extends Error`).
+    ///
+    /// Captured at bind time for cross-batch heritage resolution. The checker
+    /// uses these names to look up `DefId`s from the `DefinitionStore` after
+    /// all pre-population batches have completed.
+    pub extends_names: Vec<String>,
+    /// Heritage clause: names of implemented interfaces.
+    ///
+    /// Captured at bind time for cross-batch heritage resolution, analogous to
+    /// `extends_names`.
+    pub implements_names: Vec<String>,
 }
 
 impl BinderState {
