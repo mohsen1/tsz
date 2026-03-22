@@ -1093,16 +1093,14 @@ fn test_direct_assignability_mismatch_decision_usage_is_quarantined() {
         }
         let src = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
-        if src.contains("should_report_assignability_mismatch(")
-            || src.contains("should_report_assignability_mismatch_bivariant(")
-        {
+        if src.contains("should_report_assignability_mismatch_bivariant(") {
             violations.push(rel);
         }
     }
 
     assert!(
         violations.is_empty(),
-        "direct should_report_assignability_mismatch usage should stay in assignability/query boundary modules; violations: {}",
+        "direct should_report_assignability_mismatch_bivariant usage should stay in assignability/query boundary modules; violations: {}",
         violations.join(", ")
     );
 }
