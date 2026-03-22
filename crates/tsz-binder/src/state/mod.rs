@@ -494,6 +494,18 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
+    /// Names of types this declaration extends (empty for non-class/interface).
+    ///
+    /// Captured at bind time from heritage clauses so the checker can resolve
+    /// cross-batch heritage links (e.g., `class MyError extends Error`) without
+    /// re-examining the AST. For classes this is typically 0 or 1 entry; for
+    /// interfaces it can be multiple (`interface Foo extends Bar, Baz`).
+    pub extends_names: Vec<String>,
+    /// Names of interfaces this class implements (empty for non-class declarations).
+    ///
+    /// Captured at bind time from heritage clauses so the checker can resolve
+    /// cross-batch heritage links without re-examining the AST.
+    pub implements_names: Vec<String>,
 }
 
 impl BinderState {

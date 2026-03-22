@@ -224,6 +224,8 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -262,6 +264,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
     let mut binder_b = BinderState::new();
@@ -277,6 +281,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -321,6 +327,8 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -373,6 +381,8 @@ fn apply_to_pre_populates_enum_member_names() {
             ],
             is_const: true,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -523,6 +533,8 @@ fn apply_to_pre_populates_def_ids_for_all_declaration_families() {
                 enum_member_names: Vec::new(),
                 is_const: false,
                 is_abstract: false,
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
             },
         );
     }
@@ -577,6 +589,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -593,6 +607,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
