@@ -494,25 +494,6 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
-    /// Heritage `extends` clause target names.
-    ///
-    /// For classes: at most one name (the extended class).
-    /// For interfaces: zero or more names (extended interfaces).
-    /// Empty for other kinds.
-    ///
-    /// Captured as identifier strings from the AST at bind time. The checker
-    /// resolves these to `DefId`s during pre-population using name-based lookup
-    /// in the semantic_defs index, moving heritage resolution from checker
-    /// hot paths to deterministic construction time.
-    pub extends_names: Vec<String>,
-    /// Heritage `implements` clause target names (class only).
-    ///
-    /// Zero or more interface names that the class implements.
-    /// Empty for non-class kinds.
-    ///
-    /// Captured as identifier strings from the AST at bind time, analogous
-    /// to `extends_names`.
-    pub implements_names: Vec<String>,
 }
 
 impl BinderState {

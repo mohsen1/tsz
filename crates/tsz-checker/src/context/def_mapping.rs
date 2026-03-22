@@ -647,27 +647,15 @@ impl<'a> CheckerContext<'a> {
     /// `pre_populate_def_ids_from_lib_binders` (lib binders). The logic is
     /// identical: convert `SemanticDefEntry` to `DefinitionInfo`, register in
     /// the `DefinitionStore`, and populate local caches.
-    ///
-    /// ## Two-pass design
-    ///
-    /// Pass 1 creates `DefId`s for all entries with stub heritage/enum data.
-    /// Pass 2 resolves heritage names (extends/implements) to `DefId`s using
-    /// the name→DefId index built during pass 1. This avoids ordering
-    /// dependencies: `class Foo extends Bar` works regardless of whether
-    /// `Bar` was pre-populated before or after `Foo`.
     fn populate_def_ids_from_semantic_defs(
         &self,
         semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
     ) -> usize {
-        use tsz_solver::def::{DefKind, DefinitionInfo, EnumMemberValue};
+        use tsz_solver::def::{DefKind, DefinitionInfo};
 
         if semantic_defs.is_empty() {
             return 0;
         }
-
-        // ---- Pass 1: Create DefIds with core identity ----
-        // Collect newly created (DefId, entry) pairs for pass 2 heritage resolution.
-        let mut new_defs: Vec<(tsz_solver::def::DefId, &tsz_binder::SemanticDefEntry)> = Vec::new();
 
         let mut count = 0;
         for (&sym_id, entry) in semantic_defs {
@@ -719,19 +707,6 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
-            // Populate enum members from binder-captured names.
-            // The binder already extracts member names at bind time; use them
-            // to create stub EnumMemberValue::Computed entries so the solver
-            // sees enum structure before the checker walk fills in real values.
-            let enum_members: Vec<(tsz_common::interner::Atom, EnumMemberValue)> = entry
-                .enum_member_names
-                .iter()
-                .map(|member_name| {
-                    let atom = self.types.intern_string(member_name);
-                    (atom, EnumMemberValue::Computed)
-                })
-                .collect();
-
             let info = DefinitionInfo {
                 kind,
                 name,
@@ -741,7 +716,7 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
-                enum_members,
+                enum_members: Vec::new(),
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
@@ -770,54 +745,7 @@ impl<'a> CheckerContext<'a> {
             // Propagate DefKind to both TypeEnvironments (evaluator + flow-analyzer)
             self.register_def_kind_in_envs(def_id, kind);
 
-            // Track for pass 2 heritage resolution
-            if !entry.extends_names.is_empty() || !entry.implements_names.is_empty() {
-                new_defs.push((def_id, entry));
-            }
-
             count += 1;
-        }
-
-        // ---- Pass 2: Resolve heritage names to DefIds ----
-        // Build a name→DefId index from the semantic_defs we just processed
-        // plus any already-registered entries in the DefinitionStore.
-        if !new_defs.is_empty() {
-            // Build name→DefId lookup from the semantic_defs in this batch.
-            // This is a lightweight local index; we don't persist it because
-            // heritage resolution is a one-time construction-time operation.
-            let name_to_def: rustc_hash::FxHashMap<&str, tsz_solver::def::DefId> = semantic_defs
-                .iter()
-                .filter_map(|(&sym_id, entry)| {
-                    let def_id = self.symbol_to_def.borrow().get(&sym_id).copied()?;
-                    Some((entry.name.as_str(), def_id))
-                })
-                .collect();
-
-            for (def_id, entry) in &new_defs {
-                let mut extends = None;
-                let mut implements = Vec::new();
-
-                // Resolve extends (take the first match — classes have at most one)
-                for extends_name in &entry.extends_names {
-                    if let Some(&target_def) = name_to_def.get(extends_name.as_str()) {
-                        extends = Some(target_def);
-                        break;
-                    }
-                }
-
-                // Resolve implements
-                for impl_name in &entry.implements_names {
-                    if let Some(&target_def) = name_to_def.get(impl_name.as_str()) {
-                        implements.push(target_def);
-                    }
-                }
-
-                // Update the DefinitionInfo with resolved heritage
-                if extends.is_some() || !implements.is_empty() {
-                    self.definition_store
-                        .set_heritage(*def_id, extends, implements);
-                }
-            }
         }
 
         count
