@@ -149,7 +149,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .type_env
                             .try_borrow()
-                            .map_or(false, |env| env.get_def(def_id).is_none());
+                            .is_ok_and(|env| env.get_def(def_id).is_none());
                         if needs_registration {
                             let type_params =
                                 self.ctx.get_def_type_params(def_id).unwrap_or_default();

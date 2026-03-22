@@ -1745,29 +1745,29 @@ impl<'a> CheckerState<'a> {
             // so both environments stay consistent. The type_env block above
             // handles SymbolRef + DefId writes to the evaluator env; this block
             // ensures the flow-analyzer env also has the DefId entries.
-            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                    if let Some((instance_type, _)) = &class_env_entry {
-                        if type_params.is_empty() {
-                            env.insert_def(def_id, result);
-                        } else {
-                            env.insert_def_with_params(def_id, result, type_params.clone());
-                        }
-                        env.insert_class_instance_type(def_id, *instance_type);
-                        env.register_def_symbol_mapping(def_id, sym_id);
+            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
+                && let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
+            {
+                if let Some((instance_type, _)) = &class_env_entry {
+                    if type_params.is_empty() {
+                        env.insert_def(def_id, result);
                     } else {
-                        let lib_params = if type_params.is_empty() {
-                            self.ctx.get_def_type_params(def_id)
-                        } else {
-                            None
-                        };
-                        if let Some(params) = lib_params {
-                            env.insert_def_with_params(def_id, result, params);
-                        } else if type_params.is_empty() {
-                            env.insert_def(def_id, result);
-                        } else {
-                            env.insert_def_with_params(def_id, result, type_params.clone());
-                        }
+                        env.insert_def_with_params(def_id, result, type_params);
+                    }
+                    env.insert_class_instance_type(def_id, *instance_type);
+                    env.register_def_symbol_mapping(def_id, sym_id);
+                } else {
+                    let lib_params = if type_params.is_empty() {
+                        self.ctx.get_def_type_params(def_id)
+                    } else {
+                        None
+                    };
+                    if let Some(params) = lib_params {
+                        env.insert_def_with_params(def_id, result, params);
+                    } else if type_params.is_empty() {
+                        env.insert_def(def_id, result);
+                    } else {
+                        env.insert_def_with_params(def_id, result, type_params);
                     }
                 }
             }

@@ -1377,13 +1377,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let has_placeholder_arg = t_app_args
                         .iter()
                         .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited));
-                    if has_placeholder_arg {
-                        if let Some(expanded) = self.checker.expand_type_alias_application(target) {
-                            if expanded != target {
-                                self.constrain_types(ctx, var_map, source, expanded, priority);
-                                return;
-                            }
-                        }
+                    if has_placeholder_arg
+                        && let Some(expanded) = self.checker.expand_type_alias_application(target)
+                        && expanded != target
+                    {
+                        self.constrain_types(ctx, var_map, source, expanded, priority);
+                        return;
                     }
                 }
 

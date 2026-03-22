@@ -375,7 +375,7 @@ impl<'a> CheckerState<'a> {
                 env.set_boxed_type(IntrinsicKind::Function, ty);
             }
             if let Some(ty) = array_instance_type {
-                env.set_array_base_type(ty, array_type_params_for_flow.clone());
+                env.set_array_base_type(ty, array_type_params_for_flow);
             }
         }
     }

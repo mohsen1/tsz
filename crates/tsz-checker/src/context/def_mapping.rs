@@ -515,7 +515,7 @@ impl<'a> CheckerContext<'a> {
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
     /// paths can resolve the type during evaluation.
     ///
-    /// The SymbolRef mapping is written to `type_environment` only (legacy flow-analyzer
+    /// The `SymbolRef` mapping is written to `type_environment` only (legacy flow-analyzer
     /// path). The DefId mapping is written to **both** environments via the dual-env
     /// helpers so the evaluator (`type_env`) and flow analyzer (`type_environment`)
     /// stay consistent.
