@@ -421,6 +421,14 @@ impl<'a> EnumEvaluator<'a> {
     /// Parse a numeric literal string to i64
     fn parse_numeric_literal(&self, text: &str) -> EnumValue {
         let text = text.trim();
+        // Strip numeric separators (underscores) before parsing
+        let owned;
+        let text = if text.contains('_') {
+            owned = text.replace('_', "");
+            &owned
+        } else {
+            text
+        };
 
         // Handle hex literals
         if text.starts_with("0x") || text.starts_with("0X") {

@@ -9766,3 +9766,20 @@ fn fix_static_readonly_negative_number() {
     println!("static readonly negative:\n{output}");
     assert!(output.contains("= -42"), "negative number preserved: {output}");
 }
+
+#[test]
+fn fix_enum_numeric_separator_in_value() {
+    // Enum member values with numeric separators should be evaluated correctly
+    let output = emit_dts("export enum E { A = 1_000, B = 2_000, C = A + B }");
+    println!("enum sep values:\n{output}");
+    assert!(output.contains("A = 1000"), "A should be 1000: {output}");
+    assert!(output.contains("B = 2000"), "B should be 2000: {output}");
+    assert!(output.contains("C = 3000"), "C should be 3000: {output}");
+}
+
+#[test]
+fn fix_enum_hex_separator_in_value() {
+    let output = emit_dts("export enum E { A = 0xFF_FF }");
+    println!("enum hex sep:\n{output}");
+    assert!(output.contains("A = 65535"), "hex with sep should evaluate: {output}");
+}
