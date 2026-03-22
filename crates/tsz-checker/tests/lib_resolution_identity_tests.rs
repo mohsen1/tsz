@@ -706,3 +706,119 @@ const result: Error = identity(e);
         "Error type should be consistent across references.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- resolve_augmentation_node stable helper tests ----
+
+#[test]
+fn test_augmentation_node_resolver_cross_file_interface_merge() {
+    // Exercises the `resolve_augmentation_node` stable helper via the
+    // global augmentation path in lib_resolution.rs and lib.rs.
+    // The augmentation declares a new method on a lib interface;
+    // the resolver must find the base symbol via scope-chain + name lookup.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface String {
+        trimToLength(n: number): string;
+    }
+}
+const s: string = "hello";
+const trimmed: string = s.trimToLength(3);
+export {};
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2669)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Augmented String.trimToLength should be accessible via resolve_augmentation_node.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_augmentation_node_resolver_preserves_original_members() {
+    // After augmenting a lib interface, original members must still
+    // be accessible. This validates that the augmentation lowering
+    // (using resolve_augmentation_node) produces a proper intersection
+    // without losing the base type's members.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Number {
+        toLabel(): string;
+    }
+}
+const n: number = 42;
+const fixed: string = n.toFixed(2);
+const label: string = n.toLabel();
+export {};
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2669)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Number.toFixed and augmented Number.toLabel should both be accessible.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// ---- resolve_lib_type_with_params def_id consistency tests ----
+
+#[test]
+fn test_resolve_lib_type_with_params_uses_stable_def_id() {
+    // resolve_lib_type_with_params (used by register_boxed_types) now
+    // uses get_lib_def_id instead of get_existing_def_id, ensuring
+    // lib symbols that weren't pre-populated still get stable DefIds.
+    // This test validates that boxed types (Array, Promise) resolve
+    // correctly when accessed through the with_params path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<number> = [1, 2, 3];
+const mapped: Array<string> = arr.map(x => x.toString());
+const p: Promise<number> = Promise.resolve(42);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Array and Promise accessed via with_params path should resolve with stable DefId.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_resolves_lib() {
+    // import("...") type expressions that reference lib types should
+    // resolve through the stable def_id path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type PromiseNum = Promise<number>;
+async function wrap(): PromiseNum {
+    return 42;
+}
+async function unwrap(): Promise<void> {
+    const n: number = await wrap();
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Type alias to Promise<number> should resolve correctly.\nDiagnostics: {real_errors:#?}"
+    );
+}

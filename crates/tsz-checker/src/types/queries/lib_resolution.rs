@@ -185,6 +185,48 @@ pub(crate) fn resolve_name_to_lib_symbol(
         .find_map(|ctx| ctx.binder.file_locals.get(name))
 }
 
+/// Resolve a `NodeIndex` to a raw `SymbolId` value using the augmentation
+/// resolution strategy: node-symbol lookup → scope-chain walk → name-based
+/// multi-tier fallback.
+///
+/// This consolidates the resolver closure that was duplicated in every
+/// `lower_with_arena` augmentation helper across `lib_resolution.rs` and
+/// `lib.rs`.  The three tiers are:
+/// 1. `binder.get_node_symbol(node_idx)` — direct AST node → symbol binding.
+/// 2. `resolve_scope_chain(...)` — lexical scope walk from the node's enclosing
+///    scope up to root.
+/// 3. `resolve_name_to_lib_symbol(...)` — file_locals / global index / all-binders
+///    / lib-contexts multi-tier fallback (same as standalone function above).
+///
+/// Returns `None` for compiler-managed types (e.g., `__String`).
+pub(crate) fn resolve_augmentation_node(
+    binder: &tsz_binder::BinderState,
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
+    all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
+    lib_contexts: &[crate::context::LibContext],
+) -> Option<u32> {
+    if let Some(sym_id) = binder.get_node_symbol(node_idx) {
+        return Some(sym_id.0);
+    }
+    if let Some(sym_id) = resolve_scope_chain(binder, arena, node_idx) {
+        return Some(sym_id);
+    }
+    let ident_name = arena.get_identifier_text(node_idx)?;
+    if is_compiler_managed_type(ident_name) {
+        return None;
+    }
+    resolve_name_to_lib_symbol(
+        ident_name,
+        binder,
+        global_file_locals_index,
+        all_binders,
+        lib_contexts,
+    )
+    .map(|sym| sym.0)
+}
+
 impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
@@ -836,35 +878,23 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Helper: lower augmentation declarations using a given arena
+            // Helper: lower augmentation declarations using a given arena.
+            // Uses `resolve_augmentation_node` (the shared stable helper) instead
+            // of building per-call resolver closures with duplicated logic.
             let global_idx = self.ctx.global_file_locals_index.as_deref();
             let all_binders_ref = self.ctx.all_binders.as_deref();
             let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
                 let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                        return Some(sym_id.0);
-                    }
-                    if let Some(sym_id) = resolve_scope_chain(decl_binder, arena_ref, node_idx) {
-                        return Some(sym_id);
-                    }
-                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    resolve_name_to_lib_symbol(
-                        ident_name,
+                    resolve_augmentation_node(
                         decl_binder,
+                        arena_ref,
+                        node_idx,
                         global_idx,
                         all_binders_ref.map(|v| v.as_ref()),
                         &lib_contexts,
                     )
-                    .map(|sym| sym.0)
                 };
-                // DefId resolver: delegates to the SymbolId resolver above.
-                // Prefers pre-populated DefIds from semantic_defs propagation;
-                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
-                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     resolver(node_idx)
                         .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
