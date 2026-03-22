@@ -1534,6 +1534,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let rest = &rest[1..];
+        // Closure-style constructor types like `function(new: object, ...)` have
+        // an implied return type (the type after `new:`).  They never need a
+        // separate `:returnType` suffix, so they should not trigger TS7014.
+        if rest.trim_start().starts_with("new:") || rest.trim_start().starts_with("new :") {
+            return false;
+        }
         let mut depth = 1u32;
         let mut close_idx = None;
         for (i, ch) in rest.char_indices() {

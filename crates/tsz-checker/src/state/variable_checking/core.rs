@@ -690,7 +690,8 @@ impl<'a> CheckerState<'a> {
             }
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
-                if let Some(sf) = checker.ctx.arena.source_files.first()
+                if checker.ctx.no_implicit_any()
+                    && let Some(sf) = checker.ctx.arena.source_files.first()
                     && let Some(jsdoc) = checker.find_jsdoc_for_function(decl_idx)
                     && CheckerState::jsdoc_type_tag_function_missing_return(&jsdoc)
                     && let Some((_, comment_pos)) = checker.try_jsdoc_with_ancestor_walk_and_pos(
