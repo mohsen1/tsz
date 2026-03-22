@@ -177,6 +177,9 @@ pub struct DefinitionInfo {
     /// E.g., `class Foo extends Bar` stores `["Bar"]` so that
     /// `resolve_heritage` can look up the `Bar` DefId by name.
     pub heritage_names: Vec<String>,
+    pub is_exported: bool,
+    pub is_const: bool,
+    pub is_abstract: bool,
 }
 
 /// Enum member value.
@@ -208,6 +211,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         }
     }
 
@@ -244,6 +250,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         }
     }
 
@@ -283,6 +292,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         }
     }
 
@@ -303,6 +315,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         }
     }
 
@@ -323,6 +338,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         }
     }
 
