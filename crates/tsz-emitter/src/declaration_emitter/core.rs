@@ -1506,6 +1506,18 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 }
+            } else if is_readonly
+                && !is_abstract
+                && !prop.question_token
+                && prop.initializer.is_some()
+                && let Some(lit_text) =
+                    self.const_literal_initializer_text_deep(prop.initializer)
+            {
+                // For readonly properties with simple literal initializers,
+                // emit `= value` form (matching tsc's const-like literal
+                // preservation for `static readonly` and `readonly` properties).
+                self.write(" = ");
+                self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.infer_fallback_type_text(prop.initializer)
             {
