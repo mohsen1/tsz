@@ -297,6 +297,112 @@ impl ProjectFile {
         self.content_hash
     }
 
+    /// Estimate the heap memory footprint of this file in bytes.
+    ///
+    /// Accounts for binder state (symbols, scopes, flow nodes, hash maps) and
+    /// the parser arena (nodes + typed pools, rough estimate). Used for memory
+    /// pressure tracking and eviction decisions at the `Project` level.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // file_name
+        size += self.file_name.capacity();
+
+        // Parser arena: each node is 16 bytes, plus rough overhead for typed pools.
+        // We use 2x the node-header footprint as a conservative estimate for the
+        // pools (identifiers, literals, expressions, etc.) that accompany nodes.
+        let node_count = self.parser.get_node_count();
+        size += node_count * 16 * 2;
+
+        // Source text retained by the scanner inside ParserState.
+        size += self.source_text().len();
+
+        // --- Binder state ---
+        let b = &self.binder;
+
+        // symbols
+        size += b.symbols.len() * std::mem::size_of::<tsz_binder::Symbol>();
+        for sym in b.symbols.iter() {
+            size += sym.escaped_name.capacity();
+            size += sym.declarations.capacity() * std::mem::size_of::<NodeIndex>();
+            if let Some(ref exports) = sym.exports {
+                size += exports.len() * (32 + std::mem::size_of::<SymbolId>());
+            }
+            if let Some(ref members) = sym.members {
+                size += members.len() * (32 + std::mem::size_of::<SymbolId>());
+            }
+            if let Some(ref s) = sym.import_module {
+                size += s.capacity();
+            }
+            if let Some(ref s) = sym.import_name {
+                size += s.capacity();
+            }
+        }
+
+        // file_locals
+        size += b.file_locals.len() * (32 + std::mem::size_of::<SymbolId>());
+
+        // declared_modules
+        for s in &b.declared_modules {
+            size += s.capacity() + 8;
+        }
+
+        // node_symbols
+        size += b.node_symbols.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
+
+        // scopes
+        size += b.scopes.capacity() * std::mem::size_of::<tsz_binder::Scope>();
+        for scope in &b.scopes {
+            size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
+        }
+
+        // node_scope_ids
+        size += b.node_scope_ids.capacity() * (std::mem::size_of::<u32>() + 4 + 8);
+
+        // flow_nodes
+        size += b.flow_nodes.len() * std::mem::size_of::<tsz_binder::FlowNode>();
+        for flow_node in b.flow_nodes.iter() {
+            size += flow_node.antecedent.capacity() * std::mem::size_of::<tsz_binder::FlowNodeId>();
+        }
+
+        // node_flow
+        size += b.node_flow.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<tsz_binder::FlowNodeId>() + 8);
+
+        // switch_clause_to_switch
+        size += b.switch_clause_to_switch.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
+
+        // symbol_arenas (Arc overhead only, shared data not counted)
+        size += b.symbol_arenas.capacity()
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<usize>() + 8);
+
+        // declaration_arenas
+        size +=
+            b.declaration_arenas.len() * (std::mem::size_of::<(SymbolId, NodeIndex)>() + 32 + 8);
+
+        // global_augmentations
+        for (k, v) in &b.global_augmentations {
+            size += k.capacity() + 8;
+            size += v.capacity() * std::mem::size_of::<tsz_binder::GlobalAugmentation>();
+        }
+
+        // expando_properties
+        for (k, v) in &b.expando_properties {
+            size += k.capacity() + 8;
+            for s in v {
+                size += s.capacity() + 8;
+            }
+        }
+
+        // line_map
+        size += std::mem::size_of::<LineMap>();
+
+        size
+    }
+
     /// Get the strict mode setting for type checking.
     pub const fn strict(&self) -> bool {
         self.strict
@@ -1164,6 +1270,30 @@ impl ProjectPerformance {
     }
 }
 
+/// Aggregate memory residency statistics for the entire `Project`.
+///
+/// Provides a snapshot of how much memory the project's files consume.
+/// Useful for telemetry, memory pressure decisions, and eviction heuristics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectResidencyStats {
+    /// Total number of files in the project.
+    pub file_count: usize,
+    /// Sum of `estimated_size_bytes()` across all files.
+    pub total_estimated_bytes: usize,
+    /// Largest single-file estimate, with its name.
+    pub largest_file: Option<(String, usize)>,
+    /// Smallest single-file estimate, with its name.
+    pub smallest_file: Option<(String, usize)>,
+}
+
+impl ProjectResidencyStats {
+    /// Total estimated size in megabytes (truncated).
+    #[must_use]
+    pub const fn total_mb(&self) -> usize {
+        self.total_estimated_bytes / (1024 * 1024)
+    }
+}
+
 fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Option<String> {
     let mut edits_with_offsets = Vec::with_capacity(edits.len());
     for edit in edits {
@@ -1815,6 +1945,41 @@ impl Project {
         &self.performance
     }
 
+    /// Compute aggregate memory residency statistics for the project.
+    ///
+    /// Iterates all files and sums their `estimated_size_bytes()`.
+    /// The result is a snapshot — it does not cache or persist.
+    #[must_use]
+    pub fn residency_stats(&self) -> ProjectResidencyStats {
+        let mut total: usize = 0;
+        let mut largest: Option<(&str, usize)> = None;
+        let mut smallest: Option<(&str, usize)> = None;
+
+        for (name, file) in &self.files {
+            let est = file.estimated_size_bytes();
+            total = total.saturating_add(est);
+            if largest.map_or(true, |(_, s)| est > s) {
+                largest = Some((name.as_str(), est));
+            }
+            if smallest.map_or(true, |(_, s)| est < s) {
+                smallest = Some((name.as_str(), est));
+            }
+        }
+
+        ProjectResidencyStats {
+            file_count: self.files.len(),
+            total_estimated_bytes: total,
+            largest_file: largest.map(|(n, s)| (n.to_string(), s)),
+            smallest_file: smallest.map(|(n, s)| (n.to_string(), s)),
+        }
+    }
+
+    /// Estimated memory footprint of a single file, or `None` if not tracked.
+    #[must_use]
+    pub fn file_estimated_size(&self, file_name: &str) -> Option<usize> {
+        self.files.get(file_name).map(|f| f.estimated_size_bytes())
+    }
+
     /// Add or replace a file, re-parsing and re-binding its contents.
     ///
     /// If the file already exists with identical content (same content hash),
@@ -1862,6 +2027,18 @@ impl Project {
         self.fingerprint_cache.update(file_idx, new_fp);
 
         self.files.insert(file_name.clone(), file);
+
+        // Log per-file memory estimate for telemetry / pressure tracking.
+        if let Some(f) = self.files.get(&file_name) {
+            let est = f.estimated_size_bytes();
+            tracing::debug!(
+                file = %file_name,
+                estimated_bytes = est,
+                file_count = self.files.len(),
+                "project: file added/replaced"
+            );
+        }
+
         // Update dependency graph with imports from this file
         self.update_dependencies(&file_name);
     }
@@ -1982,8 +2159,25 @@ impl Project {
         // Remove from dependency graph (cleans up both outgoing and incoming edges)
         self.dependency_graph.remove_file(file_name);
 
-        // Remove from files map
-        self.files.remove(file_name)
+        // Log memory freed by removal.
+        let freed_bytes = self
+            .files
+            .get(file_name)
+            .map(|f| f.estimated_size_bytes())
+            .unwrap_or(0);
+
+        let removed = self.files.remove(file_name);
+
+        if removed.is_some() {
+            tracing::debug!(
+                file = %file_name,
+                freed_bytes,
+                remaining_files = self.files.len(),
+                "project: file removed"
+            );
+        }
+
+        removed
     }
 
     /// Extract import paths from a file's AST.
