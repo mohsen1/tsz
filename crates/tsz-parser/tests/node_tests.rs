@@ -539,9 +539,7 @@ fn estimated_size_bytes_grows_with_nodes() {
     let after_tokens = arena.estimated_size_bytes();
     assert!(
         after_tokens > baseline,
-        "estimated_size_bytes should grow after adding nodes: {} vs {}",
-        after_tokens,
-        baseline,
+        "estimated_size_bytes should grow after adding nodes: {after_tokens} vs {baseline}",
     );
 }
 
@@ -552,7 +550,7 @@ fn estimated_size_bytes_grows_with_identifiers() {
 
     // Add identifiers with string data
     for i in 0..50 {
-        let name = format!("identifier_{}_with_some_length", i);
+        let name = format!("identifier_{i}_with_some_length");
         arena.add_identifier(
             SyntaxKind::Identifier as u16,
             0,
@@ -568,17 +566,14 @@ fn estimated_size_bytes_grows_with_identifiers() {
     let after_ids = arena.estimated_size_bytes();
     assert!(
         after_ids > baseline,
-        "estimated_size_bytes should grow after adding identifiers: {} vs {}",
-        after_ids,
-        baseline,
+        "estimated_size_bytes should grow after adding identifiers: {after_ids} vs {baseline}",
     );
     // The growth should account for string heap data (each identifier ~30 chars)
     // 50 identifiers * ~30 bytes = ~1500 bytes of string data minimum
     let growth = after_ids - baseline;
     assert!(
         growth >= 1000,
-        "growth ({}) should account for heap string data in identifiers",
-        growth,
+        "growth ({growth}) should account for heap string data in identifiers",
     );
 }
 
@@ -589,7 +584,7 @@ fn estimated_size_bytes_grows_with_literals() {
 
     // Add string literals
     for i in 0..30 {
-        let text = format!("literal string value number {}", i);
+        let text = format!("literal string value number {i}");
         arena.add_literal(
             SyntaxKind::StringLiteral as u16,
             0,
@@ -604,9 +599,7 @@ fn estimated_size_bytes_grows_with_literals() {
     let after_lits = arena.estimated_size_bytes();
     assert!(
         after_lits > baseline,
-        "estimated_size_bytes should grow after adding literals: {} vs {}",
-        after_lits,
-        baseline,
+        "estimated_size_bytes should grow after adding literals: {after_lits} vs {baseline}",
     );
 }
 
@@ -643,8 +636,6 @@ fn estimated_size_bytes_larger_arena_beats_smaller() {
     let large_size = large_arena.estimated_size_bytes();
     assert!(
         large_size > small_size,
-        "larger source should produce larger estimated_size_bytes: large={} vs small={}",
-        large_size,
-        small_size,
+        "larger source should produce larger estimated_size_bytes: large={large_size} vs small={small_size}",
     );
 }

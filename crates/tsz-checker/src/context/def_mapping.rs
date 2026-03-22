@@ -298,11 +298,11 @@ impl<'a> CheckerContext<'a> {
     /// Register a `DefKind` for a `DefId` in **both** type environments.
     ///
     /// This ensures the evaluator (`type_env`) and flow-analyzer (`type_environment`)
-    /// both see the DefKind, which is needed for Lazy(DefId) resolution and
+    /// both see the `DefKind`, which is needed for Lazy(DefId) resolution and
     /// semantic queries (e.g., distinguishing class vs interface callables).
     ///
     /// Prior to this helper, pre-population and fallback paths only propagated
-    /// DefKind to `type_env`, leaving `type_environment` without the mapping
+    /// `DefKind` to `type_env`, leaving `type_environment` without the mapping
     /// until the full checker walk populated it incidentally.
     fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
         if let Ok(mut env) = self.type_env.try_borrow_mut() {
@@ -781,7 +781,7 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Called once during checker construction after all `pre_populate_*` methods.
     /// Returns the number of heritage links resolved.
-    pub fn resolve_cross_batch_heritage(&self) -> usize {
+    pub const fn resolve_cross_batch_heritage(&self) -> usize {
         // Heritage resolution via SemanticDefEntry.extends_names/implements_names
         // was removed when the binder heritage model was simplified. The method
         // is kept as a no-op stub because callers (checker construction, tests)

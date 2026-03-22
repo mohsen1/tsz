@@ -3903,9 +3903,7 @@ fn test_skeleton_index_estimated_size_grows_with_content() {
 
     assert!(
         large_size > small_size,
-        "larger project skeleton ({} bytes) should be bigger than small ({} bytes)",
-        large_size,
-        small_size
+        "larger project skeleton ({large_size} bytes) should be bigger than small ({small_size} bytes)"
     );
 }
 
@@ -3940,9 +3938,7 @@ fn test_bind_result_estimated_size_grows_with_content() {
 
     assert!(
         large_size > small_size,
-        "larger file ({} bytes) should have bigger estimate than small file ({} bytes)",
-        large_size,
-        small_size
+        "larger file ({large_size} bytes) should have bigger estimate than small file ({small_size} bytes)"
     );
 }
 
@@ -3969,9 +3965,7 @@ fn test_bind_result_estimated_size_accounts_for_flow_nodes() {
 
     assert!(
         size > simple_size,
-        "file with control flow ({} bytes) should be larger than simple file ({} bytes)",
-        size,
-        simple_size
+        "file with control flow ({size} bytes) should be larger than simple file ({simple_size} bytes)"
     );
 }
 
@@ -4172,14 +4166,13 @@ export enum Status { Active, Inactive }
 
     // Should capture all exported symbols
     let names: Vec<&str> = skeleton.symbols.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"API_KEY"), "missing API_KEY in {:?}", names);
-    assert!(names.contains(&"greet"), "missing greet in {:?}", names);
+    assert!(names.contains(&"API_KEY"), "missing API_KEY in {names:?}");
+    assert!(names.contains(&"greet"), "missing greet in {names:?}");
     assert!(
         names.contains(&"UserService"),
-        "missing UserService in {:?}",
-        names
+        "missing UserService in {names:?}"
     );
-    assert!(names.contains(&"Status"), "missing Status in {:?}", names);
+    assert!(names.contains(&"Status"), "missing Status in {names:?}");
 }
 
 #[test]
@@ -4293,7 +4286,7 @@ fn skeleton_pipeline_end_to_end_no_change() {
 
     // Diff should be empty
     let diff = diff_skeletons(&skels1, &skels2);
-    assert!(diff.is_empty(), "no changes expected, got {:?}", diff);
+    assert!(diff.is_empty(), "no changes expected, got {diff:?}");
     assert!(!diff.topology_changed);
 }
 
