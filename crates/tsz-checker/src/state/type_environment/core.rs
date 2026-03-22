@@ -702,6 +702,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         mapped_id: MappedTypeId,
     ) -> TypeId {
+        use tsz_solver::PropertyInfo;
         let factory = self.ctx.types.factory();
 
         let mapped = self.ctx.types.mapped_type(mapped_id);
@@ -764,16 +765,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fallback: expand the mapped type to properties.
-        //
-        // Non-homomorphic types: delegate to the solver's resolver-aware property
-        // expansion. Templates don't involve T[K]-style IndexAccess, so the solver's
-        // evaluator can fully resolve them with the CheckerContext resolver.
-        //
-        // Homomorphic types: use the checker's template instantiation which can
-        // resolve IndexAccess on type parameters through their constraint chains
-        // (e.g., P["foo"] where P extends MyPartial<Foo>). The solver's evaluator
-        // defers these because it doesn't resolve type parameters through constraints.
+        // Fallback: checker-local expansion when the solver still can't evaluate.
+        // This handles homomorphic mapped types and deferred types with constraints
+        // the solver can't resolve even with the CheckerContext resolver.
 
         // Prefer the shared finite-key collector once the constraint has been
         // resolved. This keeps mapped expansion aligned with property access and
@@ -800,30 +794,19 @@ impl<'a> CheckerState<'a> {
                 Default::default()
             };
 
-        if !is_homomorphic {
-            // Non-homomorphic: solver handles everything including template evaluation.
-            let properties = query::expand_mapped_type_to_properties_with_resolver(
-                self.ctx.types,
-                &self.ctx,
-                &mapped,
-                &string_keys,
-                &source_prop_map,
-                false,
-            );
-            return factory.object(properties);
-        }
-
-        // Homomorphic: use checker's deep template resolution for IndexAccess on
-        // type parameters, with solver-centralized modifier computation.
+        // Build the resulting object properties using solver-centralized modifier logic.
         let mut properties = Vec::new();
         for key_name in string_keys {
+            // Use env-evaluated template instantiation (needed for Lazy/DefId resolution).
             let mut property_type =
                 self.instantiate_mapped_property_template_with_env(&mapped, key_name);
 
+            // Look up source property info for modifier computation
             let source_info = source_prop_map.get(&key_name);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
 
+            // Use solver-centralized modifier computation
             let (optional, readonly) = query::compute_mapped_modifiers(
                 &mapped,
                 is_homomorphic,
@@ -831,6 +814,9 @@ impl<'a> CheckerState<'a> {
                 source_readonly,
             );
 
+            // For homomorphic mapped types with optional source properties, use the
+            // source property's declared type to avoid double-encoding undefined.
+            // This matches the solver's evaluate_mapped behavior.
             if is_homomorphic
                 && source_optional
                 && let Some((_, _, declared_type)) = source_info
@@ -838,7 +824,7 @@ impl<'a> CheckerState<'a> {
                 property_type = *declared_type;
             }
 
-            properties.push(tsz_solver::PropertyInfo {
+            properties.push(PropertyInfo {
                 name: key_name,
                 type_id: property_type,
                 write_type: property_type,
