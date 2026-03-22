@@ -694,3 +694,134 @@ export const clientSlice = createSlice({
         "Expected ValidateSliceCaseReducers example to avoid overload failure, got diagnostics={diagnostics:?}"
     );
 }
+
+// ──── Object Literal / Excess Property / Contextual Typing Tests ────
+
+/// Object literal excess property check: unknown property should emit TS2353.
+#[test]
+fn test_object_literal_excess_property_error() {
+    let source = r#"
+interface Point { x: number; y: number; }
+let p: Point = { x: 1, y: 2, z: 3 };
+"#;
+    let diagnostics = check_default(source);
+    let excess = diagnostics.iter().any(|d| d.code == 2353 || d.code == 2322);
+    assert!(
+        excess,
+        "Expected excess property error for unknown property 'z', got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal with matching properties should have no errors.
+#[test]
+fn test_object_literal_no_excess_property_when_matching() {
+    let source = r#"
+interface Point { x: number; y: number; }
+let p: Point = { x: 1, y: 2 };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for matching object literal, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal widening: property literal types widen without const assertion.
+#[test]
+fn test_object_literal_property_widening() {
+    let source = r#"
+let obj = { x: "hello", y: 42 };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for basic object literal widening, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Contextual type narrows object literal property types.
+#[test]
+fn test_object_literal_contextual_type_preserves_literals() {
+    let source = r#"
+interface Config { mode: "strict" | "loose"; }
+let cfg: Config = { mode: "strict" };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors with contextual literal type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal spread: spreading an object into another.
+#[test]
+fn test_object_literal_spread_basic() {
+    let source = r#"
+let a = { x: 1 };
+let b = { ...a, y: 2 };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for basic spread, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Duplicate property in object literal should emit TS1117.
+#[test]
+fn test_object_literal_duplicate_property() {
+    let source = r#"
+let obj = { x: 1, x: 2 };
+"#;
+    let diagnostics = check_default(source);
+    let has_1117 = diagnostics.iter().any(|d| d.code == 1117);
+    assert!(
+        has_1117,
+        "Expected TS1117 for duplicate property, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal method `this` type uses contextual object type.
+/// When no ThisType marker exists, methods should use the contextual type
+/// (if present) as `this` inside the method body.
+#[test]
+fn test_object_literal_method_this_type_from_contextual() {
+    let source = r#"
+interface HasGreet {
+    name: string;
+    greet(): string;
+}
+let obj: HasGreet = {
+    name: "world",
+    greet() {
+        return "hello " + this.name;
+    }
+};
+"#;
+    let diagnostics = check_default(source);
+    // Should not have TS2339 for 'name' on 'this' when contextual type provides it
+    let ts2339 = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'name'"));
+    assert!(
+        !ts2339,
+        "Expected no TS2339 for 'this.name' with contextual type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal with getter and setter pair should not be a duplicate property error.
+#[test]
+fn test_object_literal_getter_setter_pair_no_duplicate() {
+    let source = r#"
+let obj = {
+    get x() { return 1; },
+    set x(v: number) {}
+};
+"#;
+    let diagnostics = check_default(source);
+    let has_1117 = diagnostics.iter().any(|d| d.code == 1117);
+    assert!(
+        !has_1117,
+        "Expected no TS1117 for getter+setter pair, got diagnostics={diagnostics:?}"
+    );
+}
