@@ -65,6 +65,24 @@ pub(crate) fn type_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &s
     tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
 }
 
+/// Check if a type is the polymorphic `this` type.
+///
+/// Used during property access resolution to suppress TS2339 when `this`
+/// comes from a ThisType marker (e.g., Vue 2 Options API pattern).
+pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_this_type(db, type_id)
+}
+
+/// Extract object and index types from an IndexAccess type (T[K]).
+///
+/// Returns `None` if `type_id` is not an `IndexAccess` type.
+pub(crate) fn index_access_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    tsz_solver::type_queries::get_index_access_types(db, type_id)
+}
+
 #[cfg(test)]
 #[path = "../../tests/property_access_boundaries.rs"]
 mod tests;
