@@ -18,6 +18,7 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
+use tsz_common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -8375,9 +8376,10 @@ function f() {
 }
 
 #[test]
-fn test_import_equals_in_namespace_emits_ts1147_only() {
+fn test_import_equals_in_namespace_emits_ts1147_and_ts2307() {
     let opts = CheckerOptions {
         no_implicit_any: true,
+        module: ModuleKind::CommonJS,
         ..CheckerOptions::default()
     };
     let source = r#"
@@ -8413,8 +8415,10 @@ namespace myModule {
         has_error(&diagnostics, 1147),
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
-    // TODO: tsc only emits TS1147 here, suppressing TS2307. We currently emit
-    // both. Update once import-in-namespace diagnostic suppression is implemented.
+    assert!(
+        has_error(&diagnostics, 2307),
+        "Expected TS2307 for unresolvable module inside namespace (tsc emits both TS1147 and TS2307). Actual: {diagnostics:#?}"
+    );
 }
 
 #[test]
