@@ -741,3 +741,74 @@ defineComponent({
          got {ts7006_errors:?}"
     );
 }
+
+/// Contextual typing for method parameters in object literals when the target
+/// type has a string index signature providing a callable type.
+///
+/// tsc uses the index signature's value type as a fallback contextual type for
+/// properties not explicitly declared on the target. This exercises the
+/// `contextual_callable_property_fallback_for_lookup` path in object_literal.rs.
+#[test]
+fn test_object_literal_method_contextual_type_from_index_signature() {
+    let source = r#"
+interface EventHandlers {
+    [key: string]: (event: string) => void;
+}
+
+const handlers: EventHandlers = {
+    onClick(event) {
+        event.toLowerCase();
+    },
+    onHover(event) {
+        event.toUpperCase();
+    }
+};
+"#;
+
+    let diagnostics = check_default(source);
+
+    // The index signature `[key: string]: (event: string) => void` should
+    // provide contextual parameter types for onClick/onHover, so `event`
+    // should be typed as `string` and no TS7006 should fire.
+    let ts7006_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7006)
+        .collect();
+
+    assert!(
+        ts7006_errors.is_empty(),
+        "Expected no TS7006 errors when index signature provides contextual callable type, \
+         got {ts7006_errors:?}"
+    );
+}
+
+/// Contextual typing of object literal properties assigned to a Record<string, T>.
+///
+/// `Record<string, number>` expands to `{ [key: string]: number }`, so
+/// excess property checking should NOT fire — all string-keyed properties are
+/// valid. This is a common tsc pattern users rely on.
+#[test]
+fn test_object_literal_no_epc_with_record_string_target() {
+    let source = r#"
+type Record<K extends string, T> = { [P in K]: T };
+
+const scores: Record<string, number> = {
+    alice: 100,
+    bob: 95,
+    charlie: 88
+};
+"#;
+
+    let diagnostics = check_default(source);
+
+    let epc_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2353 || diag.code == 2322)
+        .collect();
+
+    assert!(
+        epc_errors.is_empty(),
+        "Expected no EPC/TS2322 errors when assigning to Record<string, T>, \
+         got {epc_errors:?}"
+    );
+}
