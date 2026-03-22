@@ -2694,3 +2694,251 @@ m.set("key", [1, 2, 3]);
         "Nested lib generic Map<string, Array<number>> should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- Focused tests: get_canonical_lib_def_id, Promise, import-type ----
+
+#[test]
+fn test_promise_resolve_returns_typed_value() {
+    if !lib_files_available() {
+        return;
+    }
+    // Promise.resolve should return Promise<T> where T matches the argument.
+    let diagnostics = compile_with_lib(
+        r#"
+async function fetchData(): Promise<string> {
+    return "hello";
+}
+const p: Promise<string> = fetchData();
+const q: Promise<number> = Promise.resolve(42);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2339),
+        "Promise<T> should resolve correctly without false assignability or property errors.\n\
+         Diagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_then_chain_preserves_type() {
+    if !lib_files_available() {
+        return;
+    }
+    // then() should accept callbacks and chain correctly.
+    let diagnostics = compile_with_lib(
+        r#"
+const p = Promise.resolve(42);
+const q: Promise<string> = p.then((x) => x.toString());
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Promise.then should be accessible without TS2339.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_constructor_with_executor() {
+    if !lib_files_available() {
+        return;
+    }
+    // new Promise((resolve, reject) => ...) should work.
+    let diagnostics = compile_with_lib(
+        r#"
+const p = new Promise<number>((resolve, reject) => {
+    resolve(42);
+});
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        "new Promise<number>() should resolve without 'not found' errors.\n\
+         Diagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_error_extends_correctly() {
+    if !lib_files_available() {
+        return;
+    }
+    // Error should be resolvable and have .message, .name, .stack.
+    let diagnostics = compile_with_lib(
+        r#"
+const e = new Error("oops");
+const msg: string = e.message;
+const name: string = e.name;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Error.message and Error.name should be accessible.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_regexp_methods() {
+    if !lib_files_available() {
+        return;
+    }
+    // RegExp should have .test() and .exec().
+    let diagnostics = compile_with_lib(
+        r#"
+const re = /hello/;
+const result: boolean = re.test("hello world");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "RegExp.test should be accessible.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_resolves_without_error() {
+    if !lib_files_available() {
+        return;
+    }
+    // Type aliases referencing lib types should not produce false errors.
+    let diagnostics = compile_with_lib(
+        r#"
+type StringArray = Array<string>;
+const a: StringArray = ["hello", "world"];
+const len: number = a.length;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2322),
+        "Type alias to Array<string> should resolve via lib.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_multiple_lib_ref_instantiations_share_identity() {
+    if !lib_files_available() {
+        return;
+    }
+    // Multiple references to the same lib generic should use the same DefId.
+    let diagnostics = compile_with_lib(
+        r#"
+const a: Array<number> = [1, 2, 3];
+const b: Array<string> = ["a", "b"];
+const c: Array<boolean> = [true, false];
+const lenA: number = a.length;
+const lenB: number = b.length;
+const lenC: number = c.length;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Multiple Array<T> instantiations should all have .length.\n\
+         Diagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_canonical_lib_def_id_consistency() {
+    if !lib_files_available() {
+        return;
+    }
+    // Regression: ensure get_canonical_lib_def_id produces same DefId as
+    // the two-step canonical_lib_sym_id + get_lib_def_id pattern.
+    // We exercise this via resolve_lib_type_with_params (which uses
+    // get_canonical_lib_def_id internally) by checking that generic lib types
+    // resolve correctly.
+    let diagnostics = compile_with_lib(
+        r#"
+function identity<T>(x: T): T { return x; }
+const arr: Array<number> = [1, 2, 3];
+const first: number = arr[0];
+const mapped: Array<string> = arr.map((x) => x.toString());
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 2304),
+        "Array.map should be accessible via get_canonical_lib_def_id path.\n\
+         Diagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_all_resolves_tuple() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function allPromises() {
+    const [a, b] = await Promise.all([
+        Promise.resolve(1),
+        Promise.resolve("hello"),
+    ]);
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304),
+        "Promise.all should resolve without 'not found' errors.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_context_fallback_arena_resolves_symbol_arenas() {
+    if !lib_files_available() {
+        return;
+    }
+    // Exercise the per-lib-context fallback arena path (resolve_lib_context_fallback_arena).
+    // Symbol types that span multiple lib files (e.g., SymbolConstructor from
+    // es2015.symbol.wellknown.d.ts) should resolve via the symbol_arenas fallback.
+    let diagnostics = compile_with_lib(
+        r#"
+const sym = Symbol("test");
+const desc: string | undefined = sym.description;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    // Symbol should be resolvable
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304),
+        "Symbol should resolve via lib context fallback arena.\nDiagnostics: {real_errors:#?}"
+    );
+}

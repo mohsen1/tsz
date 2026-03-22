@@ -207,6 +207,18 @@ impl<'a> CheckerContext<'a> {
         self.binder.file_locals.get(name).unwrap_or(per_lib_sym_id)
     }
 
+    /// Return the `DefId` for a lib symbol, canonicalizing the `SymbolId` first.
+    ///
+    /// Combines [`canonical_lib_sym_id`] and [`get_lib_def_id`] into a single
+    /// call. Use this in per-lib-context lowering paths (e.g.,
+    /// `resolve_lib_type_with_params`) where the `SymbolId` comes from an
+    /// individual lib binder and must be mapped to the merged-binder identity
+    /// before creating/looking up the `DefId`.
+    pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
+        let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
+        self.get_lib_def_id(canonical_sym)
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the
