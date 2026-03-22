@@ -5212,3 +5212,29 @@ fn test_project_residency_stats_type_interner_nonzero_even_empty_project() {
         "type_interner_estimated_bytes should be nonzero even for empty project (intrinsics)"
     );
 }
+
+#[test]
+fn test_project_residency_stats_includes_definition_store() {
+    let mut project = Project::new();
+    project.set_file(
+        "a.ts".to_string(),
+        "interface Foo { x: number; }\nclass Bar {}".to_string(),
+    );
+
+    let stats = project.residency_stats();
+    assert!(
+        stats.definition_store_estimated_bytes > 0,
+        "definition_store_estimated_bytes should be nonzero for a project with definitions"
+    );
+}
+
+#[test]
+fn test_project_residency_stats_definition_store_nonzero_even_empty_project() {
+    let project = Project::new();
+    let stats = project.residency_stats();
+    // Even an empty store has struct overhead (DashMaps, atomics, etc.)
+    assert!(
+        stats.definition_store_estimated_bytes > 0,
+        "definition_store_estimated_bytes should be nonzero even for empty project"
+    );
+}
