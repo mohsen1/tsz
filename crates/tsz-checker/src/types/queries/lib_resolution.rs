@@ -277,102 +277,6 @@ impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
-    /// Lower global augmentation declarations for a lib type and merge them
-    /// into an existing base type (or create one if `base` is `None`).
-    ///
-    /// This consolidates the duplicated augmentation lowering blocks from
-    /// `resolve_lib_type_by_name` and `resolve_lib_type_with_params`.  Both
-    /// methods group augmentation declarations by arena and lower each group
-    /// using `resolve_augmentation_node` + `TypeLowering`, then merge via
-    /// `intersection2`.
-    pub(crate) fn lower_global_augmentations(
-        &mut self,
-        name: &str,
-        base: Option<TypeId>,
-        lib_contexts: &[crate::context::LibContext],
-    ) -> Option<TypeId> {
-        use tsz_lowering::TypeLowering;
-
-        let augmentation_decls = self.ctx.binder.global_augmentations.get(name)?;
-        if augmentation_decls.is_empty() {
-            return base;
-        }
-
-        let factory = self.ctx.types.factory();
-        let current_arena: &NodeArena = self.ctx.arena;
-        let binder_ref = self.ctx.binder;
-
-        // Group augmentation declarations by arena pointer identity.
-        let mut current_file_decls: Vec<NodeIndex> = Vec::new();
-        let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
-            FxHashMap::default();
-
-        for aug in augmentation_decls {
-            if let Some(ref arena) = aug.arena {
-                let key = Arc::as_ptr(arena) as usize;
-                cross_file_groups
-                    .entry(key)
-                    .or_insert_with(|| (Arc::clone(arena), Vec::new()))
-                    .1
-                    .push(aug.node);
-            } else {
-                current_file_decls.push(aug.node);
-            }
-        }
-
-        let mut result = base;
-
-        // Helper: lower augmentation declarations using a given arena.
-        let global_idx = self.ctx.global_file_locals_index.as_deref();
-        let all_binders_ref = self.ctx.all_binders.as_deref();
-        let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
-            let decl_binder = self
-                .ctx
-                .get_binder_for_arena(arena_ref)
-                .unwrap_or(binder_ref);
-            let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                resolve_augmentation_node(
-                    decl_binder,
-                    arena_ref,
-                    node_idx,
-                    global_idx,
-                    all_binders_ref.map(|v| v.as_ref()),
-                    lib_contexts,
-                )
-            };
-            let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                resolver(node_idx)
-                    .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
-            };
-            let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
-            };
-            let lowering = TypeLowering::with_hybrid_resolver(
-                arena_ref,
-                self.ctx.types,
-                &resolver,
-                &def_id_resolver,
-                &|_| None,
-            )
-            .with_name_def_id_resolver(&name_resolver);
-            let aug_type = lowering.lower_interface_declarations(decls);
-            result = if let Some(existing) = result {
-                Some(factory.intersection2(existing, aug_type))
-            } else {
-                Some(aug_type)
-            };
-        };
-
-        if !current_file_decls.is_empty() {
-            lower_with_arena(current_arena, &current_file_decls);
-        }
-        for (arena, decls) in cross_file_groups.values() {
-            lower_with_arena(arena.as_ref(), decls);
-        }
-
-        result
-    }
-
     /// Resolve a library type by name from lib.d.ts and other library contexts.
     ///
     /// This function resolves types from library definition files like lib.d.ts,
@@ -851,7 +755,9 @@ impl<'a> CheckerState<'a> {
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Record type parameters for generic interfaces.
-                            let def_id = self.ctx.resolve_lib_sym_def_id(name, sym_id);
+                            let file_sym_id =
+                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                            let def_id = self.ctx.get_lib_def_id(file_sym_id);
                             if !params.is_empty() {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
@@ -880,7 +786,9 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Cache type parameters for Application expansion.
-                                    let def_id = self.ctx.resolve_lib_sym_def_id(name, sym_id);
+                                    // Prefer get_existing_def_id: lib symbols should be
+                                    // pre-populated via semantic_defs propagation.
+                                    let def_id = self.ctx.get_lib_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
                                     // Register the type body in both envs so that
@@ -976,8 +884,92 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
 
-        // Merge global augmentations (declare global { interface X { ... } }).
-        lib_type_id = self.lower_global_augmentations(name, lib_type_id, &lib_contexts);
+        // Check for global augmentations that should merge with this type.
+        // Augmentations may come from the current file or other files (cross-file merge).
+        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
+            && !augmentation_decls.is_empty()
+        {
+            // Group augmentation declarations by arena.
+            // Declarations with arena=None use the current file's arena.
+            let current_arena: &NodeArena = self.ctx.arena;
+            let binder_ref = self.ctx.binder;
+
+            let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
+                let arenas = self.ctx.all_arenas.as_ref()?;
+                let binders = self.ctx.all_binders.as_ref()?;
+                let arena_ptr = arena_ref as *const NodeArena;
+                for (idx, arena) in arenas.iter().enumerate() {
+                    if Arc::as_ptr(arena) == arena_ptr {
+                        return binders.get(idx).map(Arc::as_ref);
+                    }
+                }
+                None
+            };
+
+            // Collect declarations grouped by arena pointer identity
+            let mut current_file_decls: Vec<NodeIndex> = Vec::new();
+            let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
+                FxHashMap::default();
+
+            for aug in augmentation_decls {
+                if let Some(ref arena) = aug.arena {
+                    let key = Arc::as_ptr(arena) as usize;
+                    cross_file_groups
+                        .entry(key)
+                        .or_insert_with(|| (Arc::clone(arena), Vec::new()))
+                        .1
+                        .push(aug.node);
+                } else {
+                    current_file_decls.push(aug.node);
+                }
+            }
+
+            // Helper: lower augmentation declarations using a given arena.
+            // Uses `resolve_augmentation_node` (the shared stable helper) instead
+            // of building per-call resolver closures with duplicated logic.
+            let global_idx = self.ctx.global_file_locals_index.as_deref();
+            let all_binders_ref = self.ctx.all_binders.as_deref();
+            let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
+                let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
+                let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    resolve_augmentation_node(
+                        decl_binder,
+                        arena_ref,
+                        node_idx,
+                        global_idx,
+                        all_binders_ref.map(|v| v.as_ref()),
+                        &lib_contexts,
+                    )
+                };
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    resolver(node_idx)
+                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
+                };
+                let lowering = TypeLowering::with_hybrid_resolver(
+                    arena_ref,
+                    self.ctx.types,
+                    &resolver,
+                    &def_id_resolver,
+                    &|_| None,
+                );
+                let aug_type = lowering.lower_interface_declarations(decls);
+                lib_type_id = if let Some(lib_type) = lib_type_id {
+                    Some(factory.intersection2(lib_type, aug_type))
+                } else {
+                    Some(aug_type)
+                };
+            };
+
+            // Lower current-file augmentations
+            if !current_file_decls.is_empty() {
+                lower_with_arena(current_arena, &current_file_decls);
+            }
+
+            // Lower cross-file augmentations (each group uses its own arena)
+            for (arena, decls) in cross_file_groups.values() {
+                lower_with_arena(arena.as_ref(), decls);
+            }
+        }
 
         // Process heritage clauses from global augmentations.
         // This is in a separate block because lower_with_arena borrows `self`
