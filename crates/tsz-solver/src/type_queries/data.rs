@@ -2243,7 +2243,6 @@ fn resolve_concrete_conditional_result(
     })
 }
 
-
 /// Find the private brand name for a type.
 ///
 /// Private members in TypeScript classes use a "brand" property for nominal typing.
@@ -2973,7 +2972,6 @@ mod tests {
             TypeId::STRING
         );
     }
-
 
     #[test]
     fn classify_body_for_arg_preservation_non_conditional() {
