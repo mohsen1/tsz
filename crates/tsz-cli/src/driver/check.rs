@@ -636,6 +636,19 @@ pub(super) fn collect_diagnostics(
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
 
+        // Reorder work queue in topological (dependency-first) order so that
+        // dependencies are checked before their dependents. This ensures that
+        // cached type information and export hashes are available when checking
+        // files that import them, improving incremental invalidation accuracy.
+        {
+            let queue_vec: Vec<usize> = work_queue.iter().copied().collect();
+            let ordered = topological_file_order(&queue_vec, &resolved_module_paths);
+            work_queue.clear();
+            for idx in ordered {
+                work_queue.push_back(idx);
+            }
+        }
+
         // Process files in the work queue
         while let Some(file_idx) = work_queue.pop_front() {
             let file = &program.files[file_idx];
@@ -982,6 +995,96 @@ fn propagate_module_export_maps(
             }
         }
     }
+}
+
+/// Compute a topological ordering of file indices based on resolved module dependencies.
+///
+/// Given `resolved_module_paths` mapping `(source_file_idx, specifier) -> target_file_idx`,
+/// this produces a dependency-first ordering: files with no dependencies come first,
+/// followed by files that depend only on already-listed files.
+///
+/// If cycles exist, the cycle participants are appended at the end in their original
+/// order (matching tsc behavior which gracefully handles circular imports).
+///
+/// Only file indices present in `file_indices` are included in the output.
+fn topological_file_order(
+    file_indices: &[usize],
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> Vec<usize> {
+    if file_indices.len() <= 1 {
+        return file_indices.to_vec();
+    }
+
+    // Build adjacency list: src -> [targets it imports].
+    // Edge A -> B means "A depends on B" (A imports B).
+    let file_set: FxHashSet<usize> = file_indices.iter().copied().collect();
+    let mut deps: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    for &idx in file_indices {
+        deps.insert(idx, Vec::new());
+    }
+    for (&(src, _), &target) in resolved_module_paths.iter() {
+        if file_set.contains(&src) && file_set.contains(&target) && src != target {
+            deps.entry(src).or_default().push(target);
+        }
+    }
+
+    // Kahn's algorithm on the dependency graph.
+    // We want dependencies first: if A imports B, B should appear before A.
+    // in_degree[x] = number of imports x has (edges leaving x in the dep graph).
+    // Nodes with in_degree 0 have no imports and can be processed first.
+    let mut in_degree: FxHashMap<usize, usize> = FxHashMap::default();
+    // reverse_deps[B] = [A, ...] means "A depends on B"
+    let mut reverse_deps: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    for &idx in file_indices {
+        in_degree.insert(idx, 0);
+        reverse_deps.insert(idx, Vec::new());
+    }
+    for (&src, dep_list) in &deps {
+        for &dep in dep_list {
+            if dep != src {
+                reverse_deps.entry(dep).or_default().push(src);
+                *in_degree.entry(src).or_default() += 1;
+            }
+        }
+    }
+
+    // Seed queue with nodes that have no dependencies, in sorted order for determinism.
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    let mut sorted_indices: Vec<usize> = file_indices.to_vec();
+    sorted_indices.sort_unstable();
+    for &idx in &sorted_indices {
+        if in_degree[&idx] == 0 {
+            queue.push_back(idx);
+        }
+    }
+
+    let mut result = Vec::with_capacity(file_indices.len());
+    while let Some(node) = queue.pop_front() {
+        result.push(node);
+        if let Some(dependents) = reverse_deps.get(&node) {
+            let mut sorted_dependents = dependents.clone();
+            sorted_dependents.sort_unstable();
+            for &dependent in &sorted_dependents {
+                let deg = in_degree.get_mut(&dependent).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    queue.push_back(dependent);
+                }
+            }
+        }
+    }
+
+    // If cycles exist, append remaining nodes in their original order.
+    if result.len() < file_indices.len() {
+        let in_result: FxHashSet<usize> = result.iter().copied().collect();
+        for &idx in file_indices {
+            if !in_result.contains(&idx) {
+                result.push(idx);
+            }
+        }
+    }
+
+    result
 }
 
 pub(super) struct CheckFileForParallelContext<'a> {
@@ -1722,5 +1825,101 @@ let x2: string = f;
                 .any(|diag| diag.file == "/b.ts" && diag.code == 2427),
             "expected TS2427 to survive parse-error suppression: {diagnostics:?}"
         );
+    }
+
+    // --- topological_file_order tests ---
+
+    #[test]
+    fn topo_order_empty() {
+        let result = topological_file_order(&[], &FxHashMap::default());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn topo_order_single_file() {
+        let result = topological_file_order(&[0], &FxHashMap::default());
+        assert_eq!(result, vec![0]);
+    }
+
+    #[test]
+    fn topo_order_no_deps() {
+        // Three files with no dependencies — output should be sorted by index
+        let result = topological_file_order(&[2, 0, 1], &FxHashMap::default());
+        assert_eq!(result, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn topo_order_linear_chain() {
+        // File 0 imports file 1, file 1 imports file 2
+        // Expected order: 2 (no deps), then 1, then 0
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./b".to_string()), 1);
+        deps.insert((1, "./c".to_string()), 2);
+
+        let result = topological_file_order(&[0, 1, 2], &deps);
+        assert_eq!(result, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn topo_order_diamond() {
+        // File 0 imports 1 and 2; both 1 and 2 import 3
+        // Expected: 3 first, then 1 and 2 (sorted), then 0
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./a".to_string()), 1);
+        deps.insert((0, "./b".to_string()), 2);
+        deps.insert((1, "./c".to_string()), 3);
+        deps.insert((2, "./c".to_string()), 3);
+
+        let result = topological_file_order(&[0, 1, 2, 3], &deps);
+        assert_eq!(result, vec![3, 1, 2, 0]);
+    }
+
+    #[test]
+    fn topo_order_cycle() {
+        // Circular: 0 -> 1 -> 0
+        // Both participate in a cycle; should still include both files
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./b".to_string()), 1);
+        deps.insert((1, "./a".to_string()), 0);
+
+        let result = topological_file_order(&[0, 1], &deps);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&0));
+        assert!(result.contains(&1));
+    }
+
+    #[test]
+    fn topo_order_partial_cycle() {
+        // File 2 has no deps; files 0 and 1 form a cycle
+        // Expected: 2 first (no deps), then 0, 1 (cycle participants appended)
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./b".to_string()), 1);
+        deps.insert((1, "./a".to_string()), 0);
+
+        let result = topological_file_order(&[0, 1, 2], &deps);
+        assert_eq!(result[0], 2, "dependency-free file should come first");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn topo_order_ignores_external_deps() {
+        // File 0 depends on file 5, but 5 is not in file_indices — should be ignored
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./ext".to_string()), 5);
+
+        let result = topological_file_order(&[0, 1], &deps);
+        assert_eq!(result.len(), 2);
+        // Both have no in-set dependencies, so sorted order
+        assert_eq!(result, vec![0, 1]);
+    }
+
+    #[test]
+    fn topo_order_self_import_ignored() {
+        // File 0 imports itself — self-loops should be ignored
+        let mut deps = FxHashMap::default();
+        deps.insert((0, "./self".to_string()), 0);
+
+        let result = topological_file_order(&[0, 1], &deps);
+        assert_eq!(result, vec![0, 1]);
     }
 }
