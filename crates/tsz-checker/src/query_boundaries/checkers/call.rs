@@ -180,3 +180,21 @@ pub(crate) fn expanded_this_type_from_application(
         ContextualTypeContext::with_expected_and_options(db, expanded, no_implicit_any);
     expanded_ctx.get_this_type_from_marker()
 }
+
+pub(crate) fn get_overload_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::CallSignature>> {
+    tsz_solver::type_queries::data::get_overload_call_signatures(db, type_id)
+}
+
+pub(crate) fn is_valid_union_predicate(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::flow::is_valid_union_predicate(db, type_id)
+}
+
+pub(crate) fn extract_predicate_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::type_queries::flow::ExtractedPredicateSignature> {
+    tsz_solver::type_queries::flow::extract_predicate_signature(db, type_id)
+}
