@@ -494,6 +494,26 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
+    /// Heritage clause references (extends/implements) captured at bind time.
+    ///
+    /// Only meaningful for `SemanticDefKind::Class` and `SemanticDefKind::Interface`;
+    /// empty for other kinds. Each entry records the base type name and whether
+    /// the reference is from an `extends` or `implements` clause. This allows the
+    /// checker to resolve class/interface hierarchies without re-examining the AST.
+    pub heritage_names: Vec<HeritageRef>,
+}
+
+/// A reference to a base type from a heritage clause (extends/implements).
+///
+/// Captured at bind time from the heritage clause's type expression. For simple
+/// identifiers (`class Foo extends Bar`), the name is `"Bar"`. For qualified
+/// names (`class Foo extends NS.Bar`), the name is `"NS.Bar"`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeritageRef {
+    /// The text name of the referenced type (e.g., `"Bar"` or `"NS.Bar"`).
+    pub name: String,
+    /// `true` if this comes from an `extends` clause, `false` for `implements`.
+    pub is_extends: bool,
 }
 
 impl BinderState {

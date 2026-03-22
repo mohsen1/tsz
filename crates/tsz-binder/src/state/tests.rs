@@ -4503,3 +4503,105 @@ const myVar = 1;
         );
     }
 }
+
+// ── Heritage capture tests ──────────────────────────────────────────
+
+#[test]
+fn heritage_names_class_extends() {
+    let binder = bind_source("class Foo extends Bar {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 1);
+    assert_eq!(entry.heritage_names[0].name, "Bar");
+    assert!(entry.heritage_names[0].is_extends);
+}
+
+#[test]
+fn heritage_names_class_implements() {
+    let binder = bind_source("class Foo implements IBar {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 1);
+    assert_eq!(entry.heritage_names[0].name, "IBar");
+    assert!(!entry.heritage_names[0].is_extends);
+}
+
+#[test]
+fn heritage_names_class_extends_and_implements() {
+    let binder = bind_source("class Foo extends Bar implements IBaz, IQux {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 3);
+    assert_eq!(entry.heritage_names[0].name, "Bar");
+    assert!(entry.heritage_names[0].is_extends);
+    assert_eq!(entry.heritage_names[1].name, "IBaz");
+    assert!(!entry.heritage_names[1].is_extends);
+    assert_eq!(entry.heritage_names[2].name, "IQux");
+    assert!(!entry.heritage_names[2].is_extends);
+}
+
+#[test]
+fn heritage_names_class_extends_qualified() {
+    let binder = bind_source("class Foo extends NS.Bar {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 1);
+    assert_eq!(entry.heritage_names[0].name, "NS.Bar");
+    assert!(entry.heritage_names[0].is_extends);
+}
+
+#[test]
+fn heritage_names_interface_extends() {
+    let binder = bind_source("interface Foo extends Bar, Baz {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 2);
+    assert_eq!(entry.heritage_names[0].name, "Bar");
+    assert!(entry.heritage_names[0].is_extends);
+    assert_eq!(entry.heritage_names[1].name, "Baz");
+    assert!(entry.heritage_names[1].is_extends);
+}
+
+#[test]
+fn heritage_names_class_extends_generic() {
+    let binder = bind_source("class Foo extends Bar<string> {}");
+    let sym_id = binder.file_locals.get("Foo").expect("expected Foo");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Foo");
+    assert_eq!(entry.heritage_names.len(), 1);
+    assert_eq!(entry.heritage_names[0].name, "Bar");
+    assert!(entry.heritage_names[0].is_extends);
+}
+
+#[test]
+fn heritage_names_empty_for_non_heritage_declarations() {
+    let binder = bind_source("class Foo {} type Bar = string; enum Baz { A }");
+    let foo_sym = binder.file_locals.get("Foo").expect("expected Foo");
+    let foo_entry = binder.semantic_defs.get(&foo_sym).unwrap();
+    assert!(foo_entry.heritage_names.is_empty());
+
+    let bar_sym = binder.file_locals.get("Bar").expect("expected Bar");
+    let bar_entry = binder.semantic_defs.get(&bar_sym).unwrap();
+    assert!(bar_entry.heritage_names.is_empty());
+
+    let baz_sym = binder.file_locals.get("Baz").expect("expected Baz");
+    let baz_entry = binder.semantic_defs.get(&baz_sym).unwrap();
+    assert!(baz_entry.heritage_names.is_empty());
+}
