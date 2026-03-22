@@ -1977,3 +1977,187 @@ const d: Dog = { name: "Rex", breed: "Lab" };
         }
     }
 }
+
+// =========================================================================
+// Focused tests: prime_lib_type_params via get_lib_def_id
+// =========================================================================
+// These tests validate that prime_lib_type_params uses the stable
+// get_lib_def_id helper (instead of get_existing_def_id with early return),
+// ensuring type params are primed even when pre-population has gaps.
+
+#[test]
+fn test_prime_lib_type_params_via_get_lib_def_id() {
+    // Array<T> type params should be primed even when accessed indirectly
+    // through a nested generic context, exercising the get_lib_def_id path
+    // in prime_lib_type_params.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+function wrap<T>(value: T): Array<T> {
+    return [value];
+}
+const nums: Array<number> = wrap(42);
+const strs: Array<string> = wrap("hello");
+// Should error: string not assignable to number
+const bad: Array<number> = wrap("oops");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        real_errors.iter().any(|(c, _)| *c == 2322),
+        "Array<number> = wrap('oops') should produce TS2322 when type params are primed.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_type_params_primed_for_nested_generics() {
+    // Promise type params must be primed via get_lib_def_id for nested
+    // generic usage to infer correctly.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+function wrapInPromise<T>(value: T): Promise<T> {
+    return Promise.resolve(value);
+}
+const p: Promise<number> = wrapInPromise(42);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise<number> = wrapInPromise(42) should resolve with primed type params.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// =========================================================================
+// Focused tests: import-type lowering through lib resolution
+// =========================================================================
+
+#[test]
+fn test_import_type_indirect_lib_generic() {
+    // Type alias chains that eventually reference lib generics should
+    // resolve through the stable identity path without DefId repair.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type MaybeArray<T> = Array<T> | T;
+type Numbers = MaybeArray<number>;
+const a: Numbers = [1, 2, 3];
+const b: Numbers = 42;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "MaybeArray<number> union with lib Array should resolve.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_promise_conditional() {
+    // Conditional types referencing Promise should resolve through the
+    // stable lib DefId path (get_lib_def_id in the lowering closures).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+type A = UnwrapPromise<Promise<number>>;
+type B = UnwrapPromise<string>;
+const a: A = 42;
+const b: B = "hello";
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "UnwrapPromise conditional type should infer through lib Promise.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// =========================================================================
+// Focused tests: library-reference resolution stability
+// =========================================================================
+
+#[test]
+fn test_library_reference_multiple_promise_declarations() {
+    // Promise has declarations across multiple lib files (es5, es2015, etc.).
+    // All declarations should merge consistently via the stable identity path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p: Promise<number> = new Promise<number>((resolve) => resolve(42));
+const then_result = p.then(n => n.toString());
+const caught = p.catch(err => "error");
+"#,
+    );
+    // Promise members from different lib declarations should all be accessible
+    let property_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert!(
+        property_errors.is_empty(),
+        "Promise members (then, catch) should be accessible across lib declarations.\nDiagnostics: {property_errors:#?}"
+    );
+}
+
+#[test]
+fn test_library_reference_error_subclass_chain() {
+    // Error → TypeError → RangeError etc. hierarchy should resolve
+    // through lib heritage merging with stable helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+function handleError(e: Error): string {
+    return e.message;
+}
+const te: TypeError = new TypeError("type");
+const re: RangeError = new RangeError("range");
+const r1: string = handleError(te);
+const r2: string = handleError(re);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Error subclasses should be assignable to Error via heritage.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_library_reference_iterable_protocol() {
+    // for..of uses the Iterable protocol from lib. Heritage chain resolution
+    // (Array → Iterable) must work through stable helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<number> = [1, 2, 3];
+let sum: number = 0;
+for (const n of arr) {
+    sum = sum + n;
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345 || *c == 2488)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "for..of on Array should work via Iterable heritage.\nDiagnostics: {real_errors:#?}"
+    );
+}
