@@ -424,6 +424,79 @@ const rec: Record<string, number> = { a: 1, b: 2 };
     );
 }
 
+// ---- Augmentation symbol resolution (stable helpers) ----
+
+#[test]
+fn test_global_augmentation_merges_with_lib_type() {
+    if !lib_files_available() {
+        return;
+    }
+    // Global augmentations should merge with lib types via the stable
+    // resolve_augmentation_symbol helper (no per-call RefCell cache).
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Array<T> {
+        customMethod(): T;
+    }
+}
+const arr: Array<number> = [1, 2, 3];
+const val: number = arr.customMethod();
+export {};
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Augmented Array.customMethod should be accessible.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_all_with_lib_stable_identity() {
+    if !lib_files_available() {
+        return;
+    }
+    // Promise.all uses complex generic resolution that depends on stable
+    // lib DefId identity across multiple Promise interface declarations.
+    let diagnostics = compile_with_lib(
+        r#"
+async function fetchAll(): Promise<number[]> {
+    const promises: Promise<number>[] = [
+        Promise.resolve(1),
+        Promise.resolve(2),
+    ];
+    return Promise.all(promises);
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise.all should preserve number[] type.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_resolves_lib_types() {
+    if !lib_files_available() {
+        return;
+    }
+    // Basic lib type references should resolve without import-type errors
+    let diagnostics = compile_with_lib(
+        r#"
+type NumArray = Array<number>;
+const arr: NumArray = [1, 2, 3];
+const len: number = arr.length;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        "Type alias referencing lib Array should resolve.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
 // ---- Cross-lib interface heritage ----
 
 #[test]
