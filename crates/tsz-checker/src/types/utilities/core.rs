@@ -126,10 +126,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .resolve_import_with_reexports_type_only(target_file_name, member_name)
             {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_idx);
                 return Some(sym_id);
             }
         }
@@ -140,10 +137,7 @@ impl<'a> CheckerState<'a> {
             .resolve_import_with_reexports_type_only(module_specifier, member_name)
         {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_idx);
             } else {
                 self.record_cross_file_symbol_if_needed(sym_id, member_name, module_specifier);
             }
