@@ -34,7 +34,6 @@ fn empty_project_env() -> ProjectEnv {
         typescript_dom_replacement_globals: (false, false, false),
         has_deprecation_diagnostics: false,
         last_skeleton_fingerprint: None,
-        global_arena_index: None,
     }
 }
 
