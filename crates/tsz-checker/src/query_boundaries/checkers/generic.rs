@@ -113,52 +113,24 @@ pub(crate) fn classify_index_key(db: &dyn TypeDatabase, key_type: TypeId) -> Ind
 
 /// Check if a key type (and its `IndexKeyKind`) matches a string index signature.
 ///
-/// Recursive for union members: all members must individually match.
+/// Delegates to the solver's canonical implementation.
 pub(crate) fn key_matches_string_index(
     db: &dyn TypeDatabase,
     key_type: TypeId,
     kind: &IndexKeyKind,
 ) -> bool {
-    match kind {
-        IndexKeyKind::String
-        | IndexKeyKind::Number
-        | IndexKeyKind::StringLiteral
-        | IndexKeyKind::NumberLiteral
-        | IndexKeyKind::NumericStringLike
-        | IndexKeyKind::TemplateLiteralString => true,
-        IndexKeyKind::Union(members) => members.iter().all(|&member| {
-            let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
-            key_matches_string_index(db, member, &member_kind)
-        }),
-        IndexKeyKind::Other => {
-            tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
-                || tsz_solver::type_queries::is_keyof_type(db, key_type)
-        }
-    }
+    tsz_solver::type_queries::key_matches_string_index(db, key_type, kind)
 }
 
 /// Check if a key type (and its `IndexKeyKind`) matches a number index signature.
 ///
-/// Recursive for union members: all members must individually match.
+/// Delegates to the solver's canonical implementation.
 pub(crate) fn key_matches_number_index(
     db: &dyn TypeDatabase,
     key_type: TypeId,
     kind: &IndexKeyKind,
 ) -> bool {
-    match kind {
-        IndexKeyKind::Number | IndexKeyKind::NumberLiteral | IndexKeyKind::NumericStringLike => {
-            true
-        }
-        IndexKeyKind::Union(members) => members.iter().all(|&member| {
-            let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
-            key_matches_number_index(db, member, &member_kind)
-        }),
-        IndexKeyKind::Other => {
-            tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
-                || tsz_solver::type_queries::is_keyof_type(db, key_type)
-        }
-        _ => false,
-    }
+    tsz_solver::type_queries::key_matches_number_index(db, key_type, kind)
 }
 
 // =========================================================================
