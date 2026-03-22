@@ -416,6 +416,10 @@ fn test_merged_program_residency_stats_track_unique_file_arenas() {
         "skeleton should track at least 2 symbols, got {}",
         stats.skeleton_total_symbol_count
     );
+    assert!(
+        stats.skeleton_estimated_size_bytes > 0,
+        "skeleton size estimate should be nonzero when skeleton is present"
+    );
 }
 
 #[test]
@@ -3819,4 +3823,80 @@ fn test_merge_deterministic_global_namespace() {
         prev_symbol_names = Some(symbol_names);
         prev_deep_exports = Some(deep_exports);
     }
+}
+
+#[test]
+fn test_skeleton_index_estimated_size_bytes_is_nonzero() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+        (
+            "c.ts".to_string(),
+            "export * from './a'; export { b } from './b';".to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    let stats = program.residency_stats();
+    assert!(stats.has_skeleton_index);
+    assert!(
+        stats.skeleton_estimated_size_bytes > 0,
+        "skeleton index should report nonzero estimated size, got 0"
+    );
+    // The estimate should at least cover the base struct size
+    assert!(
+        stats.skeleton_estimated_size_bytes >= std::mem::size_of::<SkeletonIndex>(),
+        "skeleton size estimate ({}) should be >= struct size ({})",
+        stats.skeleton_estimated_size_bytes,
+        std::mem::size_of::<SkeletonIndex>()
+    );
+}
+
+#[test]
+fn test_skeleton_index_estimated_size_grows_with_content() {
+    // Small project
+    let small_files = vec![("a.ts".to_string(), "export const a = 1;".to_string())];
+    let small_results = parse_and_bind_parallel(small_files);
+    let small_program = merge_bind_results(small_results);
+    let small_size = small_program
+        .skeleton_index
+        .as_ref()
+        .unwrap()
+        .estimated_size_bytes();
+
+    // Larger project with more symbols and cross-file relationships
+    let large_files = vec![
+        (
+            "a.ts".to_string(),
+            "export const a1 = 1; export const a2 = 2; export const a3 = 3;".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export const b1 = 1; export const b2 = 2; export const b3 = 3;".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "export * from './a'; export * from './b';".to_string(),
+        ),
+        (
+            "d.ts".to_string(),
+            "export { a1, a2 } from './a'; export { b1 } from './b';".to_string(),
+        ),
+    ];
+    let large_results = parse_and_bind_parallel(large_files);
+    let large_program = merge_bind_results(large_results);
+    let large_size = large_program
+        .skeleton_index
+        .as_ref()
+        .unwrap()
+        .estimated_size_bytes();
+
+    assert!(
+        large_size > small_size,
+        "larger project skeleton ({} bytes) should be bigger than small ({} bytes)",
+        large_size,
+        small_size
+    );
 }
