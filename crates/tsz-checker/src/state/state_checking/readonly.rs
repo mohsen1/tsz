@@ -509,22 +509,21 @@ impl<'a> CheckerState<'a> {
         // mapped type's homomorphic source. The solver's property_is_readonly
         // can only detect explicit +readonly modifiers, but homomorphic mapped
         // types inherit readonly from source properties.
-        if tsz_solver::is_mapped_type(self.ctx.types, readonly_check_type) {
-            if self.is_mapped_type_property_readonly(readonly_check_type, &prop_name) {
-                if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression)
-                {
-                    return false;
-                }
-                if prop_from_index_sig {
-                    self.error_readonly_index_signature_at(
-                        readonly_check_type,
-                        access.name_or_argument,
-                    );
-                } else {
-                    self.error_readonly_property_at(&prop_name, access.name_or_argument);
-                }
-                return true;
+        if tsz_solver::is_mapped_type(self.ctx.types, readonly_check_type)
+            && self.is_mapped_type_property_readonly(readonly_check_type, &prop_name)
+        {
+            if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
+                return false;
             }
+            if prop_from_index_sig {
+                self.error_readonly_index_signature_at(
+                    readonly_check_type,
+                    access.name_or_argument,
+                );
+            } else {
+                self.error_readonly_property_at(&prop_name, access.name_or_argument);
+            }
+            return true;
         }
 
         // Check if the property is readonly in the object type (solver types)
@@ -1080,15 +1079,14 @@ impl<'a> CheckerState<'a> {
         // No explicit modifier: check if homomorphic and inherit from source.
         // Homomorphic pattern: template is IndexAccess(source, param) where
         // param matches the mapped type's iteration parameter.
-        if let Some(tsz_solver::TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template) {
-            if let Some(tsz_solver::TypeData::TypeParameter(param)) = db.lookup(idx) {
-                if param.name == mapped.type_param.name {
-                    // This is a homomorphic mapped type. Resolve the source type
-                    // through the checker environment and check the property.
-                    let resolved_source = self.evaluate_type_with_resolution(source);
-                    return self.is_property_readonly(resolved_source, prop_name);
-                }
-            }
+        if let Some(tsz_solver::TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template)
+            && let Some(tsz_solver::TypeData::TypeParameter(param)) = db.lookup(idx)
+            && param.name == mapped.type_param.name
+        {
+            // This is a homomorphic mapped type. Resolve the source type
+            // through the checker environment and check the property.
+            let resolved_source = self.evaluate_type_with_resolution(source);
+            return self.is_property_readonly(resolved_source, prop_name);
         }
 
         false
