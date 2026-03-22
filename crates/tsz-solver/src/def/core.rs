@@ -759,6 +759,47 @@ impl DefinitionStore {
         }
     }
 
+    /// Set the parent class `DefId` for a class definition.
+    ///
+    /// This is a convenience wrapper over `set_heritage` for the common case
+    /// where only the extends relationship needs to be updated.
+    pub fn set_extends(&self, id: DefId, parent: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(parent);
+        }
+    }
+
+    /// Add an implemented interface `DefId` to a class definition.
+    ///
+    /// Idempotent: if `iface` is already in the implements list, this is a no-op.
+    pub fn add_implements(&self, id: DefId, iface: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if !entry.implements.contains(&iface) {
+                entry.implements.push(iface);
+            }
+        }
+    }
+
+    /// Resolve a heritage name by `Atom` directly, returning the first matching
+    /// `Class` or `Interface` `DefId` that is not `requester_id`.
+    ///
+    /// This is a simpler variant of `resolve_heritage` for cases where the
+    /// caller already has an interned `Atom`.
+    pub fn resolve_heritage_name(&self, name: Atom, requester_id: DefId) -> Option<DefId> {
+        let candidates = self.name_to_defs.get(&name)?;
+        for &candidate_id in candidates.value() {
+            if candidate_id == requester_id {
+                continue;
+            }
+            if let Some(candidate_info) = self.definitions.get(&candidate_id) {
+                if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
+                    return Some(candidate_id);
+                }
+            }
+        }
+        None
+    }
+
     /// Update the body `TypeId` for a definition (for lazy evaluation).
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
