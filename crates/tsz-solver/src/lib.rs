@@ -408,5 +408,5 @@ mod variance_tests;
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
 #[cfg(test)]
-#[path = "../tests/architecture_guards.rs"]
-mod architecture_guards;
+#[path = "tests/solver_file_size_ceiling_tests.rs"]
+mod solver_file_size_ceiling_tests;

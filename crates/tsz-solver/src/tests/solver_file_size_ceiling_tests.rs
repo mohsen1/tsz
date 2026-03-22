@@ -1,0 +1,223 @@
+use std::fs;
+use std::path::Path;
+
+fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|_| panic!("failed to read directory {}", dir.display()));
+    for entry in entries {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rs_files_recursive(&path, files);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+/// Ratchet guard: prevent solver source files from growing beyond maintainability limits.
+///
+/// Per CLAUDE.md section 19: "Avoid growth of monolith modules; split before crossing
+/// maintainability threshold." While section 12 specifically targets checker files at
+/// ~2000 LOC, the same principle applies to solver files.
+///
+/// This test enforces two ceilings:
+/// 1. The total count of files exceeding 2000 LOC must not increase.
+/// 2. The maximum line count of any single file must not increase.
+///
+/// Both ceilings can only shrink as files are split into smaller modules.
+#[test]
+fn test_solver_file_size_ceiling() {
+    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&solver_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&solver_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Skip test files — they are not subject to the LOC guideline
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {} ({} lines)", rel, line_count));
+        }
+    }
+
+    // Ceiling: number of solver source files exceeding 2000 LOC.
+    // This number must only shrink as files are split into smaller modules.
+    // Current oversized files (as of 2026-03-22):
+    //   type_queries/data.rs, operations/generic_call.rs, diagnostics/format.rs,
+    //   operations/constraints.rs, operations/core.rs, intern/core.rs,
+    //   relations/subtype/rules/functions.rs, relations/subtype/core.rs
+    const FILE_COUNT_CEILING: usize = 8;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of solver source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules before adding new code. \
+         Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // Ceiling: maximum line count of any single solver source file.
+    // This prevents existing large files from growing further.
+    const MAX_LOC_CEILING: usize = 4150;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest solver source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
+
+/// Ratchet guard: prevent the binder crate from growing oversized files.
+///
+/// The binder is simpler than checker/solver but should still maintain
+/// file size discipline to stay maintainable.
+#[test]
+fn test_binder_file_size_ceiling() {
+    let binder_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-binder/src");
+    if !binder_src.exists() {
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&binder_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&binder_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {} ({} lines)", rel, line_count));
+        }
+    }
+
+    // Capture current state as ceiling (1 file: binding/declaration.rs)
+    const FILE_COUNT_CEILING: usize = 1;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of binder source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules. Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // binding/declaration.rs is currently the largest at ~2603 lines.
+    const MAX_LOC_CEILING: usize = 2650;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest binder source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
+
+/// Ratchet guard: prevent the emitter crate from growing oversized files.
+#[test]
+fn test_emitter_file_size_ceiling() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-emitter/src");
+    if !emitter_src.exists() {
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&emitter_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {} ({} lines)", rel, line_count));
+        }
+    }
+
+    // Current oversized files (12 as of 2026-03-22):
+    //   declaration_emitter/helpers.rs (8938), declaration_emitter/core.rs (4270),
+    //   emitter/declarations/class.rs (3796), transforms/class_es5_ir.rs (2667),
+    //   emitter/statements.rs (2574), emitter/types/printer.rs (2443),
+    //   emitter/jsx.rs (2231), emitter/expressions/core.rs (2206),
+    //   declaration_emitter/exports.rs (2185), and others.
+    const FILE_COUNT_CEILING: usize = 12;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of emitter source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules. Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // declaration_emitter/helpers.rs is currently the largest at ~8938 lines.
+    const MAX_LOC_CEILING: usize = 9000;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest emitter source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
