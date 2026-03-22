@@ -154,6 +154,76 @@ fn local_import_alias_falls_back_to_import_qualified_name_when_elided() {
 }
 
 #[test]
+fn string_literal_type_escapes_double_quotes() {
+    let interner = tsz_solver::TypeInterner::new();
+    let lit_type = interner.literal_string("he said \"hi\"");
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(lit_type);
+    assert_eq!(
+        result, "\"he said \\\"hi\\\"\"",
+        "String literal types must escape double quotes"
+    );
+}
+
+#[test]
+fn string_literal_type_escapes_newline() {
+    let interner = tsz_solver::TypeInterner::new();
+    let lit_type = interner.literal_string("line1\nline2");
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(lit_type);
+    assert_eq!(
+        result, "\"line1\\nline2\"",
+        "String literal types must escape newlines"
+    );
+}
+
+#[test]
+fn string_literal_type_escapes_backslash() {
+    let interner = tsz_solver::TypeInterner::new();
+    let lit_type = interner.literal_string("back\\slash");
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(lit_type);
+    assert_eq!(
+        result, "\"back\\\\slash\"",
+        "String literal types must escape backslashes"
+    );
+}
+
+#[test]
+fn string_literal_type_escapes_tab() {
+    let interner = tsz_solver::TypeInterner::new();
+    let lit_type = interner.literal_string("col1\tcol2");
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(lit_type);
+    assert_eq!(
+        result, "\"col1\\tcol2\"",
+        "String literal types must escape tabs"
+    );
+}
+
+#[test]
+fn quoted_property_name_escapes_special_chars() {
+    let interner = tsz_solver::TypeInterner::new();
+    // Create a property with a name containing a double quote
+    let name = interner.intern_string("say \"hi\"");
+    let obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
+        name,
+        TypeId::STRING,
+    )]);
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(obj);
+    assert!(
+        result.contains("\"say \\\"hi\\\"\""),
+        "Property names with quotes must be escaped: {result}"
+    );
+}
+
+#[test]
 fn external_module_symbol_is_not_treated_as_global() {
     let interner = tsz_solver::TypeInterner::new();
     let mut symbols = SymbolArena::new();

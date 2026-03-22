@@ -714,7 +714,7 @@ impl<'a> TypePrinter<'a> {
     fn print_literal(&self, literal: &tsz_solver::types::LiteralValue) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {
-                format!("\"{}\"", self.resolve_atom(*atom))
+                format!("\"{}\"", escape_string_for_double_quote(&self.resolve_atom(*atom)))
             }
             tsz_solver::types::LiteralValue::Number(n) => {
                 let v = n.0;
@@ -993,9 +993,7 @@ impl<'a> TypePrinter<'a> {
                 // Property name (quote if needed)
                 let name = self.resolve_atom(property.name);
                 if needs_property_name_quoting(&name) {
-                    member.push('"');
-                    member.push_str(&name);
-                    member.push('"');
+                    member.push_str(&quote_property_name(&name));
                 } else {
                     member.push_str(&name);
                 }
@@ -2319,11 +2317,32 @@ impl<'a> TypePrinter<'a> {
     }
 }
 
+/// Escape a cooked string value for embedding in a double-quoted string literal.
+///
+/// The solver stores "cooked" (unescaped) text for string literals. When
+/// writing strings back into `.d.ts` output we must re-escape characters
+/// that cannot appear raw inside double-quoted string literals.
+fn escape_string_for_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Quote a property name with the appropriate quote style.
 /// tsc uses double quotes for numeric-like strings (e.g. "-1", "0")
 /// and for other non-identifier names.
 fn quote_property_name(name: &str) -> String {
-    format!("\"{name}\"")
+    format!("\"{}\"", escape_string_for_double_quote(name))
 }
 
 /// Check if a property name needs quoting (contains spaces, hyphens, etc.)
