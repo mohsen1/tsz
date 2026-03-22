@@ -50,6 +50,9 @@ pub struct TypePrinter<'a> {
     namespace_alias_resolver: Option<&'a dyn Fn(SymbolId) -> Option<String>>,
     /// Optional resolver for deciding whether a local import alias survives in emitted output.
     local_import_alias_name_resolver: Option<&'a dyn Fn(SymbolId) -> bool>,
+    /// When false, standalone `null` and `undefined` widen to `any` and are
+    /// filtered from union members (matching tsc's DTS behaviour).
+    strict_null_checks: bool,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -66,6 +69,7 @@ impl<'a> TypePrinter<'a> {
             module_path_resolver: None,
             namespace_alias_resolver: None,
             local_import_alias_name_resolver: None,
+            strict_null_checks: true,
         }
     }
 
@@ -133,6 +137,13 @@ impl<'a> TypePrinter<'a> {
         resolver: &'a dyn Fn(SymbolId) -> bool,
     ) -> Self {
         self.local_import_alias_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Configure strictNullChecks mode. When false, standalone `null` and
+    /// `undefined` widen to `any` and are stripped from union members.
+    pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
+        self.strict_null_checks = strict;
         self
     }
 
@@ -683,7 +694,9 @@ impl<'a> TypePrinter<'a> {
             TypeId::NEVER => "never".to_string(),
             TypeId::UNKNOWN => "unknown".to_string(),
             TypeId::VOID => "void".to_string(),
+            TypeId::UNDEFINED if !self.strict_null_checks => "any".to_string(),
             TypeId::UNDEFINED => "undefined".to_string(),
+            TypeId::NULL if !self.strict_null_checks => "any".to_string(),
             TypeId::NULL => "null".to_string(),
             TypeId::BOOLEAN => "boolean".to_string(),
             TypeId::NUMBER => "number".to_string(),
@@ -1555,6 +1568,12 @@ impl<'a> TypePrinter<'a> {
 
         let mut parts = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
+            // When strictNullChecks is off, filter null/undefined/void from unions
+            if !self.strict_null_checks
+                && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
+            {
+                continue;
+            }
             let s = self.composition_member_text(type_id);
             // Parenthesize function/constructor types in union position
             if self.type_needs_parentheses_in_composition(type_id) {
@@ -1562,6 +1581,11 @@ impl<'a> TypePrinter<'a> {
             } else {
                 parts.push(s);
             }
+        }
+
+        // If all members were filtered out, the result is `any` (widened)
+        if parts.is_empty() {
+            return "any".to_string();
         }
 
         // Join with " | "
