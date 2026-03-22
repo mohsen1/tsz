@@ -187,12 +187,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This handles both pre-evaluation form (constraint is `keyof T`) and
         // post-instantiation form (constraint eagerly evaluated to literal union).
         let homomorphic_source = self.homomorphic_mapped_source(mapped);
-        let is_homomorphic = homomorphic_source.is_some();
+        // True identity homomorphic: template is T[K] and constraint is keyof T.
+        // Used for declared-type substitution (avoid double-encoding optionality).
+        let is_identity_homomorphic = homomorphic_source.is_some();
 
         // For homomorphic types, source comes from the homomorphic check.
         // For non-homomorphic types, still try extracting from keyof for array/tuple preservation.
         let source_object =
             homomorphic_source.or_else(|| self.extract_source_from_keyof(mapped.constraint));
+
+        // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
+        // inheritance — the source T's optional/readonly flags propagate to the
+        // output even when the template is NOT `T[K]`. For example:
+        //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
+        // inherits optionality from Partial<M0>'s properties, even though the
+        // template is `M0[K]`, not `Partial<M0>[K]`.
+        let is_homomorphic = source_object.is_some();
 
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
@@ -386,26 +396,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_readonly,
             );
 
-            // TypeScript homomorphic mapped type behavior: the template `T[P]` evaluates
-            // via IndexAccess which adds `| undefined` for optional source properties.
-            // In homomorphic mapped types, since optionality is already captured by the
-            // `?` modifier on the output property, we should use the DECLARED type
-            // (without the extra `| undefined`) to avoid double-encoding optionality.
+            // TypeScript identity homomorphic mapped type behavior: the template `T[P]`
+            // evaluates via IndexAccess which adds `| undefined` for optional source
+            // properties. In identity homomorphic mapped types (template IS `T[P]`),
+            // since optionality is already captured by the `?` modifier on the output
+            // property, we should use the DECLARED type (without the extra `| undefined`)
+            // to avoid double-encoding optionality.
             //
-            // This applies when:
-            // 1. The mapped type is homomorphic (template is `T[P]`)
+            // This applies ONLY when:
+            // 1. The mapped type is identity homomorphic (template is `T[P]`)
             // 2. The source property is optional
-            // Regardless of whether the output property stays optional or not (e.g., `-?`
-            // removes optionality, but the declared type is still correct).
-            // For homomorphic mapped types with optional source properties, use the
-            // source property's declared type (raw type_id from the source Object). This
-            // replaces the template-evaluated type which includes `| undefined` from the
-            // indexed access on an optional property. The declared type preserves the
-            // distinction between implicit undefined (from `a?: string` → `string`) and
-            // explicit undefined (from `a?: string | undefined` → `string | undefined`).
-            // This is critical for `-?` (Required): it removes optionality but must
-            // preserve explicitly written `| undefined` in the source property's type.
-            if is_homomorphic
+            //
+            // For non-identity homomorphic types (e.g., `{ [K in keyof Partial<M0>]: M0[K] }`),
+            // the template is `M0[K]` which evaluates independently of the source's
+            // optionality. We must NOT substitute the declared type here because M0 is a
+            // different type from the keyof source (Partial<M0>).
+            if is_identity_homomorphic
                 && source_optional
                 && let Some((_, _, declared_type)) = source_info
             {

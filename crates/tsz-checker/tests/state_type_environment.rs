@@ -1,5 +1,5 @@
 use super::*;
-use tsz_solver::{DefId, TypeInterner};
+use tsz_solver::{DefId, QueryDatabase, TypeInterner};
 
 #[test]
 fn classifies_and_extracts_environment_resolution_shapes() {
@@ -318,4 +318,95 @@ fn type_param_name_extracts_name_via_boundary() {
     let matched = declared_params.iter().find(|p| p.name == extracted_name);
     assert!(matched.is_some());
     assert_eq!(matched.unwrap().constraint, Some(TypeId::OBJECT));
+}
+
+#[test]
+fn non_identity_homomorphic_mapped_type_inherits_optionality() {
+    // tsc treats `{ [K in keyof T]: X }` as homomorphic w.r.t. T for modifier
+    // inheritance, even when the template X is NOT `T[K]`. For example:
+    //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
+    // inherits optionality from Partial<M0>'s properties even though the template
+    // references M0, not Partial<M0>. This matches tsc's behavior.
+    use tsz_solver::{
+        MappedType, ObjectShape, PropertyInfo, TypeEnvironment, TypeEvaluator, TypeParamInfo,
+        Visibility,
+    };
+
+    let types = TypeInterner::new();
+    let k_name = types.intern_string("K");
+    let a_name = types.intern_string("a");
+    let b_name = types.intern_string("b");
+
+    // Build source object: { a?: number; b?: number } (simulating Partial<M0>)
+    let source_obj = types.factory().object(vec![
+        PropertyInfo {
+            name: a_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: b_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+    ]);
+
+    // Build mapped type: { [K in keyof source_obj]: string }
+    // Note: template is STRING, NOT source_obj[K] — this is a non-identity template.
+    let constraint = types.keyof(source_obj);
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let mapped_type = types.mapped(mapped);
+
+    // Evaluate with the solver's TypeEvaluator
+    let env = TypeEnvironment::new();
+    let mut evaluator = TypeEvaluator::with_resolver(&types, &env);
+    let result = evaluator.evaluate(mapped_type);
+
+    // The result should be an Object (not a deferred Mapped type)
+    assert_ne!(result, mapped_type, "Mapped type should be evaluated");
+
+    // Check that properties inherit optionality from the source
+    let shape = tsz_solver::type_queries::get_object_shape(&types, result)
+        .expect("Result should be an object");
+    let prop_a = shape.properties.iter().find(|p| p.name == a_name);
+    let prop_b = shape.properties.iter().find(|p| p.name == b_name);
+    assert!(prop_a.is_some(), "Property 'a' should exist");
+    assert!(prop_b.is_some(), "Property 'b' should exist");
+    assert!(
+        prop_a.unwrap().optional,
+        "Property 'a' should be optional (inherited from source)"
+    );
+    assert!(
+        prop_b.unwrap().optional,
+        "Property 'b' should be optional (inherited from source)"
+    );
+    // Template should still be STRING, not the source's number
+    assert_eq!(prop_a.unwrap().type_id, TypeId::STRING);
+    assert_eq!(prop_b.unwrap().type_id, TypeId::STRING);
 }
