@@ -995,9 +995,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if expected_keys == mapped.constraint {
                 return Some(obj);
             }
-            // Subset check: all constraint keys must exist in keyof obj
+            // Subset check: all constraint keys must exist in keyof obj.
+            // Use the already-evaluated keys (from evaluate_keyof_or_constraint
+            // at the top of evaluate_mapped) rather than the raw constraint.
+            // The raw constraint may be an unevaluated Application type (e.g.,
+            // Exclude<keyof T, K>) that extract_mapped_keys can't handle,
+            // but the evaluated keys are a concrete union of string literals.
+            let evaluated_constraint = self.evaluate_keyof_or_constraint(mapped.constraint);
             if let (Some(constraint_keys), Some(expected_key_set)) = (
-                self.extract_mapped_keys(mapped.constraint),
+                self.extract_mapped_keys(evaluated_constraint),
                 self.extract_mapped_keys(expected_keys),
             ) {
                 // Only do subset check for pure string literal keys (no string/number index)

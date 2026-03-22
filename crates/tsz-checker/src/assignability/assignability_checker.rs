@@ -753,6 +753,40 @@ impl<'a> CheckerState<'a> {
         evaluated
     }
 
+    /// Resolve a deferred Mapped type by pre-resolving its constraint's Applications.
+    ///
+    /// When evaluation produces a deferred Mapped type (e.g., from Omit/Pick where
+    /// the constraint contains Application types like `Exclude<keyof T, K>`), the
+    /// solver's TypeEvaluator may have failed because lib type DefIds weren't
+    /// registered in the TypeEnvironment. This method resolves the constraint through
+    /// the checker's evaluation path and retries the Mapped type evaluation.
+    pub(crate) fn resolve_deferred_mapped_type(&mut self, type_id: TypeId) -> TypeId {
+        let Some(mapped_id) = crate::query_boundaries::state::type_environment::mapped_type_id(
+            self.ctx.types.as_type_database(),
+            type_id,
+        ) else {
+            return type_id;
+        };
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let constraint = mapped.constraint;
+        let resolved_constraint = self.evaluate_mapped_constraint_with_resolution(constraint);
+        if resolved_constraint != constraint {
+            self.ctx
+                .env_eval_cache
+                .borrow_mut()
+                .entry(constraint)
+                .or_insert(crate::context::EnvEvalCacheEntry {
+                    result: resolved_constraint,
+                    depth_exceeded: false,
+                });
+            let retry = self.evaluate_type_with_env_uncached(type_id);
+            if retry != type_id {
+                return retry;
+            }
+        }
+        type_id
+    }
+
     // =========================================================================
     // Main Assignability Check
     // =========================================================================

@@ -463,7 +463,11 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object being accessed and normalize it through
         // solver-backed evaluation before property/read-only checks.
         let obj_type = self.get_type_of_node(access.expression);
-        let readonly_check_type = self.evaluate_type_for_assignability(obj_type);
+        let mut readonly_check_type = self.evaluate_type_for_assignability(obj_type);
+        // If evaluation produced a deferred Mapped type (e.g., from Omit/Pick),
+        // resolve it through the checker's TypeEnvironment to get concrete
+        // property readonly flags.
+        readonly_check_type = self.resolve_deferred_mapped_type(readonly_check_type);
 
         // Check if the property is a const export from a namespace/module (TS2540).
         // For `M.x = 1` where `export const x = 0` in namespace M.
