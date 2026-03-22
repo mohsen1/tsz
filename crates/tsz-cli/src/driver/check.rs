@@ -10,6 +10,8 @@ pub(super) struct CollectDiagnosticsResult {
     /// Aggregate query-cache statistics from the sequential path's shared `QueryCache`.
     /// `None` in the parallel path (each thread has its own short-lived cache).
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
+    pub def_store_stats: Option<tsz_solver::StoreStatistics>,
 }
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
@@ -470,6 +472,8 @@ pub(super) fn collect_diagnostics(
     // Both branches unconditionally set this, so the initial value is never read.
     #[allow(unused_assignments)]
     let mut aggregated_qc_stats: Option<tsz_solver::QueryCacheStatistics> = None;
+    #[allow(unused_assignments)]
+    let mut aggregated_ds_stats: Option<tsz_solver::StoreStatistics> = None;
 
     if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
@@ -519,7 +523,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics)> = {
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics)> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -573,7 +577,7 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics)> =
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics)> =
             work_items
                 .iter()
                 .zip(per_file_binders.into_iter())
@@ -596,18 +600,20 @@ pub(super) fn collect_diagnostics(
                 })
                 .collect();
 
-        // Aggregate per-file query cache statistics from the parallel path.
+        // Aggregate per-file query cache and definition store statistics from the parallel path.
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
+        let mut parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters, qc_stats)) in
+            for (idx, (file_diags, type_cache, file_counters, qc_stats, ds_stats)) in
                 file_results.into_iter().enumerate()
             {
                 diagnostics.extend(file_diags);
                 request_cache_counters.merge(file_counters);
                 parallel_qc_stats.merge(&qc_stats);
+                parallel_ds_stats.merge(&ds_stats);
                 if let Some(tc) = type_cache {
                     let file_path = PathBuf::from(&program.files[work_items[idx]].file_name);
                     tc_out.insert(file_path, tc);
@@ -615,8 +621,10 @@ pub(super) fn collect_diagnostics(
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
+        aggregated_ds_stats = Some(parallel_ds_stats);
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
+        let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
 
         // Process files in the work queue
         while let Some(file_idx) = work_queue.pop_front() {
@@ -822,6 +830,7 @@ pub(super) fn collect_diagnostics(
             // so body-only/comment-only/private-symbol edits produce the same
             // invalidation decisions in both CLI and LSP.
             let checker_counters = checker.ctx.request_cache_counters;
+            sequential_ds_stats.merge(&checker.ctx.definition_store.statistics());
 
             if let Some(c) = cache.as_deref_mut() {
                 let new_sig = compute_export_signature(program, file, file_idx);
@@ -854,6 +863,7 @@ pub(super) fn collect_diagnostics(
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
         aggregated_qc_stats = Some(query_cache.statistics());
+        aggregated_ds_stats = Some(sequential_ds_stats);
     }
 
     // Collect diagnostics from cache for all files
@@ -888,6 +898,7 @@ pub(super) fn collect_diagnostics(
         diagnostics,
         request_cache_counters,
         query_cache_stats,
+        def_store_stats: aggregated_ds_stats,
     }
 }
 
@@ -993,7 +1004,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics) {
+) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics) {
     let CheckFileForParallelContext {
         file_idx,
         binder,
@@ -1011,7 +1022,7 @@ pub(super) fn check_file_for_parallel<'a>(
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (Vec::new(), None, RequestCacheCounters::default(), tsz_solver::QueryCacheStatistics::default());
+        return (Vec::new(), None, RequestCacheCounters::default(), tsz_solver::QueryCacheStatistics::default(), tsz_solver::StoreStatistics::default());
     }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
@@ -1150,8 +1161,9 @@ pub(super) fn check_file_for_parallel<'a>(
 
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
+    let ds_stats = checker.ctx.definition_store.statistics();
     let type_cache = checker.extract_cache();
-    (file_diagnostics, Some(type_cache), checker_counters, qc_stats)
+    (file_diagnostics, Some(type_cache), checker_counters, qc_stats, ds_stats)
 }
 
 #[cfg(test)]

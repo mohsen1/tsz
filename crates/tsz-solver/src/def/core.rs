@@ -486,6 +486,34 @@ pub struct StoreStatistics {
     pub next_def_id: u32,
 }
 
+impl StoreStatistics {
+    /// Merge another `StoreStatistics` into this one (additive).
+    ///
+    /// Used to aggregate per-file statistics from parallel checking,
+    /// where each checker has its own `DefinitionStore`.
+    pub fn merge(&mut self, other: &StoreStatistics) {
+        self.total_definitions += other.total_definitions;
+        self.type_aliases += other.type_aliases;
+        self.interfaces += other.interfaces;
+        self.classes += other.classes;
+        self.class_constructors += other.class_constructors;
+        self.enums += other.enums;
+        self.namespaces += other.namespaces;
+        self.functions += other.functions;
+        self.variables += other.variables;
+        self.type_to_def_entries += other.type_to_def_entries;
+        self.symbol_def_index_entries += other.symbol_def_index_entries;
+        self.symbol_only_index_entries += other.symbol_only_index_entries;
+        self.body_to_alias_entries += other.body_to_alias_entries;
+        self.shape_to_def_entries += other.shape_to_def_entries;
+        self.file_count += other.file_count;
+        // next_def_id: take the maximum (high-water mark)
+        if other.next_def_id > self.next_def_id {
+            self.next_def_id = other.next_def_id;
+        }
+    }
+}
+
 impl std::fmt::Display for StoreStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "DefinitionStore statistics:")?;
