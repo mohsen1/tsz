@@ -447,12 +447,6 @@ pub enum SemanticDefKind {
     Function,
     /// Variable declaration: `const x = 1` or `let y: string`
     Variable,
-    /// Enum member: `Red` inside `enum Color { Red }`
-    ///
-    /// Recorded for each individual enum member so the checker can pre-populate
-    /// solver `DefIds` for member symbols without fallback creation.
-    /// Mapped to `DefKind::Variable` in the solver (enum members are values).
-    EnumMember,
 }
 
 /// Binder-captured semantic identity for a top-level declaration.
@@ -522,12 +516,6 @@ pub struct SemanticDefEntry {
     ///
     /// `None` for top-level (source-file scope) declarations.
     pub parent_namespace: Option<SymbolId>,
-    /// The `SymbolId` of the containing enum, if this is an enum member.
-    ///
-    /// Set for `SemanticDefKind::EnumMember` entries; `None` for everything else.
-    /// Used by `pre_populate_definition_store` to wire enum member → parent
-    /// relationships in the `DefinitionStore`.
-    pub parent_enum: Option<SymbolId>,
 }
 
 // =============================================================================
