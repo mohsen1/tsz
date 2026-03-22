@@ -1130,3 +1130,93 @@ const name: string = e.name;
         "Error hierarchy should resolve with stable lib helpers.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- keyword_syntax_to_type_id / keyword_name_to_type_id coverage ----
+// These tests exercise the consolidated keyword→TypeId helpers that replaced
+// the duplicated match blocks in resolve_lib_heritage_type_arg.
+
+#[test]
+fn test_lib_heritage_keyword_type_args_resolve() {
+    // Heritage clauses like `extends Iterable<string>` need keyword type
+    // args (string, number, boolean, etc.) resolved via the stable
+    // keyword_syntax_to_type_id / keyword_name_to_type_id helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<string> = ["a", "b"];
+const len: number = arr.length;
+const first: string = arr[0];
+
+// ReadonlyArray<number> → heritage uses keyword type arg
+function sum(items: ReadonlyArray<number>): number {
+    let total: number = 0;
+    for (let i = 0; i < items.length; i++) {
+        total = total + items[i];
+    }
+    return total;
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Heritage keyword type args should resolve via stable helpers.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_no_file_sym_id_repair_needed() {
+    // After removing the file_sym_id re-lookup repair (which redundantly
+    // re-resolved sym_id via file_locals), Promise generic type params
+    // should still resolve correctly.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function multiPromise(): Promise<void> {
+    const p1: Promise<number> = Promise.resolve(1);
+    const p2: Promise<string> = Promise.resolve("x");
+    const n: number = await p1;
+    const s: string = await p2;
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        "Promise generic params should resolve without file_sym_id repair.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_interface_with_multiple_keyword_heritage_args() {
+    // Validates that heritage clauses with multiple keyword type arguments
+    // (e.g., `extends Map<string, number>`) resolve all keyword args
+    // correctly through the consolidated helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const m: Map<string, number> = new Map();
+m.set("key", 42);
+const val: number | undefined = m.get("key");
+const hasKey: boolean = m.has("key");
+const sz: number = m.size;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Map<string, number> with keyword type args should resolve.\nDiagnostics: {real_errors:#?}"
+    );
+}
