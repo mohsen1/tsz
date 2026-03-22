@@ -2125,6 +2125,21 @@ impl BinderState {
                 k if k == syntax_kind_ext::CALL_EXPRESSION => {
                     symbol_call(arena, init_idx).then(|| format!("__unique_{}", sym_id.0))
                 }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION =>
+                {
+                    let assertion = arena.get_type_assertion(init_node)?;
+                    let inner = arena.get(assertion.expression)?;
+                    match inner.kind {
+                        k if k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NumericLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                        {
+                            arena.get_literal(inner).map(|lit| lit.text.clone())
+                        }
+                        _ => None,
+                    }
+                }
                 _ => None,
             }
         }
@@ -2241,7 +2256,7 @@ impl BinderState {
 
         // Also track for variables initialized with function/class/object-literal expressions
         // (e.g. `var X = function(){}; X.prop = 1` or `var X = {}; X.prop = 1`)
-        // but NOT variables with explicit type annotations (e.g. `let p: Person`)
+        // For typed variables, only track function/arrow inits (expando function pattern).
         if (symbol.flags & symbol_flags::VARIABLE) != 0 {
             let decl_idx = symbol.value_declaration;
             if decl_idx.is_none() {
@@ -2253,21 +2268,20 @@ impl BinderState {
             let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
                 return;
             };
-            // Skip if has explicit type annotation — expando doesn't apply
-            if var_decl.type_annotation.is_some() {
-                return;
-            }
             if var_decl.initializer.is_none() {
                 return;
             }
             let Some(init_node) = arena.get(var_decl.initializer) else {
                 return;
             };
-            if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-            {
+            let has_type_annotation = var_decl.type_annotation.is_some();
+            let is_function_like = init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION;
+            let is_expando_init = is_function_like
+                || (!has_type_annotation
+                    && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                        || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
+            if is_expando_init {
                 self.expando_properties
                     .entry(obj_key)
                     .or_default()

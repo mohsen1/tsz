@@ -879,7 +879,19 @@ impl<'a> CheckerState<'a> {
                     // causing type_contains_error to return true even though the declared type
                     // itself (String interface) is perfectly valid for assignability checking.
                     if declared_type != TypeId::ANY && declared_type != TypeId::ERROR {
-                        let checked_init_type = init_type_for_relation;
+                        // Augment function initializer with expando properties (suppresses spurious TS2741).
+                        let checked_init_type = if initializer_is_function
+                            && let Some(ref name) = var_name
+                            && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                        {
+                            checker.augment_callable_type_with_expandos(
+                                name,
+                                sym_id,
+                                init_type_for_relation,
+                            )
+                        } else {
+                            init_type_for_relation
+                        };
                         if let Some((source_level, target_level)) =
                             checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
                         {
@@ -1272,6 +1284,11 @@ impl<'a> CheckerState<'a> {
                 // type resolution chains (e.g., `typeof k` indexers resolve to
                 // `any` after the symbol type is overwritten by a redeclaration).
                 if !is_merged_interface && !is_redeclaration {
+                    // Augment callable types with expando properties before caching.
+                    if let Some(ref name) = var_name {
+                        final_type =
+                            self.augment_callable_type_with_expandos(name, sym_id, final_type);
+                    }
                     self.cache_symbol_type(sym_id, final_type);
                 }
             }
