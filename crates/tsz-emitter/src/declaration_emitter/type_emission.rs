@@ -394,6 +394,7 @@ impl<'a> DeclarationEmitter<'a> {
                         n.kind == syntax_kind_ext::UNION_TYPE
                             || n.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || n.kind == syntax_kind_ext::FUNCTION_TYPE
+                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
                     });
 
                     if needs_parens {

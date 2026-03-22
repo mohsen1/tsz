@@ -2338,11 +2338,13 @@ impl<'a> TypePrinter<'a> {
 
     fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
         let container_str = self.print_type(container);
-        // Parenthesize union, intersection, and function types in indexed access position
-        // e.g., (A | B)[K], (A & B)[K], ((x: number) => void)[K]
+        // Parenthesize union, intersection, function, and conditional types in indexed access position
+        // e.g., (A | B)[K], (A & B)[K], ((x: number) => void)[K],
+        // (T extends U ? X : Y)[K]
         let needs_parens = visitor::union_list_id(self.interner, container).is_some()
             || visitor::intersection_list_id(self.interner, container).is_some()
-            || visitor::function_shape_id(self.interner, container).is_some();
+            || visitor::function_shape_id(self.interner, container).is_some()
+            || visitor::conditional_type_id(self.interner, container).is_some();
         if needs_parens {
             format!("({})[{}]", container_str, self.print_type(index))
         } else {
