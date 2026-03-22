@@ -472,8 +472,8 @@ impl BindResult {
         // file_name
         size += self.file_name.capacity();
 
-        // arena (NodeArena behind Arc — count Arc overhead + heap data pools)
-        size += self.arena.estimated_size_bytes();
+        // arena (NodeArena behind Arc — count the Arc overhead, not the shared data)
+        size += std::mem::size_of::<NodeArena>();
 
         // symbols (SymbolArena: Vec<Symbol> + name_index)
         size += self.symbols.len() * std::mem::size_of::<crate::binder::Symbol>();
@@ -564,7 +564,7 @@ impl BindResult {
         }
 
         // augmentation_target_modules
-        for v in self.augmentation_target_modules.values() {
+        for (_, v) in &self.augmentation_target_modules {
             size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
         }
 
@@ -634,16 +634,13 @@ impl BindResult {
         size += self.alias_partners.capacity() * (std::mem::size_of::<SymbolId>() * 2 + 8);
 
         // semantic_defs
-        for def in self.semantic_defs.values() {
+        for (_, def) in &self.semantic_defs {
             size += std::mem::size_of::<SymbolId>()
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8;
             size += def.name.capacity();
-            for n in &def.extends_names {
-                size += n.capacity();
-            }
-            for n in &def.implements_names {
-                size += n.capacity();
+            for h in &def.heritage_names {
+                size += h.capacity();
             }
         }
 
@@ -1309,10 +1306,8 @@ impl BoundFile {
         // file_name
         size += self.file_name.capacity();
 
-        // arena (Arc — count heap data pools; shared data may appear in
-        // multiple BoundFiles but unique-arena dedup in residency stats
-        // handles cross-file overlap at a higher level)
-        size += self.arena.estimated_size_bytes();
+        // arena (Arc overhead only — shared data not double-counted)
+        size += std::mem::size_of::<NodeArena>();
 
         // node_symbols
         size += self.node_symbols.capacity()
@@ -1354,7 +1349,7 @@ impl BoundFile {
         }
 
         // augmentation_target_modules
-        for v in self.augmentation_target_modules.values() {
+        for (_, v) in &self.augmentation_target_modules {
             size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
         }
 

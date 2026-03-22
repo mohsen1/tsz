@@ -494,18 +494,17 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
-    /// Names of types this declaration extends (empty for non-class/interface).
+    /// Names referenced in heritage clauses (`extends` / `implements`).
     ///
-    /// Captured at bind time from heritage clauses so the checker can resolve
-    /// cross-batch heritage links (e.g., `class MyError extends Error`) without
-    /// re-examining the AST. For classes this is typically 0 or 1 entry; for
-    /// interfaces it can be multiple (`interface Foo extends Bar, Baz`).
-    pub extends_names: Vec<String>,
-    /// Names of interfaces this class implements (empty for non-class declarations).
+    /// Captured at bind time from the heritage clause expressions of class and
+    /// interface declarations. For example, `class Foo extends Bar implements Baz`
+    /// yields `["Bar", "Baz"]`. Only simple identifier names are captured;
+    /// property-access heritage expressions (e.g., `ns.Base`) are stored as
+    /// dot-separated strings (e.g., `"ns.Base"`).
     ///
-    /// Captured at bind time from heritage clauses so the checker can resolve
-    /// cross-batch heritage links without re-examining the AST.
-    pub implements_names: Vec<String>,
+    /// Used by `FileSkeleton` fingerprinting so that heritage changes (which
+    /// affect cross-file type resolution) trigger re-merge.
+    pub heritage_names: Vec<String>,
 }
 
 impl BinderState {
