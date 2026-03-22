@@ -735,22 +735,6 @@ impl DefinitionStore {
         }
     }
 
-    /// Update the heritage (`extends`/`implements`) for a class or interface.
-    ///
-    /// Called during pre-population pass 2 after all `DefId`s in the batch
-    /// have been created, so heritage name→DefId resolution can succeed
-    /// regardless of declaration order.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            if extends.is_some() {
-                entry.extends = extends;
-            }
-            if !implements.is_empty() {
-                entry.implements = implements;
-            }
-        }
-    }
-
     /// Number of definitions.
     pub fn len(&self) -> usize {
         self.definitions.len()
