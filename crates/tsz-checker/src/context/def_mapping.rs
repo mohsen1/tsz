@@ -707,23 +707,6 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
-            // Propagate enum member names from binder-captured identity.
-            // The binder records member names at bind time so we can create
-            // stub enum_members here, avoiding the checker needing to walk
-            // enum member declarations on demand.
-            let enum_members = if !entry.enum_member_names.is_empty() {
-                entry
-                    .enum_member_names
-                    .iter()
-                    .map(|name| {
-                        let atom = self.types.intern_string(name);
-                        (atom, tsz_solver::def::EnumMemberValue::Computed)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
             let info = DefinitionInfo {
                 kind,
                 name,
@@ -733,7 +716,7 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
-                enum_members,
+                enum_members: Vec::new(),
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
