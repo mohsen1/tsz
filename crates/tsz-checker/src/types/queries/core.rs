@@ -578,6 +578,29 @@ impl<'a> CheckerState<'a> {
         node.kind == SyntaxKind::ThisKeyword as u16
     }
 
+    /// Check if a `this` keyword node resolves to `typeof globalThis` —
+    /// either at module/script top-level or inside a global-capturing arrow.
+    pub(crate) fn is_this_resolving_to_global(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::ThisKeyword as u16 {
+            return false;
+        }
+        // `this` at the top level (no enclosing non-arrow function, no enclosing class)
+        // resolves to `typeof globalThis`.
+        if self.ctx.enclosing_class.is_none()
+            && self.find_enclosing_non_arrow_function(idx).is_none()
+        {
+            return true;
+        }
+        // `this` in a top-level arrow function that captures globalThis.
+        if self.is_this_in_global_capturing_arrow(idx) {
+            return true;
+        }
+        false
+    }
+
     /// Check if a node is a `globalThis` identifier expression.
     pub(crate) fn is_global_this_expression(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {

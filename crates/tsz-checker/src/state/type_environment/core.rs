@@ -2168,8 +2168,8 @@ impl<'a> CheckerState<'a> {
 
         // For truly unknown properties, return ANY to maintain compatibility with
         // JS expando patterns (e.g., `globalThis.alpha = 4` in checkJs mode).
-        // Emitting TS2339 here would require `typeof globalThis` to be a proper
-        // object type rather than ANY, which is a larger refactor.
+        // The caller is responsible for emitting TS7017 (dot access) or TS7053
+        // (bracket access) when noImplicitAny is enabled.
         TypeId::ANY
     }
 }
