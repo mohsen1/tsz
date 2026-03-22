@@ -970,16 +970,39 @@ impl<'a> CheckerState<'a> {
                     return (false, None);
                 }
                 tracing::trace!("No direct target binder, checking all binders");
-                if let Some(all_binders) = &self.ctx.all_binders {
-                    // Try to find the module in any binder's exports
+                // Use the global module binder index for O(1) lookup when available.
+                if let Some(ref idx) = self.ctx.global_module_binder_index {
                     let normalized = module_name.trim_matches('"').trim_matches('\'');
-                    tracing::trace!(num_binders = all_binders.len(), "Checking all binders");
+                    let candidate_indices = idx
+                        .get(module_name)
+                        .into_iter()
+                        .flatten()
+                        .chain(idx.get(normalized).into_iter().flatten());
+                    if let Some(all_binders) = &self.ctx.all_binders {
+                        let mut seen = rustc_hash::FxHashSet::default();
+                        for &binder_idx in candidate_indices {
+                            if !seen.insert(binder_idx) {
+                                continue;
+                            }
+                            if let Some(binder) = all_binders.get(binder_idx) {
+                                tracing::trace!(binder_idx, "Found matching binder via index");
+                                if let Some(exists) =
+                                    self.check_symbol_in_binder(binder, import_name, module_name)
+                                {
+                                    return exists;
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(all_binders) = &self.ctx.all_binders {
+                    // Fallback: O(N) scan when index not built
+                    let normalized = module_name.trim_matches('"').trim_matches('\'');
+                    tracing::trace!(num_binders = all_binders.len(), "Checking all binders (fallback)");
                     for binder in all_binders.iter() {
                         if binder.module_exports.contains_key(module_name)
                             || binder.module_exports.contains_key(normalized)
                         {
                             tracing::trace!("Found matching binder via exports");
-                            // Check if the symbol exists locally in this binder
                             if let Some(exists) =
                                 self.check_symbol_in_binder(binder, import_name, module_name)
                             {
