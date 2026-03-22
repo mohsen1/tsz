@@ -359,6 +359,7 @@ impl BinderState {
                                 file_id,
                                 span_start: entry.span_start,
                                 type_param_count: entry.type_param_count,
+                                is_exported: entry.is_exported,
                             },
                         );
                     }

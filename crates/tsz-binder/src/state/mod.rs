@@ -473,6 +473,13 @@ pub struct SemanticDefEntry {
     /// placeholder parameters (e.g., `Map<unknown, unknown>`) before the full
     /// checker walk fills in the real `TypeParamInfo`.
     pub type_param_count: u16,
+    /// Whether the declaration has an `export` modifier or is otherwise exported.
+    ///
+    /// Captured at bind time so the checker and file-skeleton infrastructure can
+    /// determine export visibility without re-examining the symbol table. This is
+    /// a prerequisite for Phase 2 file-skeleton decomposition where export surfaces
+    /// are extracted from binder-owned identity rather than full symbol residency.
+    pub is_exported: bool,
 }
 
 impl BinderState {

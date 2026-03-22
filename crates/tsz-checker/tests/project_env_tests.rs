@@ -159,6 +159,7 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             file_id: 1,
             span_start: 0,
             type_param_count: 0,
+            is_exported: false,
         },
     );
 
@@ -193,6 +194,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             file_id: 0,
             span_start: 0,
             type_param_count: 0,
+            is_exported: false,
         },
     );
     let mut binder_b = BinderState::new();
@@ -204,6 +206,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             file_id: 1,
             span_start: 100,
             type_param_count: 0,
+            is_exported: false,
         },
     );
 
@@ -244,6 +247,7 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             file_id: 0,
             span_start: 0,
             type_param_count: 3,
+            is_exported: false,
         },
     );
 

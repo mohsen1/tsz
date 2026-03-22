@@ -197,6 +197,7 @@ impl BinderState {
                     &name,
                     idx,
                     0,
+                    is_exported,
                 );
 
                 // `declare global { namespace X { ... } }` makes X visible at the global

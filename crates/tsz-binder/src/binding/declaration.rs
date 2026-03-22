@@ -73,6 +73,7 @@ impl BinderState {
                     name,
                     idx,
                     0,
+                    is_exported,
                 );
 
                 // Hoist global augmentation variables to file_locals for cross-file
@@ -106,6 +107,7 @@ impl BinderState {
                             name,
                             ident_idx,
                             0,
+                            is_exported,
                         );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
@@ -166,6 +168,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             }
 
@@ -603,6 +606,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             }
 
@@ -859,6 +863,7 @@ impl BinderState {
                 name,
                 idx,
                 tp_count,
+                is_exported,
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -968,6 +973,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             } else {
                 let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
@@ -981,6 +987,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             }
 
@@ -1021,6 +1028,7 @@ impl BinderState {
                 name,
                 idx,
                 0,
+                is_exported,
             );
 
             // Get existing exports (for namespace merging)
@@ -2350,6 +2358,7 @@ impl BinderState {
         name: &str,
         declaration: NodeIndex,
         type_param_count: u16,
+        is_exported: bool,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2383,6 +2392,7 @@ impl BinderState {
                     .map_or(u32::MAX, |s| s.decl_file_idx),
                 span_start: declaration.0,
                 type_param_count,
+                is_exported,
             },
         );
     }
