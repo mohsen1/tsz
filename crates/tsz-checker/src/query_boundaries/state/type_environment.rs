@@ -190,6 +190,28 @@ pub(crate) fn extract_string_literal_keys(
     tsz_solver::type_queries::extract_string_literal_keys(db, type_id)
 }
 
+/// Get the name of a type parameter (TypeParameter or Infer).
+///
+/// Returns `Some(name)` if the type is a type parameter, `None` otherwise.
+/// Used by the checker to match type parameters against declared parameter
+/// lists without accessing `TypeData` directly.
+pub(crate) fn type_param_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_common::Atom> {
+    tsz_solver::type_queries::get_type_parameter_info(db, type_id).map(|info| info.name)
+}
+
+/// Re-export the body arg preservation classification for application evaluation.
+pub(crate) use tsz_solver::type_queries::BodyArgPreservation;
+
+/// Classify a type body to decide how args should be handled during application evaluation.
+///
+/// Delegates to the solver's structural analysis of conditional-infer patterns.
+pub(crate) fn classify_body_for_arg_preservation(
+    db: &dyn TypeDatabase,
+    body_type: TypeId,
+) -> BodyArgPreservation {
+    tsz_solver::type_queries::classify_body_for_arg_preservation(db, body_type)
+}
+
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).
 pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_primitive_type(db, type_id)

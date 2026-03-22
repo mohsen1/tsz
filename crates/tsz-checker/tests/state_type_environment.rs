@@ -269,3 +269,53 @@ fn non_homomorphic_mapped_type_delegates_to_solver_after_constraint_resolution()
         Some(TypeId::STRING),
     );
 }
+
+#[test]
+fn type_param_name_extracts_name_via_boundary() {
+    let types = TypeInterner::new();
+
+    let name_t = types.intern_string("T");
+    let name_u = types.intern_string("U");
+
+    let param_t = types.type_param(tsz_solver::TypeParamInfo {
+        name: name_t,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let param_u = types.type_param(tsz_solver::TypeParamInfo {
+        name: name_u,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // type_param_name should extract the name from a TypeParameter
+    assert_eq!(type_param_name(&types, param_t), Some(name_t));
+    assert_eq!(type_param_name(&types, param_u), Some(name_u));
+
+    // Non-TypeParameter types should return None
+    assert_eq!(type_param_name(&types, TypeId::STRING), None);
+    assert_eq!(type_param_name(&types, TypeId::NUMBER), None);
+    assert_eq!(type_param_name(&types, TypeId::ANY), None);
+
+    // The extracted name should match declared params by identity
+    let declared_params = vec![
+        tsz_solver::TypeParamInfo {
+            name: name_t,
+            constraint: Some(TypeId::OBJECT),
+            default: None,
+            is_const: false,
+        },
+        tsz_solver::TypeParamInfo {
+            name: name_u,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        },
+    ];
+    let extracted_name = type_param_name(&types, param_t).unwrap();
+    let matched = declared_params.iter().find(|p| p.name == extracted_name);
+    assert!(matched.is_some());
+    assert_eq!(matched.unwrap().constraint, Some(TypeId::OBJECT));
+}
