@@ -132,6 +132,30 @@ pub(crate) fn expand_mapped_type_to_properties(
     )
 }
 
+/// Expand a mapped type with resolved finite keys using a TypeResolver for deep evaluation.
+///
+/// This is the resolver-aware version that evaluates templates through the solver's
+/// `TypeEvaluator::with_resolver`, enabling resolution of Lazy(DefId) types in mapped
+/// type templates (e.g., `T[K]` where T needs to be resolved via the type environment).
+/// Preferred over the no-resolver version when checker context is available.
+pub(crate) fn expand_mapped_type_to_properties_with_resolver<R: tsz_solver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    mapped: &tsz_solver::MappedType,
+    string_keys: &[tsz_common::Atom],
+    source_props: &rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)>,
+    is_homomorphic: bool,
+) -> Vec<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::expand_mapped_type_to_properties_with_resolver(
+        db,
+        resolver,
+        mapped,
+        string_keys,
+        source_props,
+        is_homomorphic,
+    )
+}
+
 /// Re-export identity mapped type info from solver.
 pub(crate) use tsz_solver::type_queries::IdentityMappedInfo;
 
