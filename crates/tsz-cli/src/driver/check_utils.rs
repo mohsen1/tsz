@@ -1448,4 +1448,162 @@ mod tests {
             "TS1359 for 'await' should be kept when it's the only diagnostic, got: {codes:?}"
         );
     }
+
+    // ---------------------------------------------------------------
+    // Export signature tests: CLI path via build_export_signature_input
+    // ---------------------------------------------------------------
+
+    /// Helper: compute export signature from source via the CLI pipeline
+    /// (parse_and_bind_single → merge → build_export_signature_input → from_input).
+    fn cli_export_signature(source: &str) -> tsz_lsp::export_signature::ExportSignature {
+        let bind_result =
+            parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());
+        let program = parallel::merge_bind_results(vec![bind_result]);
+        let file = &program.files[0];
+        compute_export_signature(&program, file, 0)
+    }
+
+    /// Helper: compute CLI export signature input (for structural inspection).
+    fn cli_export_input(source: &str) -> tsz_lsp::export_signature::ExportSignatureInput {
+        let bind_result =
+            parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());
+        let program = parallel::merge_bind_results(vec![bind_result]);
+        let file = &program.files[0];
+        build_export_signature_input(&program, file, 0)
+    }
+
+    #[test]
+    fn body_only_edit_preserves_signature() {
+        let before = "export function foo() { return 1; }";
+        let after = "export function foo() { return 42; }";
+        assert_eq!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "body-only edit must not change export signature"
+        );
+    }
+
+    #[test]
+    fn comment_only_edit_preserves_signature() {
+        let before = "// original comment\nexport const x = 1;";
+        let after = "// modified comment with extra words\nexport const x = 1;";
+        assert_eq!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "comment-only edit must not change export signature"
+        );
+    }
+
+    #[test]
+    fn private_symbol_edit_preserves_signature() {
+        let before = "const priv = 1;\nexport const pub_val = priv;";
+        let after = "const priv = 999;\nconst priv2 = 2;\nexport const pub_val = priv;";
+        assert_eq!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "private symbol additions/edits must not change export signature"
+        );
+    }
+
+    #[test]
+    fn adding_export_changes_signature() {
+        let before = "export const x = 1;";
+        let after = "export const x = 1;\nexport const y = 2;";
+        assert_ne!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "adding a new export must change the signature"
+        );
+    }
+
+    #[test]
+    fn removing_export_changes_signature() {
+        let before = "export const x = 1;\nexport const y = 2;";
+        let after = "export const x = 1;";
+        assert_ne!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "removing an export must change the signature"
+        );
+    }
+
+    #[test]
+    fn re_export_edit_changes_signature() {
+        let before = "export { foo } from './other';";
+        let after = "export { foo, bar } from './other';";
+        assert_ne!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "adding a named re-export must change the signature"
+        );
+    }
+
+    #[test]
+    fn wildcard_re_export_changes_signature() {
+        let before = "export const x = 1;";
+        let after = "export const x = 1;\nexport * from './other';";
+        assert_ne!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "adding a wildcard re-export must change the signature"
+        );
+    }
+
+    #[test]
+    fn augmentation_edit_changes_signature() {
+        let before = "export const x = 1;";
+        let after = "export const x = 1;\ndeclare global { interface Window { foo: string; } }";
+        assert_ne!(
+            cli_export_signature(before),
+            cli_export_signature(after),
+            "adding a global augmentation must change the signature"
+        );
+    }
+
+    #[test]
+    fn export_input_captures_exports() {
+        let input = cli_export_input("export const x = 1;\nexport function foo() {}");
+        let names: Vec<&str> = input.exports.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"x"), "should contain x export: {names:?}");
+        assert!(
+            names.contains(&"foo"),
+            "should contain foo export: {names:?}"
+        );
+    }
+
+    #[test]
+    fn export_input_captures_re_exports() {
+        let input = cli_export_input("export { bar } from './other';");
+        let re_names: Vec<&str> = input
+            .named_reexports
+            .iter()
+            .map(|(n, _, _)| n.as_str())
+            .collect();
+        assert!(
+            re_names.contains(&"bar"),
+            "should contain bar re-export: {re_names:?}"
+        );
+    }
+
+    #[test]
+    fn export_input_captures_wildcard_re_exports() {
+        let input = cli_export_input("export * from './other';");
+        assert_eq!(
+            input.wildcard_reexports.len(),
+            1,
+            "should have one wildcard re-export"
+        );
+        assert_eq!(input.wildcard_reexports[0].0, "./other");
+    }
+
+    #[test]
+    fn export_input_ignores_private_symbols() {
+        let input = cli_export_input("const priv = 1;\nexport const pub_val = priv;");
+        let names: Vec<&str> = input.exports.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(
+            !names.contains(&"priv"),
+            "private symbols must not appear in export input"
+        );
+        assert!(names.contains(&"pub_val"));
+    }
 }
