@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
 use tsz::emitter::ModuleKind;
-use tsz::module_resolver::PackageType;
+use tsz::module_resolver::{PackageType, is_path_relative};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParserState;
 use tsz::parser::node::{NodeAccess, NodeArena};
@@ -812,18 +812,6 @@ fn collect_import_local_names(
     }
 
     names
-}
-
-/// Matches TypeScript's `pathIsRelative` check: `/^\.\..?(?:$|[\\/])/`.
-///
-/// A specifier is relative only when it starts with `./`, `../`, `.` alone,
-/// or `..` alone.  Notably, `.prisma/client` starts with `.` but is NOT a
-/// relative specifier -- it is a bare module name.
-fn is_path_relative(specifier: &str) -> bool {
-    matches!(
-        specifier.as_bytes(),
-        [b'.'] | [b'.', b'.'] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..]
-    )
 }
 
 pub(crate) fn resolve_module_specifier(

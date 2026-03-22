@@ -353,11 +353,7 @@ impl ModuleResolver {
         }
 
         // Step 3: Handle relative imports
-        if specifier.starts_with("./")
-            || specifier.starts_with("../")
-            || specifier == "."
-            || specifier == ".."
-        {
+        if is_path_relative(specifier) {
             return (
                 self.resolve_relative(
                     specifier,
