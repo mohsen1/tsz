@@ -677,7 +677,14 @@ impl<'a> CheckerState<'a> {
                                 syntax_kind_ext::AS_EXPRESSION
                                     | syntax_kind_ext::TYPE_ASSERTION
                                     | syntax_kind_ext::SATISFIES_EXPRESSION
+                                    | syntax_kind_ext::CASE_CLAUSE
                             ) {
+                                // Case clauses use comparability (TS2678), not
+                                // assignability (TS2322), to validate the case
+                                // expression against the switch discriminant type.
+                                // The contextual type here is only meant for type
+                                // inference (e.g., object literal excess properties),
+                                // not for assignability checking on || operands.
                                 check = false;
                             } else if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
                                 && let Some(parent_binary) =
