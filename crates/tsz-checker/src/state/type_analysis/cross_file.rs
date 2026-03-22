@@ -840,17 +840,18 @@ impl<'a> CheckerState<'a> {
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(expected_name))
-            && let Some(binders) = &self.ctx.all_binders {
-                for &(file_idx, _) in entries {
-                    if let Some(binder) = binders.get(file_idx)
-                        && let Some(symbol) = binder.get_symbol(sym_id)
-                        && symbol.escaped_name.as_str() == expected_name
-                    {
-                        self.ctx.register_symbol_file_target(sym_id, file_idx);
-                        return;
-                    }
+            && let Some(binders) = &self.ctx.all_binders
+        {
+            for &(file_idx, _) in entries {
+                if let Some(binder) = binders.get(file_idx)
+                    && let Some(symbol) = binder.get_symbol(sym_id)
+                    && symbol.escaped_name.as_str() == expected_name
+                {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    return;
                 }
             }
+        }
         // Full fallback: the symbol may be nested (not in file_locals).
         if let Some(binders) = &self.ctx.all_binders {
             for (idx, binder) in binders.iter().enumerate() {
