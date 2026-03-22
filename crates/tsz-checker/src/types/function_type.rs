@@ -1239,7 +1239,12 @@ impl<'a> CheckerState<'a> {
                 };
                 param_types.push(Some(cached_type));
                 destructuring_context_param_types.push(binding_context_type);
-                contextual_index += 1;
+                // Only increment contextual_index for non-`this` parameters.
+                // The contextual FunctionShape stores `this` separately in `this_type`,
+                // not in the `params` array, so `this` doesn't consume a param index.
+                if !is_this_param {
+                    contextual_index += 1;
+                }
             }
         }
 
