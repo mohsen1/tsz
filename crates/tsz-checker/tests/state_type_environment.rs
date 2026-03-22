@@ -328,8 +328,7 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
     // inherits optionality from Partial<M0>'s properties even though the template
     // references M0, not Partial<M0>. This matches tsc's behavior.
     use tsz_solver::{
-        MappedType, PropertyInfo, TypeEnvironment, TypeEvaluator, TypeParamInfo,
-        Visibility,
+        MappedType, PropertyInfo, TypeEnvironment, TypeEvaluator, TypeParamInfo, Visibility,
     };
 
     let types = TypeInterner::new();

@@ -780,7 +780,6 @@ impl FileSkeleton {
 // Symbol Merging
 // =============================================================================
 
-
 // =============================================================================
 // Skeleton invalidation — compare snapshots to detect changed files
 // =============================================================================
@@ -822,10 +821,7 @@ impl SkeletonDiff {
 /// Files with identical fingerprints are guaranteed unchanged.
 ///
 /// This is a pure function suitable for incremental invalidation drivers.
-pub fn diff_skeletons(
-    previous: &[FileSkeleton],
-    current: &[FileSkeleton],
-) -> SkeletonDiff {
+pub fn diff_skeletons(previous: &[FileSkeleton], current: &[FileSkeleton]) -> SkeletonDiff {
     let prev_map: FxHashMap<&str, u64> = previous
         .iter()
         .map(|s| (s.file_name.as_str(), s.fingerprint))
@@ -897,10 +893,7 @@ mod tests {
 
     #[test]
     fn diff_identical_skeletons_is_empty() {
-        let skels = vec![
-            make_skeleton("a.ts", 100),
-            make_skeleton("b.ts", 200),
-        ];
+        let skels = vec![make_skeleton("a.ts", 100), make_skeleton("b.ts", 200)];
         let diff = diff_skeletons(&skels, &skels);
         assert!(diff.is_empty());
         assert_eq!(diff.affected_count(), 0);
@@ -909,10 +902,7 @@ mod tests {
 
     #[test]
     fn diff_detects_changed_file() {
-        let prev = vec![
-            make_skeleton("a.ts", 100),
-            make_skeleton("b.ts", 200),
-        ];
+        let prev = vec![make_skeleton("a.ts", 100), make_skeleton("b.ts", 200)];
         let curr = vec![
             make_skeleton("a.ts", 100),
             make_skeleton("b.ts", 999), // changed
@@ -927,10 +917,7 @@ mod tests {
     #[test]
     fn diff_detects_added_file() {
         let prev = vec![make_skeleton("a.ts", 100)];
-        let curr = vec![
-            make_skeleton("a.ts", 100),
-            make_skeleton("new.ts", 300),
-        ];
+        let curr = vec![make_skeleton("a.ts", 100), make_skeleton("new.ts", 300)];
         let diff = diff_skeletons(&prev, &curr);
         assert!(diff.changed.is_empty());
         assert_eq!(diff.added, vec!["new.ts"]);
@@ -939,10 +926,7 @@ mod tests {
 
     #[test]
     fn diff_detects_removed_file() {
-        let prev = vec![
-            make_skeleton("a.ts", 100),
-            make_skeleton("old.ts", 200),
-        ];
+        let prev = vec![make_skeleton("a.ts", 100), make_skeleton("old.ts", 200)];
         let curr = vec![make_skeleton("a.ts", 100)];
         let diff = diff_skeletons(&prev, &curr);
         assert!(diff.changed.is_empty());
