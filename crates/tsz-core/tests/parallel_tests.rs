@@ -5168,7 +5168,7 @@ fn definition_store_defids_match_semantic_defs_symbols() {
     let program = merge_bind_results(results);
 
     // Every symbol in semantic_defs should have a DefId in the store
-    for (&sym_id, _entry) in &program.semantic_defs {
+    for &sym_id in program.semantic_defs.keys() {
         let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
         assert!(
             def_id.is_some(),
@@ -5196,7 +5196,7 @@ fn definition_store_defids_survive_binder_reconstruction() {
 
     // After reconstruction, the semantic_defs should still map to the same
     // DefIds that were pre-populated during merge.
-    for (&sym_id, _entry) in &binder_a.semantic_defs {
+    for &sym_id in binder_a.semantic_defs.keys() {
         let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
         assert!(
             def_id.is_some(),
@@ -5204,7 +5204,7 @@ fn definition_store_defids_survive_binder_reconstruction() {
             sym_id.0
         );
     }
-    for (&sym_id, _entry) in &binder_b.semantic_defs {
+    for &sym_id in binder_b.semantic_defs.keys() {
         let def_id = program.definition_store.find_def_by_symbol(sym_id.0);
         assert!(
             def_id.is_some(),
