@@ -167,5 +167,9 @@ path = "tests/stable_identity_helpers_tests.rs"
 name = "project_env_tests"
 path = "tests/project_env_tests.rs"
 
+[[test]]
+name = "generic_call_inference_tests"
+path = "tests/generic_call_inference_tests.rs"
+
 [lints]
 workspace = true
