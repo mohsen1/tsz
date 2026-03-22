@@ -441,6 +441,14 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         &fs::read_to_string("src/state/type_environment/lazy.rs")
             .expect("failed to read src/state/type_environment/lazy.rs for architecture guard"),
     );
+    // Include core.rs which has application/mapped type evaluation
+    let state_type_environment_core_src = fs::read_to_string("src/state/type_environment/core.rs")
+        .expect("failed to read src/state/type_environment/core.rs for architecture guard");
+    state_type_environment_src.push_str(&state_type_environment_core_src);
+    assert!(
+        !state_type_environment_core_src.contains("TypeData::TypeParameter("),
+        "state_type_environment/core.rs should use solver query (type_param_name / get_type_parameter_info) instead of direct TypeData::TypeParameter pattern matching"
+    );
     assert!(
         !state_type_environment_src.contains("intern(TypeData::Enum("),
         "state_type_environment should use solver enum_type constructor API, not TypeData::Enum"
