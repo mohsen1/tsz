@@ -1435,18 +1435,25 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        // NOTE: We intentionally pass `None` for `leading_comment` here.
-        // The statement-level comment handler (`emit_comments_before_pos`) in
-        // the block/source-file loop already emits any leading comments that
-        // precede the class declaration. Extracting and re-emitting the same
-        // comment in the IR printer would produce duplicate output.
+        // When the class has auto-accessor members, the statement-level comment
+        // handler in source_file.rs intentionally skips leading comments (to
+        // avoid emitting them before the WeakMap storage declarations). In that
+        // case we extract the comment here so the IR printer can place it
+        // between the storage declarations and the class IIFE.
+        // For classes without auto-accessors the source_file handler emits the
+        // comment normally, so we pass None to avoid duplicates.
+        let leading_comment = if !self.auto_accessors.is_empty() {
+            self.extract_leading_comment(class_node)
+        } else {
+            None
+        };
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),
             body,
             weakmap_decls,
             weakmap_inits,
-            leading_comment: None,
+            leading_comment,
             deferred_static_blocks,
         })
     }

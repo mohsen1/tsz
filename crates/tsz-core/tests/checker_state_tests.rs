@@ -22852,7 +22852,6 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_type_predicate_param_type_no_ts2304() {
     use crate::parser::ParserState;
 

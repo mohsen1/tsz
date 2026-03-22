@@ -1902,7 +1902,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pre-existing regression from 118ebd752 — accessor leading comment lost"]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";

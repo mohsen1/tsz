@@ -54,7 +54,7 @@ impl ParserState {
         self.parse_type_with_predicates(false)
     }
 
-    fn parse_type_with_predicates(&mut self, allow_type_predicates: bool) -> NodeIndex {
+    pub(crate) fn parse_type_with_predicates(&mut self, allow_type_predicates: bool) -> NodeIndex {
         if allow_type_predicates && self.is_asserts_type_predicate_start() {
             return self.parse_asserts_type_predicate();
         }
