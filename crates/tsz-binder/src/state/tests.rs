@@ -3855,3 +3855,41 @@ const r = require("./required");
         binder.file_import_sources
     );
 }
+
+#[test]
+fn expando_const_variable_function_expression() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+const Y = function Y() {}
+Y.test = 42;
+",
+    );
+
+    assert!(
+        binder
+            .expando_properties
+            .get("Y")
+            .is_some_and(|props| props.contains("test")),
+        "should track Y.test as expando property, got: {:?}",
+        binder.expando_properties
+    );
+}
+
+#[test]
+fn expando_typed_variable_with_arrow_function() {
+    let (binder, _parser) = parse_and_bind(
+        r"
+const foo: Foo = () => {};
+foo.prop = true;
+",
+    );
+
+    assert!(
+        binder
+            .expando_properties
+            .get("foo")
+            .is_some_and(|props| props.contains("prop")),
+        "should track foo.prop as expando property even with type annotation, got: {:?}",
+        binder.expando_properties
+    );
+}
