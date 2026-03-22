@@ -4648,3 +4648,96 @@ fn test_content_hash_updated_by_update_source() {
 
     assert_ne!(hash_before, hash_after, "Content hash should change after update_source");
 }
+
+#[test]
+fn test_set_file_returns_new_file_summary_for_first_add() {
+    let mut project = Project::new();
+    let summary = project.set_file("a.ts".to_string(), "export const x = 1;".to_string());
+    assert!(summary.api_changed, "New file should report api_changed");
+    assert!(
+        summary.old_signature.is_none(),
+        "New file should have no old signature"
+    );
+    assert_eq!(summary.dependents_invalidated, 0);
+}
+
+#[test]
+fn test_set_file_returns_unchanged_for_identical_content() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x = 1;".to_string());
+    let summary = project.set_file("a.ts".to_string(), "export const x = 1;".to_string());
+    assert!(
+        !summary.api_changed,
+        "Identical content should report unchanged"
+    );
+}
+
+#[test]
+fn test_set_file_body_change_does_not_invalidate_dependents() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 1; }".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from \"./a\";\nfoo();\n".to_string(),
+    );
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Clean b.ts diagnostics
+    let _ = project.get_diagnostics("b.ts");
+    assert!(!project.files["b.ts"].diagnostics_dirty);
+
+    // Replace a.ts with a body-only change via set_file
+    let summary = project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 2; }".to_string(),
+    );
+
+    assert!(
+        !summary.api_changed,
+        "Body-only change should not change the export signature"
+    );
+    assert_eq!(summary.dependents_invalidated, 0);
+    assert!(
+        !project.files["b.ts"].diagnostics_dirty,
+        "b.ts should NOT be invalidated by a body-only change via set_file"
+    );
+}
+
+#[test]
+fn test_set_file_export_change_invalidates_dependents() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 1; }".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from \"./a\";\nfoo();\n".to_string(),
+    );
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Clean b.ts diagnostics
+    let _ = project.get_diagnostics("b.ts");
+    assert!(!project.files["b.ts"].diagnostics_dirty);
+
+    // Replace a.ts with a new export via set_file
+    let summary = project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 1; }\nexport function bar() {}".to_string(),
+    );
+
+    assert!(
+        summary.api_changed,
+        "Adding an export should change the export signature"
+    );
+    assert_eq!(summary.dependents_invalidated, 1);
+    assert!(
+        project.files["b.ts"].diagnostics_dirty,
+        "b.ts SHOULD be invalidated when a.ts adds a new export via set_file"
+    );
+}
