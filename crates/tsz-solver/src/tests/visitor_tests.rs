@@ -854,3 +854,122 @@ fn test_collect_referenced_types_transitive_and_unique() {
     assert!(reachable.contains(&nested));
     assert_eq!(reachable.len(), 5);
 }
+
+// =============================================================================
+// unwrap_readonly_or_noinfer Tests
+// =============================================================================
+
+#[test]
+fn test_unwrap_readonly_or_noinfer_readonly() {
+    let interner = TypeInterner::new();
+    let readonly_str = interner.readonly_type(TypeId::STRING);
+    assert_eq!(
+        unwrap_readonly_or_noinfer(&interner, readonly_str),
+        Some(TypeId::STRING)
+    );
+}
+
+#[test]
+fn test_unwrap_readonly_or_noinfer_noinfer() {
+    let interner = TypeInterner::new();
+    let noinfer_num = interner.no_infer(TypeId::NUMBER);
+    assert_eq!(
+        unwrap_readonly_or_noinfer(&interner, noinfer_num),
+        Some(TypeId::NUMBER)
+    );
+}
+
+#[test]
+fn test_unwrap_readonly_or_noinfer_neither() {
+    let interner = TypeInterner::new();
+    assert_eq!(unwrap_readonly_or_noinfer(&interner, TypeId::STRING), None);
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(unwrap_readonly_or_noinfer(&interner, union), None);
+}
+
+// =============================================================================
+// contains_type_by_id Tests
+// =============================================================================
+
+#[test]
+fn test_contains_type_by_id_identity() {
+    let interner = TypeInterner::new();
+    assert!(contains_type_by_id(
+        &interner,
+        TypeId::STRING,
+        TypeId::STRING
+    ));
+}
+
+#[test]
+fn test_contains_type_by_id_in_union() {
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![TypeId::STRING, TypeId::UNKNOWN, TypeId::NUMBER]);
+    assert!(contains_type_by_id(&interner, union, TypeId::UNKNOWN));
+    assert!(!contains_type_by_id(&interner, union, TypeId::BOOLEAN));
+}
+
+#[test]
+fn test_contains_type_by_id_nested() {
+    let interner = TypeInterner::new();
+    let inner_union = interner.union(vec![TypeId::STRING, TypeId::ERROR]);
+    let arr = interner.array(inner_union);
+    assert!(contains_type_by_id(&interner, arr, TypeId::ERROR));
+    assert!(!contains_type_by_id(&interner, arr, TypeId::UNKNOWN));
+}
+
+#[test]
+fn test_contains_type_by_id_not_found() {
+    let interner = TypeInterner::new();
+    let arr = interner.array(TypeId::STRING);
+    assert!(!contains_type_by_id(&interner, arr, TypeId::UNKNOWN));
+    assert!(!contains_type_by_id(&interner, arr, TypeId::ERROR));
+}
+
+// =============================================================================
+// references_any_type_param_named Tests
+// =============================================================================
+
+#[test]
+fn test_references_any_type_param_named_direct() {
+    let interner = TypeInterner::new();
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mut names = rustc_hash::FxHashSet::default();
+    names.insert(interner.intern_string("T"));
+    assert!(references_any_type_param_named(&interner, tp, &names));
+}
+
+#[test]
+fn test_references_any_type_param_named_nested_in_union() {
+    let interner = TypeInterner::new();
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let union = interner.union(vec![TypeId::STRING, tp]);
+    let mut names = rustc_hash::FxHashSet::default();
+    names.insert(interner.intern_string("U"));
+    assert!(references_any_type_param_named(&interner, union, &names));
+}
+
+#[test]
+fn test_references_any_type_param_named_not_found() {
+    let interner = TypeInterner::new();
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let union = interner.union(vec![TypeId::STRING, tp]);
+    let mut names = rustc_hash::FxHashSet::default();
+    names.insert(interner.intern_string("X")); // Not present
+    assert!(!references_any_type_param_named(&interner, union, &names));
+}

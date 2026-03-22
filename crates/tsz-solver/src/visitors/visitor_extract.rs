@@ -296,6 +296,15 @@ pub fn no_infer_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
     })
 }
 
+/// Extract the inner type if this is a `Readonly` or `NoInfer` wrapper type.
+///
+/// Convenience helper that combines `readonly_inner_type` and `no_infer_inner_type`
+/// to unwrap a single layer of either wrapper. Returns `None` if the type is
+/// neither `Readonly<T>` nor `NoInfer<T>`.
+pub fn unwrap_readonly_or_noinfer(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    readonly_inner_type(types, type_id).or_else(|| no_infer_inner_type(types, type_id))
+}
+
 /// Extract string intrinsic components if this is a string intrinsic type.
 pub fn string_intrinsic_components(
     types: &dyn TypeDatabase,
