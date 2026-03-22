@@ -86,6 +86,25 @@ pub struct FileInfo {
     pub reasons: Vec<FileInclusionReason>,
 }
 
+/// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
+///
+/// Matches tsc's output categories: I/O read, parse+bind, check, emit.
+#[derive(Debug, Clone, Default)]
+pub struct PhaseTimings {
+    /// Time spent reading source files from disk.
+    pub io_read_ms: f64,
+    /// Time spent loading and binding lib files.
+    pub load_libs_ms: f64,
+    /// Time spent parsing and binding user files.
+    pub parse_bind_ms: f64,
+    /// Time spent type-checking (collecting diagnostics).
+    pub check_ms: f64,
+    /// Time spent emitting output files.
+    pub emit_ms: f64,
+    /// Total wall-clock compilation time.
+    pub total_ms: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct CompilationResult {
     pub diagnostics: Vec<Diagnostic>,
@@ -102,6 +121,8 @@ pub struct CompilationResult {
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
+    /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
+    pub phase_timings: PhaseTimings,
     /// Invalidation summaries for files changed in this compilation.
     ///
     /// Populated by `compile_with_cache_and_changes` (watch-mode incremental path).
@@ -840,6 +861,7 @@ fn compile_inner(
             interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
             invalidation_summaries: Vec::new(),
         });
     }
@@ -873,6 +895,7 @@ fn compile_inner(
                     interner_estimated_bytes: 0,
                     query_cache_stats: None,
                     def_store_stats: None,
+                    phase_timings: PhaseTimings::default(),
                     invalidation_summaries: Vec::new(),
                 });
             }
@@ -960,6 +983,7 @@ fn compile_inner(
             interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1031,6 +1055,7 @@ fn compile_inner(
             interner_estimated_bytes: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1100,6 +1125,7 @@ fn compile_inner(
             changed_set.as_ref(),
         )?
     };
+    let io_read_duration = read_sources_start.elapsed();
     perf_log_phase("read_sources", read_sources_start);
 
     // Update dependencies in the cache
@@ -1192,6 +1218,7 @@ fn compile_inner(
     // 2) checker lib contexts (global symbol/type resolution)
     let load_libs_start = Instant::now();
     let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding_strict(&lib_path_refs)?;
+    let load_libs_duration = load_libs_start.elapsed();
     perf_log_phase("load_libs", load_libs_start);
 
     // PERF: Start loading checker lib contexts in a background thread while we
@@ -1227,6 +1254,7 @@ fn compile_inner(
         let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
         (parallel::merge_bind_results(bind_results), None)
     };
+    let parse_bind_duration = build_program_start.elapsed();
     perf_log_phase("build_program", build_program_start);
 
     // Update import symbol IDs if we have a cache
@@ -1255,6 +1283,7 @@ fn compile_inner(
         has_deprecation_diagnostics,
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
+    let check_duration = collect_diagnostics_start.elapsed();
     perf_log_phase("collect_diagnostics", collect_diagnostics_start);
 
     // Get reference to type caches for declaration emit.
@@ -1386,6 +1415,7 @@ fn compile_inner(
             Vec::new()
         }
     };
+    let emit_duration = emit_outputs_start.elapsed();
     perf_log_phase("emit_outputs", emit_outputs_start);
 
     // Recompute has_error after emit diagnostics (e.g., TS2883) are added.
@@ -1473,6 +1503,14 @@ fn compile_inner(
         interner_estimated_bytes: program.type_interner.estimated_size_bytes(),
         query_cache_stats: collected.query_cache_stats,
         def_store_stats: collected.def_store_stats,
+        phase_timings: PhaseTimings {
+            io_read_ms: io_read_duration.as_secs_f64() * 1000.0,
+            load_libs_ms: load_libs_duration.as_secs_f64() * 1000.0,
+            parse_bind_ms: parse_bind_duration.as_secs_f64() * 1000.0,
+            check_ms: check_duration.as_secs_f64() * 1000.0,
+            emit_ms: emit_duration.as_secs_f64() * 1000.0,
+            total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
+        },
         invalidation_summaries: Vec::new(),
     })
 }
@@ -1491,6 +1529,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         interner_estimated_bytes: 0,
         query_cache_stats: None,
         def_store_stats: None,
+        phase_timings: PhaseTimings::default(),
         invalidation_summaries: Vec::new(),
     }
 }
