@@ -94,6 +94,10 @@ pub struct CompilationResult {
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
     pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
+    /// Number of interned types in the shared `TypeInterner` after checking.
+    pub interned_types_count: usize,
+    /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
+    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -788,6 +792,8 @@ fn compile_inner(
             files_read: Vec::new(),
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            query_cache_stats: None,
         });
     }
 
@@ -816,6 +822,8 @@ fn compile_inner(
                     files_read: Vec::new(),
                     file_infos: Vec::new(),
                     request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+                    interned_types_count: 0,
+                    query_cache_stats: None,
                 });
             }
             return Err(e);
@@ -898,6 +906,8 @@ fn compile_inner(
             files_read: Vec::new(),
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            query_cache_stats: None,
         });
     }
 
@@ -964,6 +974,8 @@ fn compile_inner(
             files_read: Vec::new(),
             file_infos: Vec::new(),
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            query_cache_stats: None,
         });
     }
 
@@ -1396,6 +1408,8 @@ fn compile_inner(
         files_read,
         file_infos,
         request_cache_counters: collected.request_cache_counters,
+        interned_types_count: program.type_interner.len(),
+        query_cache_stats: collected.query_cache_stats,
     })
 }
 
@@ -1409,6 +1423,8 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         files_read: Vec::new(),
         file_infos: Vec::new(),
         request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+        interned_types_count: 0,
+        query_cache_stats: None,
     }
 }
 

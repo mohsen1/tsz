@@ -1,6 +1,7 @@
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, RelationCacheKey,
-    RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
+    RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
+    TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -260,4 +261,39 @@ fn type_interner_element_access_respects_no_unchecked_indexed_access() {
     let with_flag = db.resolve_element_access_type(array, TypeId::NUMBER, None);
     assert_ne!(with_flag, TypeId::STRING);
     assert!(crate::type_contains_undefined(&interner, with_flag));
+}
+
+#[test]
+fn query_cache_statistics_reflects_cache_population() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    // Empty cache should have zero entries everywhere.
+    let stats = cache.statistics();
+    assert_eq!(stats, QueryCacheStatistics::default());
+
+    // Subtype check populates the subtype cache.
+    let _ = cache.is_subtype_of(TypeId::NUMBER, TypeId::NUMBER);
+
+    // Assignability check populates the assignability cache.
+    let _ = cache.is_assignable_to(TypeId::STRING, TypeId::ANY);
+
+    let stats = cache.statistics();
+    // Relation caches should have entries from the checks above.
+    assert!(
+        stats.relation.subtype_entries >= 1,
+        "subtype cache should be populated: {}",
+        stats.relation.subtype_entries,
+    );
+    assert!(
+        stats.relation.assignability_entries >= 1,
+        "assignability cache should be populated: {}",
+        stats.relation.assignability_entries,
+    );
+    // Display impl should not panic.
+    let display_output = format!("{stats}");
+    assert!(display_output.contains("QueryCache statistics:"));
+    assert!(display_output.contains("eval_cache:"));
+    assert!(display_output.contains("subtype_cache:"));
+    assert!(display_output.contains("assignability_cache:"));
 }
