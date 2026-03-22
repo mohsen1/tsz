@@ -207,18 +207,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved_source = self.evaluate(source);
             resolved_source_id = Some(resolved_source);
 
-            // tsc rule: homomorphic mapped types over `any` produce `any`.
-            // E.g., `{ -readonly [P in keyof T]: Awaited<T[P]> }` with T=any → any.
-            // This is important for generic inference chains where intermediate
-            // mapped types over `any` must remain `any` to preserve assignability.
+            // When a homomorphic mapped type has `any` as its source, the normal
+            // key expansion path handles it correctly: `keyof any` = `string | number | symbol`,
+            // which produces an object with string+number index signatures.
+            // This matches tsc's behavior for both `Objectish<any>` and non-identity
+            // homomorphic types like `{ [K in keyof T]: string }` with T=any.
             //
-            // NOTE: For non-array-constrained types like `Objectish<any>`, tsc
-            // actually produces `{ [x: string]: any }`. The checker's Application
-            // type evaluation handles this distinction using the type parameter's
-            // original constraint info, which the evaluator doesn't have.
-            if is_homomorphic && resolved_source == TypeId::ANY {
-                return TypeId::ANY;
-            }
+            // Previously this returned TypeId::ANY, which was incorrect for the
+            // `Objectish<any>` case and required a checker-local workaround.
 
             match collect_properties(resolved_source, self.interner(), self.resolver()) {
                 PropertyCollectionResult::Properties { properties, .. } => {
