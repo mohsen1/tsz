@@ -246,6 +246,40 @@ pub enum ImportingModuleKind {
     CommonJs,
 }
 
+impl ImportingModuleKind {
+    /// Return the package.json exports/imports condition string for this module kind.
+    ///
+    /// - `Esm` → `"import"`
+    /// - `CommonJs` → `"require"`
+    ///
+    /// This is the condition used when resolving conditional exports/imports in
+    /// `package.json`. Drivers that need a `"import"` / `"require"` string for
+    /// per-file module format decisions (e.g., Node16/NodeNext emit) can use this
+    /// instead of reimplementing the extension + package.json walk-up logic.
+    pub const fn as_condition_str(&self) -> &'static str {
+        match self {
+            Self::Esm => "import",
+            Self::CommonJs => "require",
+        }
+    }
+
+    /// Whether this is ESM mode.
+    pub const fn is_esm(&self) -> bool {
+        matches!(self, Self::Esm)
+    }
+
+    /// Whether this is CommonJS mode.
+    pub const fn is_cjs(&self) -> bool {
+        matches!(self, Self::CommonJs)
+    }
+}
+
+impl std::fmt::Display for ImportingModuleKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_condition_str())
+    }
+}
+
 /// Matches TypeScript's `pathIsRelative` check: `/^\.\..?(?:$|[\\/])/`.
 ///
 /// A specifier is relative only when it starts with `./`, `../`, `.` alone,
@@ -317,5 +351,31 @@ impl ModuleExtension {
     /// .cts, .cjs, .d.cts files are always CommonJS
     pub const fn forces_cjs(&self) -> bool {
         matches!(self, Self::Cts | Self::Cjs | Self::DCts)
+    }
+
+    /// Check if this is a declaration file extension (.d.ts, .d.mts, .d.cts).
+    ///
+    /// This replaces scattered `path.ends_with(".d.ts") || ...` checks in the driver.
+    pub const fn is_declaration(&self) -> bool {
+        matches!(self, Self::Dts | Self::DmTs | Self::DCts)
+    }
+
+    /// Check if this is any TypeScript source extension (.ts, .tsx, .mts, .cts).
+    ///
+    /// Declaration files (.d.ts, .d.mts, .d.cts) are NOT included — use
+    /// `is_declaration()` for those.
+    pub const fn is_typescript_source(&self) -> bool {
+        matches!(self, Self::Ts | Self::Tsx | Self::Mts | Self::Cts)
+    }
+
+    /// Check if this is any JavaScript extension (.js, .jsx, .mjs, .cjs).
+    pub const fn is_javascript(&self) -> bool {
+        matches!(self, Self::Js | Self::Jsx | Self::Mjs | Self::Cjs)
+    }
+}
+
+impl std::fmt::Display for ModuleExtension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }

@@ -2422,11 +2422,7 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 }
 
 pub(crate) fn is_declaration_file(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+    tsz::module_resolver::ModuleExtension::from_path(path).is_declaration()
 }
 
 pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
