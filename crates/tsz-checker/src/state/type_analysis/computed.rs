@@ -235,6 +235,10 @@ impl<'a> CheckerState<'a> {
             // Pre-cache member symbol types (separate pass to avoid borrow conflicts).
             // This avoids per-member `get_type_of_symbol` overhead in
             // hot paths such as large enum property-access switches.
+            //
+            // Collect (member_def_id, member_enum_type) pairs so we can mirror
+            // them into type_environment after releasing the type_env borrow.
+            let mut member_def_entries: Vec<(tsz_solver::DefId, TypeId)> = Vec::new();
             {
                 let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
                 for &(member_type, ref member_name, _member_idx) in &member_entries {
@@ -257,8 +261,18 @@ impl<'a> CheckerState<'a> {
                                 env.insert_def(member_def_id, member_enum_type);
                                 // Register parent-child relationship for enum member widening
                                 env.register_enum_parent(member_def_id, def_id);
+                                member_def_entries.push((member_def_id, member_enum_type));
                             }
                         }
+                    }
+                }
+            }
+            // Mirror enum member DefId entries into type_environment for consistency
+            if !member_def_entries.is_empty() {
+                if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                    for &(member_def_id, member_enum_type) in &member_def_entries {
+                        env.insert_def(member_def_id, member_enum_type);
+                        env.register_enum_parent(member_def_id, def_id);
                     }
                 }
             }
@@ -275,11 +289,9 @@ impl<'a> CheckerState<'a> {
                 factory.union(member_types)
             };
 
-            // Cache the structural type in type_env for compatibility
-            // Note: Enum types now use TypeData::Enum(def_id, member_type) directly
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.insert_def(def_id, structural_type);
-            }
+            // Cache the structural type in both environments for compatibility.
+            // Note: Enum types now use TypeData::Enum(def_id, member_type) directly.
+            self.ctx.register_def_in_envs(def_id, structural_type);
 
             // CRITICAL: Return TypeData::Enum(def_id, structural_type) NOT Lazy(def_id)
             // - Lazy(def_id) creates infinite recursion in ensure_refs_resolved
@@ -294,8 +306,12 @@ impl<'a> CheckerState<'a> {
             // Always compute this — both plain enums and enum+namespace merges need it.
             let ns_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
             self.ctx.enum_namespace_types.insert(sym_id, ns_type);
-            // Also register in TypeEnvironment so the solver's evaluator can access it
+            // Register in both TypeEnvironment instances so the solver's evaluator
+            // and the flow analyzer can both access enum namespace types.
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.register_enum_namespace_type(def_id, ns_type);
+            }
+            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
                 env.register_enum_namespace_type(def_id, ns_type);
             }
             // Register DefId <-> SymbolId mapping for enum type resolution
