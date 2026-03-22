@@ -5338,3 +5338,158 @@ fn definition_store_declaration_merge_preserves_first_defid() {
         "DefId for merged interface should be valid"
     );
 }
+
+#[test]
+fn definition_store_namespace_exports_wired_during_pre_populate() {
+    // Namespace members with parent_namespace should be wired as exports
+    // of their parent's DefinitionInfo during pre_populate_definition_store.
+    let source = r#"
+        namespace MyNS {
+            export class Foo {}
+            export interface Bar {}
+            export type Baz = string;
+            export enum Color { Red }
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Find the namespace DefId
+    let ns_entry = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "MyNS" && e.kind == crate::binder::SemanticDefKind::Namespace);
+    let (&ns_sym, _) = ns_entry.expect("expected semantic def for MyNS");
+    let ns_def_id = program
+        .definition_store
+        .find_def_by_symbol(ns_sym.0)
+        .expect("MyNS should have a DefId");
+
+    // The namespace's DefinitionInfo.exports should contain its members
+    let exports = program
+        .definition_store
+        .get_exports(ns_def_id)
+        .unwrap_or_default();
+    assert!(
+        exports.len() >= 4,
+        "MyNS should have at least 4 exports (Foo, Bar, Baz, Color), got {}",
+        exports.len()
+    );
+
+    // Each member should also have parent_namespace set in semantic_defs
+    let member_names = ["Foo", "Bar", "Baz", "Color"];
+    for name in &member_names {
+        let member_entry = program.semantic_defs.values().find(|e| e.name == *name);
+        let entry = member_entry.unwrap_or_else(|| panic!("expected semantic def for '{name}'"));
+        assert_eq!(
+            entry.parent_namespace,
+            Some(ns_sym),
+            "'{name}' should have parent_namespace = MyNS"
+        );
+    }
+}
+
+#[test]
+fn definition_store_namespace_exports_survive_binder_reconstruction() {
+    // After binder reconstruction (as check_files_parallel does),
+    // namespace export wiring should still be intact in the shared store.
+    let source = r#"
+        namespace NS {
+            export class Inner {}
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Reconstruct binder (as check_files_parallel does)
+    let binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+
+    // The reconstructed binder's semantic_defs should have parent_namespace
+    let inner_entry = binder.semantic_defs.values().find(|e| e.name == "Inner");
+    assert!(
+        inner_entry.is_some(),
+        "reconstructed binder should have semantic_def for Inner"
+    );
+    let inner = inner_entry.unwrap();
+    assert!(
+        inner.parent_namespace.is_some(),
+        "Inner should have parent_namespace set after reconstruction"
+    );
+
+    // The shared DefinitionStore should still have the export wiring
+    let ns_sym = binder
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "NS")
+        .map(|(&id, _)| id)
+        .expect("expected NS in semantic_defs");
+    let ns_def_id = program
+        .definition_store
+        .find_def_by_symbol(ns_sym.0)
+        .expect("NS should have a DefId");
+    let exports = program
+        .definition_store
+        .get_exports(ns_def_id)
+        .unwrap_or_default();
+    assert!(
+        !exports.is_empty(),
+        "NS exports should be non-empty in shared store after reconstruction"
+    );
+}
+
+#[test]
+fn definition_store_nested_namespace_exports_wired() {
+    // Nested namespaces should have their own export wiring.
+    let source = r#"
+        namespace Outer {
+            export namespace Inner {
+                export class Deep {}
+            }
+        }
+    "#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Outer should have Inner as export
+    let outer_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Outer")
+        .map(|(&id, _)| id)
+        .expect("expected Outer");
+    let outer_def = program
+        .definition_store
+        .find_def_by_symbol(outer_sym.0)
+        .expect("Outer should have DefId");
+    let outer_exports = program
+        .definition_store
+        .get_exports(outer_def)
+        .unwrap_or_default();
+    assert!(
+        !outer_exports.is_empty(),
+        "Outer should have Inner as an export"
+    );
+
+    // Inner should have Deep as export
+    let inner_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Inner")
+        .map(|(&id, _)| id)
+        .expect("expected Inner");
+    let inner_def = program
+        .definition_store
+        .find_def_by_symbol(inner_sym.0)
+        .expect("Inner should have DefId");
+    let inner_exports = program
+        .definition_store
+        .get_exports(inner_def)
+        .unwrap_or_default();
+    assert!(
+        !inner_exports.is_empty(),
+        "Inner should have Deep as an export"
+    );
+}
