@@ -746,7 +746,7 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             self.ctx.compiler_options.no_implicit_any,
                         );
-                        if let Some(tt) = ctx_helper.get_this_type_from_marker_expanding(&*env) {
+                        if let Some(tt) = ctx_helper.get_this_type_from_marker() {
                             shape_this_type = Some(tt);
                             break;
                         }
