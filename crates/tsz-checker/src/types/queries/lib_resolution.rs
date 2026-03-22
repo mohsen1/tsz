@@ -10,9 +10,9 @@
 //!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
 //! 2. [`CheckerContext::get_lib_def_id`] — SymbolId → DefId, preferring
 //!    pre-populated identities from `semantic_defs` with on-demand fallback.
-//! 3. [`lib_def_id_from_node`] — one-step NodeIndex → DefId via (1)+(2), for
+//! 3. [`lib_def_id_from_node`] — one-step `NodeIndex` → DefId via (1)+(2), for
 //!    the merged-binder path.
-//! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step NodeIndex → DefId via
+//! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step `NodeIndex` → DefId via
 //!    [`resolve_lib_node_in_lib_contexts`]+(2), for per-lib-context lowering.
 //!
 //! All lib-lowering resolver closures should delegate to these helpers instead
@@ -156,7 +156,7 @@ pub(crate) fn dedup_decl_arenas<'a>(
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
 ///
 /// This is the stable one-step helper for lib lowering: it combines
-/// [`resolve_lib_node_in_arenas`] (NodeIndex → raw SymbolId) with
+/// [`resolve_lib_node_in_arenas`] (`NodeIndex` → raw SymbolId) with
 /// [`CheckerContext::get_lib_def_id`] (SymbolId → DefId).  Using this
 /// instead of the two-step closure pattern avoids duplicating the
 /// `resolver(node_idx).map(|raw| ctx.get_lib_def_id(SymbolId(raw)))` logic
