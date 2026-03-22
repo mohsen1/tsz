@@ -5182,3 +5182,33 @@ fn test_project_residency_stats_after_remove() {
     assert_eq!(after.file_count, 1);
     assert!(after.total_estimated_bytes < before.total_estimated_bytes);
 }
+
+#[test]
+fn test_project_residency_stats_includes_type_interner() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "const x: number = 1;".to_string());
+
+    let stats = project.residency_stats();
+    assert!(
+        stats.type_interner_estimated_bytes > 0,
+        "type_interner_estimated_bytes should be nonzero for any project with files"
+    );
+    // The interner size should be at least the struct overhead
+    assert!(
+        stats.type_interner_estimated_bytes >= std::mem::size_of::<tsz_solver::TypeInterner>(),
+        "interner estimate ({}) should be >= struct size ({})",
+        stats.type_interner_estimated_bytes,
+        std::mem::size_of::<tsz_solver::TypeInterner>(),
+    );
+}
+
+#[test]
+fn test_project_residency_stats_type_interner_nonzero_even_empty_project() {
+    let project = Project::new();
+    let stats = project.residency_stats();
+    // Even an empty project has a TypeInterner with intrinsics pre-registered
+    assert!(
+        stats.type_interner_estimated_bytes > 0,
+        "type_interner_estimated_bytes should be nonzero even for empty project (intrinsics)"
+    );
+}
