@@ -495,8 +495,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.experimental_decorators
                     && features.has(FileFeatures::DECORATORS)
             }
-            FeatureGate::UsingDeclaration => false, // tsc only checks Disposable when actually needed
-            FeatureGate::AwaitUsingDeclaration => false, // tsc only checks AsyncDisposable when actually needed
+            FeatureGate::UsingDeclaration => features.has(FileFeatures::USING),
+            FeatureGate::AwaitUsingDeclaration => features.has(FileFeatures::AWAIT_USING),
             // Awaited maps to AsyncFunction gate — check async_depth
             FeatureGate::AsyncFunction => self.ctx.async_depth > 0,
             _ => false,
