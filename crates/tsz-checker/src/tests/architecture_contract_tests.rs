@@ -3186,9 +3186,9 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
 // Ratchet guards: prevent architecture debt from growing
 // =============================================================================
 
-/// Guard that the TEMPORARILY_ALLOWED bypass list in the solver-imports test
-/// does not silently grow. When someone wraps a solver API in query_boundaries,
-/// they should remove it from TEMPORARILY_ALLOWED, shrinking the count.
+/// Guard that the `TEMPORARILY_ALLOWED` bypass list in the solver-imports test
+/// does not silently grow. When someone wraps a solver API in `query_boundaries`,
+/// they should remove it from `TEMPORARILY_ALLOWED`, shrinking the count.
 /// Adding new bypasses requires updating this ceiling (which reviewers will see).
 ///
 /// Current ceiling: 45 items. This number must only decrease over time.
@@ -3234,7 +3234,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
 /// `interner.object()`, `interner.array()`, `interner.tuple()`, `interner.function()`)
 /// in checker source files outside `query_boundaries/` and `tests/` do not increase.
 ///
-/// These calls bypass the query_boundaries layer and should be migrated to use
+/// These calls bypass the `query_boundaries` layer and should be migrated to use
 /// `flow_analysis::union_types()` or equivalent boundary helpers.
 ///
 /// Current ceiling: 15 occurrences. This number must only decrease over time.
