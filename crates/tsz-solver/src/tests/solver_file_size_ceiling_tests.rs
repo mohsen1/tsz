@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
-    let entries = fs::read_dir(dir)
-        .unwrap_or_else(|_| panic!("failed to read directory {}", dir.display()));
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|_| panic!("failed to read directory {}", dir.display()));
     for entry in entries {
         let entry = entry.expect("failed to read directory entry");
         let path = entry.path();
