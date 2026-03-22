@@ -9813,3 +9813,34 @@ fn fix_regex_in_const_with_flags() {
     println!("regex with flags:\n{output}");
     assert!(output.contains("RegExp"), "regex with flags should infer RegExp: {output}");
 }
+
+#[test]
+fn fix_const_numeric_separator_stripped() {
+    let output = emit_dts("export const x = 1_000_000;");
+    println!("const sep:\n{output}");
+    assert!(output.contains("1000000"), "const numeric sep should be stripped: {output}");
+    assert!(!output.contains("_"), "underscore should not appear: {output}");
+}
+
+#[test]
+fn fix_const_bigint_separator_stripped() {
+    let output = emit_dts("export const x = 1_000n;");
+    println!("const bigint sep:\n{output}");
+    assert!(output.contains("1000n"), "bigint sep should be stripped: {output}");
+    assert!(!output.contains("_"), "underscore should not appear: {output}");
+}
+
+#[test]
+fn fix_const_negative_separator_stripped() {
+    let output = emit_dts("export const x = -1_000;");
+    println!("const neg sep:\n{output}");
+    assert!(output.contains("-1000"), "negative sep should be stripped: {output}");
+    assert!(!output.contains("_"), "underscore should not appear: {output}");
+}
+
+#[test]
+fn fix_const_hex_separator_converted() {
+    let output = emit_dts("export const x = 0xFF_FF;");
+    println!("const hex sep:\n{output}");
+    assert!(output.contains("65535"), "hex sep should convert to decimal: {output}");
+}
