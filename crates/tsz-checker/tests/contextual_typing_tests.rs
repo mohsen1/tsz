@@ -983,3 +983,74 @@ const r = apply(42, x => x);
         "Expected no TS7006 errors for contextually instantiated callback, got {ts7006_errors:?}"
     );
 }
+
+/// Weak type detection (TS2559): when the target type has only optional
+/// properties and a non-fresh source shares NO properties with it, tsc
+/// emits TS2559. (For fresh object literals, EPC/TS2353 takes priority.)
+///
+/// NOTE: tsz currently emits TS2345 instead of TS2559 — weak-type detection
+/// is not yet fully implemented. This test documents the current behavior and
+/// should be updated to expect TS2559 once the Lawyer layer implements it.
+#[test]
+#[ignore = "TS2559 weak-type detection not yet implemented — currently emits TS2345"]
+fn test_weak_type_detection_ts2559_for_non_fresh_source() {
+    let source = r#"
+interface Options {
+    color?: string;
+    width?: number;
+}
+
+declare function configure(opts: Options): void;
+
+let obj = { unknown: true };
+configure(obj);
+"#;
+
+    let diagnostics = check_default(source);
+
+    // tsc: TS2559: Type '{ unknown: boolean; }' has no properties in common
+    // with type 'Options'.
+    // tsz (current): TS2345 argument not assignable.
+    let ts2559_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2559)
+        .collect();
+
+    assert!(
+        !ts2559_errors.is_empty(),
+        "Expected TS2559 (weak type) for non-fresh source with no overlap, \
+         got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Fresh object literals with excess properties assigned to weak types
+/// should trigger EPC (TS2353) rather than weak-type (TS2559).
+///
+/// This verifies that freshness-based EPC takes priority over weak-type
+/// detection for object literals — a subtle tsc behavior distinction.
+#[test]
+fn test_fresh_literal_to_weak_type_triggers_epc_not_ts2559() {
+    let source = r#"
+interface Options {
+    color?: string;
+    width?: number;
+}
+
+declare function configure(opts: Options): void;
+
+configure({ unknown: true });
+"#;
+
+    let diagnostics = check_default(source);
+
+    // Fresh literal → EPC fires first (TS2353), not TS2559
+    let ts2353_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2353)
+        .collect();
+
+    assert!(
+        !ts2353_errors.is_empty(),
+        "Expected TS2353 (EPC) for fresh literal to weak type, got diagnostics={diagnostics:?}"
+    );
+}
