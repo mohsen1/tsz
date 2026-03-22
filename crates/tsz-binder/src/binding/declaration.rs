@@ -1120,6 +1120,11 @@ impl BinderState {
             if let Some(enum_symbol) = self.symbols.get_mut(enum_sym_id) {
                 enum_symbol.exports = Some(Box::new(exports));
             }
+
+            // Record individual enum member semantic defs for stable identity.
+            // This enables pre_populate_definition_store to create DefIds for
+            // each member, eliminating checker fallback creation.
+            self.record_enum_member_defs(enum_sym_id, arena, &enum_decl.members.nodes);
         }
     }
 
@@ -2511,8 +2516,56 @@ impl BinderState {
                 is_abstract,
                 heritage_names,
                 parent_namespace,
+                parent_enum: None,
             },
         );
+    }
+
+    /// Record semantic def entries for each individual enum member.
+    ///
+    /// Unlike top-level declarations, enum members live inside a Block scope.
+    /// We bypass the top-level check and insert them directly into `semantic_defs`
+    /// with `parent_enum` set, so `pre_populate_definition_store` can create
+    /// individual `DefIds` for each member. This eliminates checker fallback
+    /// creation for enum member symbols.
+    pub(crate) fn record_enum_member_defs(
+        &mut self,
+        enum_sym_id: SymbolId,
+        arena: &NodeArena,
+        members: &[NodeIndex],
+    ) {
+        for &member_idx in members {
+            if let Some(member_node) = arena.get(member_idx)
+                && let Some(member) = arena.get_enum_member(member_node)
+                && let Some(member_name) = Self::get_property_name(arena, member.name)
+            {
+                // Look up the member's SymbolId from node_symbols (set during
+                // bind_enum_declaration before this method is called).
+                if let Some(&member_sym_id) = self.node_symbols.get(&member_idx.0) {
+                    let file_id = self
+                        .symbols
+                        .get(member_sym_id)
+                        .map_or(u32::MAX, |s| s.decl_file_idx);
+                    self.semantic_defs.insert(
+                        member_sym_id,
+                        crate::state::SemanticDefEntry {
+                            kind: crate::state::SemanticDefKind::EnumMember,
+                            name: member_name.to_string(),
+                            file_id,
+                            span_start: member_idx.0,
+                            type_param_count: 0,
+                            is_exported: false,
+                            enum_member_names: Vec::new(),
+                            is_const: false,
+                            is_abstract: false,
+                            heritage_names: Vec::new(),
+                            parent_namespace: None,
+                            parent_enum: Some(enum_sym_id),
+                        },
+                    );
+                }
+            }
+        }
     }
 
     fn is_global_scope(&self) -> bool {
