@@ -216,14 +216,15 @@ impl<'a> CheckerState<'a> {
                     static_shape: None,
                     extends: None,
                     implements: Vec::new(),
+                    heritage_names: Vec::new(),
+                    is_exported: false,
+                    is_const: false,
+                    is_abstract: false,
                     enum_members: Vec::new(),
                     exports: Vec::new(),
                     file_id: None,
                     span: None,
                     symbol_id,
-                    is_abstract: false,
-                    is_const: false,
-                    is_exported: false,
                 });
             self.ctx
                 .definition_store
