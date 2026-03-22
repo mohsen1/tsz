@@ -1481,7 +1481,7 @@ impl<'a> CheckerState<'a> {
                 et,
                 self.ctx.compiler_options.no_implicit_any,
             );
-            let env = self.ctx.type_env.borrow();
+            let _env = self.ctx.type_env.borrow();
             if let Some(this_type) = ctx_helper
                 .get_this_type_from_marker()
                 .or_else(|| ctx_helper.get_this_type_from_marker())

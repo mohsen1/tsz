@@ -738,7 +738,7 @@ impl<'a> CheckerState<'a> {
                 // Extract ThisType<T> from shape params via alias expansion.
                 // Store for re-use across retry arg typing calls.
                 if shape_this_type.is_none() {
-                    let env = self.ctx.type_env.borrow();
+                    let _env = self.ctx.type_env.borrow();
                     for param in &shape.params {
                         use tsz_solver::ContextualTypeContext;
                         let ctx_helper = ContextualTypeContext::with_expected_and_options(

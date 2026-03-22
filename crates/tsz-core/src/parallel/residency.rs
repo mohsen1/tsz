@@ -5,7 +5,7 @@
 //! `--extendedDiagnostics` reporting.
 
 use super::core::MergedProgram;
-use super::skeleton::SkeletonIndex;
+
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
