@@ -1470,35 +1470,6 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             );
         }
 
-        // // Merged-program residency statistics
-        // if let Some(ref rs) = result.residency_stats() {
-        // println!(
-        // "Residency files:               {} ({} unique arenas)",
-        // rs.file_count, rs.unique_arena_count,
-        // );
-        // println!(
-        // "Pre-merge bind memory:         {}KB",
-        // rs.pre_merge_bind_total_bytes / 1024,
-        // );
-        // println!(
-        // "Bound file metadata:           {}KB",
-        // rs.total_bound_file_bytes / 1024,
-        // );
-        // println!("Symbol arena entries:           {}", rs.symbol_arena_count,);
-        // println!(
-        // "Declaration arena buckets:      {} ({} mappings)",
-        // rs.declaration_arena_bucket_count, rs.declaration_arena_mapping_count,
-        // );
-        // if rs.has_skeleton_index {
-        // println!(
-        // "Skeleton index:                {} symbols, {} merge candidates, {}KB",
-        // rs.skeleton_total_symbol_count,
-        // rs.skeleton_merge_candidate_count,
-        // rs.skeleton_estimated_size_bytes / 1024,
-        // );
-        // }
-        // }
-
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }
