@@ -100,6 +100,12 @@ pub struct CompilationResult {
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
+    /// Invalidation summaries for files changed in this compilation.
+    ///
+    /// Populated by `compile_with_cache_and_changes` (watch-mode incremental path).
+    /// Each entry records whether a file's public API changed and how many
+    /// dependents were invalidated. Empty for full (non-incremental) compilations.
+    pub invalidation_summaries: Vec<tsz_lsp::export_signature::InvalidationSummary>,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -612,6 +618,8 @@ pub(crate) fn compile_with_cache_and_changes(
     cache: &mut CompilationCache,
     changed_paths: &[PathBuf],
 ) -> Result<CompilationResult> {
+    use tsz_lsp::export_signature::InvalidationSummary;
+
     let canonical_paths: Vec<PathBuf> = changed_paths
         .iter()
         .map(|path| canonicalize_or_owned(path))
@@ -624,12 +632,34 @@ pub(crate) fn compile_with_cache_and_changes(
     }
 
     cache.invalidate_paths(canonical_paths.iter().cloned());
-    let result = compile_inner(args, cwd, Some(cache), Some(&canonical_paths), None, None)?;
+    let mut result = compile_inner(args, cwd, Some(cache), Some(&canonical_paths), None, None)?;
 
-    let exports_changed = canonical_paths
-        .iter()
-        .any(|path| old_hashes.get(path).copied() != cache.export_hashes.get(path).copied());
-    if !exports_changed {
+    // Build per-file invalidation summaries and decide whether dependents need recompilation.
+    let mut any_exports_changed = false;
+    let mut summaries = Vec::with_capacity(canonical_paths.len());
+    for path in &canonical_paths {
+        let old_hash = old_hashes.get(path).copied();
+        let new_hash = cache.export_hashes.get(path).copied();
+        let file_name = path.to_string_lossy().into_owned();
+
+        match (old_hash, new_hash) {
+            (Some(old), Some(new)) if old == new => {
+                summaries.push(InvalidationSummary::unchanged(file_name, new));
+            }
+            (old, Some(new)) => {
+                any_exports_changed = true;
+                // Dependent count will be filled in after we compute the set below.
+                summaries.push(InvalidationSummary::changed(file_name, old, new, 0));
+            }
+            (_, None) => {
+                // File was not recompiled (e.g. parse error); treat as new.
+                summaries.push(InvalidationSummary::new_file(file_name, 0));
+            }
+        }
+    }
+
+    if !any_exports_changed {
+        result.invalidation_summaries = summaries;
         return Ok(result);
     }
 
@@ -648,15 +678,25 @@ pub(crate) fn compile_with_cache_and_changes(
         cache.collect_dependents(canonical_paths.iter().cloned())
     };
 
+    // Fill in the dependent count for changed files.
+    let dependent_count = dependents.len().saturating_sub(canonical_paths.len());
+    for summary in &mut summaries {
+        if summary.api_changed {
+            summary.dependents_invalidated = dependent_count;
+        }
+    }
+
     cache.invalidate_paths_with_dependents_symbols(canonical_paths);
-    compile_inner(
+    let mut result = compile_inner(
         args,
         cwd,
         Some(cache),
         Some(changed_paths),
         Some(&dependents),
         None,
-    )
+    )?;
+    result.invalidation_summaries = summaries;
+    Ok(result)
 }
 
 /// Returns true if the given diagnostic code is a grammar-level error that should
@@ -797,6 +837,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            invalidation_summaries: Vec::new(),
         });
     }
 
@@ -828,6 +869,7 @@ fn compile_inner(
                     interned_types_count: 0,
                     query_cache_stats: None,
                     def_store_stats: None,
+                    invalidation_summaries: Vec::new(),
                 });
             }
             return Err(e);
@@ -913,6 +955,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            invalidation_summaries: Vec::new(),
         });
     }
 
@@ -982,6 +1025,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            invalidation_summaries: Vec::new(),
         });
     }
 
@@ -1422,6 +1466,7 @@ fn compile_inner(
         interned_types_count: program.type_interner.len(),
         query_cache_stats: collected.query_cache_stats,
         def_store_stats: collected.def_store_stats,
+        invalidation_summaries: Vec::new(),
     })
 }
 
@@ -1438,6 +1483,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         interned_types_count: 0,
         query_cache_stats: None,
         def_store_stats: None,
+        invalidation_summaries: Vec::new(),
     }
 }
 
