@@ -707,7 +707,7 @@ impl<'a> CheckerState<'a> {
                 // Uses get_lib_def_id: prefers pre-populated DefIds, falls
                 // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).map(|raw| self.ctx.lib_def_id_for_raw(raw))
+                    resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
                 };
 
                 // Name-based resolver: resolves identifier text directly without NodeIndex.
@@ -1045,7 +1045,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-            resolver(node_idx).map(|raw| self.ctx.lib_def_id_for_raw(raw))
+            resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
             self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
