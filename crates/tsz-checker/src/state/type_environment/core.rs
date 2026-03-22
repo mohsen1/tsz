@@ -729,10 +729,9 @@ impl<'a> CheckerState<'a> {
         // in the environment, and the checker falls back to local expansion.
         if let query::MappedConstraintKind::KeyOf(source) =
             query::classify_mapped_constraint(self.ctx.types, mapped.constraint)
+            && let Some(constraint) = query::type_parameter_constraint(self.ctx.types, source)
         {
-            if let Some(constraint) = query::type_parameter_constraint(self.ctx.types, source) {
-                self.ensure_relation_input_ready(constraint);
-            }
+            self.ensure_relation_input_ready(constraint);
         }
 
         // Use solver classification to decide whether to preserve array/tuple identity.

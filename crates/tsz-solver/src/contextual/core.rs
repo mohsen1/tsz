@@ -730,18 +730,18 @@ impl<'a> ContextualTypeContext<'a> {
         // If so, expand the alias body and retry.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
-            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) {
-                if let Some(body) = resolver.resolve_lazy(def_id, self.interner) {
-                    let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
-                    let expanded =
-                        crate::instantiate_generic(self.interner, body, &type_params, &app.args);
-                    let expanded_ctx = ContextualTypeContext::with_expected_and_options(
-                        self.interner,
-                        expanded,
-                        self.no_implicit_any,
-                    );
-                    return expanded_ctx.get_this_type_from_marker();
-                }
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
+                && let Some(body) = resolver.resolve_lazy(def_id, self.interner)
+            {
+                let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
+                let expanded =
+                    crate::instantiate_generic(self.interner, body, &type_params, &app.args);
+                let expanded_ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    expanded,
+                    self.no_implicit_any,
+                );
+                return expanded_ctx.get_this_type_from_marker();
             }
         }
 

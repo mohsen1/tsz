@@ -1393,16 +1393,15 @@ impl<'a> CheckerState<'a> {
                         if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name)
                         {
                             for &idx in file_indices {
-                                if let Some(b) = binders.get(idx) {
-                                    if let Some(exports) = b.module_exports.get(module_name)
-                                        && let Some(target_sym_id) = exports.get(export_name)
-                                    {
-                                        current_binder = &**b;
-                                        current_file_idx = idx;
-                                        current_sym_id = target_sym_id;
-                                        found = true;
-                                        break;
-                                    }
+                                if let Some(b) = binders.get(idx)
+                                    && let Some(exports) = b.module_exports.get(module_name)
+                                    && let Some(target_sym_id) = exports.get(export_name)
+                                {
+                                    current_binder = &**b;
+                                    current_file_idx = idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                    break;
                                 }
                             }
                         } else {

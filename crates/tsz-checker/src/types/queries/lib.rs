@@ -286,12 +286,11 @@ impl<'a> CheckerState<'a> {
             if let Some(all_binders) = &self.ctx.all_binders {
                 if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
                     for &file_idx in file_indices {
-                        if let Some(binder) = all_binders.get(file_idx) {
-                            if let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get(export_name)
-                            {
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                            }
+                        if let Some(binder) = all_binders.get(file_idx)
+                            && let Some(exports) = binder.module_exports.get(module_name)
+                            && let Some(target_sym_id) = exports.get(export_name)
+                        {
+                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                     }
                 } else {
@@ -325,13 +324,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(all_binders) = &self.ctx.all_binders {
                     if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
                         for &file_idx in file_indices {
-                            if let Some(binder) = all_binders.get(file_idx) {
-                                if let Some(exports) = binder.module_exports.get(module_name)
-                                    && let Some(target_sym_id) = exports.get("export=")
-                                {
-                                    return self
-                                        .resolve_alias_symbol(target_sym_id, visited_aliases);
-                                }
+                            if let Some(binder) = all_binders.get(file_idx)
+                                && let Some(exports) = binder.module_exports.get(module_name)
+                                && let Some(target_sym_id) = exports.get("export=")
+                            {
+                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
                     } else {

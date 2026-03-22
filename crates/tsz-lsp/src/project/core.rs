@@ -316,7 +316,7 @@ impl ProjectFile {
     /// Timestamp of the last LSP access to this file.
     ///
     /// Used by eviction heuristics to identify cold files.
-    pub fn last_accessed(&self) -> Instant {
+    pub const fn last_accessed(&self) -> Instant {
         self.last_accessed
     }
 
@@ -2040,10 +2040,10 @@ impl Project {
         for (name, file) in &self.files {
             let est = file.estimated_size_bytes();
             total = total.saturating_add(est);
-            if largest.map_or(true, |(_, s)| est > s) {
+            if largest.is_none_or(|(_, s)| est > s) {
                 largest = Some((name.as_str(), est));
             }
-            if smallest.map_or(true, |(_, s)| est < s) {
+            if smallest.is_none_or(|(_, s)| est < s) {
                 smallest = Some((name.as_str(), est));
             }
         }
@@ -2081,10 +2081,10 @@ impl Project {
             .iter()
             .filter_map(|(name, file)| {
                 let idle = now.duration_since(file.last_accessed);
-                if let Some(threshold) = min_idle {
-                    if idle < threshold {
-                        return None;
-                    }
+                if let Some(threshold) = min_idle
+                    && idle < threshold
+                {
+                    return None;
                 }
                 Some(FileResidencyInfo {
                     file_name: name.clone(),

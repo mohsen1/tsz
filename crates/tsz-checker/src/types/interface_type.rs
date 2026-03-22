@@ -1173,15 +1173,15 @@ impl<'a> CheckerState<'a> {
         // When module_spec is a resolved file path, augmentations may be keyed by a
         // bare specifier. Reverse-lookup: resolve file path to file index, then find
         // augmentation keys that resolve to the same target file.
-        if resolved_source_idx.is_none() {
-            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                for (idx, arena) in arenas.iter().enumerate() {
-                    if let Some(sf) = arena.source_files.first() {
-                        if sf.file_name == module_spec || sf.file_name == trimmed {
-                            resolved_source_idx = Some(idx);
-                            break;
-                        }
-                    }
+        if resolved_source_idx.is_none()
+            && let Some(arenas) = self.ctx.all_arenas.as_ref()
+        {
+            for (idx, arena) in arenas.iter().enumerate() {
+                if let Some(sf) = arena.source_files.first()
+                    && (sf.file_name == module_spec || sf.file_name == trimmed)
+                {
+                    resolved_source_idx = Some(idx);
+                    break;
                 }
             }
         }
@@ -1276,12 +1276,11 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                             let mut cloned = aug.clone();
-                            if cloned.arena.is_none() {
-                                if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                                    if let Some(arena) = arenas.get(*file_idx) {
-                                        cloned.arena = Some(Arc::clone(arena));
-                                    }
-                                }
+                            if cloned.arena.is_none()
+                                && let Some(arenas) = self.ctx.all_arenas.as_ref()
+                                && let Some(arena) = arenas.get(*file_idx)
+                            {
+                                cloned.arena = Some(Arc::clone(arena));
                             }
                             result.push(cloned);
                         }
@@ -1296,12 +1295,11 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                                 let mut cloned = aug.clone();
-                                if cloned.arena.is_none() {
-                                    if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                                        if let Some(arena) = arenas.get(file_idx) {
-                                            cloned.arena = Some(Arc::clone(arena));
-                                        }
-                                    }
+                                if cloned.arena.is_none()
+                                    && let Some(arenas) = self.ctx.all_arenas.as_ref()
+                                    && let Some(arena) = arenas.get(file_idx)
+                                {
+                                    cloned.arena = Some(Arc::clone(arena));
                                 }
                                 result.push(cloned);
                             }
@@ -1388,12 +1386,11 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let mut cloned = aug.clone();
-                        if cloned.arena.is_none() {
-                            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                                if let Some(arena) = arenas.get(*file_idx) {
-                                    cloned.arena = Some(Arc::clone(arena));
-                                }
-                            }
+                        if cloned.arena.is_none()
+                            && let Some(arenas) = self.ctx.all_arenas.as_ref()
+                            && let Some(arena) = arenas.get(*file_idx)
+                        {
+                            cloned.arena = Some(Arc::clone(arena));
                         }
                         result.push(cloned);
                     }

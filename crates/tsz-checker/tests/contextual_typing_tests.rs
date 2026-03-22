@@ -782,7 +782,7 @@ let obj = { x: 1, x: 2 };
 }
 
 /// Object literal method `this` type uses contextual object type.
-/// When no ThisType marker exists, methods should use the contextual type
+/// When no `ThisType` marker exists, methods should use the contextual type
 /// (if present) as `this` inside the method body.
 #[test]
 fn test_object_literal_method_this_type_from_contextual() {
@@ -829,7 +829,7 @@ let obj = {
 /// Nested object literal gets contextual typing from a deeply nested target type.
 ///
 /// This exercises the recursive contextual property type extraction in
-/// object_literal.rs — when the target type has nested object properties,
+/// `object_literal.rs` — when the target type has nested object properties,
 /// the checker must propagate contextual types through each level.
 #[test]
 fn test_nested_object_literal_contextual_typing_provides_parameter_types() {
@@ -937,7 +937,7 @@ const result = map([1, 2, 3], item => item + 1);
 /// Generic call inference with return-context substitution.
 ///
 /// When a generic function's return type is used as a contextual type,
-/// the collect_return_context_substitution path in call_inference.rs
+/// the `collect_return_context_substitution` path in `call_inference.rs`
 /// matches type parameters between the source and target return types.
 #[test]
 fn test_generic_call_return_context_substitution() {
@@ -963,7 +963,7 @@ const x: string = identity("hello");
 /// argument against a non-generic target parameter type.
 ///
 /// This exercises `instantiate_generic_function_argument_against_target_params`
-/// in call_inference.rs.
+/// in `call_inference.rs`.
 #[test]
 fn test_generic_callback_argument_contextual_instantiation() {
     let source = r#"
@@ -1093,7 +1093,7 @@ const k = pick("a");
 }
 
 /// Generic call inference through rest parameters.
-/// Exercises contextual_param_types_from_instantiated_params with rest expansion.
+/// Exercises `contextual_param_types_from_instantiated_params` with rest expansion.
 #[test]
 fn test_generic_call_rest_parameter_contextual_typing() {
     let source = r#"
@@ -1109,7 +1109,7 @@ const r = call((x: number, y: string) => x + y.length, 1, "hello");
 }
 
 /// Return-context substitution through array element types.
-/// Exercises the array_element_type matching path in collect_return_context_substitution.
+/// Exercises the `array_element_type` matching path in `collect_return_context_substitution`.
 #[test]
 fn test_return_context_substitution_array_element() {
     let source = r#"
@@ -1125,7 +1125,7 @@ const arr: number[] = wrap(42);
 }
 
 /// Return-context substitution through tuple element types.
-/// Exercises the tuple_elements matching path in collect_return_context_substitution.
+/// Exercises the `tuple_elements` matching path in `collect_return_context_substitution`.
 #[test]
 fn test_return_context_substitution_tuple_elements() {
     let source = r#"
@@ -1141,7 +1141,7 @@ const p: [string, number] = pair("hello", 42);
 }
 
 /// Return-context substitution with generic application (Promise<T>).
-/// Exercises the application_info matching path in collect_return_context_substitution.
+/// Exercises the `application_info` matching path in `collect_return_context_substitution`.
 #[test]
 fn test_return_context_substitution_generic_application() {
     let source = r#"
@@ -1157,7 +1157,7 @@ const p: Promise<string> = wrapPromise("hello");
 }
 
 /// Generic callback with binding pattern parameter.
-/// Exercises sanitize_generic_inference_arg_type which replaces binding pattern params
+/// Exercises `sanitize_generic_inference_arg_type` which replaces binding pattern params
 /// with unknown for inference purposes.
 #[test]
 fn test_generic_callback_binding_pattern_parameter() {
@@ -1176,7 +1176,7 @@ process([{ x: 1, y: 2 }], ({ x, y }) => {
 }
 
 /// Generic call with return-context function shape matching.
-/// Exercises the function shape matching path in collect_return_context_substitution
+/// Exercises the function shape matching path in `collect_return_context_substitution`
 /// where both source and target return types are callable.
 #[test]
 fn test_return_context_function_shape_matching() {
@@ -1210,7 +1210,7 @@ const zipped = zip([1, 2], ["a", "b"], (n, s) => [n, s]);
 }
 
 /// Generic call with mismatched argument type should produce TS2345.
-/// Verifies that recheck_generic_call_arguments_with_real_types correctly
+/// Verifies that `recheck_generic_call_arguments_with_real_types` correctly
 /// detects type mismatches after instantiation.
 #[test]
 fn test_generic_call_recheck_detects_mismatch() {
@@ -1227,7 +1227,7 @@ const r = apply(42, (x: string) => x);
 }
 
 /// Generic call with conditional return in zero-param callback.
-/// Exercises zero_param_callback_first_conditional_branch path.
+/// Exercises `zero_param_callback_first_conditional_branch` path.
 #[test]
 fn test_zero_param_callback_conditional_branch() {
     let source = r#"

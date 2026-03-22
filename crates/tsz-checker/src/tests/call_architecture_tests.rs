@@ -5,7 +5,7 @@
 
 use crate::test_utils::check_source_diagnostics;
 
-/// Verify ThisType extraction through type alias applications works correctly
+/// Verify `ThisType` extraction through type alias applications works correctly
 /// via `get_this_type_from_marker_expanding` (previously used raw TypeData
 /// pattern matching on Application/Lazy).
 #[test]
@@ -41,7 +41,7 @@ createComponent({
     );
 }
 
-/// Verify union callee predicate extraction uses is_union_type query
+/// Verify union callee predicate extraction uses `is_union_type` query
 /// (previously used raw solver-internal Union pattern match).
 #[test]
 fn union_callee_type_predicate_extraction_no_crash() {
@@ -215,7 +215,7 @@ const b: object = parser.parse("{}", (k, v) => v);
 }
 
 /// Callable interface (call signature) invocation works through
-/// classify_for_call_signatures query.
+/// `classify_for_call_signatures` query.
 #[test]
 fn callable_interface_invocation() {
     let diags = check_source_diagnostics(
@@ -324,7 +324,7 @@ const result: string | undefined = fn1?.(42);
 // tsz_solver::type_queries:: calls to common:: boundary wrappers.
 
 /// Regression: literal type classification goes through boundary wrapper.
-/// Exercises common::classify_literal_type via generic call inference
+/// Exercises `common::classify_literal_type` via generic call inference
 /// where contextual constraint preserves literal types.
 #[test]
 fn generic_call_preserves_literal_types_in_constraint() {
@@ -344,10 +344,10 @@ const result: "a" = pick("a");
     );
 }
 
-/// Regression: application_info boundary wrapper used in return context
+/// Regression: `application_info` boundary wrapper used in return context
 /// substitution collection for Application types (e.g., Promise<T>).
-/// Exercises the code path where collect_return_context_substitution
-/// compares Application types via common::application_info.
+/// Exercises the code path where `collect_return_context_substitution`
+/// compares Application types via `common::application_info`.
 #[test]
 fn generic_call_application_info_return_context() {
     let diags = check_source_diagnostics(
@@ -373,7 +373,7 @@ const boxed = wrap(42);
     );
 }
 
-/// Regression: function_shape_for_type boundary wrapper used during
+/// Regression: `function_shape_for_type` boundary wrapper used during
 /// sanitization of generic inference arguments (binding patterns).
 #[test]
 fn generic_call_binding_pattern_sanitization() {
@@ -389,7 +389,7 @@ process(({ x, y }: { x: number; y: string }) => {}, [{ x: 1, y: "a" }]);
     let _ = diags;
 }
 
-/// Regression: unpack_tuple_rest_parameter boundary wrapper used in
+/// Regression: `unpack_tuple_rest_parameter` boundary wrapper used in
 /// contextual signature normalization for spread calls.
 #[test]
 fn spread_call_tuple_rest_unpacking() {
@@ -413,8 +413,8 @@ const result: number = sum(...args);
     );
 }
 
-/// Regression: is_callable_type boundary wrapper used in contextual
-/// call param type normalization (normalize_contextual_call_param_type).
+/// Regression: `is_callable_type` boundary wrapper used in contextual
+/// call param type normalization (`normalize_contextual_call_param_type`).
 #[test]
 fn callable_param_type_normalization() {
     let diags = check_source_diagnostics(
@@ -436,8 +436,8 @@ const result: number = apply(x => x + 1, 42);
     );
 }
 
-/// Regression: find_property_in_object boundary wrapper used in
-/// constructor_type_from_new_property for construct signature lookup.
+/// Regression: `find_property_in_object` boundary wrapper used in
+/// `constructor_type_from_new_property` for construct signature lookup.
 #[test]
 fn new_property_constructor_lookup() {
     let diags = check_source_diagnostics(
@@ -462,7 +462,7 @@ const instance: MyClass = new Ctor(42);
     );
 }
 
-/// Regression: enum_def_id boundary wrapper used during generic inference
+/// Regression: `enum_def_id` boundary wrapper used during generic inference
 /// argument sanitization for enum types.
 #[test]
 fn generic_call_with_enum_argument() {
@@ -540,7 +540,7 @@ const b: string = concat("a", "b", "c", "d");
 }
 
 /// Property call on nested object method resolves through
-/// classify_for_call_signatures query.
+/// `classify_for_call_signatures` query.
 #[test]
 fn property_call_nested_object_method() {
     let diags = check_source_diagnostics(

@@ -51,7 +51,7 @@ struct EvictionEntry {
 
 impl EvictionEntry {
     /// Composite eviction score (higher = evict first).
-    fn score(&self) -> u64 {
+    const fn score(&self) -> u64 {
         let size = self.estimated_bytes as u64;
         // Files with dependents get a 8x penalty (lower score).
         let dep_factor = if self.has_dependents { size / 8 } else { size };
@@ -138,7 +138,7 @@ impl Project {
             .collect();
 
         // Sort by score descending (highest score = evict first).
-        entries.sort_by(|a, b| b.score().cmp(&a.score()));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.score()));
 
         let mut evicted = Vec::new();
         let mut bytes_freed: usize = 0;

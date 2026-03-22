@@ -272,7 +272,10 @@ CHECKS = [
         "LSP boundary: direct lookup() on solver interner",
         ROOT / "crates" / "tsz-lsp",
         re.compile(r"\.lookup\s*\("),
-        {"exclude_dirs": {"tests"}},
+        {"exclude_dirs": {"tests"}, "exclude_files": {
+            # file_id_allocator.lookup() is not a solver interner lookup
+            "crates/tsz-lsp/src/project/core.rs",
+        }},
     ),
     (
         "Checker test boundary: no direct solver internal type inspection in integration tests",

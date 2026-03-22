@@ -8436,7 +8436,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(expr_node) {
                     let escaped = escape_string_for_double_quote(&lit.text);
-                    Some(format!("\"{}\"", escaped))
+                    Some(format!("\"{escaped}\""))
                 } else {
                     None
                 }

@@ -4834,7 +4834,7 @@ fn test_project_file_name_for_idx() {
     project.set_file("src/bar.ts".to_string(), "export const y = 2;".to_string());
 
     // Look up file_idx for "src/foo.ts" via a symbol's decl_file_idx.
-    let foo_file = project.files.get("src/foo.ts").unwrap();
+    let foo_file = &project.files["src/foo.ts"];
     let foo_sym = foo_file
         .binder()
         .symbols
@@ -5361,11 +5361,11 @@ fn test_touch_file_updates_last_accessed() {
     let mut project = Project::new();
     project.set_file("/a.ts".to_string(), "const a = 1;".to_string());
 
-    let before = project.files.get("/a.ts").unwrap().last_accessed();
+    let before = project.files["/a.ts"].last_accessed();
     // Small sleep to ensure timestamp difference
     std::thread::sleep(std::time::Duration::from_millis(5));
     project.touch_file("/a.ts");
-    let after = project.files.get("/a.ts").unwrap().last_accessed();
+    let after = project.files["/a.ts"].last_accessed();
 
     assert!(
         after > before,

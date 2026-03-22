@@ -187,12 +187,11 @@ impl<'a> CheckerContext<'a> {
             for candidate in &candidates {
                 if let Some(file_indices) = self.files_for_module_specifier(candidate) {
                     for &idx in file_indices {
-                        if checked.insert(idx) {
-                            if let Some(binder) = all_binders.get(idx) {
-                                if let Some(non_module) = lookup_cached(binder, candidate) {
-                                    return non_module;
-                                }
-                            }
+                        if checked.insert(idx)
+                            && let Some(binder) = all_binders.get(idx)
+                            && let Some(non_module) = lookup_cached(binder, candidate)
+                        {
+                            return non_module;
                         }
                     }
                 } else {
@@ -235,13 +234,11 @@ impl<'a> CheckerContext<'a> {
                     candidate_symbols.push((target_binder, sym));
                     found = true;
                 }
-                if !found {
-                    if let Some(all_binders) = self.all_binders.as_ref() {
-                        for other in all_binders.iter() {
-                            if let Some(sym) = other.get_symbol(export_equals_sym_id) {
-                                candidate_symbols.push((other.as_ref(), sym));
-                                break;
-                            }
+                if !found && let Some(all_binders) = self.all_binders.as_ref() {
+                    for other in all_binders.iter() {
+                        if let Some(sym) = other.get_symbol(export_equals_sym_id) {
+                            candidate_symbols.push((other.as_ref(), sym));
+                            break;
                         }
                     }
                 }
@@ -489,10 +486,10 @@ impl<'a> CheckerContext<'a> {
             // Use O(1) module binder index when available.
             if let Some(file_indices) = self.files_for_module_specifier(module_specifier) {
                 for &idx in file_indices {
-                    if let Some(binder) = all_binders.get(idx) {
-                        if let Some(result) = check_binder_at(idx, binder, &mut saw_non_module) {
-                            return result;
-                        }
+                    if let Some(binder) = all_binders.get(idx)
+                        && let Some(result) = check_binder_at(idx, binder, &mut saw_non_module)
+                    {
+                        return result;
                     }
                 }
             } else {

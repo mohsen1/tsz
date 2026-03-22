@@ -300,7 +300,7 @@ fn type_param_name_extracts_name_via_boundary() {
     assert_eq!(type_param_name(&types, TypeId::ANY), None);
 
     // The extracted name should match declared params by identity
-    let declared_params = vec![
+    let declared_params = [
         tsz_solver::TypeParamInfo {
             name: name_t,
             constraint: Some(TypeId::OBJECT),

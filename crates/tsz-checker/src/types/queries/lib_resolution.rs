@@ -28,7 +28,7 @@ use tsz_solver::is_compiler_managed_type;
 ///
 /// Returns `None` for non-keyword syntax kinds, letting callers fall through
 /// to more expensive resolution paths only when necessary.
-pub(crate) fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
+pub(crate) const fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
     match kind {
         k if k == SyntaxKind::StringKeyword as u16 => Some(TypeId::STRING),
         k if k == SyntaxKind::NumberKeyword as u16 => Some(TypeId::NUMBER),
@@ -198,6 +198,7 @@ pub(crate) fn resolve_scope_chain(
 /// inlined in augmentation resolver closures (with a per-call
 /// `RefCell<FxHashMap>` cache that added complexity for negligible benefit
 /// given the O(1) nature of each tier).
+#[allow(clippy::type_complexity)]
 pub(crate) fn resolve_name_to_lib_symbol(
     name: &str,
     primary_binder: &tsz_binder::BinderState,
@@ -211,10 +212,10 @@ pub(crate) fn resolve_name_to_lib_symbol(
     }
     // Tier 2: global file_locals index (O(1))
     if let Some(idx) = global_file_locals_index {
-        if let Some(entries) = idx.get(name) {
-            if let Some(&(_file_idx, sym_id)) = entries.first() {
-                return Some(sym_id);
-            }
+        if let Some(entries) = idx.get(name)
+            && let Some(&(_file_idx, sym_id)) = entries.first()
+        {
+            return Some(sym_id);
         }
     } else if let Some(binders) = all_binders {
         // Tier 2b: O(N) binder scan only when no global index
@@ -286,10 +287,11 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
 /// 1. `binder.get_node_symbol(node_idx)` — direct AST node → symbol binding.
 /// 2. `resolve_scope_chain(...)` — lexical scope walk from the node's enclosing
 ///    scope up to root.
-/// 3. `resolve_name_to_lib_symbol(...)` — file_locals / global index / all-binders
+/// 3. `resolve_name_to_lib_symbol(...)` — `file_locals` / global index / all-binders
 ///    / lib-contexts multi-tier fallback (same as standalone function above).
 ///
 /// Returns `None` for compiler-managed types (e.g., `__String`).
+#[allow(clippy::type_complexity)]
 pub(crate) fn resolve_augmentation_node(
     binder: &tsz_binder::BinderState,
     arena: &NodeArena,
