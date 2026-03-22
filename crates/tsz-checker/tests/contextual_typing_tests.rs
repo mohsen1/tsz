@@ -1054,3 +1054,207 @@ configure({ unknown: true });
         "Expected TS2353 (EPC) for fresh literal to weak type, got diagnostics={diagnostics:?}"
     );
 }
+
+// ──── Generic Call Inference / Contextual Instantiation Tests ────
+
+/// Generic call with multiple type params: T inferred from first arg, U from callback return.
+/// Exercises round-2 contextual typing where multiple type parameters are resolved across args.
+#[test]
+fn test_generic_multi_param_inference_across_arguments() {
+    let source = r#"
+declare function transform<T, U>(items: T[], fn: (x: T) => U): U[];
+const result = transform(["a", "b"], s => s.length);
+"#;
+    let diagnostics = check_default(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 7006 || d.code == 2339)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no TS7006/TS2339 for multi-param generic call, got {errors:?}"
+    );
+}
+
+/// Generic call with constrained type parameter and literal preservation.
+/// When the constraint is a union of literal types, the inferred type should preserve
+/// literal values rather than widening.
+#[test]
+fn test_generic_constrained_literal_preservation() {
+    let source = r#"
+declare function pick<T extends "a" | "b" | "c">(key: T): T;
+const k = pick("a");
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for constrained literal generic, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Generic call inference through rest parameters.
+/// Exercises contextual_param_types_from_instantiated_params with rest expansion.
+#[test]
+fn test_generic_call_rest_parameter_contextual_typing() {
+    let source = r#"
+declare function call<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+const r = call((x: number, y: string) => x + y.length, 1, "hello");
+"#;
+    let diagnostics = check_default(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Expected no TS2345 for generic rest parameter inference, got {ts2345:?}"
+    );
+}
+
+/// Return-context substitution through array element types.
+/// Exercises the array_element_type matching path in collect_return_context_substitution.
+#[test]
+fn test_return_context_substitution_array_element() {
+    let source = r#"
+declare function wrap<T>(value: T): T[];
+const arr: number[] = wrap(42);
+"#;
+    let diagnostics = check_default(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for array return context, got {ts2322:?}"
+    );
+}
+
+/// Return-context substitution through tuple element types.
+/// Exercises the tuple_elements matching path in collect_return_context_substitution.
+#[test]
+fn test_return_context_substitution_tuple_elements() {
+    let source = r#"
+declare function pair<A, B>(a: A, b: B): [A, B];
+const p: [string, number] = pair("hello", 42);
+"#;
+    let diagnostics = check_default(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for tuple return context, got {ts2322:?}"
+    );
+}
+
+/// Return-context substitution with generic application (Promise<T>).
+/// Exercises the application_info matching path in collect_return_context_substitution.
+#[test]
+fn test_return_context_substitution_generic_application() {
+    let source = r#"
+declare function wrapPromise<T>(value: T): Promise<T>;
+const p: Promise<string> = wrapPromise("hello");
+"#;
+    let diagnostics = check_default(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for Promise return context, got {ts2322:?}"
+    );
+}
+
+/// Generic callback with binding pattern parameter.
+/// Exercises sanitize_generic_inference_arg_type which replaces binding pattern params
+/// with unknown for inference purposes.
+#[test]
+fn test_generic_callback_binding_pattern_parameter() {
+    let source = r#"
+declare function process<T>(items: T[], fn: (item: T) => void): void;
+process([{ x: 1, y: 2 }], ({ x, y }) => {
+    const sum: number = x + y;
+});
+"#;
+    let diagnostics = check_default(source);
+    let ts7006: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        ts7006.is_empty(),
+        "Expected no TS7006 for binding pattern in generic callback, got {ts7006:?}"
+    );
+}
+
+/// Generic call with return-context function shape matching.
+/// Exercises the function shape matching path in collect_return_context_substitution
+/// where both source and target return types are callable.
+#[test]
+fn test_return_context_function_shape_matching() {
+    let source = r#"
+declare function factory<T>(value: T): (x: T) => T;
+const fn1: (x: string) => string = factory("hello");
+"#;
+    let diagnostics = check_default(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for function return context, got {ts2322:?}"
+    );
+}
+
+/// Recheck of generic call arguments against instantiated parameters.
+/// When round-1 infers types and round-2 rechecks with real types,
+/// assignability should hold for correctly typed arguments.
+#[test]
+fn test_generic_call_recheck_with_real_types_assignable() {
+    let source = r#"
+declare function zip<A, B>(a: A[], b: B[], fn: (a: A, b: B) => [A, B]): [A, B][];
+const zipped = zip([1, 2], ["a", "b"], (n, s) => [n, s]);
+"#;
+    let diagnostics = check_default(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Expected no TS2345 for generic zip call, got {ts2345:?}"
+    );
+}
+
+/// Generic call with mismatched argument type should produce TS2345.
+/// Verifies that recheck_generic_call_arguments_with_real_types correctly
+/// detects type mismatches after instantiation.
+#[test]
+fn test_generic_call_recheck_detects_mismatch() {
+    let source = r#"
+declare function apply<T>(value: T, fn: (x: T) => T): T;
+const r = apply(42, (x: string) => x);
+"#;
+    let diagnostics = check_default(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        !ts2345.is_empty(),
+        "Expected TS2345 for mismatched generic callback argument, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Generic call with conditional return in zero-param callback.
+/// Exercises zero_param_callback_first_conditional_branch path.
+#[test]
+fn test_zero_param_callback_conditional_branch() {
+    let source = r#"
+declare function lazy<T>(fn: () => T): T;
+declare const cond: boolean;
+const val: string = lazy(() => cond ? "yes" : "no");
+"#;
+    let diagnostics = check_default(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for conditional return in zero-param callback, got {ts2322:?}"
+    );
+}
+
+/// Widening round-2 contextual substitution preserves literals when constraint allows.
+/// When the type parameter has a constraint like `string`, inferred literal types
+/// should be widened to `string` in round-2.
+#[test]
+fn test_widen_round2_preserves_literals_with_string_constraint() {
+    let source = r#"
+declare function tag<T extends string>(value: T): { tag: T };
+const t = tag("hello");
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for literal-preserving generic, got diagnostics={diagnostics:?}"
+    );
+}
