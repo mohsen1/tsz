@@ -22,8 +22,10 @@
 //! | CLI  | Sequential allocation | Fresh start each compilation |
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 
+use crate::TypeDatabase;
 use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use dashmap::DashMap;
+use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -570,6 +572,42 @@ impl std::fmt::Display for StoreStatistics {
     }
 }
 
+// =============================================================================
+// HeritageResolutionSummary
+// =============================================================================
+
+/// Summary of heritage resolution results from `DefinitionStore::resolve_heritage`.
+///
+/// Provides observability into how many heritage relationships were resolved,
+/// how many names could not be found, and how many qualified names were skipped.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeritageResolutionSummary {
+    /// Number of definitions that had heritage_names and were processed.
+    pub definitions_processed: usize,
+    /// Number of `extends` relationships successfully resolved.
+    pub resolved_extends: usize,
+    /// Number of `implements` relationships successfully resolved.
+    pub resolved_implements: usize,
+    /// Number of heritage names that could not be resolved to a DefId.
+    pub unresolved: usize,
+    /// Number of qualified names (containing '.') that were skipped.
+    pub skipped_qualified: usize,
+}
+
+impl std::fmt::Display for HeritageResolutionSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "heritage resolution: {} defs processed, {} extends, {} implements, {} unresolved, {} qualified-skipped",
+            self.definitions_processed,
+            self.resolved_extends,
+            self.resolved_implements,
+            self.unresolved,
+            self.skipped_qualified,
+        )
+    }
+}
+
 impl Default for DefinitionStore {
     fn default() -> Self {
         Self::new()
@@ -863,6 +901,137 @@ impl DefinitionStore {
     /// O(1) lookup via the `file_to_defs` index.
     pub fn has_file(&self, file_id: u32) -> bool {
         self.file_to_defs.contains_key(&file_id)
+    }
+
+    /// Resolve heritage relationships for all definitions that have `heritage_names`.
+    ///
+    /// This method should be called **once** after all batches (lib files + user files)
+    /// have been registered. It resolves the string-based `heritage_names` to `DefId`s
+    /// and populates the `extends` and `implements` fields on each `DefinitionInfo`.
+    ///
+    /// ## Resolution Rules
+    ///
+    /// For **classes** (`DefKind::Class`):
+    /// - The first heritage name that resolves to a `Class` definition sets `extends`.
+    /// - All other resolved heritage names are added to `implements`.
+    ///
+    /// For **interfaces** (`DefKind::Interface`):
+    /// - All resolved heritage names are added to `implements` (interface extension).
+    ///
+    /// ## Name Matching
+    ///
+    /// Heritage names are matched against definition names using the string interner.
+    /// When multiple definitions share the same name (declaration merging), the first
+    /// registered `DefId` is used. Qualified names (e.g., `"ns.Base"`) are not
+    /// resolved by this method — they require scope-aware resolution in the checker.
+    ///
+    /// ## Returns
+    ///
+    /// A `HeritageResolutionSummary` with counts of resolved and unresolved references.
+    pub fn resolve_heritage(&self, db: &dyn TypeDatabase) -> HeritageResolutionSummary {
+        // Phase 1: Build a temporary name -> DefId lookup from all definitions.
+        let mut name_to_def: FxHashMap<String, DefId> = FxHashMap::default();
+        for entry in &self.definitions {
+            let name_str = db.resolve_atom(entry.value().name);
+            // First-registered wins (stable identity for declaration merging).
+            name_to_def.entry(name_str).or_insert(*entry.key());
+        }
+
+        // Phase 2: Iterate definitions with heritage_names and resolve.
+        let mut summary = HeritageResolutionSummary::default();
+
+        // Collect DefIds that need heritage resolution to avoid holding DashMap
+        // refs during mutation.
+        let candidates: Vec<(DefId, DefKind, Vec<String>)> = self
+            .definitions
+            .iter()
+            .filter(|entry| !entry.value().heritage_names.is_empty())
+            .map(|entry| {
+                (
+                    *entry.key(),
+                    entry.value().kind,
+                    entry.value().heritage_names.clone(),
+                )
+            })
+            .collect();
+
+        for (def_id, kind, heritage_names) in candidates {
+            let mut found_extends = false;
+
+            for heritage_name in &heritage_names {
+                // Skip qualified names (e.g., "ns.Base") — requires scope-aware resolution.
+                if heritage_name.contains('.') {
+                    summary.skipped_qualified += 1;
+                    continue;
+                }
+
+                let Some(&target_def_id) = name_to_def.get(heritage_name.as_str()) else {
+                    summary.unresolved += 1;
+                    trace!(
+                        source_def_id = %def_id.0,
+                        heritage_name = %heritage_name,
+                        "resolve_heritage: unresolved heritage name"
+                    );
+                    continue;
+                };
+
+                // Don't self-reference.
+                if target_def_id == def_id {
+                    continue;
+                }
+
+                let target_kind = self.get_kind(target_def_id);
+
+                match kind {
+                    DefKind::Class => {
+                        // For classes: first Class target → extends, rest → implements.
+                        if !found_extends
+                            && target_kind == Some(DefKind::Class)
+                        {
+                            if let Some(mut entry) = self.definitions.get_mut(&def_id) {
+                                if entry.extends.is_none() {
+                                    entry.extends = Some(target_def_id);
+                                    found_extends = true;
+                                    summary.resolved_extends += 1;
+                                }
+                            }
+                        } else {
+                            if let Some(mut entry) = self.definitions.get_mut(&def_id) {
+                                if !entry.implements.contains(&target_def_id) {
+                                    entry.implements.push(target_def_id);
+                                    summary.resolved_implements += 1;
+                                }
+                            }
+                        }
+                    }
+                    DefKind::Interface => {
+                        // For interfaces: all heritage → implements.
+                        if let Some(mut entry) = self.definitions.get_mut(&def_id) {
+                            if !entry.implements.contains(&target_def_id) {
+                                entry.implements.push(target_def_id);
+                                summary.resolved_implements += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        // Other kinds don't have heritage relationships.
+                    }
+                }
+            }
+
+            summary.definitions_processed += 1;
+        }
+
+        trace!(
+            resolved_extends = summary.resolved_extends,
+            resolved_implements = summary.resolved_implements,
+            unresolved = summary.unresolved,
+            skipped_qualified = summary.skipped_qualified,
+            definitions_processed = summary.definitions_processed,
+            "resolve_heritage complete"
+        );
+
+        summary
     }
 
     /// Invalidate all definitions originating from the given file.
