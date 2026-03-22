@@ -601,6 +601,10 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let heritage_names = Self::collect_heritage_clause_names(
+                    arena,
+                    class.heritage_clauses.as_ref(),
+                );
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -611,6 +615,7 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
+                    heritage_names,
                 );
             }
 
@@ -861,13 +866,21 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
-            self.record_semantic_def(
+            let heritage_names = Self::collect_heritage_clause_names(
+                arena,
+                iface.heritage_clauses.as_ref(),
+            );
+            self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
                 name,
                 idx,
                 tp_count,
                 is_exported,
+                Vec::new(),
+                false,
+                false,
+                heritage_names,
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -1049,6 +1062,7 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 false, // is_abstract
+                Vec::new(), // heritage_names
             );
 
             // Get existing exports (for namespace merging)
@@ -2390,6 +2404,7 @@ impl BinderState {
             Vec::new(),
             false,
             false,
+            Vec::new(),
         );
     }
 
@@ -2414,6 +2429,7 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
+        heritage_names: Vec<String>,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2451,6 +2467,7 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
+                heritage_names,
             },
         );
     }

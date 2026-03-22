@@ -494,6 +494,17 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
+    /// Names referenced in heritage clauses (`extends` / `implements`).
+    ///
+    /// Captured at bind time from the heritage clause expressions of class and
+    /// interface declarations. For example, `class Foo extends Bar implements Baz`
+    /// yields `["Bar", "Baz"]`. Only simple identifier names are captured;
+    /// property-access heritage expressions (e.g., `ns.Base`) are stored as
+    /// dot-separated strings (e.g., `"ns.Base"`).
+    ///
+    /// Used by `FileSkeleton` fingerprinting so that heritage changes (which
+    /// affect cross-file type resolution) trigger re-merge.
+    pub heritage_names: Vec<String>,
 }
 
 impl BinderState {

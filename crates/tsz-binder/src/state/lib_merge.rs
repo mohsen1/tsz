@@ -363,6 +363,7 @@ impl BinderState {
                                 enum_member_names: entry.enum_member_names.clone(),
                                 is_const: entry.is_const,
                                 is_abstract: entry.is_abstract,
+                                heritage_names: entry.heritage_names.clone(),
                             },
                         );
                     }
