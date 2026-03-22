@@ -9844,3 +9844,11 @@ fn fix_const_hex_separator_converted() {
     println!("const hex sep:\n{output}");
     assert!(output.contains("65535"), "hex sep should convert to decimal: {output}");
 }
+
+#[test]
+fn fix_numeric_property_name_separator() {
+    let output = emit_dts("export interface I { 1_000: string; }");
+    println!("numeric prop name sep:\n{output}");
+    assert!(output.contains("1000:"), "numeric property name sep should be stripped: {output}");
+    assert!(!output.contains("_"), "underscore should not appear: {output}");
+}
