@@ -9693,10 +9693,22 @@ fn dump_const_literal_preservation() {
         ("const-array", "export const d = [1, 2, 3];"),
         ("let-string", "export let e = '1.0';"),
         ("let-number", "export let f = 42;"),
-        ("static-readonly-string", "export class C { static readonly VERSION = '1.0'; }"),
-        ("static-readonly-number", "export class C { static readonly COUNT = 42; }"),
-        ("static-readonly-bool", "export class C { static readonly FLAG = true; }"),
-        ("static-readonly-array", "export class C { static readonly ITEMS = [1, 2, 3]; }"),
+        (
+            "static-readonly-string",
+            "export class C { static readonly VERSION = '1.0'; }",
+        ),
+        (
+            "static-readonly-number",
+            "export class C { static readonly COUNT = 42; }",
+        ),
+        (
+            "static-readonly-bool",
+            "export class C { static readonly FLAG = true; }",
+        ),
+        (
+            "static-readonly-array",
+            "export class C { static readonly ITEMS = [1, 2, 3]; }",
+        ),
         ("static-non-readonly", "export class C { static x = 42; }"),
         ("const-negative", "export const x = -42;"),
         ("const-template", "export const x = `hello`;"),
@@ -9715,22 +9727,30 @@ fn fix_static_readonly_string_literal_preserved() {
     // tsc preserves literal values for static readonly properties
     let output = emit_dts("export class C { static readonly VERSION = '1.0'; }");
     println!("static readonly string:\n{output}");
-    assert!(output.contains("= \"1.0\"") || output.contains("= '1.0'"),
-        "static readonly string should be preserved as literal: {output}");
+    assert!(
+        output.contains("= \"1.0\"") || output.contains("= '1.0'"),
+        "static readonly string should be preserved as literal: {output}"
+    );
 }
 
 #[test]
 fn fix_static_readonly_number_literal_preserved() {
     let output = emit_dts("export class C { static readonly COUNT = 42; }");
     println!("static readonly number:\n{output}");
-    assert!(output.contains("= 42"), "static readonly number should be preserved: {output}");
+    assert!(
+        output.contains("= 42"),
+        "static readonly number should be preserved: {output}"
+    );
 }
 
 #[test]
 fn fix_static_readonly_boolean_literal_preserved() {
     let output = emit_dts("export class C { static readonly FLAG = true; }");
     println!("static readonly bool:\n{output}");
-    assert!(output.contains("= true"), "static readonly boolean should be preserved: {output}");
+    assert!(
+        output.contains("= true"),
+        "static readonly boolean should be preserved: {output}"
+    );
 }
 
 #[test]
@@ -9739,7 +9759,10 @@ fn fix_static_readonly_array_not_preserved() {
     let output = emit_dts("export class C { static readonly ITEMS = [1, 2, 3]; }");
     println!("static readonly array:\n{output}");
     // Should NOT have = [...], should have : any[] or similar
-    assert!(!output.contains("= ["), "array should widen, not preserve literal: {output}");
+    assert!(
+        !output.contains("= ["),
+        "array should widen, not preserve literal: {output}"
+    );
 }
 
 #[test]
@@ -9747,8 +9770,14 @@ fn fix_static_non_readonly_widens() {
     // Non-readonly static should widen to type
     let output = emit_dts("export class C { static x = 42; }");
     println!("static non-readonly:\n{output}");
-    assert!(output.contains(": number"), "non-readonly should widen: {output}");
-    assert!(!output.contains("= 42"), "non-readonly should not preserve literal: {output}");
+    assert!(
+        output.contains(": number"),
+        "non-readonly should widen: {output}"
+    );
+    assert!(
+        !output.contains("= 42"),
+        "non-readonly should not preserve literal: {output}"
+    );
 }
 
 #[test]
@@ -9756,15 +9785,20 @@ fn fix_readonly_nonstatic_literal_preserved() {
     // Readonly (non-static) should also preserve literals
     let output = emit_dts("export class C { readonly name = 'hello'; }");
     println!("readonly nonstatic:\n{output}");
-    assert!(output.contains("= \"hello\"") || output.contains("= 'hello'"),
-        "readonly string should be preserved: {output}");
+    assert!(
+        output.contains("= \"hello\"") || output.contains("= 'hello'"),
+        "readonly string should be preserved: {output}"
+    );
 }
 
 #[test]
 fn fix_static_readonly_negative_number() {
     let output = emit_dts("export class C { static readonly OFFSET = -42; }");
     println!("static readonly negative:\n{output}");
-    assert!(output.contains("= -42"), "negative number preserved: {output}");
+    assert!(
+        output.contains("= -42"),
+        "negative number preserved: {output}"
+    );
 }
 
 #[test]
@@ -9781,7 +9815,10 @@ fn fix_enum_numeric_separator_in_value() {
 fn fix_enum_hex_separator_in_value() {
     let output = emit_dts("export enum E { A = 0xFF_FF }");
     println!("enum hex sep:\n{output}");
-    assert!(output.contains("A = 65535"), "hex with sep should evaluate: {output}");
+    assert!(
+        output.contains("A = 65535"),
+        "hex with sep should evaluate: {output}"
+    );
 }
 
 #[test]
@@ -9789,7 +9826,10 @@ fn fix_regex_literal_inferred_type() {
     // Regex literal initializer should infer RegExp type
     let output = emit_dts("export const x = /hello/;");
     println!("regex:\n{output}");
-    assert!(output.contains("RegExp"), "regex should infer RegExp: {output}");
+    assert!(
+        output.contains("RegExp"),
+        "regex should infer RegExp: {output}"
+    );
 }
 
 #[test]
@@ -9797,58 +9837,94 @@ fn fix_template_literal_initializer_inferred_type() {
     // Template literal initializer should infer string type
     let output = emit_dts("export const x = `hello`;");
     println!("template init:\n{output}");
-    assert!(output.contains("string") || output.contains("\"hello\""), "template should infer string: {output}");
+    assert!(
+        output.contains("string") || output.contains("\"hello\""),
+        "template should infer string: {output}"
+    );
 }
 
 #[test]
 fn fix_template_expression_initializer_inferred_type() {
     let output = emit_dts("export let x = `hello ${42}`;");
     println!("template expr init:\n{output}");
-    assert!(output.contains("string"), "template expression should infer string: {output}");
+    assert!(
+        output.contains("string"),
+        "template expression should infer string: {output}"
+    );
 }
 
 #[test]
 fn fix_regex_in_const_with_flags() {
     let output = emit_dts("export const re = /test/gi;");
     println!("regex with flags:\n{output}");
-    assert!(output.contains("RegExp"), "regex with flags should infer RegExp: {output}");
+    assert!(
+        output.contains("RegExp"),
+        "regex with flags should infer RegExp: {output}"
+    );
 }
 
 #[test]
 fn fix_const_numeric_separator_stripped() {
     let output = emit_dts("export const x = 1_000_000;");
     println!("const sep:\n{output}");
-    assert!(output.contains("1000000"), "const numeric sep should be stripped: {output}");
-    assert!(!output.contains("_"), "underscore should not appear: {output}");
+    assert!(
+        output.contains("1000000"),
+        "const numeric sep should be stripped: {output}"
+    );
+    assert!(
+        !output.contains("_"),
+        "underscore should not appear: {output}"
+    );
 }
 
 #[test]
 fn fix_const_bigint_separator_stripped() {
     let output = emit_dts("export const x = 1_000n;");
     println!("const bigint sep:\n{output}");
-    assert!(output.contains("1000n"), "bigint sep should be stripped: {output}");
-    assert!(!output.contains("_"), "underscore should not appear: {output}");
+    assert!(
+        output.contains("1000n"),
+        "bigint sep should be stripped: {output}"
+    );
+    assert!(
+        !output.contains("_"),
+        "underscore should not appear: {output}"
+    );
 }
 
 #[test]
 fn fix_const_negative_separator_stripped() {
     let output = emit_dts("export const x = -1_000;");
     println!("const neg sep:\n{output}");
-    assert!(output.contains("-1000"), "negative sep should be stripped: {output}");
-    assert!(!output.contains("_"), "underscore should not appear: {output}");
+    assert!(
+        output.contains("-1000"),
+        "negative sep should be stripped: {output}"
+    );
+    assert!(
+        !output.contains("_"),
+        "underscore should not appear: {output}"
+    );
 }
 
 #[test]
 fn fix_const_hex_separator_converted() {
     let output = emit_dts("export const x = 0xFF_FF;");
     println!("const hex sep:\n{output}");
-    assert!(output.contains("65535"), "hex sep should convert to decimal: {output}");
+    assert!(
+        output.contains("65535"),
+        "hex sep should convert to decimal: {output}"
+    );
 }
 
 #[test]
 fn fix_numeric_property_name_separator() {
     let output = emit_dts("export interface I { 1_000: string; }");
     println!("numeric prop name sep:\n{output}");
-    assert!(output.contains("1000:"), "numeric property name sep should be stripped: {output}");
-    assert!(!output.contains("_"), "underscore should not appear: {output}");
+    assert!(
+        output.contains("1000:"),
+        "numeric property name sep should be stripped: {output}"
+    );
+    assert!(
+        !output.contains("_"),
+        "underscore should not appear: {output}"
+    );
 }

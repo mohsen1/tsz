@@ -1510,8 +1510,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
-                && let Some(lit_text) =
-                    self.const_literal_initializer_text_deep(prop.initializer)
+                && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
                 // For readonly properties with simple literal initializers,
                 // emit `= value` form (matching tsc's const-like literal
