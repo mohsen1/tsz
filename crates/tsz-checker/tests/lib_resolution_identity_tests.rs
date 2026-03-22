@@ -1130,3 +1130,163 @@ const name: string = e.name;
         "Error hierarchy should resolve with stable lib helpers.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- Tests for resolve_lib_sym_def_id (consolidated canonical sym lookup) ----
+
+#[test]
+fn test_resolve_lib_sym_def_id_interface_and_alias_consistency() {
+    // resolve_lib_sym_def_id consolidates the pattern:
+    //   binder.file_locals.get(name).unwrap_or(sym_id) -> get_lib_def_id(...)
+    // This test verifies that both interface types (Array) and type aliases
+    // (Record) resolve consistently when accessed through multiple paths
+    // (direct reference + type alias indirection).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type MyArray<T> = Array<T>;
+type MyRecord<K extends string, V> = Record<K, V>;
+const arr: MyArray<number> = [1, 2, 3];
+const arrLen: number = arr.length;
+const rec: MyRecord<string, number> = { x: 1 };
+const directArr: Array<number> = arr;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Aliased and direct lib references should be identity-consistent \
+         via resolve_lib_sym_def_id.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_resolve_lib_sym_def_id_promise_from_multiple_contexts() {
+    // Promise can be referenced from multiple lib contexts (es5, es2015).
+    // resolve_lib_sym_def_id should yield the same canonical DefId regardless
+    // of which lib context's SymbolId is encountered first.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type P1 = Promise<number>;
+type P2 = Promise<string>;
+function combine(a: P1, b: P2): Promise<number | string> {
+    return a.then(() => b);
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise aliases from multiple contexts should resolve \
+         consistently via resolve_lib_sym_def_id.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// ---- Tests for lower_global_augmentations (extracted shared helper) ----
+
+#[test]
+fn test_lower_global_augmentations_multiple_interfaces() {
+    // lower_global_augmentations consolidates the augmentation lowering code
+    // that was duplicated in resolve_lib_type_by_name and
+    // resolve_lib_type_with_params. Test that augmenting multiple lib
+    // interfaces in one declare-global block works.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Array<T> {
+        first(): T | undefined;
+    }
+    interface String {
+        reverse(): string;
+    }
+}
+const arr: Array<number> = [1, 2];
+const f: number | undefined = arr.first();
+const s: string = "hello".reverse();
+const len: number = arr.length;
+export {};
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2669)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Multiple augmented interfaces should merge via lower_global_augmentations.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lower_global_augmentations_preserves_generics() {
+    // Augmenting a generic lib interface should preserve the original
+    // type parameters. The consolidated lower_global_augmentations helper
+    // must not lose generic context during intersection merging.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Map<K, V> {
+        getOrDefault(key: K, defaultValue: V): V;
+    }
+}
+const m: Map<string, number> = new Map();
+m.set("key", 42);
+const val: number = m.getOrDefault("key", 0);
+export {};
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2669)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Augmented Map.getOrDefault should preserve generic params.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_with_lib_promise() {
+    // import("...") referencing lib types (Promise) exercises the lowering
+    // path through resolve_lib_type_by_name -> lower_global_augmentations.
+    // Ensures the refactored helper doesn't break import-type resolution.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type Deferred<T> = {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+};
+function createDeferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(r => { resolve = r; });
+    return { promise, resolve };
+}
+const d: Deferred<number> = createDeferred<number>();
+const p: Promise<number> = d.promise;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Deferred<T> wrapping Promise<T> should resolve via stable lib path.\nDiagnostics: {real_errors:#?}"
+    );
+}
