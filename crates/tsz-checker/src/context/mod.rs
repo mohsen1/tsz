@@ -813,6 +813,9 @@ pub struct CheckerContext<'a> {
     /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
     pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
 
+    /// Pre-built index mapping SymbolId → file index for O(1) cross-binder lookups.
+    pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
+
     /// All arenas for cross-file resolution (indexed by `file_idx` from `Symbol.decl_file_idx`).
     /// Set during multi-file type checking to allow resolving declarations across files.
     pub all_arenas: Option<Arc<Vec<Arc<NodeArena>>>>,
