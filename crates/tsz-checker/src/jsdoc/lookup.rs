@@ -108,7 +108,7 @@ impl<'a> CheckerState<'a> {
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.current_file_idx = file_idx;
-            self.ctx.copy_symbol_file_targets_to(&checker.ctx);
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
             if let Some(ty) =
                 checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)

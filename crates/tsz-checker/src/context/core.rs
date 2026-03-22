@@ -121,6 +121,51 @@ impl<'a> CheckerContext<'a> {
                 .is_some_and(|map| map.contains_key(&sym_id))
     }
 
+    /// Register a dynamically-discovered `SymbolId` → file index mapping
+    /// in the local overlay.
+    pub fn register_symbol_file_target(&self, sym_id: SymbolId, file_idx: usize) {
+        self.cross_file_symbol_targets
+            .borrow_mut()
+            .insert(sym_id, file_idx);
+    }
+
+    /// Copy the local overlay of symbol-file targets to a child checker context.
+    ///
+    /// This copies only the dynamically-discovered overlay entries, NOT the
+    /// entries from `global_symbol_file_index` (which is already shared via
+    /// `copy_cross_file_state_from`). This makes child-checker creation O(D)
+    /// where D = number of dynamically discovered entries, instead of O(N)
+    /// where N = total entries (base + dynamic).
+    pub fn copy_symbol_file_targets_to(&self, child: &mut CheckerContext<'_>) {
+        let overlay = self.cross_file_symbol_targets.borrow();
+        if !overlay.is_empty() {
+            *child.cross_file_symbol_targets.borrow_mut() = overlay.clone();
+        }
+    }
+
+    /// Merge the child checker's local overlay back into this context.
+    ///
+    /// After a child checker finishes, any new dynamically-discovered mappings
+    /// it found are merged back into the parent's overlay.
+    pub fn merge_symbol_file_targets_from(&self, child: &CheckerContext<'_>) {
+        let child_overlay = child.cross_file_symbol_targets.borrow();
+        if !child_overlay.is_empty() {
+            let mut parent_overlay = self.cross_file_symbol_targets.borrow_mut();
+            for (&sym_id, &file_idx) in child_overlay.iter() {
+                parent_overlay.insert(sym_id, file_idx);
+            }
+        }
+    }
+
+    /// Check whether any symbol-file targets exist (overlay or global).
+    pub fn has_any_symbol_file_targets(&self) -> bool {
+        !self.cross_file_symbol_targets.borrow().is_empty()
+            || self
+                .global_symbol_file_index
+                .as_ref()
+                .is_some_and(|map| !map.is_empty())
+    }
+
     /// Set lib contexts for global type resolution.
     /// Note: `lib_contexts` may include both actual lib files AND user files for cross-file
     /// resolution. Use `set_actual_lib_file_count()` to track how many are actual lib files.
@@ -699,7 +744,7 @@ impl<'a> CheckerContext<'a> {
         target_binder
             .resolve_import_with_reexports_type_only(file_name, member_name)
             .map(|(sym_id, _)| {
-                self.register_symbol_file_index(sym_id, target_idx);
+                self.register_symbol_file_target(sym_id, target_idx);
                 sym_id
             })
     }
@@ -769,7 +814,7 @@ impl<'a> CheckerContext<'a> {
         {
             let target_binder = self.get_binder_for_file(target_idx)?;
             let result = target_binder.file_locals.get(import_name)?;
-            self.register_symbol_file_index(result, target_idx);
+            self.register_symbol_file_target(result, target_idx);
             return Some(result);
         }
 
@@ -781,7 +826,7 @@ impl<'a> CheckerContext<'a> {
         if let Some((result, file_idx)) =
             self.resolve_import_from_ambient_module_with_file_idx(module_specifier, import_name)
         {
-            self.register_symbol_file_index(result, file_idx);
+            self.register_symbol_file_target(result, file_idx);
             return Some(result);
         }
         None
@@ -842,50 +887,6 @@ impl<'a> CheckerContext<'a> {
             return Some((sym_id, file_idx));
         }
         None
-    }
-
-    // ── cross_file_symbol_targets helpers ──────────────────────────────
-    //
-    // These three methods encapsulate all access to the
-    // `cross_file_symbol_targets` RefCell so that call-sites don't need
-    // to spell out `borrow()/borrow_mut()` chains and future backing
-    // changes (e.g. Arc-based sharing) can be done in one place.
-
-    /// Register (or overwrite) the owning file for `sym_id`.
-    #[inline]
-    pub fn register_symbol_file_index(&self, sym_id: tsz_binder::SymbolId, file_idx: usize) {
-        self.cross_file_symbol_targets
-            .borrow_mut()
-            .insert(sym_id, file_idx);
-    }
-
-    /// Copy every entry from this context's `cross_file_symbol_targets`
-    /// into `dest`, without overwriting entries that `dest` already has.
-    /// Used when creating child checkers so they inherit the parent's
-    /// cross-file knowledge.
-    pub fn copy_symbol_file_targets_to(&self, dest: &Self) {
-        let src = self.cross_file_symbol_targets.borrow();
-        if src.is_empty() {
-            return;
-        }
-        let mut dst = dest.cross_file_symbol_targets.borrow_mut();
-        for (&sym_id, &file_idx) in src.iter() {
-            dst.entry(sym_id).or_insert(file_idx);
-        }
-    }
-
-    /// Merge all entries from `source` context's `cross_file_symbol_targets`
-    /// into this context. Used after a child checker finishes to absorb
-    /// any new mappings it discovered.
-    pub fn merge_symbol_file_targets_from(&self, source: &Self) {
-        let src = source.cross_file_symbol_targets.borrow();
-        if src.is_empty() {
-            return;
-        }
-        let mut dst = self.cross_file_symbol_targets.borrow_mut();
-        for (&sym_id, &file_idx) in src.iter() {
-            dst.insert(sym_id, file_idx);
-        }
     }
 
     /// Extract the persistent cache from this context.

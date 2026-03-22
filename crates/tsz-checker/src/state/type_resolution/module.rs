@@ -265,9 +265,8 @@ impl<'a> CheckerState<'a> {
         {
             // Record cross-file origin so delegate_cross_arena_symbol_resolution
             // can find the correct arena/binder for this symbol.
-            // Register only if not already known (or_insert semantics)
-            if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
-                self.ctx.register_symbol_file_index(sym_id, binder_idx);
+            if !self.ctx.has_symbol_file_index(sym_id) {
+                self.ctx.register_symbol_file_target(sym_id, binder_idx);
             }
             return Some(sym_id);
         }
@@ -281,7 +280,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .resolve_import_target_from_file(from_file, module_specifier)
             {
-                self.ctx.register_symbol_file_index(sym_id, target_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_idx);
             }
             return Some(sym_id);
         }
@@ -307,7 +306,7 @@ impl<'a> CheckerState<'a> {
         // Helper: record the cross-file origin so delegate_cross_arena_symbol_resolution
         // can find the correct arena for this SymbolId.
         let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
-            self.ctx.register_symbol_file_index(sym_id, target_file_idx);
+            self.ctx.register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
 
@@ -343,7 +342,7 @@ impl<'a> CheckerState<'a> {
         if let Some((sym_id, actual_file_idx)) =
             self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
         {
-            self.ctx.register_symbol_file_index(sym_id, actual_file_idx);
+            self.ctx.register_symbol_file_target(sym_id, actual_file_idx);
             return Some(sym_id);
         }
 
@@ -536,7 +535,7 @@ impl<'a> CheckerState<'a> {
         // Helper: record cross-file origin for all symbols in a table.
         let record_symbols = |table: &tsz_binder::SymbolTable| {
             for (_, &sym_id) in table.iter() {
-                self.ctx.register_symbol_file_index(sym_id, target_file_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
             }
         };
 
@@ -593,7 +592,7 @@ impl<'a> CheckerState<'a> {
 
         let record_symbols = |table: &tsz_binder::SymbolTable| {
             for (_, &sym_id) in table.iter() {
-                self.ctx.register_symbol_file_index(sym_id, target_file_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
             }
         };
 
@@ -1244,9 +1243,10 @@ impl<'a> CheckerState<'a> {
             if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                 return Some(sym);
             }
-            // O(1) fast-path: check cross_file_symbol_targets before O(N) binder scan
+            // O(1) fast-path: check resolve_symbol_file_index before O(N) binder scan
             {
-                if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+                if let Some(file_idx) = file_idx
                     && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
                 {
                     if let Some(sym) = binder.get_symbol(sym_id) {
@@ -1356,14 +1356,14 @@ impl<'a> CheckerState<'a> {
                 && let Some(exports) = target_binder.module_exports.get(&target_file_name)
                 && let Some(sym_id) = resolve_from_exports(exports)
             {
-                self.ctx.register_symbol_file_index(sym_id, target_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
             }
 
             if let Some(exports) = target_binder.module_exports.get(module_specifier)
                 && let Some(sym_id) = resolve_from_exports(exports)
             {
-                self.ctx.register_symbol_file_index(sym_id, target_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
             }
         }

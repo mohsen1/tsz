@@ -1197,14 +1197,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if local_symbol.escaped_name != name {
-                        // Register only if not already known (or_insert semantics)
-                        if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
-                            self.ctx.register_symbol_file_index(sym_id, file_idx);
-                        }
+                    if local_symbol.escaped_name != name
+                        && !self.ctx.has_symbol_file_index(sym_id)
+                    {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
                     }
-                } else if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
-                    self.ctx.register_symbol_file_index(sym_id, file_idx);
+                } else if !self.ctx.has_symbol_file_index(sym_id) {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
                 }
                 return Some(sym_id);
             }
@@ -1294,12 +1293,12 @@ impl<'a> CheckerState<'a> {
     fn record_cross_file_member(&self, member_id: SymbolId, member_name: &str, file_idx: usize) {
         if let Some(local_sym) = self.ctx.binder.get_symbol(member_id) {
             if local_sym.escaped_name.as_str() != member_name
-                && self.ctx.resolve_symbol_file_index(member_id).is_none()
+                && !self.ctx.has_symbol_file_index(member_id)
             {
-                self.ctx.register_symbol_file_index(member_id, file_idx);
+                self.ctx.register_symbol_file_target(member_id, file_idx);
             }
-        } else if self.ctx.resolve_symbol_file_index(member_id).is_none() {
-            self.ctx.register_symbol_file_index(member_id, file_idx);
+        } else if !self.ctx.has_symbol_file_index(member_id) {
+            self.ctx.register_symbol_file_target(member_id, file_idx);
         }
     }
 

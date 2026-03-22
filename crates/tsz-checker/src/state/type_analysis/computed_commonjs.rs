@@ -713,7 +713,7 @@ impl<'a> CheckerState<'a> {
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to(&checker.ctx);
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
         let mut ty = checker
             .literal_type_from_initializer(rhs_expr)
