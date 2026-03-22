@@ -212,8 +212,15 @@ impl<'a> CheckerState<'a> {
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
         // get_type_of_symbol. This eliminates the need for checker-side mapped
         // type expansion in many cases.
+        //
+        // For mapped types: trigger the second pass even when result == type_id.
+        // The TypeEnvironment resolver may lack Lazy resolution for the mapped
+        // type's constraint or template operands (e.g., homomorphic `keyof T`
+        // where T is still Lazy). The CheckerContext resolver can resolve these,
+        // allowing the solver's evaluate_mapped to expand the type fully. This
+        // reduces reliance on the checker's fallback mapped type expansion.
         let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
-            || (result != type_id && query::mapped_type_id(self.ctx.types, result).is_some());
+            || query::mapped_type_id(self.ctx.types, result).is_some();
         let final_result = if needs_resolver_pass {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
             if use_cache {
