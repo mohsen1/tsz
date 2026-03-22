@@ -9,7 +9,6 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::visitor;
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -33,7 +32,7 @@ impl<'a> CheckerState<'a> {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
         let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
-            tsz_solver::relations::freshness::widen_freshness(self.ctx.types, return_type)
+            common::widen_freshness(self.ctx.types, return_type)
         } else {
             return_type
         };
@@ -50,7 +49,7 @@ impl<'a> CheckerState<'a> {
         // Evaluating Promise<T> into its structural Object form destroys the
         // Application wrapper and causes `await fn()` to produce the structural
         // Promise object instead of the unwrapped T.
-        let return_type = if tsz_solver::query::is_generic_application(self.ctx.types, return_type)
+        let return_type = if common::is_generic_application(self.ctx.types, return_type)
             && !self.contains_type_parameters_cached(return_type)
             && !self.is_promise_type(return_type)
         {
@@ -102,7 +101,7 @@ impl<'a> CheckerState<'a> {
         mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
-        if tsz_solver::literal_value(self.ctx.types, expected).is_some() {
+        if common::literal_value(self.ctx.types, expected).is_some() {
             return expected;
         }
         arg_types
@@ -111,8 +110,8 @@ impl<'a> CheckerState<'a> {
             .filter(|(idx, _)| *idx != mismatch_index)
             .map(|(_, ty)| *ty)
             .find(|&candidate| {
-                tsz_solver::literal_value(self.ctx.types, candidate).is_some()
-                    && tsz_solver::widen_literal_type(self.ctx.types, candidate) == expected
+                common::literal_value(self.ctx.types, candidate).is_some()
+                    && common::widen_literal_type(self.ctx.types, candidate) == expected
             })
             .unwrap_or(expected)
     }
@@ -171,8 +170,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            for ty in visitor::collect_all_types(self.ctx.types, source_param.type_id) {
-                let Some(tp) = tsz_solver::type_param_info(self.ctx.types, ty) else {
+            for ty in common::collect_all_types(self.ctx.types, source_param.type_id) {
+                let Some(tp) = common::type_param_info(self.ctx.types, ty) else {
                     continue;
                 };
                 if tracked_type_params.contains(&tp.name) && substitution.get(tp.name).is_none() {
