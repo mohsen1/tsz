@@ -328,7 +328,7 @@ LINE_LIMIT_CHECKS = [
         # assignment_checker.rs (1721), assignability_checker.rs (1223),
         # enum_utils.rs (1695), helpers.rs (1475), class_type/core.rs (1729),
         # object_literal.rs (1977), access.rs (1449), property.rs (1337),
-        # jsx_checker.rs (removed)
+        # jsx_checker.rs (removed), state/state.rs (1787)
         {
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
@@ -338,7 +338,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/dispatch.rs",
             "crates/tsz-checker/src/checkers/call_checker.rs",
             "crates/tsz-checker/src/checkers/jsx/props.rs",
-            "crates/tsz-checker/src/state/state.rs",
             "crates/tsz-checker/src/error_reporter/assignability.rs",
             "crates/tsz-checker/src/flow/control_flow/assignment.rs",
             "crates/tsz-checker/src/symbols/symbol_resolver.rs",
