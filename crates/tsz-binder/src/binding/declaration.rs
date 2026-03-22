@@ -595,25 +595,23 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
+                let is_abstract = Self::has_abstract_modifier(arena, class.modifiers.as_ref());
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 let tp_count = class
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
-                self.record_semantic_def(
+                self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
                     name,
                     idx,
                     tp_count,
                     is_exported,
+                    Vec::new(),
+                    false, // is_const
+                    is_abstract,
                 );
-                // Enrich the semantic def entry with abstract flag.
-                if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
-                    if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
-                        entry.is_abstract = true;
-                    }
-                }
             }
 
             // Enter class scope for members
@@ -1028,13 +1026,29 @@ impl BinderState {
             };
 
             let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
-            self.record_semantic_def(
+
+            // Collect enum member names at bind time for stable identity.
+            let enum_member_names: Vec<String> = enum_decl
+                .members
+                .nodes
+                .iter()
+                .filter_map(|&member_idx| {
+                    let member_node = arena.get(member_idx)?;
+                    let member = arena.get_enum_member(member_node)?;
+                    Self::get_property_name(arena, member.name).map(|n| n.to_string())
+                })
+                .collect();
+
+            self.record_semantic_def_ext(
                 enum_sym_id,
                 crate::state::SemanticDefKind::Enum,
                 name,
                 idx,
                 0,
                 is_exported,
+                enum_member_names,
+                is_const,
+                false, // is_abstract
             );
 
             // Get existing exports (for namespace merging)
@@ -1063,13 +1077,11 @@ impl BinderState {
                 }
             }
 
-            let mut member_names = Vec::new();
             for &member_idx in &enum_decl.members.nodes {
                 if let Some(member_node) = arena.get(member_idx)
                     && let Some(member) = arena.get_enum_member(member_node)
                     && let Some(member_name) = Self::get_property_name(arena, member.name)
                 {
-                    member_names.push(member_name.to_string());
                     let sym_id = self
                         .symbols
                         .alloc(symbol_flags::ENUM_MEMBER, member_name.to_string());
@@ -1093,12 +1105,6 @@ impl BinderState {
                 }
             }
             self.exit_scope(arena);
-
-            // Enrich the semantic def entry with member names and const flag.
-            if let Some(entry) = self.semantic_defs.get_mut(&enum_sym_id) {
-                entry.enum_member_names = member_names;
-                entry.is_const = is_const;
-            }
 
             // Update the enum's exports with members
             if let Some(enum_symbol) = self.symbols.get_mut(enum_sym_id) {
@@ -2374,6 +2380,41 @@ impl BinderState {
         type_param_count: u16,
         is_exported: bool,
     ) {
+        self.record_semantic_def_ext(
+            sym_id,
+            kind,
+            name,
+            declaration,
+            type_param_count,
+            is_exported,
+            Vec::new(),
+            false,
+            false,
+        );
+    }
+
+    /// Extended version of `record_semantic_def` that also captures enriched
+    /// identity data: enum member names, const-enum flag, and abstract-class flag.
+    ///
+    /// This captures stable identity information at bind time so the checker
+    /// can pre-create solver `DefIds` during construction rather than inventing
+    /// them on demand in hot paths.
+    ///
+    /// Only records entries for declarations at the source file scope (ScopeId(0))
+    /// to avoid noise from nested declarations that are less likely to be
+    /// cross-file semantic references.
+    pub(crate) fn record_semantic_def_ext(
+        &mut self,
+        sym_id: SymbolId,
+        kind: crate::state::SemanticDefKind,
+        name: &str,
+        declaration: NodeIndex,
+        type_param_count: u16,
+        is_exported: bool,
+        enum_member_names: Vec<String>,
+        is_const: bool,
+        is_abstract: bool,
+    ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
         // recorded because they don't participate in cross-file identity.
@@ -2407,9 +2448,9 @@ impl BinderState {
                 span_start: declaration.0,
                 type_param_count,
                 is_exported,
-                enum_member_names: Vec::new(),
-                is_const: false,
-                is_abstract: false,
+                enum_member_names,
+                is_const,
+                is_abstract,
             },
         );
     }

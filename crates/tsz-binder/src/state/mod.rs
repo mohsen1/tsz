@@ -480,16 +480,19 @@ pub struct SemanticDefEntry {
     /// a prerequisite for Phase 2 file-skeleton decomposition where export surfaces
     /// are extracted from binder-owned identity rather than full symbol residency.
     pub is_exported: bool,
-    /// Enum member names captured at bind time (empty for non-enum declarations).
+    /// Enum member names (empty for non-enum declarations).
     ///
-    /// Populated during `bind_enum_declaration` after all members are bound.
-    /// The checker uses these to pre-populate `DefinitionInfo.enum_members`
-    /// with `(Atom, EnumMemberValue::Computed)` stubs, reducing the need to
-    /// re-walk the AST to discover member names.
+    /// Captured at bind time so the checker's DefId pre-population can create
+    /// `DefinitionInfo` with stub enum members. This avoids the checker needing
+    /// to walk enum member declarations on demand to populate the definition.
     pub enum_member_names: Vec<String>,
-    /// Whether this declaration has the `const` modifier (relevant for const enums).
+    /// Whether this is a `const enum` declaration.
+    ///
+    /// Only meaningful for `SemanticDefKind::Enum`; always `false` for other kinds.
     pub is_const: bool,
-    /// Whether this declaration has the `abstract` modifier (relevant for abstract classes).
+    /// Whether this is an `abstract class` declaration.
+    ///
+    /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
 }
 
