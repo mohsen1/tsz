@@ -329,6 +329,8 @@ pub struct TypeInterner {
     /// comparison is hash-dependent. This counter provides allocation-order
     /// comparison that approximates tsc's source-order type ID allocation.
     alloc_counter: AtomicU32,
+    /// Circuit breaker: once set, all intern/lookup calls return early.
+    poisoned: std::sync::atomic::AtomicBool,
     /// Maps TypeId -> allocation order for types that need ordering.
     /// Only populated for non-intrinsic types. Used by `compare_union_members`.
     alloc_order: DashMap<TypeId, u32, FxBuildHasher>,
@@ -389,6 +391,7 @@ impl TypeInterner {
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
             this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
             alloc_counter: AtomicU32::new(0),
+            poisoned: std::sync::atomic::AtomicBool::new(false),
             alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
@@ -726,15 +729,25 @@ impl TypeInterner {
     /// This uses a lock-free pattern with `DashMap` for concurrent access.
     #[inline]
     pub fn intern(&self, key: TypeData) -> TypeId {
+        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
+            return TypeId::ERROR;
+        }
         if let Some(id) = self.get_intrinsic_id(&key) {
             return id;
         }
 
-        // Circuit breaker: prevent OOM by limiting total interned types
-        // This is especially important for WASM where linear memory is limited.
-        // We do a cheap approximate check (summing shard indices) to avoid
-        // iterating all shards on every intern call.
+        // Circuit breaker 1: type count limit.
         if self.approximate_count() > MAX_INTERNED_TYPES {
+            self.poisoned.store(true, std::sync::atomic::Ordering::Relaxed);
+            return TypeId::ERROR;
+        }
+        // Circuit breaker 2: total operation count (catches infinite loops
+        // that repeatedly look up cached types without creating new ones).
+        thread_local! {
+            static OP_COUNT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+        if OP_COUNT.with(|c| { let v = c.get() + 1; c.set(v); v }) > 10_000_000 {
+            self.poisoned.store(true, std::sync::atomic::Ordering::Relaxed);
             return TypeId::ERROR;
         }
 
@@ -781,6 +794,9 @@ impl TypeInterner {
     /// This uses lock-free `DashMap` access with lazy shard initialization.
     #[inline]
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
         }

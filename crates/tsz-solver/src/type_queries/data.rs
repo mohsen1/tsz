@@ -2637,8 +2637,10 @@ pub fn reconstruct_mapped_with_constraint(
     };
     // Intern via the TypeDatabase factory and extract the MappedTypeId.
     let type_id = db.mapped(new_mapped);
-    crate::mapped_type_id(db, type_id)
-        .expect("freshly constructed mapped type should have MappedTypeId")
+    match crate::mapped_type_id(db, type_id) {
+        Some(id) => id,
+        None => crate::MappedTypeId(0),
+    }
 }
 
 /// Compute modifier values for a mapped type property given the source property's
