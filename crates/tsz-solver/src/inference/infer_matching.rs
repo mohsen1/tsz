@@ -257,6 +257,22 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_mapped_type(source_shape, mapped_id, priority)?;
             }
 
+            // Tuple against mapped type: reverse-mapped inference from tuple elements.
+            // Handles: source [Wrap<string>, Wrap<number>] against
+            //   target { [K in keyof Tuple]: Wrap<Tuple[K]> }
+            // Infers Tuple from the tuple elements by substituting numeric keys
+            // into the template and inferring each element type.
+            (Some(TypeData::Tuple(source_elems)), Some(TypeData::Mapped(mapped_id))) => {
+                self.infer_from_mapped_type_tuple(source_elems, mapped_id, priority)?;
+            }
+
+            // Array against mapped type: infer element type against mapped template.
+            // Handles: source Wrap<string>[] against
+            //   target { [K in keyof Arr]: Wrap<Arr[K]> }
+            (Some(TypeData::Array(source_elem)), Some(TypeData::Mapped(mapped_id))) => {
+                self.infer_from_mapped_type_array(source_elem, mapped_id, priority)?;
+            }
+
             // TypeApplication target: expand type alias and recurse.
             // This handles cases like `Spec<T[P]>` where Spec is a mapped type alias.
             // Without expansion, inference against recursive type alias applications
@@ -486,6 +502,85 @@ impl<'a> InferenceContext<'a> {
                 InferencePriority::MappedType,
             )?;
         }
+
+        Ok(())
+    }
+
+    /// Infer type parameters from a tuple source against a mapped type target.
+    ///
+    /// For a mapped type `{ [K in keyof T]: Template<T[K]> }` and a source tuple
+    /// `[Wrap<string>, Wrap<number>]`, this:
+    /// 1. Substitutes K with "0", "1", etc. in the template
+    /// 2. Infers each element type against the instantiated template
+    ///
+    /// This matches tsc's `inferFromMappedType` which handles both object and
+    /// tuple sources against mapped types.
+    fn infer_from_mapped_type_tuple(
+        &mut self,
+        source_elems: TupleListId,
+        mapped_id: MappedTypeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let mapped = self.interner.mapped_type(mapped_id);
+        let source_elems = self.interner.tuple_list(source_elems);
+        if source_elems.is_empty() {
+            return Ok(());
+        }
+
+        let iter_param_name = mapped.type_param.name;
+
+        // Infer the constraint type from numeric key literals
+        // e.g., for [a, b, c], K = "0" | "1" | "2"
+        let name_literals: Vec<TypeId> = (0..source_elems.len())
+            .map(|i| {
+                let key_str = i.to_string();
+                let key_atom = self.interner.intern_string(&key_str);
+                self.interner.literal_string_atom(key_atom)
+            })
+            .collect();
+        let names_union = if name_literals.len() == 1 {
+            name_literals[0]
+        } else {
+            self.interner.union(name_literals.clone())
+        };
+        self.infer_from_types(names_union, mapped.constraint, priority)?;
+
+        // Infer the template type from each tuple element
+        let template_priority = InferencePriority::MappedType;
+        for (i, elem) in source_elems.iter().enumerate() {
+            let key_literal = name_literals[i];
+            let mut subst = TypeSubstitution::new();
+            subst.insert(iter_param_name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
+            let inferable_elem_type = self.get_partially_inferable_type(elem.type_id);
+            self.infer_from_types(
+                inferable_elem_type,
+                instantiated_template,
+                template_priority,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Infer type parameters from an array source against a mapped type target.
+    ///
+    /// For a mapped type `{ [K in keyof T]: Template<T[K]> }` and a source array
+    /// `Wrap<string>[]`, this infers from the array element type against the template
+    /// using `number` as the key type.
+    fn infer_from_mapped_type_array(
+        &mut self,
+        source_elem: TypeId,
+        mapped_id: MappedTypeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // Infer the constraint from `number` (array index type)
+        self.infer_from_types(TypeId::NUMBER, mapped.constraint, priority)?;
+
+        // Infer the template from the element type
+        self.infer_from_types(source_elem, mapped.template, InferencePriority::MappedType)?;
 
         Ok(())
     }
