@@ -33,7 +33,7 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/complex.rs",
                 # Pre-existing: overload candidate filtering via TypeData
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
-                # Pre-existing: enum member type resolution via TypeData
+                # ClassSummary::lookup() — not a solver interner lookup
                 "crates/tsz-checker/src/types/property_access_type.rs",
                 # Pre-existing: class member lookup in class_checker
                 "crates/tsz-checker/src/classes/class_checker.rs",
@@ -266,7 +266,6 @@ CHECKS = [
             "exclude_files": {
                 # Pre-existing: these files use TypeData matching for specific patterns
                 # TODO: refactor to use query_boundaries wrappers
-                "crates/tsz-checker/src/types/property_access_type.rs",
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
                 "crates/tsz-checker/src/types/computation/call.rs",
                 # query_boundaries is the canonical boundary layer — TypeData

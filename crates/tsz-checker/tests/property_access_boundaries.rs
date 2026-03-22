@@ -75,3 +75,52 @@ fn exposes_property_access_boundary_queries() {
     );
     assert!(array_element_type(&types, tuple).is_none());
 }
+
+#[test]
+fn this_type_query_via_boundary() {
+    let types = TypeInterner::new();
+
+    let this_ty = types.this_type();
+    assert!(is_this_type(&types, this_ty));
+
+    // Non-ThisType types should return false
+    assert!(!is_this_type(&types, TypeId::ANY));
+    assert!(!is_this_type(&types, TypeId::STRING));
+    assert!(!is_this_type(&types, TypeId::NUMBER));
+    assert!(!is_this_type(&types, TypeId::NEVER));
+}
+
+#[test]
+fn index_access_type_query_via_boundary() {
+    let types = TypeInterner::new();
+
+    // Create T[K] where T = string[], K = number
+    let array_ty = types.array(TypeId::STRING);
+    let idx_access = types.index_access(array_ty, TypeId::NUMBER);
+
+    let result = index_access_types(&types, idx_access);
+    assert_eq!(result, Some((array_ty, TypeId::NUMBER)));
+
+    // Non-IndexAccess types should return None
+    assert_eq!(index_access_types(&types, TypeId::STRING), None);
+    assert_eq!(index_access_types(&types, array_ty), None);
+}
+
+#[test]
+fn type_has_property_query() {
+    let types = TypeInterner::new();
+
+    let name_atom = types.intern_string("x");
+    let obj = types.object(vec![tsz_solver::PropertyInfo {
+        name: name_atom,
+        type_id: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        visibility: tsz_common::common::Visibility::Public,
+        is_method: false,
+        ..Default::default()
+    }]);
+
+    assert!(type_has_property(&types, obj, "x"));
+    assert!(!type_has_property(&types, obj, "y"));
+}
