@@ -157,7 +157,7 @@ impl Default for ResidencyBudget {
 impl ResidencyBudget {
     /// Assess memory pressure from residency stats.
     #[must_use]
-    pub fn assess(&self, stats: &MergedProgramResidencyStats) -> MemoryPressure {
+    pub const fn assess(&self, stats: &MergedProgramResidencyStats) -> MemoryPressure {
         let total = stats.pre_merge_bind_total_bytes + stats.total_bound_file_bytes;
         if total >= self.high_watermark_bytes {
             MemoryPressure::High
@@ -169,16 +169,16 @@ impl ResidencyBudget {
     }
 
     /// Returns whether the skeleton index alone could serve merge decisions,
-    /// allowing full BindResult eviction for memory recovery.
+    /// allowing full `BindResult` eviction for memory recovery.
     #[must_use]
-    pub fn skeleton_can_replace_full_arenas(stats: &MergedProgramResidencyStats) -> bool {
+    pub const fn skeleton_can_replace_full_arenas(stats: &MergedProgramResidencyStats) -> bool {
         stats.has_skeleton_index && stats.skeleton_merge_candidate_count > 0
     }
 
-    /// Estimate how many bytes would be freed by evicting pre-merge BindResults
+    /// Estimate how many bytes would be freed by evicting pre-merge `BindResults`
     /// and relying on the skeleton index for merge topology.
     #[must_use]
-    pub fn eviction_savings(stats: &MergedProgramResidencyStats) -> usize {
+    pub const fn eviction_savings(stats: &MergedProgramResidencyStats) -> usize {
         if !stats.has_skeleton_index {
             return 0;
         }

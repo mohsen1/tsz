@@ -4038,7 +4038,7 @@ const localVar = 2;
     for name in &exported_names {
         let sym_id = binder
             .file_locals
-            .get(*name)
+            .get(name)
             .unwrap_or_else(|| panic!("expected {name} in file_locals"));
         let entry = binder
             .semantic_defs
@@ -4050,7 +4050,7 @@ const localVar = 2;
     for name in &local_names {
         let sym_id = binder
             .file_locals
-            .get(*name)
+            .get(name)
             .unwrap_or_else(|| panic!("expected {name} in file_locals"));
         let entry = binder
             .semantic_defs
@@ -4371,8 +4371,7 @@ namespace Outer {
         let found = binder.semantic_defs.values().any(|e| e.name == *name);
         assert!(
             found,
-            "namespace-scoped declaration '{}' should be in semantic_defs",
-            name
+            "namespace-scoped declaration '{name}' should be in semantic_defs"
         );
     }
 }
@@ -4495,7 +4494,7 @@ const myVar = 1;
             .semantic_defs
             .values()
             .find(|e| e.name == name)
-            .unwrap_or_else(|| panic!("expected semantic_def for '{}'", name));
+            .unwrap_or_else(|| panic!("expected semantic_def for '{name}'"));
         assert_eq!(
             entry.kind, expected_kind,
             "wrong kind for '{}': expected {:?}, got {:?}",

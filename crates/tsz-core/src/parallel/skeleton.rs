@@ -821,13 +821,13 @@ pub struct SkeletonDiff {
 impl SkeletonDiff {
     /// Returns true if no merge-relevant changes were detected.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.changed.is_empty() && self.added.is_empty() && self.removed.is_empty()
     }
 
     /// Total number of affected files.
     #[must_use]
-    pub fn affected_count(&self) -> usize {
+    pub const fn affected_count(&self) -> usize {
         self.changed.len() + self.added.len() + self.removed.len()
     }
 }

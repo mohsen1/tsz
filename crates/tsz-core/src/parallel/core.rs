@@ -564,7 +564,7 @@ impl BindResult {
         }
 
         // augmentation_target_modules
-        for (_, v) in &self.augmentation_target_modules {
+        for v in self.augmentation_target_modules.values() {
             size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
         }
 
@@ -634,7 +634,7 @@ impl BindResult {
         size += self.alias_partners.capacity() * (std::mem::size_of::<SymbolId>() * 2 + 8);
 
         // semantic_defs
-        for (_, def) in &self.semantic_defs {
+        for def in self.semantic_defs.values() {
             size += std::mem::size_of::<SymbolId>()
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8;
@@ -1353,7 +1353,7 @@ impl BoundFile {
         }
 
         // augmentation_target_modules
-        for (_, v) in &self.augmentation_target_modules {
+        for v in self.augmentation_target_modules.values() {
             size += std::mem::size_of::<SymbolId>() + v.capacity() + 8;
         }
 
