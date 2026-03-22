@@ -1465,7 +1465,7 @@ impl<'a> CheckerState<'a> {
                         // create distinct symbols instead of merging declarations).
                         if !has_conflict {
                             let all_symbols = self.ctx.binder.symbols.find_all_by_name(&name);
-                            for other_sym_id in all_symbols {
+                            for &other_sym_id in all_symbols {
                                 if other_sym_id == sym_id {
                                     continue;
                                 }

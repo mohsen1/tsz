@@ -551,7 +551,7 @@ impl<'a> CheckerState<'a> {
                 return Some(sym_id);
             }
 
-            for candidate_id in binder
+            for &candidate_id in binder
                 .get_symbols()
                 .find_all_by_name(&export_equals_symbol.escaped_name)
             {

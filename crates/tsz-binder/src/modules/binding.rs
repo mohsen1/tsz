@@ -587,7 +587,7 @@ impl BinderState {
                                         // sibling symbols with the same name (e.g. function + namespace).
                                         // Include namespace-shaped siblings so `export = X` exposes all
                                         // merged members for named import compatibility.
-                                        for candidate_id in self
+                                        for &candidate_id in self
                                             .symbols
                                             .find_all_by_name(&target_symbol.escaped_name)
                                         {

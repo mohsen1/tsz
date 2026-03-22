@@ -367,7 +367,7 @@ impl<'a> CheckerState<'a> {
         let bare = ty_name.split('<').next().unwrap_or(&ty_name);
         let simple = bare.rsplit('.').next().unwrap_or(bare).trim();
         if !simple.is_empty() && !simple.starts_with('{') && !simple.contains(' ') {
-            for sym in self.ctx.binder.get_symbols().find_all_by_name(simple) {
+            for &sym in self.ctx.binder.get_symbols().find_all_by_name(simple) {
                 if !symbol_candidates.contains(&sym) {
                     symbol_candidates.push(sym);
                 }
