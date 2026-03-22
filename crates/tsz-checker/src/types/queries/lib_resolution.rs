@@ -25,6 +25,64 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+/// Resolve the fallback arena for a lib symbol.
+///
+/// This is the canonical lookup order:
+/// 1. Per-symbol arena from `binder.symbol_arenas` (set during lib merging).
+/// 2. First lib context's arena (covers es5.d.ts and similar primary libs).
+/// 3. The user file's arena (final fallback).
+pub(crate) fn resolve_lib_fallback_arena<'a>(
+    binder: &'a tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    lib_contexts: &'a [crate::context::LibContext],
+    user_arena: &'a NodeArena,
+) -> &'a NodeArena {
+    binder
+        .symbol_arenas
+        .get(&sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
+        .unwrap_or(user_arena)
+}
+
+/// Build `(NodeIndex, &NodeArena)` pairs for a symbol's declarations.
+///
+/// Resolves each declaration to the correct arena via `binder.declaration_arenas`,
+/// falling back to:
+/// - `user_arena` if the declaration node exists there (local augmentations), or
+/// - `fallback_arena` otherwise (lib declarations).
+///
+/// When `user_arena` is `None`, the fallback is used directly (e.g., in
+/// `prime_lib_type_params` which has no user-arena context).
+pub(crate) fn collect_lib_decls_with_arenas<'a>(
+    binder: &'a tsz_binder::BinderState,
+    sym_id: tsz_binder::SymbolId,
+    declarations: &[NodeIndex],
+    fallback_arena: &'a NodeArena,
+    user_arena: Option<&'a NodeArena>,
+) -> Vec<(NodeIndex, &'a NodeArena)> {
+    declarations
+        .iter()
+        .flat_map(|&decl_idx| {
+            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                arenas
+                    .iter()
+                    .map(|arc| (decl_idx, arc.as_ref()))
+                    .collect::<Vec<_>>()
+            } else if let Some(ua) = user_arena
+                && ua.get(decl_idx).is_some()
+            {
+                // User augmentations (e.g., `interface Array<T> extends IFoo<T>`)
+                // are not in declaration_arenas. Check the user arena before
+                // falling back.
+                vec![(decl_idx, ua)]
+            } else {
+                vec![(decl_idx, fallback_arena)]
+            }
+        })
+        .collect()
+}
+
 /// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
 /// multiple declaration arenas.
 ///
@@ -145,35 +203,16 @@ impl<'a> CheckerState<'a> {
             return derived_type;
         };
 
-        let fallback_arena: &NodeArena = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref)
-            .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
-            .unwrap_or(self.ctx.arena);
+        let fallback_arena =
+            resolve_lib_fallback_arena(self.ctx.binder, sym_id, &lib_contexts, self.ctx.arena);
 
-        let user_arena: &NodeArena = self.ctx.arena;
-        let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
-            .declarations
-            .iter()
-            .flat_map(|&decl_idx| {
-                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                    arenas
-                        .iter()
-                        .map(|arc| (decl_idx, arc.as_ref()))
-                        .collect::<Vec<_>>()
-                } else if user_arena.get(decl_idx).is_some() {
-                    // User augmentations (e.g., `interface Array<T> extends IFoo<T>`)
-                    // are not in declaration_arenas (which only tracks lib-merged
-                    // declarations). Check the user arena before falling back.
-                    vec![(decl_idx, user_arena)]
-                } else {
-                    vec![(decl_idx, fallback_arena)]
-                }
-            })
-            .collect();
+        let decls_with_arenas = collect_lib_decls_with_arenas(
+            self.ctx.binder,
+            sym_id,
+            &symbol.declarations,
+            fallback_arena,
+            Some(self.ctx.arena),
+        );
 
         // Early exit: skip expensive type parameter scope setup and heritage merge
         // if no declarations have extends clauses
@@ -476,46 +515,20 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id {
             // Get the symbol's declaration(s) from the main file's binder
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                // Get the fallback arena from lib_contexts if available, otherwise use main arena
-                let fallback_arena: &NodeArena = self
-                    .ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&sym_id)
-                    .map(std::convert::AsRef::as_ref)
-                    .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
-                    .unwrap_or(self.ctx.arena);
+                let fallback_arena = resolve_lib_fallback_arena(
+                    self.ctx.binder,
+                    sym_id,
+                    &lib_contexts,
+                    self.ctx.arena,
+                );
 
-                // Build declaration -> arena pairs using declaration_arenas
-                // This is critical for merged interfaces like Array which have
-                // declarations in es5.d.ts, es2015.d.ts, etc.
-                // Use the MAIN file's binder's declaration_arenas, not lib_ctx.binder.
-                let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
-                    .declarations
-                    .iter()
-                    .flat_map(|&decl_idx| {
-                        if let Some(arenas) =
-                            self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                        {
-                            arenas
-                                .iter()
-                                .map(|arc| (decl_idx, arc.as_ref()))
-                                .collect::<Vec<_>>()
-                        } else {
-                            // When no declaration_arenas entry exists, the declaration
-                            // may be a local augmentation (e.g., user-declared
-                            // `interface ErrorConstructor { ... }` merging with a lib
-                            // symbol). Check if it exists in the main arena first;
-                            // only fall back to the lib arena otherwise.
-                            let arena = if self.ctx.arena.get(decl_idx).is_some() {
-                                self.ctx.arena
-                            } else {
-                                fallback_arena
-                            };
-                            vec![(decl_idx, arena)]
-                        }
-                    })
-                    .collect();
+                let decls_with_arenas = collect_lib_decls_with_arenas(
+                    self.ctx.binder,
+                    sym_id,
+                    &symbol.declarations,
+                    fallback_arena,
+                    Some(self.ctx.arena),
+                );
 
                 // Create resolver that looks up names in the MAIN file's binder.
                 // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions.
