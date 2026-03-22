@@ -10,7 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::document_symbols::SymbolKind;
 use tsz_binder::{BinderState, symbol_flags};
-use tsz_common::position::Location;
+use tsz_common::position::{LineMap, Location, Range};
 use tsz_parser::NodeArena;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
@@ -203,9 +203,15 @@ impl SymbolIndex {
     ///
     /// This removes old entries and re-indexes the file based on its
     /// current binder state and AST identifiers.
-    pub fn update_file(&mut self, file_name: &str, binder: &BinderState, arena: &NodeArena) {
+    pub fn update_file(
+        &mut self,
+        file_name: &str,
+        binder: &BinderState,
+        arena: &NodeArena,
+        source_text: &str,
+    ) {
         self.remove_file(file_name);
-        self.index_file(file_name, binder, arena);
+        self.index_file(file_name, binder, arena, source_text);
     }
 
     /// Remove a file from the index.
@@ -313,9 +319,16 @@ impl SymbolIndex {
     /// symbol, we can query `get_files_with_symbol()` to find only the files
     /// that actually contain that identifier string, avoiding expensive Checker
     /// runs on irrelevant files.
-    pub fn index_file(&mut self, file_name: &str, binder: &BinderState, arena: &NodeArena) {
+    pub fn index_file(
+        &mut self,
+        file_name: &str,
+        binder: &BinderState,
+        arena: &NodeArena,
+        source_text: &str,
+    ) {
         let file_name_owned = file_name.to_string();
         let mut file_symbol_names = FxHashSet::default();
+        let line_map = LineMap::build(source_text);
 
         // Pool Scan: Index all identifier mentions from the AST
         // This enables O(1) candidate filtering when searching for cross-file references
@@ -354,10 +367,30 @@ impl SymbolIndex {
             // Track in reverse mapping for efficient cleanup
             file_symbol_names.insert(name.clone());
 
-            // Extract symbol kind from binder flags and store it
+            // Extract symbol kind and definition location from binder
             if let Some(symbol) = binder.symbols.get(*symbol_id) {
                 let kind = symbol_flags_to_kind(symbol.flags);
                 self.definition_kinds.insert(name.clone(), kind);
+
+                // Add definition location from the first declaration
+                let decl_node_idx = if !symbol.declarations.is_empty() {
+                    symbol.declarations[0]
+                } else {
+                    symbol.value_declaration
+                };
+                if let Some(node) = arena.get(decl_node_idx) {
+                    let start = line_map.offset_to_position(node.pos as u32, source_text);
+                    let end = line_map.offset_to_position(node.end as u32, source_text);
+                    let location = Location::new(file_name_owned.clone(), Range::new(start, end));
+                    self.definitions
+                        .entry(name.clone())
+                        .or_default()
+                        .push(location.clone());
+                    self.file_symbols
+                        .entry(file_name_owned.clone())
+                        .or_default()
+                        .insert(name.clone());
+                }
             }
         }
 
