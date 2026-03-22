@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-22T05:32:20Z",
-  "git_sha": "2a4b8c30cbf0ac8a5b87e2e4e4aa635b6234c5ba",
+  "timestamp": "2026-03-22T06:05:57Z",
+  "git_sha": "28f67d30b7a3a00c1aaf91952471e8ee62337df9",
   "summary": {
     "total_tests": 12581,
-    "passed": 11148,
-    "failed": 1433,
+    "passed": 11149,
+    "failed": 1432,
     "pass_rate": 88.6
   },
   "areas_by_pass_rate": [
@@ -305,9 +305,9 @@
     {
       "area": "compiler",
       "total": 6490,
-      "passed": 5803,
-      "failed": 687,
-      "pass_rate": 89.41
+      "passed": 5804,
+      "failed": 686,
+      "pass_rate": 89.43
     },
     {
       "area": "expressions/unaryOperators",
@@ -774,10 +774,6 @@
       "count": 2
     },
     {
-      "code": "TS7006",
-      "count": 2
-    },
-    {
       "code": "TS2451",
       "count": 2
     },
@@ -795,6 +791,10 @@
     },
     {
       "code": "TS1003",
+      "count": 2
+    },
+    {
+      "code": "TS2698",
       "count": 2
     }
   ],
@@ -974,15 +974,15 @@
       "count": 9
     },
     {
-      "code": "TS7006",
-      "count": 9
-    },
-    {
       "code": "TS18048",
       "count": 9
     },
     {
       "code": "TS2552",
+      "count": 8
+    },
+    {
+      "code": "TS7006",
       "count": 8
     },
     {
@@ -1088,10 +1088,6 @@
       "count": 4
     },
     {
-      "code": "TS7006",
-      "count": 3
-    },
-    {
       "code": "TS2430",
       "count": 3
     },
@@ -1165,6 +1161,10 @@
     },
     {
       "code": "TS2394",
+      "count": 2
+    },
+    {
+      "code": "TS7006",
       "count": 2
     },
     {
@@ -1598,15 +1598,15 @@
       "count": 9
     },
     {
-      "code": "TS7006",
-      "count": 9
-    },
-    {
       "code": "TS18048",
       "count": 9
     },
     {
       "code": "TS2552",
+      "count": 8
+    },
+    {
+      "code": "TS7006",
       "count": 8
     },
     {
@@ -1870,7 +1870,7 @@
   ],
   "categories": {
     "false_positive": 114,
-    "all_missing": 184,
+    "all_missing": 183,
     "wrong_code": 484,
     "fingerprint_only": 614,
     "close_to_passing": 342
