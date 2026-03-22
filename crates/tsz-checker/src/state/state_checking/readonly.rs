@@ -505,6 +505,28 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // For mapped types (e.g., Pick, Omit), check readonly through the
+        // mapped type's homomorphic source. The solver's property_is_readonly
+        // can only detect explicit +readonly modifiers, but homomorphic mapped
+        // types inherit readonly from source properties.
+        if tsz_solver::is_mapped_type(self.ctx.types, readonly_check_type) {
+            if self.is_mapped_type_property_readonly(readonly_check_type, &prop_name) {
+                if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression)
+                {
+                    return false;
+                }
+                if prop_from_index_sig {
+                    self.error_readonly_index_signature_at(
+                        readonly_check_type,
+                        access.name_or_argument,
+                    );
+                } else {
+                    self.error_readonly_property_at(&prop_name, access.name_or_argument);
+                }
+                return true;
+            }
+        }
+
         // Check if the property is readonly in the object type (solver types)
         if self.is_property_readonly(readonly_check_type, &prop_name) {
             // Special case: readonly properties can be assigned in constructors
@@ -1032,6 +1054,46 @@ impl<'a> CheckerState<'a> {
     /// Evaluates through the `TypeEnvironment` to resolve Application/Lazy wrappers
     /// (e.g., `Readonly<T>` where T is generic), then delegates to the solver's
     /// `is_mapped_type_with_readonly_modifier` query.
+    /// Check if a specific property is readonly in a mapped type by examining
+    /// the homomorphic source type's property modifiers.
+    ///
+    /// For mapped types like `Pick<A, K>` = `{ [P in K]: A[P] }`, the readonly
+    /// flag is inherited from the source type `A`. The solver's standalone
+    /// `property_is_readonly` only checks for explicit `+readonly` modifiers,
+    /// but homomorphic mapped types need to look at the source property.
+    fn is_mapped_type_property_readonly(&mut self, type_id: TypeId, prop_name: &str) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, type_id) else {
+            return false;
+        };
+        let mapped = db.get_mapped(mapped_id);
+
+        // Explicit +readonly modifier means all properties are readonly.
+        if mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add) {
+            return true;
+        }
+        // Explicit -readonly modifier means all properties are mutable.
+        if mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Remove) {
+            return false;
+        }
+
+        // No explicit modifier: check if homomorphic and inherit from source.
+        // Homomorphic pattern: template is IndexAccess(source, param) where
+        // param matches the mapped type's iteration parameter.
+        if let Some(tsz_solver::TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template) {
+            if let Some(tsz_solver::TypeData::TypeParameter(param)) = db.lookup(idx) {
+                if param.name == mapped.type_param.name {
+                    // This is a homomorphic mapped type. Resolve the source type
+                    // through the checker environment and check the property.
+                    let resolved_source = self.evaluate_type_with_resolution(source);
+                    return self.is_property_readonly(resolved_source, prop_name);
+                }
+            }
+        }
+
+        false
+    }
+
     fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {
         use tsz_solver::operations::property::is_mapped_type_with_readonly_modifier;
 

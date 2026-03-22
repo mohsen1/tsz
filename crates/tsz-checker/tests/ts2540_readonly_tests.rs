@@ -486,6 +486,35 @@ type T = readonly [string, number];
 }
 
 #[test]
+fn test_omit_preserves_readonly_modifier() {
+    // Omit<T, K> is a homomorphic mapped type that preserves readonly modifiers
+    // from the source type. Assigning to a readonly property through Omit should
+    // still emit TS2540.
+    let source = r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+type A = {
+    a: number;
+    b?: string;
+    readonly c: boolean;
+    d: unknown;
+};
+
+type B = Omit<A, 'a'>;
+
+function f(x: B) {
+    x.c = true;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to readonly property 'c' through Omit type"
+    );
+}
+
+#[test]
 fn test_readonly_on_type_reference_emits_ts1354() {
     // readonly Array<string> should emit TS1354 — use ReadonlyArray<string> instead
     let source = r"
