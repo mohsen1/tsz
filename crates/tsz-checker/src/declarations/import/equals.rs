@@ -484,7 +484,7 @@ impl<'a> CheckerState<'a> {
             // Find all symbols with this name (there may be multiple due to shadowing)
             let all_symbols = self.ctx.binder.symbols.find_all_by_name(name);
 
-            for sym_id in all_symbols {
+            for &sym_id in all_symbols {
                 // Skip the import's own symbol
                 if Some(sym_id) == import_sym_id {
                     continue;

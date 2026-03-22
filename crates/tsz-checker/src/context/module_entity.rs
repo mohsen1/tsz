@@ -273,8 +273,8 @@ impl<'a> CheckerContext<'a> {
                     if sym_binder
                         .get_symbols()
                         .find_all_by_name(&sym.escaped_name)
-                        .into_iter()
-                        .filter_map(|candidate_id| sym_binder.get_symbol(candidate_id))
+                        .iter()
+                        .filter_map(|&candidate_id| sym_binder.get_symbol(candidate_id))
                         .any(|candidate| has_namespace_shape(sym_binder, candidate))
                     {
                         return true;
@@ -292,8 +292,8 @@ impl<'a> CheckerContext<'a> {
                     sym_binder
                         .get_symbols()
                         .find_all_by_name(&target_name)
-                        .into_iter()
-                        .filter_map(|target_sym_id| sym_binder.get_symbol(target_sym_id))
+                        .iter()
+                        .filter_map(|&target_sym_id| sym_binder.get_symbol(target_sym_id))
                         .any(|target_sym| has_namespace_shape(sym_binder, target_sym))
                 });
 
@@ -327,8 +327,8 @@ impl<'a> CheckerContext<'a> {
                         if binder
                             .get_symbols()
                             .find_all_by_name(&target_name)
-                            .into_iter()
-                            .filter_map(|target_id| binder.get_symbol(target_id))
+                            .iter()
+                            .filter_map(|&target_id| binder.get_symbol(target_id))
                             .any(|target_sym| has_namespace_shape(binder, target_sym))
                         {
                             return true;
