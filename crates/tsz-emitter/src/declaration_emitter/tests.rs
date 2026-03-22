@@ -8202,6 +8202,37 @@ interface Serializable {}",
 }
 
 #[test]
+fn explore_accessor_keyword_strips_initializer() {
+    // tsc emits `accessor name: string;` stripping the initializer
+    let output = emit_dts(
+        "export class Foo {
+    accessor name: string = \"\";
+}",
+    );
+    println!("EXPLORE accessor keyword:\n{output}");
+    assert!(
+        output.contains("accessor name: string;"),
+        "Should emit accessor without initializer: {output}"
+    );
+}
+
+#[test]
+fn explore_enum_negative_values() {
+    let output = emit_dts(
+        "export enum Signed {
+    Neg = -1,
+    Zero = 0,
+    Pos = 1,
+}",
+    );
+    println!("EXPLORE negative enum:\n{output}");
+    assert!(
+        output.contains("Neg = -1"),
+        "Should emit negative enum value: {output}"
+    );
+}
+
+#[test]
 fn explore_conditional_type_parens_on_check() {
     // Check type with union should get parens in conditional
     let output = emit_dts(
