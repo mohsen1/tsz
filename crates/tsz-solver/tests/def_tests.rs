@@ -797,3 +797,167 @@ fn test_clear_resets_file_index() {
     assert_eq!(store.file_count(), 0);
     assert!(store.defs_by_file(1).is_empty());
 }
+
+// =============================================================================
+// StoreStatistics tests
+// =============================================================================
+
+#[test]
+fn test_statistics_empty_store() {
+    let store = DefinitionStore::new();
+    let stats = store.statistics();
+
+    assert_eq!(stats.total_definitions, 0);
+    assert_eq!(stats.type_aliases, 0);
+    assert_eq!(stats.interfaces, 0);
+    assert_eq!(stats.classes, 0);
+    assert_eq!(stats.class_constructors, 0);
+    assert_eq!(stats.enums, 0);
+    assert_eq!(stats.namespaces, 0);
+    assert_eq!(stats.functions, 0);
+    assert_eq!(stats.variables, 0);
+    assert_eq!(stats.type_to_def_entries, 0);
+    assert_eq!(stats.symbol_def_index_entries, 0);
+    assert_eq!(stats.symbol_only_index_entries, 0);
+    assert_eq!(stats.body_to_alias_entries, 0);
+    assert_eq!(stats.shape_to_def_entries, 0);
+    assert_eq!(stats.file_count, 0);
+    assert_eq!(stats.next_def_id, DefId::FIRST_VALID);
+}
+
+#[test]
+fn test_statistics_counts_by_kind() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register one of each kind.
+    store.register(DefinitionInfo::type_alias(
+        interner.intern_string("Alias1"),
+        vec![],
+        TypeId::NUMBER,
+    ));
+    store.register(DefinitionInfo::type_alias(
+        interner.intern_string("Alias2"),
+        vec![],
+        TypeId::STRING,
+    ));
+    store.register(DefinitionInfo::interface(
+        interner.intern_string("Iface"),
+        vec![],
+        vec![],
+    ));
+    store.register(DefinitionInfo::class(
+        interner.intern_string("Cls"),
+        vec![],
+        vec![],
+        vec![],
+    ));
+    store.register(DefinitionInfo::enumeration(
+        interner.intern_string("Dir"),
+        vec![],
+    ));
+    store.register(DefinitionInfo::namespace(
+        interner.intern_string("NS"),
+        vec![],
+    ));
+
+    let stats = store.statistics();
+
+    assert_eq!(stats.total_definitions, 6);
+    assert_eq!(stats.type_aliases, 2);
+    assert_eq!(stats.interfaces, 1);
+    assert_eq!(stats.classes, 1);
+    assert_eq!(stats.enums, 1);
+    assert_eq!(stats.namespaces, 1);
+    assert_eq!(stats.functions, 0);
+    assert_eq!(stats.variables, 0);
+    // next_def_id should reflect 6 allocations starting from FIRST_VALID.
+    assert_eq!(stats.next_def_id, DefId::FIRST_VALID + 6);
+}
+
+#[test]
+fn test_statistics_index_counts() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Type alias with body -> populates body_to_alias.
+    let info = DefinitionInfo::type_alias(
+        interner.intern_string("A"),
+        vec![],
+        TypeId(200),
+    );
+    let def_a = store.register(info);
+
+    // Interface with shape -> populates shape_to_def.
+    let mut info_b = DefinitionInfo::interface(
+        interner.intern_string("B"),
+        vec![],
+        vec![],
+    );
+    info_b.file_id = Some(1);
+    info_b.symbol_id = Some(10);
+    let def_b = store.register(info_b);
+
+    // Register type and symbol mappings.
+    store.register_type_to_def(TypeId(300), def_a);
+    store.register_symbol_mapping(10, 1, def_b);
+
+    let stats = store.statistics();
+
+    assert_eq!(stats.total_definitions, 2);
+    assert_eq!(stats.type_to_def_entries, 1);
+    // symbol_def_index has the explicit mapping.
+    assert_eq!(stats.symbol_def_index_entries, 1);
+    // symbol_only_index: sym 10 from register (symbol_id=Some(10)) + register_symbol_mapping.
+    assert_eq!(stats.symbol_only_index_entries, 1);
+    // body_to_alias: A's body TypeId(200).
+    assert_eq!(stats.body_to_alias_entries, 1);
+    // shape_to_def: B's empty interface shape.
+    assert_eq!(stats.shape_to_def_entries, 1);
+    assert_eq!(stats.file_count, 1);
+}
+
+#[test]
+fn test_statistics_after_invalidation() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info = DefinitionInfo::type_alias(
+        interner.intern_string("X"),
+        vec![],
+        TypeId::NUMBER,
+    );
+    info.file_id = Some(5);
+    info.symbol_id = Some(42);
+    store.register(info);
+
+    let stats_before = store.statistics();
+    assert_eq!(stats_before.total_definitions, 1);
+    assert_eq!(stats_before.type_aliases, 1);
+    assert_eq!(stats_before.file_count, 1);
+
+    store.invalidate_file(5);
+
+    let stats_after = store.statistics();
+    assert_eq!(stats_after.total_definitions, 0);
+    assert_eq!(stats_after.type_aliases, 0);
+    assert_eq!(stats_after.file_count, 0);
+    assert_eq!(stats_after.symbol_only_index_entries, 0);
+    // next_def_id is NOT reset by invalidation (monotonically increasing).
+    assert!(stats_after.next_def_id >= stats_before.next_def_id);
+}
+
+#[test]
+fn test_statistics_display_format() {
+    let store = DefinitionStore::new();
+    let stats = store.statistics();
+    let display = format!("{stats}");
+
+    // Verify key sections are present.
+    assert!(display.contains("DefinitionStore statistics:"));
+    assert!(display.contains("definitions:"));
+    assert!(display.contains("type_aliases="));
+    assert!(display.contains("indices:"));
+    assert!(display.contains("files:"));
+    assert!(display.contains("next_def_id:"));
+}

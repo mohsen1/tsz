@@ -437,6 +437,84 @@ pub struct DefinitionStore {
     shape_to_def: DashMap<u64, DefId>,
 }
 
+// =============================================================================
+// StoreStatistics - Observability for DefinitionStore
+// =============================================================================
+
+/// Snapshot of `DefinitionStore` sizes and composition.
+///
+/// Provides observability into the store's current state for performance
+/// monitoring, capacity planning, and debugging. All counts are computed
+/// at the time of the `statistics()` call and represent a consistent-ish
+/// snapshot (individual `DashMap` reads are atomic but not globally synchronized).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StoreStatistics {
+    /// Total number of definitions.
+    pub total_definitions: usize,
+
+    /// Number of definitions by kind.
+    pub type_aliases: usize,
+    /// Number of interface definitions.
+    pub interfaces: usize,
+    /// Number of class definitions.
+    pub classes: usize,
+    /// Number of class constructor definitions.
+    pub class_constructors: usize,
+    /// Number of enum definitions.
+    pub enums: usize,
+    /// Number of namespace definitions.
+    pub namespaces: usize,
+    /// Number of function definitions.
+    pub functions: usize,
+    /// Number of variable definitions.
+    pub variables: usize,
+
+    /// Number of entries in the `TypeId` -> `DefId` reverse index.
+    pub type_to_def_entries: usize,
+    /// Number of entries in the `(SymbolId, file_idx)` -> `DefId` index.
+    pub symbol_def_index_entries: usize,
+    /// Number of entries in the `SymbolId` -> `DefId` (file-agnostic) index.
+    pub symbol_only_index_entries: usize,
+    /// Number of entries in the body `TypeId` -> `DefId` alias index.
+    pub body_to_alias_entries: usize,
+    /// Number of entries in the shape hash -> `DefId` index.
+    pub shape_to_def_entries: usize,
+    /// Number of files with registered definitions.
+    pub file_count: usize,
+
+    /// Next `DefId` value (high-water mark of allocation).
+    pub next_def_id: u32,
+}
+
+impl std::fmt::Display for StoreStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "DefinitionStore statistics:")?;
+        writeln!(f, "  definitions: {} total", self.total_definitions)?;
+        writeln!(
+            f,
+            "    type_aliases={}, interfaces={}, classes={}, class_constructors={}",
+            self.type_aliases, self.interfaces, self.classes, self.class_constructors
+        )?;
+        writeln!(
+            f,
+            "    enums={}, namespaces={}, functions={}, variables={}",
+            self.enums, self.namespaces, self.functions, self.variables
+        )?;
+        writeln!(f, "  indices:")?;
+        writeln!(f, "    type_to_def={}", self.type_to_def_entries)?;
+        writeln!(f, "    symbol_def_index={}", self.symbol_def_index_entries)?;
+        writeln!(
+            f,
+            "    symbol_only_index={}",
+            self.symbol_only_index_entries
+        )?;
+        writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
+        writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
+        writeln!(f, "  files: {}", self.file_count)?;
+        write!(f, "  next_def_id: {}", self.next_def_id)
+    }
+}
+
 impl Default for DefinitionStore {
     fn default() -> Self {
         Self::new()
@@ -817,6 +895,40 @@ impl DefinitionStore {
     /// Useful for diagnostics and testing.
     pub fn file_count(&self) -> usize {
         self.file_to_defs.len()
+    }
+
+    /// Compute a snapshot of store sizes and composition.
+    ///
+    /// This iterates all definitions once to count by `DefKind`, plus reads
+    /// the length of each reverse index. Suitable for periodic logging or
+    /// on-demand diagnostics; avoid calling on every type check.
+    pub fn statistics(&self) -> StoreStatistics {
+        let mut stats = StoreStatistics {
+            total_definitions: self.definitions.len(),
+            type_to_def_entries: self.type_to_def.len(),
+            symbol_def_index_entries: self.symbol_def_index.len(),
+            symbol_only_index_entries: self.symbol_only_index.len(),
+            body_to_alias_entries: self.body_to_alias.len(),
+            shape_to_def_entries: self.shape_to_def.len(),
+            file_count: self.file_to_defs.len(),
+            next_def_id: self.next_id.load(Ordering::Relaxed),
+            ..Default::default()
+        };
+
+        for entry in &self.definitions {
+            match entry.value().kind {
+                DefKind::TypeAlias => stats.type_aliases += 1,
+                DefKind::Interface => stats.interfaces += 1,
+                DefKind::Class => stats.classes += 1,
+                DefKind::ClassConstructor => stats.class_constructors += 1,
+                DefKind::Enum => stats.enums += 1,
+                DefKind::Namespace => stats.namespaces += 1,
+                DefKind::Function => stats.functions += 1,
+                DefKind::Variable => stats.variables += 1,
+            }
+        }
+
+        stats
     }
 }
 
