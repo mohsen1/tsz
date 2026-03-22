@@ -3306,7 +3306,7 @@ interface Merged { b: number }
 }
 
 #[test]
-fn semantic_defs_covers_all_seven_declaration_kinds() {
+fn semantic_defs_covers_all_eight_declaration_kinds() {
     let binder = bind_source(
         "
 class MyClass {}
@@ -3318,14 +3318,15 @@ function myFunc() {}
 const myVar = 1;
 ",
     );
+    // 7 top-level declarations + 1 enum member (A)
     assert_eq!(
         binder.semantic_defs.len(),
-        7,
-        "expected exactly 7 semantic defs, got {:?}",
+        8,
+        "expected exactly 8 semantic defs (7 top-level + 1 enum member), got {:?}",
         binder
             .semantic_defs
             .values()
-            .map(|e| &e.name)
+            .map(|e| format!("{} ({:?})", e.name, e.kind))
             .collect::<Vec<_>>()
     );
     let kinds: std::collections::HashSet<_> =
@@ -3337,6 +3338,7 @@ const myVar = 1;
     assert!(kinds.contains(&super::SemanticDefKind::Namespace));
     assert!(kinds.contains(&super::SemanticDefKind::Function));
     assert!(kinds.contains(&super::SemanticDefKind::Variable));
+    assert!(kinds.contains(&super::SemanticDefKind::EnumMember));
 }
 
 #[test]
@@ -5437,4 +5439,135 @@ namespace Outer {
         Some(inner_sym),
         "Deep should have Inner as parent_namespace, not Outer"
     );
+}
+
+// =============================================================================
+// Enum Member Semantic Def Tests
+// =============================================================================
+
+#[test]
+fn semantic_defs_enum_members_have_individual_entries() {
+    let binder = bind_source("enum Color { Red, Green, Blue }");
+    // The enum itself should be in semantic_defs
+    let enum_sym = binder.file_locals.get("Color").expect("expected Color");
+    let enum_entry = binder
+        .semantic_defs
+        .get(&enum_sym)
+        .expect("expected semantic def for Color");
+    assert_eq!(enum_entry.kind, super::SemanticDefKind::Enum);
+
+    // Each member should have its own EnumMember entry
+    let member_entries: Vec<_> = binder
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == super::SemanticDefKind::EnumMember)
+        .collect();
+    assert_eq!(
+        member_entries.len(),
+        3,
+        "expected 3 enum member entries, got {member_entries:?}"
+    );
+    let names: std::collections::HashSet<_> =
+        member_entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains("Red"), "should contain Red");
+    assert!(names.contains("Green"), "should contain Green");
+    assert!(names.contains("Blue"), "should contain Blue");
+}
+
+#[test]
+fn semantic_defs_enum_members_have_parent_enum() {
+    let binder = bind_source("enum Direction { Up, Down }");
+    let enum_sym = binder
+        .file_locals
+        .get("Direction")
+        .expect("expected Direction");
+
+    // Each member's parent_enum should point to the enum symbol
+    for entry in binder.semantic_defs.values() {
+        if entry.kind == super::SemanticDefKind::EnumMember {
+            assert_eq!(
+                entry.parent_enum,
+                Some(enum_sym),
+                "enum member '{}' should have Direction as parent_enum",
+                entry.name
+            );
+        }
+    }
+}
+
+#[test]
+fn semantic_defs_enum_members_stable_across_rebind() {
+    let source = "enum Status { Active, Inactive, Pending }";
+    let binder1 = bind_source(source);
+    let binder2 = bind_source(source);
+
+    let members1: std::collections::BTreeSet<_> = binder1
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == super::SemanticDefKind::EnumMember)
+        .map(|e| (&e.name, e.span_start, e.file_id))
+        .collect();
+    let members2: std::collections::BTreeSet<_> = binder2
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == super::SemanticDefKind::EnumMember)
+        .map(|e| (&e.name, e.span_start, e.file_id))
+        .collect();
+    assert_eq!(
+        members1, members2,
+        "enum member semantic defs should be identical across rebinds"
+    );
+}
+
+#[test]
+fn semantic_defs_enum_members_from_merged_enum_declarations() {
+    // Two enum declarations merge into one; all members should get entries
+    let binder = bind_source(
+        "
+enum Colors { Red, Green }
+enum Colors { Blue, Yellow }
+",
+    );
+    let member_entries: Vec<_> = binder
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == super::SemanticDefKind::EnumMember)
+        .collect();
+    let names: std::collections::HashSet<_> =
+        member_entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains("Red"), "should contain Red");
+    assert!(names.contains("Green"), "should contain Green");
+    assert!(names.contains("Blue"), "should contain Blue");
+    assert!(names.contains("Yellow"), "should contain Yellow");
+    assert_eq!(
+        member_entries.len(),
+        4,
+        "expected 4 enum member entries from merged declarations"
+    );
+}
+
+#[test]
+fn semantic_defs_const_enum_members_have_parent_enum() {
+    let binder = bind_source("const enum Flags { Read = 1, Write = 2 }");
+    let enum_sym = binder.file_locals.get("Flags").expect("expected Flags");
+    let enum_entry = binder
+        .semantic_defs
+        .get(&enum_sym)
+        .expect("expected semantic def for Flags");
+    assert!(enum_entry.is_const, "Flags should be const enum");
+
+    let member_entries: Vec<_> = binder
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == super::SemanticDefKind::EnumMember)
+        .collect();
+    assert_eq!(member_entries.len(), 2);
+    for m in &member_entries {
+        assert_eq!(
+            m.parent_enum,
+            Some(enum_sym),
+            "member '{}' should reference Flags",
+            m.name
+        );
+    }
 }

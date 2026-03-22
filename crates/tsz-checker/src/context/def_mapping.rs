@@ -683,10 +683,19 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            // Also skip if the DefinitionStore already has a mapping for this
-            // symbol (e.g., from another lib binder that declared the same
-            // global interface via declaration merging).
-            if self.definition_store.find_def_by_symbol(sym_id.0).is_some() {
+            // If the DefinitionStore already has a mapping for this symbol
+            // (e.g., from pre_populate_definition_store during merge, or from
+            // another lib binder that declared the same global interface via
+            // declaration merging), warm local caches but skip DefId creation.
+            if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
+                self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                // Propagate DefKind from the existing DefinitionInfo so both
+                // type environments see it without waiting for first access.
+                if let Some(info) = self.definition_store.get(def_id) {
+                    self.register_def_kind_in_envs(def_id, info.kind);
+                }
+                count += 1;
                 continue;
             }
 
@@ -699,6 +708,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
                 tsz_binder::SemanticDefKind::Function => DefKind::Function,
                 tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
+                tsz_binder::SemanticDefKind::EnumMember => DefKind::Variable,
             };
 
             // Use the SemanticDefEntry's self-contained data (name, file_id,
