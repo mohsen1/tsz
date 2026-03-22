@@ -1260,3 +1260,24 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts7006_emitted_for_intra_binding_pattern_reference() {
+    // When a destructuring binding element's default references another binding in the
+    // same pattern (intra-binding-pattern reference), the contextual type for that
+    // property should not flow to the RHS object literal. This matches tsc behavior
+    // (TypeScript#59177): `fn2 = fn1` references `fn1` from the same pattern, so the
+    // contextual type for `fn2: x => x + 2` is absent and TS7006 fires for `x`.
+    let diags = check_source_diagnostics(
+        r#"
+const { fn1 = (x: number) => 0, fn2 = fn1 } = { fn1: x => x + 1, fn2: x => x + 2 };
+"#,
+    );
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        1,
+        "Expected exactly 1 TS7006 for 'x' in fn2's arrow (intra-binding ref), got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

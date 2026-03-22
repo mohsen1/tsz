@@ -1874,6 +1874,27 @@ impl<'a> CheckerState<'a> {
             }
             Some(factory.tuple(tuple_elements))
         } else if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            // Collect all binding element names for intra-binding-pattern reference detection.
+            // When a binding element's default references another binding in the same pattern
+            // (e.g., `{ fn1 = (x: number) => 0, fn2 = fn1 }`), the contextual type for that
+            // property must be `any` to match tsc behavior and avoid circular contextual typing.
+            let binding_names: Vec<Option<String>> = elem_indices
+                .iter()
+                .map(|&idx| {
+                    self.ctx
+                        .arena
+                        .get(idx)
+                        .and_then(|n| self.ctx.arena.get_binding_element(n))
+                        .and_then(|elem| {
+                            self.ctx
+                                .arena
+                                .get(elem.name)
+                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                .map(|id| id.escaped_text.clone())
+                        })
+                })
+                .collect();
+
             let mut properties = Vec::new();
             for &elem_idx in &elem_indices {
                 let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -1909,6 +1930,29 @@ impl<'a> CheckerState<'a> {
 
                 let initializer = elem_data.initializer;
                 let name_idx = elem_data.name;
+
+                // Check for intra-binding-pattern reference: if the initializer is an
+                // identifier that references another binding in the same pattern, skip
+                // this property in the contextual type entirely. This matches tsc behavior
+                // (TypeScript#59177) where intra-binding references cause the contextual
+                // type for that property to be absent, so arrow function parameters in the
+                // RHS object literal don't get contextual types and TS7006 fires correctly.
+                if initializer.is_some() {
+                    let is_intra_binding_ref = self
+                        .ctx
+                        .arena
+                        .get(initializer)
+                        .filter(|init_node| init_node.kind == SyntaxKind::Identifier as u16)
+                        .and_then(|init_node| self.ctx.arena.get_identifier(init_node))
+                        .is_some_and(|init_id| {
+                            binding_names.iter().any(|name| {
+                                name.as_ref().is_some_and(|n| *n == init_id.escaped_text)
+                            })
+                        });
+                    if is_intra_binding_ref {
+                        continue;
+                    }
+                }
 
                 // For nested patterns, recursively build contextual type.
                 // For elements with default initializers, use the default's type
