@@ -34,6 +34,7 @@ fn empty_project_env() -> ProjectEnv {
         typescript_dom_replacement_globals: (false, false, false),
         has_deprecation_diagnostics: false,
         last_skeleton_fingerprint: None,
+        global_arena_index: None,
     }
 }
 
@@ -161,6 +162,9 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             span_start: 0,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
@@ -196,6 +200,9 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             span_start: 0,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
     let mut binder_b = BinderState::new();
@@ -208,6 +215,9 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             span_start: 100,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
@@ -249,6 +259,9 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             span_start: 0,
             type_param_count: 3,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
@@ -270,6 +283,69 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
         info.type_params.len(),
         3,
         "Generic interface with 3 type params should have 3 stub TypeParamInfo entries"
+    );
+}
+
+#[test]
+fn apply_to_pre_populates_enum_member_names() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Create a binder with an enum that has member names.
+    let mut other_binder = BinderState::new();
+    let sym_id = SymbolId(50);
+    other_binder.semantic_defs.insert(
+        sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Enum,
+            name: "Direction".to_string(),
+            file_id: 0,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: false,
+            enum_member_names: vec![
+                "Up".to_string(),
+                "Down".to_string(),
+                "Left".to_string(),
+                "Right".to_string(),
+            ],
+            is_const: true,
+            is_abstract: false,
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(other_binder)]);
+    env.apply_to(&mut checker.ctx);
+
+    // The pre-populated DefId should exist and have enum_members populated.
+    let def_id = checker
+        .ctx
+        .get_existing_def_id(sym_id)
+        .expect("Direction should be pre-populated");
+    let info = checker
+        .ctx
+        .definition_store
+        .get(def_id)
+        .expect("DefId should exist in store");
+    assert_eq!(
+        info.enum_members.len(),
+        4,
+        "Enum with 4 members should have 4 pre-populated enum_members"
+    );
+    // Member names should be interned Atoms -- verify via DefinitionInfo
+    let member_names: Vec<String> = info
+        .enum_members
+        .iter()
+        .map(|(atom, _)| interner.resolve_atom(*atom))
+        .collect();
+    assert_eq!(
+        member_names,
+        vec!["Up", "Down", "Left", "Right"],
+        "Enum member names should be preserved through pre-population"
     );
 }
 
