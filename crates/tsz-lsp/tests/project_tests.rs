@@ -4788,6 +4788,63 @@ fn test_file_id_allocator_remove_returns_old_id() {
     assert_eq!(alloc.remove("a.ts"), None); // already removed
 }
 
+#[test]
+fn test_file_id_allocator_reverse_lookup() {
+    use crate::project::FileIdAllocator;
+
+    let mut alloc = FileIdAllocator::new();
+    let id_a = alloc.get_or_allocate("a.ts");
+    let id_b = alloc.get_or_allocate("b.ts");
+
+    // Forward lookup works.
+    assert_eq!(alloc.lookup("a.ts"), Some(id_a));
+    assert_eq!(alloc.lookup("b.ts"), Some(id_b));
+
+    // Reverse lookup works.
+    assert_eq!(alloc.name_for_id(id_a), Some("a.ts"));
+    assert_eq!(alloc.name_for_id(id_b), Some("b.ts"));
+
+    // Out-of-range returns None.
+    assert_eq!(alloc.name_for_id(999), None);
+}
+
+#[test]
+fn test_file_id_allocator_reverse_lookup_after_remove() {
+    use crate::project::FileIdAllocator;
+
+    let mut alloc = FileIdAllocator::new();
+    let id_a = alloc.get_or_allocate("a.ts");
+    let _id_b = alloc.get_or_allocate("b.ts");
+
+    // Remove a.ts — reverse lookup should return None.
+    alloc.remove("a.ts");
+    assert_eq!(alloc.name_for_id(id_a), None);
+
+    // Re-allocating "a.ts" gets a new ID; the old slot stays cleared.
+    let id_a2 = alloc.get_or_allocate("a.ts");
+    assert_ne!(id_a, id_a2);
+    assert_eq!(alloc.name_for_id(id_a), None);
+    assert_eq!(alloc.name_for_id(id_a2), Some("a.ts"));
+}
+
+#[test]
+fn test_project_file_name_for_idx() {
+    let mut project = crate::project::Project::new();
+    project.set_file("src/foo.ts".to_string(), "export const x = 1;".to_string());
+    project.set_file("src/bar.ts".to_string(), "export const y = 2;".to_string());
+
+    // Look up file_idx for "src/foo.ts" via a symbol's decl_file_idx.
+    let foo_file = project.files.get("src/foo.ts").unwrap();
+    let foo_sym = foo_file
+        .binder()
+        .symbols
+        .iter()
+        .find(|s| s.decl_file_idx != u32::MAX)
+        .expect("expected at least one stamped symbol");
+    let resolved = project.file_name_for_idx(foo_sym.decl_file_idx);
+    assert_eq!(resolved, Some("src/foo.ts"));
+}
+
 // =============================================================================
 // Binder file_idx stamping tests
 // =============================================================================
