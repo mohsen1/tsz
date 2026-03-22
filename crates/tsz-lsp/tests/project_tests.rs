@@ -4586,3 +4586,65 @@ fn test_project_diagnostics_use_shared_def_store() {
         "Should produce type-checking diagnostics with shared DefinitionStore"
     );
 }
+
+#[test]
+fn test_set_file_skips_reparse_on_identical_content() {
+    let mut project = Project::new();
+    let source = "export const x = 1;".to_string();
+
+    // First set: file is created
+    project.set_file("test.ts".to_string(), source.clone());
+    let hash_1 = project.files["test.ts"].content_hash();
+
+    // Second set with identical content: should be a no-op
+    project.set_file("test.ts".to_string(), source.clone());
+    let hash_2 = project.files["test.ts"].content_hash();
+
+    assert_eq!(hash_1, hash_2, "Content hash should be stable for identical source");
+
+    // Verify the file still works correctly after the skip
+    assert_eq!(project.files["test.ts"].source_text(), "export const x = 1;");
+}
+
+#[test]
+fn test_set_file_reparses_on_changed_content() {
+    let mut project = Project::new();
+
+    project.set_file("test.ts".to_string(), "export const x = 1;".to_string());
+    let hash_1 = project.files["test.ts"].content_hash();
+
+    // Different content should trigger re-parse
+    project.set_file("test.ts".to_string(), "export const x = 2;".to_string());
+    let hash_2 = project.files["test.ts"].content_hash();
+
+    assert_ne!(hash_1, hash_2, "Content hash should differ for different source");
+    assert_eq!(project.files["test.ts"].source_text(), "export const x = 2;");
+}
+
+#[test]
+fn test_content_hash_consistent_across_project_file_constructors() {
+    let source = "function hello() { return 42; }";
+
+    // Standalone constructor
+    let file1 = ProjectFile::new("a.ts".to_string(), source.to_string());
+    // Via project
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), source.to_string());
+
+    assert_eq!(
+        file1.content_hash(),
+        project.files["a.ts"].content_hash(),
+        "Content hash should be the same regardless of constructor path"
+    );
+}
+
+#[test]
+fn test_content_hash_updated_by_update_source() {
+    let mut file = ProjectFile::new("test.ts".to_string(), "let x = 1;".to_string());
+    let hash_before = file.content_hash();
+
+    file.update_source("let x = 2;".to_string());
+    let hash_after = file.content_hash();
+
+    assert_ne!(hash_before, hash_after, "Content hash should change after update_source");
+}

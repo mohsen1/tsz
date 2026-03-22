@@ -1,11 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use web_time::Duration;
 
 use globset::Glob;
 use regex::{Regex, RegexBuilder};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::code_actions::ImportCandidateKind;
 use crate::completions::{CompletionItem, Completions};
@@ -102,6 +103,22 @@ pub struct ProjectFile {
     /// Position-independent hash of the file's public API (exports, re-exports, augmentations).
     /// Used to avoid invalidating dependent files when only function bodies or comments change.
     pub(crate) export_signature: ExportSignature,
+    /// Content hash of the source text.
+    ///
+    /// Used to skip redundant re-parse and re-bind when `set_file` is called with
+    /// identical content (e.g., `didOpen` on an already-loaded file, or `didSave`
+    /// without changes). Computed via `FxHasher` for speed.
+    pub(crate) content_hash: u64,
+}
+
+/// Compute a fast content hash for source text.
+///
+/// Uses `FxHasher` for speed — this is not cryptographic, just a change-detection
+/// fingerprint. Collisions are extremely unlikely for source text of different content.
+fn hash_source_content(source: &str) -> u64 {
+    let mut hasher = FxHasher::default();
+    source.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl ProjectFile {
@@ -136,6 +153,7 @@ impl ProjectFile {
         strict: bool,
         type_interner: Arc<TypeInterner>,
     ) -> Self {
+        let content_hash = hash_source_content(&source_text);
         let mut parser = ParserState::new(file_name.clone(), source_text);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
@@ -159,6 +177,7 @@ impl ProjectFile {
             strict,
             diagnostics_dirty: false,
             export_signature,
+            content_hash,
         }
     }
 
@@ -209,6 +228,14 @@ impl ProjectFile {
         self.parser.get_source_text()
     }
 
+    /// Content hash of the source text.
+    ///
+    /// This is a fast (non-cryptographic) hash used to detect whether the source
+    /// has actually changed, enabling skip of redundant re-parse and re-bind.
+    pub const fn content_hash(&self) -> u64 {
+        self.content_hash
+    }
+
     /// Get the strict mode setting for type checking.
     pub const fn strict(&self) -> bool {
         self.strict
@@ -220,6 +247,7 @@ impl ProjectFile {
     }
 
     pub fn update_source(&mut self, source_text: String) {
+        self.content_hash = hash_source_content(&source_text);
         self.parser.reset(self.file_name.clone(), source_text);
         self.root = self.parser.parse_source_file();
 
@@ -356,6 +384,7 @@ impl ProjectFile {
         }
 
         let new_text = self.parser.get_source_text().to_string();
+        let new_content_hash = hash_source_content(&new_text);
         let line_map = LineMap::build(&new_text);
         let comments = tsz_common::comments::get_comment_ranges(&new_text);
 
@@ -400,6 +429,7 @@ impl ProjectFile {
         }
 
         self.line_map = line_map;
+        self.content_hash = new_content_hash;
         let arena = self.parser.get_arena();
         if !self.binder.bind_source_file_incremental(
             arena,
@@ -1542,7 +1572,20 @@ impl Project {
     }
 
     /// Add or replace a file, re-parsing and re-binding its contents.
+    ///
+    /// If the file already exists with identical content (same content hash),
+    /// the re-parse and re-bind are skipped entirely. This avoids redundant work
+    /// when the LSP receives `didOpen` for an already-loaded file, or `didSave`
+    /// without content changes.
     pub fn set_file(&mut self, file_name: String, source_text: String) {
+        // Fast path: skip re-parse if file exists with identical content.
+        let new_hash = hash_source_content(&source_text);
+        if let Some(existing) = self.files.get(&file_name) {
+            if existing.content_hash == new_hash {
+                return;
+            }
+        }
+
         let file = ProjectFile::with_shared_interner_and_def_store(
             file_name.clone(),
             source_text,
