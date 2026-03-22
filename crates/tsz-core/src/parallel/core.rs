@@ -1290,6 +1290,10 @@ pub struct BoundFile {
     /// Expando property assignments detected during binding
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     pub file_features: crate::binder::FileFeatures,
+    /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Contains only entries that originated in this file (post-remap SymbolIds).
+    /// This enables file-scoped identity without cloning the entire global map.
+    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
 }
 
 impl BoundFile {
@@ -1372,6 +1376,23 @@ impl BoundFile {
             size += k.capacity() + std::mem::size_of::<u64>();
             for s in v {
                 size += s.capacity() + std::mem::size_of::<u64>();
+            }
+        }
+
+        // semantic_defs (per-file)
+        size += self.semantic_defs.capacity()
+            * (std::mem::size_of::<SymbolId>()
+                + std::mem::size_of::<crate::binder::SemanticDefEntry>()
+                + 8);
+        for (_, entry) in &self.semantic_defs {
+            size += entry.name.capacity();
+            size += entry.enum_member_names.capacity() * 24; // String overhead
+            for m in &entry.enum_member_names {
+                size += m.capacity();
+            }
+            size += entry.heritage_names.capacity() * 24;
+            for h in &entry.heritage_names {
+                size += h.capacity();
             }
         }
 
@@ -2397,6 +2418,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first).
         // Skip lib-originated symbols — they were already propagated in Phase 1.6.
+        // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
+        let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
+            FxHashMap::default();
         for (old_sym_id, entry) in &result.semantic_defs {
             if result.lib_symbol_ids.contains(old_sym_id) {
                 continue;
@@ -2405,6 +2429,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Update file_id to use the global file index
                 let mut remapped_entry = entry.clone();
                 remapped_entry.file_id = file_idx as u32;
+                // Collect per-file entry (always insert — no cross-file merging here)
+                file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
                 // Only insert the first occurrence (declaration merging keeps first identity)
                 semantic_defs.entry(new_sym_id).or_insert(remapped_entry);
             }
@@ -2760,6 +2786,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             is_external_module: result.is_external_module,
             expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
             file_features: result.file_features,
+            semantic_defs: file_semantic_defs,
         });
     }
 
@@ -3300,7 +3327,16 @@ pub fn create_binder_from_bound_file(
 
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
-    binder.semantic_defs = program.semantic_defs.clone();
+
+    // Compose semantic_defs: start with the global map (cross-file + lib entries)
+    // then overlay the file's own entries. Per-file entries take precedence for
+    // symbols declared in this file, ensuring file-scoped identity is authoritative.
+    // This replaces the previous blind clone of the entire global map.
+    let mut composed_semantic_defs = program.semantic_defs.clone();
+    for (sym_id, entry) in &file.semantic_defs {
+        composed_semantic_defs.insert(*sym_id, entry.clone());
+    }
+    binder.semantic_defs = composed_semantic_defs;
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = crate::binder::ScopeId(0);
