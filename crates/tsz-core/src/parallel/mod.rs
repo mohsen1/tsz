@@ -4,8 +4,10 @@
 //! symbol merging, and type checking using Rayon.
 
 mod core;
+pub mod residency;
 pub mod skeleton;
 
-// Re-export everything from core for backward compatibility
+// Re-export everything from submodules for backward compatibility
 pub use self::core::*;
+pub use residency::*;
 pub use skeleton::*;
