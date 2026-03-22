@@ -5320,16 +5320,28 @@ fn test_touch_file_updates_last_accessed() {
 fn test_eviction_candidates_deprioritizes_dts_files() {
     let mut project = Project::new();
     // Create a .d.ts file and a .ts file of similar size
-    project.set_file("/types.d.ts".to_string(), "declare const x: number;".to_string());
-    project.set_file("/app.ts".to_string(), "declare const y: string;".to_string());
+    project.set_file(
+        "/types.d.ts".to_string(),
+        "declare const x: number;".to_string(),
+    );
+    project.set_file(
+        "/app.ts".to_string(),
+        "declare const y: string;".to_string(),
+    );
 
     let candidates = project.eviction_candidates(None);
     assert_eq!(candidates.len(), 2);
 
     // The .ts file should rank higher (better eviction candidate) than .d.ts
     // because .d.ts files are deprioritized with a 4x penalty
-    let ts_idx = candidates.iter().position(|c| c.file_name == "/app.ts").unwrap();
-    let dts_idx = candidates.iter().position(|c| c.file_name == "/types.d.ts").unwrap();
+    let ts_idx = candidates
+        .iter()
+        .position(|c| c.file_name == "/app.ts")
+        .unwrap();
+    let dts_idx = candidates
+        .iter()
+        .position(|c| c.file_name == "/types.d.ts")
+        .unwrap();
     assert!(
         ts_idx < dts_idx,
         "regular .ts file should rank as better eviction candidate than .d.ts"

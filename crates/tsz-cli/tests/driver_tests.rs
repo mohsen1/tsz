@@ -7842,8 +7842,14 @@ fn phase_timings_are_populated_after_compilation() {
 
     // All phase timings should be non-negative
     assert!(pt.io_read_ms >= 0.0, "io_read_ms should be non-negative");
-    assert!(pt.load_libs_ms >= 0.0, "load_libs_ms should be non-negative");
-    assert!(pt.parse_bind_ms >= 0.0, "parse_bind_ms should be non-negative");
+    assert!(
+        pt.load_libs_ms >= 0.0,
+        "load_libs_ms should be non-negative"
+    );
+    assert!(
+        pt.parse_bind_ms >= 0.0,
+        "parse_bind_ms should be non-negative"
+    );
     assert!(pt.check_ms >= 0.0, "check_ms should be non-negative");
     assert!(pt.emit_ms >= 0.0, "emit_ms should be non-negative");
     assert!(pt.total_ms > 0.0, "total_ms should be positive");
