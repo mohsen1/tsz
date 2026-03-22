@@ -1203,6 +1203,9 @@ impl ProjectEnv {
         // This moves identity creation to apply_to time (deterministic, early)
         // rather than on-demand in get_or_create_def_id's O(N) repair path.
         ctx.pre_populate_def_ids_from_all_binders();
+        // Resolve cross-batch heritage: user types extending lib types whose
+        // DefIds were registered in separate pre-population batches.
+        ctx.resolve_cross_batch_heritage();
         // Install the shared O(1) symbol→file index. Build it lazily on first use.
         if let Some(ref idx) = self.global_symbol_file_index {
             ctx.global_symbol_file_index = Some(Arc::clone(idx));
