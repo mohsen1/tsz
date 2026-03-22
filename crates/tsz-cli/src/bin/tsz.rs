@@ -1459,11 +1459,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         if let Some(ref ds) = result.def_store_stats {
             println!(
                 "Definitions:                   {} total ({} aliases, {} interfaces, {} classes, {} enums)",
-                ds.total_definitions,
-                ds.type_aliases,
-                ds.interfaces,
-                ds.classes,
-                ds.enums,
+                ds.total_definitions, ds.type_aliases, ds.interfaces, ds.classes, ds.enums,
             );
             println!(
                 "Def indices:                   type_to_def={}, symbol_def={}, body_to_alias={}, shape_to_def={}",

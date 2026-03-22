@@ -978,5 +978,8 @@ fn test_store_statistics_merge() {
     assert_eq!(merged.type_aliases, 2);
     assert_eq!(merged.interfaces, 1);
     // next_def_id should be max of both stores.
-    assert_eq!(merged.next_def_id, stats_a.next_def_id.max(stats_b.next_def_id));
+    assert_eq!(
+        merged.next_def_id,
+        stats_a.next_def_id.max(stats_b.next_def_id)
+    );
 }
