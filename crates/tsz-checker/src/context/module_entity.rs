@@ -224,11 +224,29 @@ impl<'a> CheckerContext<'a> {
                 candidate_symbols.push((binder, sym));
             } else if let Some(sym) = self.binder.get_symbol(export_equals_sym_id) {
                 candidate_symbols.push((self.binder, sym));
-            } else if let Some(all_binders) = self.all_binders.as_ref() {
-                for other in all_binders.iter() {
-                    if let Some(sym) = other.get_symbol(export_equals_sym_id) {
-                        candidate_symbols.push((other.as_ref(), sym));
-                        break;
+            } else {
+                // O(1) fast-path via cross_file_symbol_targets, then O(N) fallback
+                let mut found = false;
+                let file_idx = self
+                    .cross_file_symbol_targets
+                    .borrow()
+                    .get(&export_equals_sym_id)
+                    .copied();
+                if let Some(file_idx) = file_idx
+                    && let Some(target_binder) = self.get_binder_for_file(file_idx)
+                    && let Some(sym) = target_binder.get_symbol(export_equals_sym_id)
+                {
+                    candidate_symbols.push((target_binder, sym));
+                    found = true;
+                }
+                if !found {
+                    if let Some(all_binders) = self.all_binders.as_ref() {
+                        for other in all_binders.iter() {
+                            if let Some(sym) = other.get_symbol(export_equals_sym_id) {
+                                candidate_symbols.push((other.as_ref(), sym));
+                                break;
+                            }
+                        }
                     }
                 }
             }
