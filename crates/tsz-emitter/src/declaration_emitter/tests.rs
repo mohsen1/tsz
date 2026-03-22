@@ -9626,3 +9626,18 @@ fn test_this_type_in_type_alias() {
         "this in type literal: {output}"
     );
 }
+
+#[test]
+fn test_conditional_type_in_indexed_access() {
+    // Conditional type as object of indexed access needs parens
+    // Without: T extends U ? X : Y[K] -> parses [K] as indexing Y only
+    // With: (T extends U ? X : Y)[K] -> indexes the whole conditional
+    let output = emit_dts(
+        "export type X<T, K extends string> = (T extends string ? { a: number } : { b: string })[K];",
+    );
+    println!("conditional in indexed access:\n{output}");
+    assert!(
+        output.contains("(T extends string ?"),
+        "conditional in indexed access needs parens: {output}"
+    );
+}
