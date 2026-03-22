@@ -1359,6 +1359,71 @@ impl<'a> Printer<'a> {
                 self.emit_parenthesized_type(node);
             }
 
+            // Conditional type: T extends U ? X : Y
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                self.emit_conditional_type(node);
+            }
+
+            // Indexed access type: T[K]
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                self.emit_indexed_access_type(node);
+            }
+
+            // Infer type: infer U
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                self.emit_infer_type(node);
+            }
+
+            // Literal type wrapper (string/number/boolean/bigint literals in type position)
+            k if k == syntax_kind_ext::LITERAL_TYPE => {
+                self.emit_literal_type(node);
+            }
+
+            // Mapped type: { [P in keyof T]: T[P] }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                self.emit_mapped_type(node);
+            }
+
+            // Named tuple member: [name: Type]
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                self.emit_named_tuple_member(node);
+            }
+
+            // Optional type: T? (in tuple elements)
+            k if k == syntax_kind_ext::OPTIONAL_TYPE => {
+                self.emit_optional_type(node);
+            }
+
+            // Rest type: ...T (in tuple elements)
+            k if k == syntax_kind_ext::REST_TYPE => {
+                self.emit_rest_type(node);
+            }
+
+            // Template literal type: `prefix${T}suffix`
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                self.emit_template_literal_type(node);
+            }
+
+            // this type in type position
+            k if k == syntax_kind_ext::THIS_TYPE => {
+                self.write("this");
+            }
+
+            // Type operator: keyof T, readonly T, unique symbol
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                self.emit_type_operator(node);
+            }
+
+            // Type predicate: x is T, asserts x is T
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                self.emit_type_predicate(node);
+            }
+
+            // Type query: typeof x
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                self.emit_type_query(node);
+            }
+
             // Empty statement
             k if k == syntax_kind_ext::EMPTY_STATEMENT => {
                 self.write_semicolon();
