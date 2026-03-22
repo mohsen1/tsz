@@ -1922,6 +1922,9 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] All diagnostics through error_reporter            -> test_no_push_diagnostic_outside_error_reporter (existing)
 // - [x] query_boundaries coverage ratio tracking          -> test_query_boundaries_coverage_ratio
 //
+// SECTION 13: Emitter Contracts
+// - [x] error_reporter is pure formatting layer           -> test_error_reporter_does_not_perform_type_construction
+//
 // SECTION 15: Dependency Policy
 // - [x] Dependency direction enforcement                  -> tests in Prompt 4.2 below
 // - [x] No checker access to solver internals             -> test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning (existing)
@@ -1930,6 +1933,10 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] TS2322 paths through query_boundaries             -> test_assignment_and_binding_default_assignability_use_central_gateway_helpers (existing)
 // - [x] No direct CompatChecker for TS2322                -> call boundary guard (existing)
 // - [x] Centralized assignability gateways                -> multiple existing tests
+//
+// RATCHET GUARDS (debt tracking):
+// - [x] TEMPORARILY_ALLOWED bypass list capped at 45      -> test_temporarily_allowed_bypass_list_does_not_grow
+// - [x] Direct interner type construction capped at 15    -> test_direct_interner_type_construction_ceiling
 //
 
 // =============================================================================
@@ -3172,5 +3179,192 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
     assert!(
         checker.ctx.definition_store.contains(def_id),
         "Checker should see definitions from the shared store"
+    );
+}
+
+// =============================================================================
+// Ratchet guards: prevent architecture debt from growing
+// =============================================================================
+
+/// Guard that the TEMPORARILY_ALLOWED bypass list in the solver-imports test
+/// does not silently grow. When someone wraps a solver API in query_boundaries,
+/// they should remove it from TEMPORARILY_ALLOWED, shrinking the count.
+/// Adding new bypasses requires updating this ceiling (which reviewers will see).
+///
+/// Current ceiling: 45 items. This number must only decrease over time.
+#[test]
+fn test_temporarily_allowed_bypass_list_does_not_grow() {
+    // The authoritative list lives in test_solver_imports_go_through_query_boundaries.
+    // We cannot inspect it at runtime, so we count the items in source.
+    let src = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/tests/architecture_contract_tests.rs"),
+    )
+    .expect("failed to read architecture_contract_tests.rs");
+
+    // Find the TEMPORARILY_ALLOWED block and count non-comment, non-empty entries
+    let mut in_block = false;
+    let mut count = 0usize;
+    for line in src.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("const TEMPORARILY_ALLOWED") {
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            if trimmed == "];" {
+                break;
+            }
+            // Count lines that are quoted string entries (start with `"`)
+            if trimmed.starts_with('"') {
+                count += 1;
+            }
+        }
+    }
+
+    const CEILING: usize = 45;
+    assert!(
+        count <= CEILING,
+        "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
+         Do not add new solver import bypasses — create a query_boundaries wrapper instead. \
+         If a wrapper was created, remove the old entry and lower CEILING in this test."
+    );
+}
+
+/// Guard that direct type-construction calls (`interner.union()`, `interner.intersection()`,
+/// `interner.object()`, `interner.array()`, `interner.tuple()`, `interner.function()`)
+/// in checker source files outside `query_boundaries/` and `tests/` do not increase.
+///
+/// These calls bypass the query_boundaries layer and should be migrated to use
+/// `flow_analysis::union_types()` or equivalent boundary helpers.
+///
+/// Current ceiling: 15 occurrences. This number must only decrease over time.
+#[test]
+fn test_direct_interner_type_construction_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    const CONSTRUCTION_METHODS: &[&str] = &[
+        "interner.union(",
+        "interner.intersection(",
+        "interner.object(",
+        "interner.array(",
+        "interner.tuple(",
+        "interner.function(",
+    ];
+
+    let mut violations = Vec::new();
+    let mut total_count = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Skip excluded directories
+        if rel.starts_with("tests/") || rel.starts_with("query_boundaries/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for method in CONSTRUCTION_METHODS {
+                if line.contains(method) {
+                    violations.push(format!("  {}:{}", rel, line_num + 1));
+                    total_count += 1;
+                }
+            }
+        }
+    }
+
+    // Ceiling: current count of direct interner type-construction calls.
+    // This number must only shrink as calls are migrated to query_boundaries.
+    const CEILING: usize = 15;
+    assert!(
+        total_count <= CEILING,
+        "Direct interner type-construction calls outside query_boundaries have increased \
+         to {total_count} (ceiling: {CEILING}). Migrate new calls to use query_boundaries \
+         helpers (e.g., flow_analysis::union_types). Current occurrences:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Guard that `error_reporter/` modules remain a pure diagnostic formatting layer.
+/// They must not perform type construction (no `interner.union()`, `interner.object()`, etc.)
+/// or type evaluation (no `TypeEvaluator::new()`, `TypeInstantiator::new()`).
+///
+/// Error reporters should only read type data and format diagnostics.
+#[test]
+fn test_error_reporter_does_not_perform_type_construction() {
+    let error_reporter_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/error_reporter");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&error_reporter_dir, &mut files);
+
+    const FORBIDDEN_PATTERNS: &[(&[&str], &str)] = &[
+        (&[
+            "interner.union(",
+            "interner.intersection(",
+            "interner.object(",
+            "interner.array(",
+            "interner.tuple(",
+            "interner.function(",
+        ], "direct type construction via interner"),
+        (&[
+            "TypeEvaluator::new(",
+        ], "type evaluation (should be in checker/query_boundaries)"),
+    ];
+
+    let mut violations = Vec::new();
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for (patterns, description) in FORBIDDEN_PATTERNS {
+                for pattern in *patterns {
+                    if line.contains(pattern) {
+                        violations.push(format!(
+                            "  {}:{} — {}",
+                            rel,
+                            line_num + 1,
+                            description,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "error_reporter modules must remain a pure formatting layer. \
+         The following files contain forbidden patterns:\n{}",
+        violations.join("\n")
     );
 }
