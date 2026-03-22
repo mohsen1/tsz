@@ -814,6 +814,12 @@ impl<'a> CheckerState<'a> {
                                 // diagnostics that need to be re-evaluated.
                                 || diag.code
                                     == crate::diagnostics::diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                // TS2339: "Property does not exist on type" is a structural
+                                // error (the object type and property name don't depend on
+                                // contextual typing). Preserve it so namespace/module
+                                // property-access errors survive the pre-contextual reset.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
                                 || diag.start < init_start
                                 || diag.start >= init_end
                         });
