@@ -413,6 +413,17 @@ pub struct BinderState {
     /// This is the binder's contribution to stable semantic identity (Phase 1).
     /// The checker converts these entries to solver `DefId`s during construction.
     pub semantic_defs: FxHashMap<SymbolId, SemanticDefEntry>,
+
+    /// Stable file index assigned by the driver (LSP `Project` or CLI).
+    ///
+    /// Defaults to `u32::MAX` (unassigned). When set before `bind_source_file`,
+    /// all symbols created during binding will have their `decl_file_idx` stamped
+    /// with this value, and all `SemanticDefEntry.file_id` fields will use it.
+    ///
+    /// This enables per-file invalidation in the `DefinitionStore`: when a file
+    /// is removed or replaced, the driver calls `invalidate_file(file_idx)` to
+    /// clean up all definitions registered under that index.
+    pub file_idx: u32,
 }
 
 /// Kind of semantic definition captured at bind time.

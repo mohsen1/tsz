@@ -730,6 +730,13 @@ impl DefinitionStore {
             .unwrap_or_default()
     }
 
+    /// Check whether the store has any definitions registered for the given file.
+    ///
+    /// O(1) lookup via the `file_to_defs` index.
+    pub fn has_file(&self, file_id: u32) -> bool {
+        self.file_to_defs.contains_key(&file_id)
+    }
+
     /// Invalidate all definitions originating from the given file.
     ///
     /// Removes each `DefId` from the main definition store and all reverse

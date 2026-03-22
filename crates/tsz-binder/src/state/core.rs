@@ -100,6 +100,7 @@ impl BinderState {
             alias_partners: FxHashMap::default(),
             semantic_defs: FxHashMap::default(),
             file_import_sources: Vec::new(),
+            file_idx: u32::MAX,
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -167,6 +168,21 @@ impl BinderState {
         self.return_targets.clear();
         self.semantic_defs.clear();
         self.file_import_sources.clear();
+        // Note: file_idx is NOT reset here. It is set by the driver (LSP/CLI)
+        // and should persist across re-binds of the same file.
+    }
+
+    /// Set the stable file index for per-file identity tracking.
+    ///
+    /// When set before `bind_source_file`, all symbols and `SemanticDefEntry`
+    /// records created during binding will use this index as their `file_id`.
+    /// This enables `DefinitionStore::invalidate_file(file_idx)` to clean up
+    /// stale definitions when a file is removed or replaced.
+    ///
+    /// Defaults to `u32::MAX` (unassigned) for backward compatibility with
+    /// single-file and CLI modes that don't need per-file invalidation.
+    pub fn set_file_idx(&mut self, file_idx: u32) {
+        self.file_idx = file_idx;
     }
 
     /// Set the current file name for debugging purposes.
@@ -301,6 +317,7 @@ impl BinderState {
             alias_partners: FxHashMap::default(),
             semantic_defs: FxHashMap::default(),
             file_import_sources: Vec::new(),
+            file_idx: u32::MAX,
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -423,6 +440,7 @@ impl BinderState {
             alias_partners,
             semantic_defs: FxHashMap::default(),
             file_import_sources: Vec::new(),
+            file_idx: u32::MAX,
         };
         if let Some(root_scope) = binder.scopes.first() {
             binder.current_scope = root_scope.table.clone();
@@ -808,6 +826,36 @@ impl BinderState {
                 if !self.file_locals.has(name) {
                     self.file_locals.set(name.clone(), *sym_id);
                 }
+            }
+        }
+
+        // Stamp all non-lib symbols with the driver-assigned file_idx.
+        // This enables per-file invalidation in the DefinitionStore.
+        if self.file_idx != u32::MAX {
+            self.stamp_file_idx();
+        }
+    }
+
+    /// Stamp all symbols and semantic_defs with `self.file_idx`.
+    ///
+    /// Only stamps symbols whose `decl_file_idx` is still `u32::MAX` (i.e.,
+    /// not already assigned by a multi-file merge). Lib symbols (tracked in
+    /// `lib_symbol_ids`) are skipped to avoid overwriting their original
+    /// file provenance.
+    fn stamp_file_idx(&mut self) {
+        let idx = self.file_idx;
+
+        // Stamp symbols
+        for sym in self.symbols.iter_mut() {
+            if sym.decl_file_idx == u32::MAX && !self.lib_symbol_ids.contains(&sym.id) {
+                sym.decl_file_idx = idx;
+            }
+        }
+
+        // Stamp semantic_defs
+        for entry in self.semantic_defs.values_mut() {
+            if entry.file_id == u32::MAX {
+                entry.file_id = idx;
             }
         }
     }
@@ -1389,6 +1437,11 @@ impl BinderState {
             if !self.file_locals.has(name) {
                 self.file_locals.set(name.clone(), *sym_id);
             }
+        }
+
+        // Stamp any newly created symbols with the driver-assigned file_idx.
+        if self.file_idx != u32::MAX {
+            self.stamp_file_idx();
         }
 
         true
