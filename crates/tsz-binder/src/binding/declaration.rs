@@ -72,6 +72,7 @@ impl BinderState {
                     crate::state::SemanticDefKind::Variable,
                     name,
                     idx,
+                    0,
                 );
 
                 // Hoist global augmentation variables to file_locals for cross-file
@@ -104,6 +105,7 @@ impl BinderState {
                             crate::state::SemanticDefKind::Variable,
                             name,
                             ident_idx,
+                            0,
                         );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
@@ -154,11 +156,16 @@ impl BinderState {
                 }
 
                 let sym_id = self.declare_symbol(name, symbol_flags::FUNCTION, idx, is_exported);
+                let tp_count = func
+                    .type_parameters
+                    .as_ref()
+                    .map_or(0, |tp| tp.nodes.len() as u16);
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::Function,
                     name,
                     idx,
+                    tp_count,
                 );
             }
 
@@ -586,7 +593,17 @@ impl BinderState {
                 }
 
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
-                self.record_semantic_def(sym_id, crate::state::SemanticDefKind::Class, name, idx);
+                let tp_count = class
+                    .type_parameters
+                    .as_ref()
+                    .map_or(0, |tp| tp.nodes.len() as u16);
+                self.record_semantic_def(
+                    sym_id,
+                    crate::state::SemanticDefKind::Class,
+                    name,
+                    idx,
+                    tp_count,
+                );
             }
 
             // Enter class scope for members
@@ -832,7 +849,17 @@ impl BinderState {
             }
 
             let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
-            self.record_semantic_def(sym_id, crate::state::SemanticDefKind::Interface, name, idx);
+            let tp_count = iface
+                .type_parameters
+                .as_ref()
+                .map_or(0, |tp| tp.nodes.len() as u16);
+            self.record_semantic_def(
+                sym_id,
+                crate::state::SemanticDefKind::Interface,
+                name,
+                idx,
+                tp_count,
+            );
 
             // Track symbols declared inside module augmentation blocks so the checker
             // can redirect self-referential type lookups (e.g., `self: Foo` inside
@@ -931,19 +958,29 @@ impl BinderState {
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
                 self.alias_partners.insert(sym_id, alias_id);
+                let tp_count = alias
+                    .type_parameters
+                    .as_ref()
+                    .map_or(0, |tp| tp.nodes.len() as u16);
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
+                    tp_count,
                 );
             } else {
                 let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
+                let tp_count = alias
+                    .type_parameters
+                    .as_ref()
+                    .map_or(0, |tp| tp.nodes.len() as u16);
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
+                    tp_count,
                 );
             }
 
@@ -978,7 +1015,13 @@ impl BinderState {
             };
 
             let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
-            self.record_semantic_def(enum_sym_id, crate::state::SemanticDefKind::Enum, name, idx);
+            self.record_semantic_def(
+                enum_sym_id,
+                crate::state::SemanticDefKind::Enum,
+                name,
+                idx,
+                0,
+            );
 
             // Get existing exports (for namespace merging)
             let mut exports = SymbolTable::new();
@@ -2306,6 +2349,7 @@ impl BinderState {
         kind: crate::state::SemanticDefKind,
         name: &str,
         declaration: NodeIndex,
+        type_param_count: u16,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2338,6 +2382,7 @@ impl BinderState {
                     .get(sym_id)
                     .map_or(u32::MAX, |s| s.decl_file_idx),
                 span_start: declaration.0,
+                type_param_count,
             },
         );
     }
