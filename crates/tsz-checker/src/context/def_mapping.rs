@@ -707,19 +707,22 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
-            // Pre-populate enum members from binder-collected member names.
-            // At pre-population time we don't have computed values, so use
-            // `EnumMemberValue::Computed` as a placeholder — the checker walk
-            // will fill in actual values later.
-            let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
+            // Propagate enum member names from binder-captured identity.
+            // The binder records member names at bind time so we can create
+            // stub enum_members here, avoiding the checker needing to walk
+            // enum member declarations on demand.
+            let enum_members = if !entry.enum_member_names.is_empty() {
                 entry
                     .enum_member_names
                     .iter()
-                    .map(|member_name| {
-                        let atom = self.types.intern_string(member_name);
+                    .map(|name| {
+                        let atom = self.types.intern_string(name);
                         (atom, tsz_solver::def::EnumMemberValue::Computed)
                     })
-                    .collect();
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             let info = DefinitionInfo {
                 kind,
