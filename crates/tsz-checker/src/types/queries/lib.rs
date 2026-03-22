@@ -4,7 +4,7 @@
 //! Type-only symbol detection has been extracted to
 //! `queries/type_only.rs`.
 
-use super::lib_resolution::resolve_augmentation_node;
+use super::lib_resolution::{resolve_augmentation_node, resolve_lib_node_in_lib_contexts};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -14,7 +14,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeParamInfo;
-use tsz_solver::is_compiler_managed_type;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
@@ -27,7 +26,6 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::TypeSubstitution;
-        use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::TypeInstantiator;
 
         let factory = self.ctx.types.factory();
@@ -60,33 +58,16 @@ impl<'a> CheckerState<'a> {
                     None,
                 );
 
-                // Create resolver that can look up names across all lib contexts and arenas
+                // Delegates to `resolve_lib_node_in_lib_contexts` (the stable identity
+                // path for per-lib-context lowering) instead of maintaining an inline
+                // resolver closure with duplicated logic.
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    // Check specific arenas first
-                    for (_, arena) in &decls_with_arenas {
-                        if let Some(ident_name) = arena.get_identifier_text(node_idx) {
-                            if is_compiler_managed_type(ident_name) {
-                                return None;
-                            }
-                            for ctx in lib_contexts {
-                                if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                                    return Some(found_sym.0);
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    // Fallback to default arena
-                    let ident_name = fallback_arena.get_identifier_text(node_idx)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    for ctx in lib_contexts {
-                        if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                            return Some(found_sym.0);
-                        }
-                    }
-                    None
+                    resolve_lib_node_in_lib_contexts(
+                        node_idx,
+                        &decls_with_arenas,
+                        fallback_arena,
+                        lib_contexts,
+                    )
                 };
 
                 // Uses get_lib_def_id: prefers pre-populated DefIds, falls
