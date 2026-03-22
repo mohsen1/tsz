@@ -3909,7 +3909,6 @@ fn workspace_symbols_case_insensitive() {
 }
 
 #[test]
-#[ignore = "requires multi-file workspace symbol aggregation"]
 fn workspace_symbols_multi_file() {
     let t = FourslashTest::multi_file(&[
         ("a.ts", "export function helperA() {}"),
@@ -3925,7 +3924,6 @@ fn workspace_symbols_multi_file() {
 }
 
 #[test]
-#[ignore = "requires workspace symbol search for class declarations"]
 fn workspace_symbols_returns_classes() {
     let t = FourslashTest::new(
         "
