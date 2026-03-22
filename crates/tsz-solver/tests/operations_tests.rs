@@ -4923,7 +4923,6 @@ fn test_infer_generic_required_property_missing_argument() {
 }
 
 #[test]
-#[ignore = "merge behavior change"]
 fn test_infer_generic_readonly_property_mismatch() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -4962,7 +4961,6 @@ fn test_infer_generic_readonly_property_mismatch() {
 }
 
 #[test]
-#[ignore = "merge behavior change"]
 fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
