@@ -707,6 +707,23 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
+            // Propagate enum member names from the binder's SemanticDefEntry.
+            // At pre-population time we only know the names (not computed values),
+            // so we use EnumMemberValue::Computed as a placeholder. The checker
+            // walk will fill in the real values later.
+            let enum_members = if !entry.enum_member_names.is_empty() {
+                entry
+                    .enum_member_names
+                    .iter()
+                    .map(|n| {
+                        let atom = self.types.intern_string(n);
+                        (atom, tsz_solver::def::EnumMemberValue::Computed)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
             let info = DefinitionInfo {
                 kind,
                 name,
@@ -716,7 +733,7 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
-                enum_members: Vec::new(),
+                enum_members,
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),

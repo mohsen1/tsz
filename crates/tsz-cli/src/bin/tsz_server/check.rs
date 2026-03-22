@@ -160,20 +160,8 @@ impl Server {
             all_binders,
             skeleton_declared_modules,
             skeleton_expando_index,
-            symbol_file_targets: Arc::new(Vec::new()),
-            global_file_locals_index: None,
-            global_module_exports_index: None,
-            global_module_augmentations_index: None,
-            global_augmentation_targets_index: None,
-            global_module_binder_index: None,
-            global_arena_index: None,
             resolved_module_paths: Arc::new(resolved_module_paths),
-            resolved_module_errors: Arc::new(FxHashMap::default()),
-            is_external_module_by_file: Arc::new(FxHashMap::default()),
-            file_is_esm_map: Arc::new(FxHashMap::default()),
-            typescript_dom_replacement_globals: (false, false, false),
-            has_deprecation_diagnostics: false,
-            last_skeleton_fingerprint: None,
+            ..Default::default()
         };
         project_env.build_global_indices();
 
@@ -509,22 +497,8 @@ impl Server {
             lib_contexts: all_contexts,
             all_arenas,
             all_binders,
-            skeleton_declared_modules: None,
-            skeleton_expando_index: None,
-            symbol_file_targets: Arc::new(Vec::new()),
-            global_file_locals_index: None,
-            global_module_exports_index: None,
-            global_module_augmentations_index: None,
-            global_augmentation_targets_index: None,
-            global_module_binder_index: None,
-            global_arena_index: None,
             resolved_module_paths: Arc::new(resolved_module_paths),
-            resolved_module_errors: Arc::new(FxHashMap::default()),
-            is_external_module_by_file: Arc::new(FxHashMap::default()),
-            file_is_esm_map: Arc::new(FxHashMap::default()),
-            typescript_dom_replacement_globals: (false, false, false),
-            has_deprecation_diagnostics: false,
-            last_skeleton_fingerprint: None,
+            ..Default::default()
         };
         project_env.build_global_indices();
 
