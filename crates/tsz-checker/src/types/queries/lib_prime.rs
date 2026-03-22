@@ -10,11 +10,11 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
             return;
         };
-        // Lib symbols are pre-populated at checker construction
-        // (pre_populate_def_ids_from_lib_binders); no on-demand creation needed.
-        let Some(def_id) = self.ctx.get_existing_def_id(sym_id) else {
-            return;
-        };
+        // Use the stable `get_lib_def_id` helper: prefers pre-populated DefIds
+        // and falls back to on-demand creation for symbols that semantic_defs
+        // missed. This avoids silently skipping type param priming when
+        // pre-population has gaps.
+        let def_id = self.ctx.get_lib_def_id(sym_id);
         if self.ctx.get_def_type_params(def_id).is_some() {
             return;
         }
