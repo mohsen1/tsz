@@ -808,6 +808,32 @@ impl<'a> CheckerState<'a> {
             mapped_id
         };
 
+        // Detect homomorphic source early: needed both for the solver retry
+        // decision and for property expansion below.
+        let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
+        let is_homomorphic = is_homomorphic_source.is_some();
+
+        // For non-homomorphic mapped types with a resolved constraint, retry the
+        // solver's evaluator. The pre-resolved template (ensure_relation_input_ready
+        // above) and resolved constraint should give the solver enough to expand
+        // the mapped type directly, eliminating checker-local property expansion.
+        //
+        // Skip for homomorphic types: their templates (`T[K]`, `Box<T[K]>`) need
+        // the checker's `resolve_property_access_with_env` for deeper IndexAccess
+        // resolution than the solver provides.
+        if resolved_mapped_id != mapped_id && !is_homomorphic {
+            let resolved_mapped = self.ctx.types.mapped_type(resolved_mapped_id);
+            let resolved_type_id = self.ctx.types.mapped(*resolved_mapped);
+            let evaluated = self.evaluate_type_with_env(resolved_type_id);
+            if evaluated != resolved_type_id {
+                return evaluated;
+            }
+        }
+
+        // Fallback: checker-local expansion when the solver still can't evaluate.
+        // This handles homomorphic mapped types and deferred types with constraints
+        // the solver can't resolve even with the CheckerContext resolver.
+
         // Prefer the shared finite-key collector once the constraint has been
         // resolved. This keeps mapped expansion aligned with property access and
         // exact `keyof` key-space semantics.
@@ -822,12 +848,6 @@ impl<'a> CheckerState<'a> {
             // Can't evaluate - return original
             return type_id;
         }
-
-        // Detect homomorphic source and collect source property info via solver helpers.
-        // This centralizes both the homomorphic detection and property collection
-        // behind the type-environment boundary instead of inline checker logic.
-        let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
-        let is_homomorphic = is_homomorphic_source.is_some();
 
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
             if let Some(source) = is_homomorphic_source {

@@ -181,7 +181,7 @@ impl BinderState {
     ///
     /// Defaults to `u32::MAX` (unassigned) for backward compatibility with
     /// single-file and CLI modes that don't need per-file invalidation.
-    pub fn set_file_idx(&mut self, file_idx: u32) {
+    pub const fn set_file_idx(&mut self, file_idx: u32) {
         self.file_idx = file_idx;
     }
 
@@ -836,7 +836,7 @@ impl BinderState {
         }
     }
 
-    /// Stamp all symbols and semantic_defs with `self.file_idx`.
+    /// Stamp all symbols and `semantic_defs` with `self.file_idx`.
     ///
     /// Only stamps symbols whose `decl_file_idx` is still `u32::MAX` (i.e.,
     /// not already assigned by a multi-file merge). Lib symbols (tracked in
