@@ -472,8 +472,8 @@ impl BindResult {
         // file_name
         size += self.file_name.capacity();
 
-        // arena (NodeArena behind Arc — count the Arc overhead, not the shared data)
-        size += std::mem::size_of::<NodeArena>();
+        // arena (NodeArena behind Arc — count Arc overhead + heap data pools)
+        size += self.arena.estimated_size_bytes();
 
         // symbols (SymbolArena: Vec<Symbol> + name_index)
         size += self.symbols.len() * std::mem::size_of::<crate::binder::Symbol>();
@@ -1303,8 +1303,10 @@ impl BoundFile {
         // file_name
         size += self.file_name.capacity();
 
-        // arena (Arc overhead only — shared data not double-counted)
-        size += std::mem::size_of::<NodeArena>();
+        // arena (Arc — count heap data pools; shared data may appear in
+        // multiple BoundFiles but unique-arena dedup in residency stats
+        // handles cross-file overlap at a higher level)
+        size += self.arena.estimated_size_bytes();
 
         // node_symbols
         size += self.node_symbols.capacity()
