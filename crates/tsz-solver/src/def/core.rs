@@ -734,16 +734,6 @@ impl DefinitionStore {
             entry.type_params = params;
         }
     }
-            if !implements.is_empty() {
-                entry.implements = implements;
-            }
-        }
-    }
-
-    /// Update the instance shape for a type definition.
-    ///
-    /// This is used by checker code when a concrete object-like shape is computed
-    /// for an interface/class definition and should be recorded for diagnostics.
     pub fn set_instance_shape(&self, id: DefId, shape: Arc<ObjectShape>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             let hash = Self::hash_shape(&shape);
