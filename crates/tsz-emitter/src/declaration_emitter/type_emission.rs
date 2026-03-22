@@ -122,6 +122,7 @@ impl<'a> DeclarationEmitter<'a> {
                         let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
                         });
                         if needs_parens {
                             self.write("(");
@@ -143,13 +144,15 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" & ");
                         }
                         first = false;
-                        // Union types inside an intersection need parentheses
+                        // Union and conditional types inside an intersection need parentheses
                         // to preserve operator precedence:
                         // `(A | B) & C` is different from `A | B & C`.
+                        // `(A extends B ? C : D) & E` is different from `A extends B ? C : D & E`.
                         let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || n.kind == syntax_kind_ext::UNION_TYPE
+                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
                         });
                         if needs_parens {
                             self.write("(");
@@ -368,6 +371,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_node(type_idx);
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(type_node) {
+                    self.write(&lit.text);
+                }
+            }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
                     self.write(&lit.text);
                 }

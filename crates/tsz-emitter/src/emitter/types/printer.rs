@@ -1575,8 +1575,12 @@ impl<'a> TypePrinter<'a> {
                 continue;
             }
             let s = self.composition_member_text(type_id);
-            // Parenthesize function/constructor types in union position
-            if self.type_needs_parentheses_in_composition(type_id) {
+            // Parenthesize function/constructor types and conditional types in union position.
+            // Conditional types need parens because `extends` binds more tightly than `|`:
+            // `A | B extends C ? D : E` parses as `(A | B) extends C ? D : E`.
+            if self.type_needs_parentheses_in_composition(type_id)
+                || visitor::conditional_type_id(self.interner, type_id).is_some()
+            {
                 parts.push(format!("({s})"));
             } else {
                 parts.push(s);
@@ -1601,11 +1605,14 @@ impl<'a> TypePrinter<'a> {
         let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
             let s = self.composition_member_text(type_id);
-            // Parenthesize function/constructor types AND union types in intersection position.
+            // Parenthesize function/constructor types, union types, and conditional types
+            // in intersection position.
             // Union types need parens because `&` binds tighter than `|`:
             // `(A | B) & C` is different from `A | B & C`.
+            // Conditional types need parens for the same precedence reason.
             let needs_parens = self.type_needs_parentheses_in_composition(type_id)
-                || visitor::union_list_id(self.interner, type_id).is_some();
+                || visitor::union_list_id(self.interner, type_id).is_some()
+                || visitor::conditional_type_id(self.interner, type_id).is_some();
             if needs_parens {
                 members.push((self.intersection_member_priority(type_id), format!("({s})")));
             } else {
