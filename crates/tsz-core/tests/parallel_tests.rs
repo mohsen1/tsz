@@ -3900,3 +3900,69 @@ fn test_skeleton_index_estimated_size_grows_with_content() {
         small_size
     );
 }
+
+#[test]
+fn test_bind_result_estimated_size_bytes_is_nonzero() {
+    let result = parse_and_bind_single("a.ts".to_string(), "export const a = 1;".to_string());
+    let size = result.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "estimated_size_bytes should be nonzero for any bind result"
+    );
+    // Must be at least the struct size itself
+    assert!(
+        size >= std::mem::size_of::<BindResult>(),
+        "estimated size ({}) should be >= struct size ({})",
+        size,
+        std::mem::size_of::<BindResult>()
+    );
+}
+
+#[test]
+fn test_bind_result_estimated_size_grows_with_content() {
+    let small = parse_and_bind_single("s.ts".to_string(), "const x = 1;".to_string());
+    let small_size = small.estimated_size_bytes();
+
+    let large_source = (0..50)
+        .map(|i| format!("export function fn{i}(a: number, b: string): boolean {{ return true; }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let large = parse_and_bind_single("l.ts".to_string(), large_source);
+    let large_size = large.estimated_size_bytes();
+
+    assert!(
+        large_size > small_size,
+        "larger file ({} bytes) should have bigger estimate than small file ({} bytes)",
+        large_size,
+        small_size
+    );
+}
+
+#[test]
+fn test_bind_result_estimated_size_accounts_for_flow_nodes() {
+    // Code with control flow creates flow nodes
+    let source = r#"
+        function f(x: number) {
+            if (x > 0) {
+                return x;
+            } else if (x < 0) {
+                return -x;
+            } else {
+                return 0;
+            }
+        }
+    "#;
+    let result = parse_and_bind_single("flow.ts".to_string(), source.to_string());
+    let size = result.estimated_size_bytes();
+
+    // Simple file without control flow
+    let simple = parse_and_bind_single("simple.ts".to_string(), "const x = 1;".to_string());
+    let simple_size = simple.estimated_size_bytes();
+
+    assert!(
+        size > simple_size,
+        "file with control flow ({} bytes) should be larger than simple file ({} bytes)",
+        size,
+        simple_size
+    );
+}
