@@ -9289,11 +9289,11 @@ var x = 2;
     );
 }
 
-/// When `var` appears before `let` for the same name, tsc emits TS2451
-/// ("Cannot redeclare block-scoped variable") since `let` is block-scoped.
-/// tsc uses TS2451 whenever ANY declaration in the conflict is block-scoped.
+/// When `var` appears before `let` for the same name, tsc emits TS2300
+/// ("Duplicate identifier") because the first declaration is non-block-scoped.
+/// When `let` appears before `var`, tsc emits TS2451 instead.
 #[test]
-fn test_ts2451_var_before_let_emits_block_scoped_redeclaration() {
+fn test_ts2300_var_before_let_emits_duplicate_identifier() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 var x = 1;
@@ -9307,11 +9307,10 @@ let x = 2;
         .filter(|(code, _)| *code == 2451 || *code == 2300)
         .map(|(code, _)| *code)
         .collect();
-    // tsc uses TS2451 whenever any declaration in the conflict is block-scoped,
-    // regardless of declaration order.
+    // tsc uses TS2300 when the first declaration is non-block-scoped (var).
     assert!(
-        codes.iter().all(|&c| c == 2451),
-        "Expected all TS2451 (var + let conflict), got codes: {codes:?}"
+        codes.iter().all(|&c| c == 2300),
+        "Expected all TS2300 (var-first + let conflict), got codes: {codes:?}"
     );
     assert!(
         codes.len() == 2,
