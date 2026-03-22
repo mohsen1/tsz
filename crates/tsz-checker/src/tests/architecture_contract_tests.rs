@@ -3488,7 +3488,12 @@ fn test_cli_must_not_import_checker_internals() {
             }
             for &forbidden in FORBIDDEN_IMPORTS {
                 if line.contains(forbidden) {
-                    violations.push(format!("  {}:{} — imports {}", rel, line_num + 1, forbidden));
+                    violations.push(format!(
+                        "  {}:{} — imports {}",
+                        rel,
+                        line_num + 1,
+                        forbidden
+                    ));
                 }
             }
         }
