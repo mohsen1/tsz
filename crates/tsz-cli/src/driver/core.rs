@@ -100,6 +100,8 @@ pub struct CompilationResult {
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
+    /// Merged-program residency counters (populated for `--extendedDiagnostics`).
+    pub residency_stats: Option<tsz::parallel::MergedProgramResidencyStats>,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -797,6 +799,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            residency_stats: None,
         });
     }
 
@@ -828,6 +831,7 @@ fn compile_inner(
                     interned_types_count: 0,
                     query_cache_stats: None,
                     def_store_stats: None,
+                    residency_stats: None,
                 });
             }
             return Err(e);
@@ -913,6 +917,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            residency_stats: None,
         });
     }
 
@@ -982,6 +987,7 @@ fn compile_inner(
             interned_types_count: 0,
             query_cache_stats: None,
             def_store_stats: None,
+            residency_stats: None,
         });
     }
 
@@ -1413,6 +1419,8 @@ fn compile_inner(
         );
     }
 
+    let residency_stats = Some(program.residency_stats());
+
     Ok(CompilationResult {
         diagnostics,
         emitted_files,
@@ -1422,6 +1430,7 @@ fn compile_inner(
         interned_types_count: program.type_interner.len(),
         query_cache_stats: collected.query_cache_stats,
         def_store_stats: collected.def_store_stats,
+        residency_stats,
     })
 }
 
@@ -1438,6 +1447,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         interned_types_count: 0,
         query_cache_stats: None,
         def_store_stats: None,
+        residency_stats: None,
     }
 }
 
