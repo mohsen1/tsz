@@ -305,13 +305,18 @@ impl<'a> QueryCache<'a> {
         // eval_cache: (TypeId, bool) -> TypeId
         {
             let map = self.eval_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<EvalCacheKey>() + std::mem::size_of::<TypeId>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<EvalCacheKey>()
+                    + std::mem::size_of::<TypeId>());
         }
 
         // application_eval_cache: (DefId, SmallVec<[TypeId; 4]>, bool) -> TypeId
         {
             let map = self.application_eval_cache.borrow();
-            let base_entry = BUCKET_OVERHEAD + std::mem::size_of::<ApplicationEvalCacheKey>() + std::mem::size_of::<TypeId>();
+            let base_entry = BUCKET_OVERHEAD
+                + std::mem::size_of::<ApplicationEvalCacheKey>()
+                + std::mem::size_of::<TypeId>();
             size += map.capacity() * base_entry;
             // SmallVec spills to heap when > 4 elements; account for spilled entries.
             for (key, _) in map.iter() {
@@ -324,13 +329,19 @@ impl<'a> QueryCache<'a> {
         // element_access_cache
         {
             let map = self.element_access_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<ElementAccessTypeCacheKey>() + std::mem::size_of::<TypeId>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<ElementAccessTypeCacheKey>()
+                    + std::mem::size_of::<TypeId>());
         }
 
         // object_spread_properties_cache: TypeId -> Vec<PropertyInfo>
         {
             let map = self.object_spread_properties_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<TypeId>() + std::mem::size_of::<Vec<PropertyInfo>>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Vec<PropertyInfo>>());
             for (_, props) in map.iter() {
                 size += props.capacity() * std::mem::size_of::<PropertyInfo>();
             }
@@ -339,25 +350,37 @@ impl<'a> QueryCache<'a> {
         // subtype_cache
         {
             let map = self.subtype_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<RelationCacheKey>() + std::mem::size_of::<bool>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<RelationCacheKey>()
+                    + std::mem::size_of::<bool>());
         }
 
         // assignability_cache
         {
             let map = self.assignability_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<RelationCacheKey>() + std::mem::size_of::<bool>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<RelationCacheKey>()
+                    + std::mem::size_of::<bool>());
         }
 
         // property_cache
         {
             let map = self.property_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<PropertyAccessCacheKey>() + std::mem::size_of::<PropertyAccessResult>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PropertyAccessCacheKey>()
+                    + std::mem::size_of::<PropertyAccessResult>());
         }
 
         // variance_cache: DefId -> Arc<[Variance]>
         {
             let map = self.variance_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>() + std::mem::size_of::<Arc<[Variance]>>());
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<DefId>()
+                    + std::mem::size_of::<Arc<[Variance]>>());
             // Account for the Arc-allocated slice contents
             for (_, arc) in map.iter() {
                 size += arc.len() * std::mem::size_of::<Variance>();
