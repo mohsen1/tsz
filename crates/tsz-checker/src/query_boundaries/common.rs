@@ -426,3 +426,89 @@ pub(crate) use tsz_solver::type_queries::extended::LiteralTypeKind;
 pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
+
+// ── Visitor predicate wrappers ──
+
+/// Check if a type contains a specific named type parameter.
+pub(crate) fn contains_type_parameter_named(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: tsz_common::Atom,
+) -> bool {
+    tsz_solver::contains_type_parameter_named(db, type_id, name)
+}
+
+/// Check if a type references any of the given named type parameters.
+pub(crate) fn references_any_type_param_named(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    names: &rustc_hash::FxHashSet<tsz_common::Atom>,
+) -> bool {
+    tsz_solver::references_any_type_param_named(db, type_id, names)
+}
+
+/// Check if a type contains a specific type by identity.
+pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, root: TypeId, target: TypeId) -> bool {
+    tsz_solver::contains_type_by_id(db, root, target)
+}
+
+/// Check if a type is a generic type application.
+pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::query::is_generic_application(db, type_id)
+}
+
+// ── Literal/type extraction wrappers ──
+
+pub(crate) use tsz_solver::LiteralValue;
+
+/// Extract the literal value from a literal type.
+pub(crate) fn literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralValue> {
+    tsz_solver::literal_value(db, type_id)
+}
+
+/// Widen a literal type to its base type (e.g., `3` → `number`).
+pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widen_literal_type(db, type_id)
+}
+
+/// Widen a type (literal types to base types, etc.).
+pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widen_type(db, type_id)
+}
+
+/// Unwrap a `Readonly<T>` or `NoInfer<T>` wrapper, returning the inner type.
+pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::unwrap_readonly_or_noinfer(db, type_id)
+}
+
+// ── Contextual/operation wrappers ──
+
+/// Extract the element type from a rest parameter type.
+pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::rest_argument_element_type(db, type_id)
+}
+
+/// Widen "fresh" object literal types to remove freshness tracking.
+pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::relations::freshness::widen_freshness(db, type_id)
+}
+
+/// Re-export of the solver's iterator info type.
+pub(crate) use tsz_solver::operations::iterators::IteratorInfo;
+
+/// Get iterator/iterable info from a type.
+pub(crate) fn get_iterator_info(
+    db: &dyn tsz_solver::QueryDatabase,
+    type_id: TypeId,
+    is_async: bool,
+) -> Option<IteratorInfo> {
+    tsz_solver::operations::get_iterator_info(db, type_id, is_async)
+}
+
+/// Collect all types recursively reachable from a root type.
+pub(crate) fn collect_all_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> rustc_hash::FxHashSet<TypeId> {
+    tsz_solver::visitor::collect_all_types(db, type_id)
+}

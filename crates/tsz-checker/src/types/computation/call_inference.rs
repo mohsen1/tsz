@@ -731,8 +731,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
-            && let Some(iterator_info) =
-                tsz_solver::operations::get_iterator_info(self.ctx.types, target, false)
+            && let Some(iterator_info) = common::get_iterator_info(self.ctx.types, target, false)
         {
             self.collect_return_context_substitution(
                 source_elem,
