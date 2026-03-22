@@ -734,17 +734,6 @@ impl DefinitionStore {
             entry.type_params = params;
         }
     }
-
-    /// Update the heritage links (extends/implements) for a definition.
-    ///
-    /// Called by the checker's `resolve_cross_batch_heritage` after all
-    /// pre-population batches complete, when heritage targets from other
-    /// batches become available in the name index.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            if extends.is_some() {
-                entry.extends = extends;
-            }
             if !implements.is_empty() {
                 entry.implements = implements;
             }
