@@ -1225,7 +1225,10 @@ impl<'a> CheckerState<'a> {
                             // Try declared modules (module_exports)
                             // Use global_module_binder_index for O(1) lookup instead of O(N) binder scan
                             if let Some(binders) = &self.ctx.all_binders {
-                                let candidate_indices = self.ctx.global_module_binder_index.as_ref()
+                                let candidate_indices = self
+                                    .ctx
+                                    .global_module_binder_index
+                                    .as_ref()
                                     .and_then(|idx| idx.get(module_name.as_str()));
                                 if let Some(indices) = candidate_indices {
                                     for &binder_idx in indices {
@@ -1233,9 +1236,11 @@ impl<'a> CheckerState<'a> {
                                             && let Some(exports) =
                                                 binder.module_exports.get(module_name.as_str())
                                             && let Some(target_sym_id) = exports.get(export_name)
-                                            && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                                            && let Some(target_sym) =
+                                                binder.symbols.get(target_sym_id)
                                             && (target_sym.flags
-                                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                                & (symbol_flags::VALUE
+                                                    | symbol_flags::EXPORT_VALUE))
                                                 != 0
                                         {
                                             import_has_value = true;
@@ -1247,9 +1252,11 @@ impl<'a> CheckerState<'a> {
                                         if let Some(exports) =
                                             binder.module_exports.get(module_name.as_str())
                                             && let Some(target_sym_id) = exports.get(export_name)
-                                            && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                                            && let Some(target_sym) =
+                                                binder.symbols.get(target_sym_id)
                                             && (target_sym.flags
-                                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                                & (symbol_flags::VALUE
+                                                    | symbol_flags::EXPORT_VALUE))
                                                 != 0
                                         {
                                             import_has_value = true;
