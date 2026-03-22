@@ -601,6 +601,8 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
+                let (extends_names, implements_names) =
+                    Self::collect_heritage_names(arena, class.heritage_clauses.as_ref());
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -611,6 +613,8 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
+                    extends_names,
+                    implements_names,
                 );
             }
 
@@ -861,13 +865,20 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
-            self.record_semantic_def(
+            let (extends_names, _implements) =
+                Self::collect_heritage_names(arena, iface.heritage_clauses.as_ref());
+            self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
                 name,
                 idx,
                 tp_count,
                 is_exported,
+                Vec::new(),
+                false,
+                false,
+                extends_names,
+                Vec::new(), // interfaces don't have implements
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -1049,6 +1060,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 false, // is_abstract
+                Vec::new(),
+                Vec::new(),
             );
 
             // Get existing exports (for namespace merging)
@@ -2390,11 +2403,14 @@ impl BinderState {
             Vec::new(),
             false,
             false,
+            Vec::new(),
+            Vec::new(),
         );
     }
 
     /// Extended version of `record_semantic_def` that also captures enriched
-    /// identity data: enum member names, const-enum flag, and abstract-class flag.
+    /// identity data: enum member names, const-enum flag, abstract-class flag,
+    /// and heritage clause names (extends/implements).
     ///
     /// This captures stable identity information at bind time so the checker
     /// can pre-create solver `DefIds` during construction rather than inventing
@@ -2414,6 +2430,8 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
+        extends_names: Vec<String>,
+        implements_names: Vec<String>,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2451,6 +2469,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
+                extends_names,
+                implements_names,
             },
         );
     }
