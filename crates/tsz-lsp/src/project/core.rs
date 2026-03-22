@@ -2325,104 +2325,21 @@ impl Project {
         removed
     }
 
-    /// Extract import paths from a file's AST.
+    /// Update the dependency graph for a file using binder-collected import sources.
     ///
-    /// Walks the top-level statements to find `ImportDeclaration`,
-    /// `ExportDeclaration`, and dynamic imports (`import()`, `require()`) nodes
-    /// and extracts their module specifier strings for the `DependencyGraph`.
-    fn extract_imports(&self, file_name: &str) -> Vec<String> {
-        let mut imports = Vec::new();
-
-        let file = match self.files.get(file_name) {
-            Some(f) => f,
-            None => return imports,
-        };
-
-        let arena = file.arena();
-        let source_text = file.source_text();
-
-        // Walk all nodes to find ImportDeclaration, ExportDeclaration, and CallExpression
-        // In the flat NodeArena, we iterate over all nodes
-        for (i, node) in arena.nodes.iter().enumerate() {
-            let node_idx = NodeIndex(i as u32);
-
-            // Get the module specifier node for imports, exports, and dynamic imports
-            let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                arena.get_import_decl(node).map(|d| d.module_specifier)
-            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                // Handle: export ... from "module" (re-exports)
-                arena.get_export_decl(node).map(|d| d.module_specifier)
-            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                // Check for dynamic imports: import("./module") or require("./module")
-                self.try_extract_dynamic_import(node_idx, arena)
-            } else {
-                None
-            };
-
-            if let Some(specifier_idx) = specifier_idx {
-                if specifier_idx.is_none() {
-                    continue;
-                }
-
-                let specifier_node = match arena.get(specifier_idx) {
-                    Some(n) => n,
-                    None => continue,
-                };
-
-                // Extract the string text
-                let start = specifier_node.pos as usize;
-                let end = specifier_node.end as usize;
-
-                if end <= start || end > source_text.len() {
-                    continue;
-                }
-
-                let text = &source_text[start..end];
-
-                // Remove quotes to get just the path
-                let path = if (text.starts_with('"') && text.ends_with('"') && text.len() > 1)
-                    || (text.starts_with('\'') && text.ends_with('\'') && text.len() > 1)
-                {
-                    &text[1..text.len() - 1]
-                } else {
-                    continue;
-                };
-
-                imports.push(path.to_string());
-            }
-        }
-
-        imports
-    }
-
-    /// Try to extract a dynamic import specifier from a call expression.
-    /// Returns the node index of the specifier string if this is `import()` or `require()`.
-    fn try_extract_dynamic_import(
-        &self,
-        call_idx: NodeIndex,
-        arena: &NodeArena,
-    ) -> Option<NodeIndex> {
-        let call_data = arena.get_call_expr_at(call_idx)?;
-
-        // Check if this is import() or require()
-        let is_import = crate::utils::is_import_keyword(arena, call_data.expression);
-        let is_require = crate::utils::is_require_identifier(arena, call_data.expression);
-
-        if !is_import && !is_require {
-            return None;
-        }
-
-        // Get the first argument (the module specifier)
-        let args = call_data.arguments.as_ref()?;
-        args.nodes.first().copied()
-    }
-
-    /// Update the dependency graph for a file.
+    /// Uses `BinderState::file_import_sources` which the binder populates during
+    /// binding from static import/export declarations. This avoids a redundant
+    /// full-AST walk that the previous `extract_imports` method performed.
     ///
-    /// Extracts imports from the file's AST and updates the `DependencyGraph`.
-    /// This should be called whenever a file is added or modified.
+    /// Note: `file_import_sources` captures static imports only (import/export
+    /// declarations, `import = require()`). Dynamic `import()` and `require()`
+    /// calls are not included, which is the correct behavior for the dependency
+    /// graph — dynamic imports are lazy and should not trigger eager invalidation.
     fn update_dependencies(&mut self, file_name: &str) {
-        let imports = self.extract_imports(file_name);
+        let imports = match self.files.get(file_name) {
+            Some(file) => file.binder.file_import_sources.clone(),
+            None => return,
+        };
         self.dependency_graph.update_file(file_name, &imports);
     }
 
