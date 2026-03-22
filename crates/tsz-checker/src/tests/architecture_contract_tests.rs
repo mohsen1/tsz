@@ -312,6 +312,30 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "register_resolved_type should use dual-env helper for DefId registration (not single-env insert_def)"
     );
 
+    // type_node_resolution must use dual-env helpers for DefId registration
+    let type_node_resolution_src = fs::read_to_string("src/types/type_node_resolution.rs")
+        .expect("failed to read src/types/type_node_resolution.rs for architecture guard");
+    assert!(
+        type_node_resolution_src.contains("register_def_in_envs("),
+        "type_node_resolution should use dual-env helpers for DefId registration"
+    );
+
+    // symbol_types must use dual-env helpers for interface structural type registration
+    let symbol_types_src = fs::read_to_string("src/state/type_resolution/symbol_types.rs")
+        .expect("failed to read src/state/type_resolution/symbol_types.rs for architecture guard");
+    assert!(
+        symbol_types_src.contains("register_def_in_envs("),
+        "symbol_types should use dual-env helpers for interface DefId registration"
+    );
+
+    // global type registration must mirror into type_environment
+    let global_src = fs::read_to_string("src/types/type_checking/global.rs")
+        .expect("failed to read src/types/type_checking/global.rs for architecture guard");
+    assert!(
+        global_src.contains("type_environment.try_borrow_mut()"),
+        "global type registration must mirror boxed DefId mappings into type_environment"
+    );
+
     let queries_src = fs::read_to_string("src/types/queries/core.rs")
         .expect("failed to read src/types/queries/core.rs for architecture guard");
     assert!(

@@ -142,14 +142,25 @@ impl<'a> CheckerState<'a> {
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::ANY
                         && structural_type != TypeId::UNKNOWN
-                        && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-                        && env.get_def(def_id).is_none()
                     {
-                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                        if type_params.is_empty() {
-                            env.insert_def(def_id, structural_type);
-                        } else {
-                            env.insert_def_with_params(def_id, structural_type, type_params);
+                        // Only register if not already present in type_env
+                        let needs_registration = self
+                            .ctx
+                            .type_env
+                            .try_borrow()
+                            .map_or(false, |env| env.get_def(def_id).is_none());
+                        if needs_registration {
+                            let type_params =
+                                self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                            if type_params.is_empty() {
+                                self.ctx.register_def_in_envs(def_id, structural_type);
+                            } else {
+                                self.ctx.register_def_with_params_in_envs(
+                                    def_id,
+                                    structural_type,
+                                    type_params,
+                                );
+                            }
                         }
                     }
 
