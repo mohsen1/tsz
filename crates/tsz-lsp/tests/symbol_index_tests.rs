@@ -1565,9 +1565,7 @@ fn test_index_file_extracts_default_import() {
     index.index_file("app.ts", &binder, parser.get_arena(), source);
 
     let imports = index.get_imports("app.ts");
-    let react_import = imports
-        .iter()
-        .find(|i| i.local_name == "React");
+    let react_import = imports.iter().find(|i| i.local_name == "React");
     assert!(react_import.is_some(), "expected 'React' default import");
     let react_import = react_import.unwrap();
     assert_eq!(react_import.source_module, "react");
@@ -1584,9 +1582,7 @@ fn test_index_file_extracts_namespace_import() {
     index.index_file("app.ts", &binder, parser.get_arena(), source);
 
     let imports = index.get_imports("app.ts");
-    let ns_import = imports
-        .iter()
-        .find(|i| i.local_name == "utils");
+    let ns_import = imports.iter().find(|i| i.local_name == "utils");
     assert!(ns_import.is_some(), "expected 'utils' namespace import");
     let ns_import = ns_import.unwrap();
     assert_eq!(ns_import.source_module, "./utils");
@@ -1603,9 +1599,7 @@ fn test_index_file_extracts_side_effect_import() {
     index.index_file("app.ts", &binder, parser.get_arena(), source);
 
     let imports = index.get_imports("app.ts");
-    let side_effect = imports
-        .iter()
-        .find(|i| i.source_module == "./polyfill");
+    let side_effect = imports.iter().find(|i| i.source_module == "./polyfill");
     assert!(
         side_effect.is_some(),
         "expected side-effect import for './polyfill'"

@@ -3,7 +3,7 @@
 //! Validates that `ProjectEnv::apply_to` correctly populates a checker context
 //! with all project-level shared state in a single call.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SemanticDefEntry, SemanticDefKind, SymbolId};
 use tsz_checker::context::{GlobalDeclaredModules, ProjectEnv};
@@ -14,28 +14,7 @@ use tsz_solver::TypeInterner;
 
 /// Helper: create a minimal `ProjectEnv` with all fields defaulted.
 fn empty_project_env() -> ProjectEnv {
-    ProjectEnv {
-        lib_contexts: vec![],
-        all_arenas: Arc::new(vec![]),
-        all_binders: Arc::new(vec![]),
-        skeleton_declared_modules: None,
-        skeleton_expando_index: None,
-        symbol_file_targets: Arc::new(vec![]),
-        global_file_locals_index: None,
-        global_module_exports_index: None,
-        global_module_augmentations_index: None,
-        global_augmentation_targets_index: None,
-        global_module_binder_index: None,
-        global_arena_index: None,
-        resolved_module_paths: Arc::new(FxHashMap::default()),
-        resolved_module_errors: Arc::new(FxHashMap::default()),
-        is_external_module_by_file: Arc::new(FxHashMap::default()),
-        file_is_esm_map: Arc::new(FxHashMap::default()),
-        typescript_dom_replacement_globals: (false, false, false),
-        has_deprecation_diagnostics: false,
-        last_skeleton_fingerprint: None,
-        global_arena_index: None,
-    }
+    ProjectEnv::default()
 }
 
 /// Helper: create a minimal checker for testing.
