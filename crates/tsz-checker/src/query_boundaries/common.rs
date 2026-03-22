@@ -9,6 +9,11 @@ use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
 };
 
+// Re-export solver value types used by checker call computation.
+pub(crate) use tsz_solver::ContextualTypeContext;
+pub(crate) use tsz_solver::FunctionShape;
+pub(crate) use tsz_solver::ParamInfo;
+
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
 /// Re-export of the solver's property access result type.
@@ -294,4 +299,21 @@ pub(crate) fn widen_callable_literal_return_types(
     } else {
         type_id
     }
+}
+
+// ── Union / classifier wrappers ──
+
+pub(crate) fn is_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_union_type(db, type_id)
+}
+
+pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_infer_types_db(db, type_id)
+}
+
+pub(crate) fn type_param_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeParamInfo> {
+    tsz_solver::type_param_info(db, type_id)
 }
