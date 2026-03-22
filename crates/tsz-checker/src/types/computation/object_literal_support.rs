@@ -180,6 +180,12 @@ impl<'a> CheckerState<'a> {
                 .flatten()
         });
 
+        // Filter out `unknown` — it's not callable, so it provides no parameter
+        // type information for method declarations. Without this, `unknown` from
+        // e.g. `Record<string, unknown>` string index signatures would incorrectly
+        // suppress TS7006 on method parameters. tsc emits TS7006 in this case.
+        let direct = direct.filter(|&t| t != TypeId::UNKNOWN);
+
         if direct.is_some() {
             return direct;
         }
@@ -188,7 +194,7 @@ impl<'a> CheckerState<'a> {
         if lookup_type != contextual_type {
             let allows_lookup_callable_fallback =
                 self.named_contextual_property_allows_callable_fallback(lookup_type, property_name);
-            match self.resolve_property_access_with_env(lookup_type, property_name) {
+            let result = match self.resolve_property_access_with_env(lookup_type, property_name) {
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id, ..
                 } => self.precise_callable_context_type(type_id),
@@ -199,7 +205,9 @@ impl<'a> CheckerState<'a> {
                 allows_lookup_callable_fallback
                     .then(|| self.contextual_callable_property_fallback_type(lookup_type, None))
                     .flatten()
-            })
+            });
+            // Same `unknown` filter for the lookup-type path.
+            result.filter(|&t| t != TypeId::UNKNOWN)
         } else {
             None
         }
