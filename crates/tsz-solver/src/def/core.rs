@@ -735,12 +735,17 @@ impl DefinitionStore {
         }
     }
 
-    /// Update the heritage links (extends/implements) for a definition.
+    /// Update heritage links (extends/implements) only for non-empty values.
     ///
     /// Called by the checker's `resolve_cross_batch_heritage` after all
     /// pre-population batches complete, when heritage targets from other
     /// batches become available in the name index.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
+    pub fn set_heritage_if_nonempty(
+        &self,
+        id: DefId,
+        extends: Option<DefId>,
+        implements: Vec<DefId>,
+    ) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             if extends.is_some() {
                 entry.extends = extends;
