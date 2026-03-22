@@ -537,3 +537,114 @@ let result = (() => 42)();
 "#;
     assert!(no_errors(source), "Arrow IIFE should not error");
 }
+
+// ============================================================================
+// Query-boundary regression: generic call inference with application types
+// ============================================================================
+
+#[test]
+fn generic_call_with_identity() {
+    // Exercises generic call inference (application types) via query boundary.
+    let source = r#"
+declare function identity<T>(x: T): T;
+let n: number = identity(42);
+let s: string = identity("hello");
+"#;
+    assert!(
+        no_errors(source),
+        "Generic identity call should infer T correctly"
+    );
+}
+
+#[test]
+fn generic_overload_resolution_picks_correct_signature() {
+    let source = r#"
+declare function overloaded(x: string): string;
+declare function overloaded(x: number): number;
+let s: string = overloaded("hello");
+let n: number = overloaded(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Overload resolution should pick correct signature"
+    );
+}
+
+#[test]
+fn generic_overload_with_type_args() {
+    let source = r#"
+declare function create<T>(x: T): T;
+declare function create<T>(x: T, y: T): T[];
+let a: number = create<number>(1);
+let b: number[] = create<number>(1, 2);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic overloads with explicit type args should resolve"
+    );
+}
+
+#[test]
+fn property_call_on_generic_interface() {
+    // Exercises application-type evaluation for interface method calls
+    let source = r#"
+interface Container<T> {
+    get(): T;
+    set(value: T): void;
+}
+declare let c: Container<number>;
+let v: number = c.get();
+c.set(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Method call on generic interface should work"
+    );
+}
+
+#[test]
+fn deeply_any_callee_returns_any() {
+    // Exercises is_type_deeply_any via query boundary
+    let source = r#"
+declare let f: any;
+let result = f(1, 2, 3);
+"#;
+    assert!(
+        no_errors(source),
+        "Calling any-typed callee should return any without errors"
+    );
+}
+
+#[test]
+fn overload_with_spread_args() {
+    let source = r#"
+declare function foo(a: number, b: string): void;
+declare function foo(a: string): void;
+foo("hello");
+"#;
+    assert!(
+        no_errors(source),
+        "Overload resolution with fewer args should pick matching signature"
+    );
+}
+
+#[test]
+fn overload_wrong_arg_count_emits_ts2554() {
+    let source = r#"
+declare function bar(x: number): void;
+bar(1, 2);
+"#;
+    assert!(has_error(source, 2554), "Too many args should emit TS2554");
+}
+
+#[test]
+fn generic_call_inference_with_callback() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+let result: number[] = map(["a", "b"], x => x.length);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with callback inference should work"
+    );
+}

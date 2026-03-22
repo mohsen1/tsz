@@ -85,6 +85,14 @@ pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::contains_lazy_or_recursive_db(db, type_id)
 }
 
+pub(crate) fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_application_in_structure(db, type_id)
+}
+
+pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_deeply_any(db, type_id)
+}
+
 pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }
