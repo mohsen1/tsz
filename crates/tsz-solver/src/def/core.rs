@@ -156,6 +156,12 @@ pub struct DefinitionInfo {
     /// For enums: member names and values
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
 
+    /// Heritage clause names (e.g., `["Base", "ns.Mixin"]` for
+    /// `class Foo extends Base implements ns.Mixin`).
+    /// Propagated from binder `SemanticDefEntry.heritage_names` at pre-population
+    /// time so cross-batch heritage resolution can use the name-based index.
+    pub heritage_names: Vec<String>,
+
     /// For namespaces/modules: exported members
     /// Maps export name to the `DefId` of the exported type
     pub exports: Vec<(Atom, DefId)>,
@@ -172,6 +178,21 @@ pub struct DefinitionInfo {
     /// stays the same. This enables coinductive cycle detection for recursive
     /// generic interfaces (e.g., `Promise<T>` vs `PromiseLike<T>`).
     pub symbol_id: Option<u32>,
+
+    /// Whether this is an abstract class (`abstract class Foo {}`).
+    /// Propagated from binder `SemanticDefEntry.is_abstract` at pre-population
+    /// time so the solver can query it without checker-level repair.
+    pub is_abstract: bool,
+
+    /// Whether this is a const enum (`const enum Direction {}`).
+    /// Propagated from binder `SemanticDefEntry.is_const` at pre-population
+    /// time so the solver can query it without checker-level repair.
+    pub is_const: bool,
+
+    /// Whether this declaration is exported.
+    /// Propagated from binder `SemanticDefEntry.is_exported` at pre-population
+    /// time for use in visibility-aware queries and incremental invalidation.
+    pub is_exported: bool,
 }
 
 /// Enum member value.
@@ -197,11 +218,15 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -232,11 +257,15 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -270,11 +299,15 @@ impl DefinitionInfo {
             static_shape: Some(Arc::new(static_shape)),
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -289,11 +322,15 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: members,
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -308,11 +345,15 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports,
             file_id: None,
             span: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 

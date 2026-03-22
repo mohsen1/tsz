@@ -726,3 +726,113 @@ fn heritage_names_resolved_to_extends_implements() {
         info.implements
     );
 }
+
+#[test]
+fn identity_flags_propagated_to_definition_info() {
+    // Verify that is_abstract, is_const, and is_exported from
+    // SemanticDefEntry are propagated to DefinitionInfo during
+    // pre-population, so the solver can query them without
+    // checker-level repair.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut cross_binder = BinderState::new();
+
+    // Abstract exported class
+    cross_binder.semantic_defs.insert(
+        SymbolId(200),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "AbstractBase".to_string(),
+            file_id: 0,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: true,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    // Const enum (not exported)
+    cross_binder.semantic_defs.insert(
+        SymbolId(201),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Enum,
+            name: "ConstDir".to_string(),
+            file_id: 0,
+            span_start: 50,
+            type_param_count: 0,
+            is_exported: false,
+            enum_member_names: vec!["Up".to_string(), "Down".to_string()],
+            is_const: true,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    // Non-abstract, non-const, exported interface
+    cross_binder.semantic_defs.insert(
+        SymbolId(202),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "IFoo".to_string(),
+            file_id: 0,
+            span_start: 100,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(cross_binder)]);
+    env.apply_to(&mut checker.ctx);
+
+    // Check AbstractBase
+    {
+        let def_id = checker.ctx.get_existing_def_id(SymbolId(200)).unwrap();
+        let info = checker.ctx.definition_store.get(def_id).unwrap();
+        assert!(
+            info.is_abstract,
+            "AbstractBase should have is_abstract=true"
+        );
+        assert!(!info.is_const, "AbstractBase should have is_const=false");
+        assert!(
+            info.is_exported,
+            "AbstractBase should have is_exported=true"
+        );
+    }
+
+    // Check ConstDir
+    {
+        let def_id = checker.ctx.get_existing_def_id(SymbolId(201)).unwrap();
+        let info = checker.ctx.definition_store.get(def_id).unwrap();
+        assert!(!info.is_abstract, "ConstDir should have is_abstract=false");
+        assert!(info.is_const, "ConstDir should have is_const=true");
+        assert!(!info.is_exported, "ConstDir should have is_exported=false");
+    }
+
+    // Check IFoo
+    {
+        let def_id = checker.ctx.get_existing_def_id(SymbolId(202)).unwrap();
+        let info = checker.ctx.definition_store.get(def_id).unwrap();
+        assert!(!info.is_abstract, "IFoo should have is_abstract=false");
+        assert!(!info.is_const, "IFoo should have is_const=false");
+        assert!(info.is_exported, "IFoo should have is_exported=true");
+    }
+
+    // Fallback counter should be zero (all pre-populated)
+    assert_eq!(
+        checker.ctx.def_fallback_count.get(),
+        0,
+        "No fallback should fire when all symbols are pre-populated"
+    );
+}
