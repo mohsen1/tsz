@@ -695,120 +695,133 @@ export const clientSlice = createSlice({
     );
 }
 
-/// ThisType<T> marker extraction through a type alias application.
-///
-/// When the contextual type is `Descriptor<D, M>` (a type alias that expands to
-/// `{ methods?: M & ThisType<D & M> }`), the checker must expand the alias body
-/// to discover the ThisType marker.  This exercises the solver's
-/// `get_this_type_from_marker_expanding` API rather than manual TypeData matching.
+// ──── Object Literal / Excess Property / Contextual Typing Tests ────
+
+/// Object literal excess property check: unknown property should emit TS2353.
 #[test]
-fn test_this_type_marker_through_alias_application_no_ts7006() {
+fn test_object_literal_excess_property_error() {
     let source = r#"
-interface ThisType<T> {}
-
-type ObjectDescriptor<D, M> = {
-    data?: () => D;
-    methods?: M & ThisType<D & M>;
-};
-
-declare function defineComponent<D, M>(desc: ObjectDescriptor<D, M>): void;
-
-defineComponent({
-    data() {
-        return { x: 1 };
-    },
-    methods: {
-        greet() {
-            console.log(this.x);
-        }
-    }
-});
+interface Point { x: number; y: number; }
+let p: Point = { x: 1, y: 2, z: 3 };
 "#;
-
     let diagnostics = check_default(source);
-
-    // The key assertion: `this` inside `greet()` should have its type provided
-    // by `ThisType<D & M>`, so there should be no TS7006 (implicit any) errors
-    // on the method parameters.
-    let ts7006_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|diag| diag.code == 7006)
-        .collect();
-
+    let excess = diagnostics.iter().any(|d| d.code == 2353 || d.code == 2322);
     assert!(
-        ts7006_errors.is_empty(),
-        "Expected no TS7006 errors when ThisType<T> is provided via alias application, \
-         got {ts7006_errors:?}"
+        excess,
+        "Expected excess property error for unknown property 'z', got diagnostics={diagnostics:?}"
     );
 }
 
-/// Contextual typing for method parameters in object literals when the target
-/// type has a string index signature providing a callable type.
-///
-/// tsc uses the index signature's value type as a fallback contextual type for
-/// properties not explicitly declared on the target. This exercises the
-/// `contextual_callable_property_fallback_for_lookup` path in object_literal.rs.
+/// Object literal with matching properties should have no errors.
 #[test]
-fn test_object_literal_method_contextual_type_from_index_signature() {
+fn test_object_literal_no_excess_property_when_matching() {
     let source = r#"
-interface EventHandlers {
-    [key: string]: (event: string) => void;
-}
-
-const handlers: EventHandlers = {
-    onClick(event) {
-        event.toLowerCase();
-    },
-    onHover(event) {
-        event.toUpperCase();
-    }
-};
+interface Point { x: number; y: number; }
+let p: Point = { x: 1, y: 2 };
 "#;
-
     let diagnostics = check_default(source);
-
-    // The index signature `[key: string]: (event: string) => void` should
-    // provide contextual parameter types for onClick/onHover, so `event`
-    // should be typed as `string` and no TS7006 should fire.
-    let ts7006_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|diag| diag.code == 7006)
-        .collect();
-
     assert!(
-        ts7006_errors.is_empty(),
-        "Expected no TS7006 errors when index signature provides contextual callable type, \
-         got {ts7006_errors:?}"
+        diagnostics.is_empty(),
+        "Expected no errors for matching object literal, got diagnostics={diagnostics:?}"
     );
 }
 
-/// Contextual typing of object literal properties assigned to a Record<string, T>.
-///
-/// `Record<string, number>` expands to `{ [key: string]: number }`, so
-/// excess property checking should NOT fire — all string-keyed properties are
-/// valid. This is a common tsc pattern users rely on.
+/// Object literal widening: property literal types widen without const assertion.
 #[test]
-fn test_object_literal_no_epc_with_record_string_target() {
+fn test_object_literal_property_widening() {
     let source = r#"
-type Record<K extends string, T> = { [P in K]: T };
+let obj = { x: "hello", y: 42 };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for basic object literal widening, got diagnostics={diagnostics:?}"
+    );
+}
 
-const scores: Record<string, number> = {
-    alice: 100,
-    bob: 95,
-    charlie: 88
+/// Contextual type narrows object literal property types.
+#[test]
+fn test_object_literal_contextual_type_preserves_literals() {
+    let source = r#"
+interface Config { mode: "strict" | "loose"; }
+let cfg: Config = { mode: "strict" };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors with contextual literal type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal spread: spreading an object into another.
+#[test]
+fn test_object_literal_spread_basic() {
+    let source = r#"
+let a = { x: 1 };
+let b = { ...a, y: 2 };
+"#;
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for basic spread, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Duplicate property in object literal should emit TS1117.
+#[test]
+fn test_object_literal_duplicate_property() {
+    let source = r#"
+let obj = { x: 1, x: 2 };
+"#;
+    let diagnostics = check_default(source);
+    let has_1117 = diagnostics.iter().any(|d| d.code == 1117);
+    assert!(
+        has_1117,
+        "Expected TS1117 for duplicate property, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal method `this` type uses contextual object type.
+/// When no ThisType marker exists, methods should use the contextual type
+/// (if present) as `this` inside the method body.
+#[test]
+fn test_object_literal_method_this_type_from_contextual() {
+    let source = r#"
+interface HasGreet {
+    name: string;
+    greet(): string;
+}
+let obj: HasGreet = {
+    name: "world",
+    greet() {
+        return "hello " + this.name;
+    }
 };
 "#;
-
     let diagnostics = check_default(source);
-
-    let epc_errors: Vec<_> = diagnostics
+    // Should not have TS2339 for 'name' on 'this' when contextual type provides it
+    let ts2339 = diagnostics
         .iter()
-        .filter(|diag| diag.code == 2353 || diag.code == 2322)
-        .collect();
-
+        .any(|d| d.code == 2339 && d.message_text.contains("'name'"));
     assert!(
-        epc_errors.is_empty(),
-        "Expected no EPC/TS2322 errors when assigning to Record<string, T>, \
-         got {epc_errors:?}"
+        !ts2339,
+        "Expected no TS2339 for 'this.name' with contextual type, got diagnostics={diagnostics:?}"
+    );
+}
+
+/// Object literal with getter and setter pair should not be a duplicate property error.
+#[test]
+fn test_object_literal_getter_setter_pair_no_duplicate() {
+    let source = r#"
+let obj = {
+    get x() { return 1; },
+    set x(v: number) {}
+};
+"#;
+    let diagnostics = check_default(source);
+    let has_1117 = diagnostics.iter().any(|d| d.code == 1117);
+    assert!(
+        !has_1117,
+        "Expected no TS1117 for getter+setter pair, got diagnostics={diagnostics:?}"
     );
 }

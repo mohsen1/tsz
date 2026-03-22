@@ -98,7 +98,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.no_implicit_any,
             );
             let env = self.ctx.type_env.borrow();
-            ctx_helper.get_this_type_from_marker_expanding(&*env)
+            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
         } else {
             None
         };

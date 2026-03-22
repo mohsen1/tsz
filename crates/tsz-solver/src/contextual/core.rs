@@ -707,27 +707,27 @@ impl<'a> ContextualTypeContext<'a> {
         extractor.extract(expected)
     }
 
-    /// Like [`get_this_type_from_marker`](Self::get_this_type_from_marker), but when
-    /// the direct extraction fails and the contextual type is a type-alias application
-    /// (e.g. `ConstructorOptions<Data>` = `Props<Data> & ThisType<Instance<Data>>`),
-    /// this method expands the alias body and retries.
+    /// Extract `ThisType<T>` from the contextual type, expanding type alias
+    /// applications if needed.
     ///
-    /// This avoids callers having to manually pattern-match `TypeData::Application`
-    /// and `TypeData::Lazy` to perform the expansion themselves.
-    pub fn get_this_type_from_marker_expanding(
+    /// When the contextual type is a type alias application like
+    /// `ConstructorOptions<Data>` whose body is `Props<Data> & ThisType<Instance<Data>>`,
+    /// the basic extractor can't see through the `Lazy(DefId)` base. This method
+    /// uses the provided `TypeResolver` to expand the alias body, instantiate it
+    /// with the application arguments, and retry the `ThisType` extraction.
+    pub fn get_this_type_from_marker_with_resolver(
         &self,
         resolver: &dyn crate::TypeResolver,
     ) -> Option<TypeId> {
-        let expected = self.expected?;
-
-        // First, try direct extraction (covers non-alias cases)
-        let mut extractor = ThisTypeMarkerExtractor::new(self.interner);
-        if let Some(result) = extractor.extract(expected) {
+        // First try the simple extraction (no expansion needed).
+        if let Some(result) = self.get_this_type_from_marker() {
             return Some(result);
         }
 
-        // If direct extraction failed, check if the type is an alias Application
-        // whose body may contain ThisType markers.
+        let expected = self.expected?;
+
+        // Check if the expected type is an Application whose base is a Lazy (type alias).
+        // If so, expand the alias body and retry.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) {
