@@ -227,12 +227,7 @@ impl<'a> CheckerContext<'a> {
             } else {
                 // O(1) fast-path via cross_file_symbol_targets, then O(N) fallback
                 let mut found = false;
-                let file_idx = self
-                    .cross_file_symbol_targets
-                    .borrow()
-                    .get(&export_equals_sym_id)
-                    .copied();
-                if let Some(file_idx) = file_idx
+                if let Some(file_idx) = self.resolve_symbol_file_index(export_equals_sym_id)
                     && let Some(target_binder) = self.get_binder_for_file(file_idx)
                     && let Some(sym) = target_binder.get_symbol(export_equals_sym_id)
                 {

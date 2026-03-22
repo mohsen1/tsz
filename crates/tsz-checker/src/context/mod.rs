@@ -1183,11 +1183,8 @@ impl ProjectEnv {
         // This moves identity creation to apply_to time (deterministic, early)
         // rather than on-demand in get_or_create_def_id's O(N) repair path.
         ctx.pre_populate_def_ids_from_all_binders();
-        {
-            let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
-            for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
-                targets.insert(sym_id, owner_idx);
-            }
+        for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
+            ctx.register_symbol_file_index(sym_id, owner_idx);
         }
         ctx.set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));

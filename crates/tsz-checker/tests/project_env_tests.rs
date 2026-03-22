@@ -84,9 +84,8 @@ fn apply_to_populates_symbol_file_targets() {
     env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0), (SymbolId(2), 1)]);
     env.apply_to(&mut checker.ctx);
 
-    let targets = checker.ctx.cross_file_symbol_targets.borrow();
-    assert_eq!(targets.get(&SymbolId(1)), Some(&0));
-    assert_eq!(targets.get(&SymbolId(2)), Some(&1));
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(2)), Some(1));
 }
 
 #[test]
