@@ -426,6 +426,82 @@ const typeHandlers: TypeHandlers = {
     );
 }
 
+#[test]
+fn mapped_type_generic_indexed_access_no_ts2349() {
+    // Repro from TypeScript#49338: element access with a generic key on a mapped
+    // type should produce a callable result via solver template substitution,
+    // not TS2349 "This expression is not callable".
+    let source = r#"
+type TypesMap = {
+    [0]: { foo: 'bar' };
+    [1]: { a: 'b' };
+};
+
+type P<T extends keyof TypesMap> = { t: T } & TypesMap[T];
+
+type TypeHandlers = {
+    [T in keyof TypesMap]?: (p: P<T>) => void;
+};
+
+declare const typeHandlers: TypeHandlers;
+const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
+    typeHandlers[p.t]?.(p);
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        "generic indexed access into mapped type should be callable, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_type_generic_indexed_access_class_member() {
+    // Repro from TypeScript#49242: accessing a mapped type class member
+    // with a generic key derived from the same keyof should work.
+    let source = r#"
+type Types = {
+    first: { a1: true };
+    second: { a2: true };
+    third: { a3: true };
+};
+
+class Test {
+    entries: { [T in keyof Types]?: Types[T][] };
+    constructor() { this.entries = {}; }
+    addEntry<T extends keyof Types>(name: T, entry: Types[T]) {
+        if (!this.entries[name]) {
+            this.entries[name] = [];
+        }
+        this.entries[name]?.push(entry);
+    }
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    // Should not emit TS2349 (not callable) for .push() call
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        "push on mapped type with generic index should be callable, got: {diagnostics:?}"
+    );
+}
+
 // =============================================================================
 // Assignment Expression Tests (TS2322)
 // =============================================================================

@@ -884,6 +884,32 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
+        // MAPPED TYPE GENERIC INDEXED ACCESS
+        // When the pre-resolution object type is (or resolves to) a mapped type and the
+        // index is a generic type parameter, produce an IndexAccess(Mapped, T) and let
+        // the solver's evaluator handle template substitution via
+        // try_mapped_type_param_substitution. This avoids the eager mapped-type expansion
+        // in resolve_type_for_property_access which destroys the template relationship
+        // needed for generic indexed access (e.g., `handlers[key]` where `handlers` has
+        // type `{ [T in keyof M]?: (p: T) => void }` and `key: K extends keyof M`).
+        if result_type.is_none()
+            && tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
+        {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            if tsz_solver::mapped_type_id(self.ctx.types, resolved_pre).is_some() {
+                let index_access = self
+                    .ctx
+                    .types
+                    .factory()
+                    .index_access(resolved_pre, index_type);
+                let evaluated = self.evaluate_type_with_env(index_access);
+                if evaluated != index_access && evaluated != TypeId::ERROR {
+                    result_type = Some(evaluated);
+                    use_index_signature_check = false;
+                }
+            }
+        }
+
         let used_generic_element_resolution = result_type.is_none();
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
