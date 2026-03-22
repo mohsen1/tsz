@@ -14,7 +14,27 @@ use tsz_solver::TypeInterner;
 
 /// Helper: create a minimal `ProjectEnv` with all fields defaulted.
 fn empty_project_env() -> ProjectEnv {
-    ProjectEnv::default()
+    ProjectEnv {
+        lib_contexts: vec![],
+        all_arenas: Arc::new(vec![]),
+        all_binders: Arc::new(vec![]),
+        skeleton_declared_modules: None,
+        skeleton_expando_index: None,
+        symbol_file_targets: Arc::new(vec![]),
+        global_file_locals_index: None,
+        global_module_exports_index: None,
+        global_module_augmentations_index: None,
+        global_augmentation_targets_index: None,
+        global_module_binder_index: None,
+        global_arena_index: None,
+        resolved_module_paths: Arc::new(FxHashMap::default()),
+        resolved_module_errors: Arc::new(FxHashMap::default()),
+        is_external_module_by_file: Arc::new(FxHashMap::default()),
+        file_is_esm_map: Arc::new(FxHashMap::default()),
+        typescript_dom_replacement_globals: (false, false, false),
+        has_deprecation_diagnostics: false,
+        last_skeleton_fingerprint: None,
+    }
 }
 
 /// Helper: create a minimal checker for testing.
@@ -144,6 +164,8 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -182,6 +204,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
     let mut binder_b = BinderState::new();
@@ -197,6 +221,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -241,6 +267,8 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -293,6 +321,8 @@ fn apply_to_pre_populates_enum_member_names() {
             ],
             is_const: true,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -443,6 +473,8 @@ fn apply_to_pre_populates_def_ids_for_all_declaration_families() {
                 enum_member_names: Vec::new(),
                 is_const: false,
                 is_abstract: false,
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
             },
         );
     }
@@ -497,6 +529,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -513,6 +547,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -538,123 +574,4 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
         1,
         "type_param_count should be preserved"
     );
-}
-
-#[test]
-fn build_global_symbol_file_index_creates_shared_map() {
-    let mut env = empty_project_env();
-    env.symbol_file_targets = Arc::new(vec![
-        (SymbolId(1), 0),
-        (SymbolId(2), 1),
-        (SymbolId(3), 0),
-    ]);
-
-    assert!(env.global_symbol_file_index.is_none());
-    env.build_global_symbol_file_index();
-    assert!(env.global_symbol_file_index.is_some());
-
-    let idx = env.global_symbol_file_index.as_ref().unwrap();
-    assert_eq!(idx.get(&SymbolId(1)), Some(&0));
-    assert_eq!(idx.get(&SymbolId(2)), Some(&1));
-    assert_eq!(idx.get(&SymbolId(3)), Some(&0));
-    assert_eq!(idx.get(&SymbolId(99)), None);
-}
-
-#[test]
-fn apply_to_installs_global_symbol_file_index() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    let mut env = empty_project_env();
-    env.symbol_file_targets = Arc::new(vec![(SymbolId(10), 2), (SymbolId(20), 5)]);
-    env.build_global_symbol_file_index();
-    env.apply_to(&mut checker.ctx);
-
-    // The shared index should be installed on the checker context.
-    assert!(checker.ctx.global_symbol_file_index.is_some());
-    let shared = checker.ctx.global_symbol_file_index.as_ref().unwrap();
-    assert_eq!(shared.get(&SymbolId(10)), Some(&2));
-    assert_eq!(shared.get(&SymbolId(20)), Some(&5));
-}
-
-#[test]
-fn resolve_symbol_file_index_checks_local_overlay_first() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    // Install shared base with SymbolId(1) -> file 0
-    let mut base = FxHashMap::default();
-    base.insert(SymbolId(1), 0_usize);
-    base.insert(SymbolId(2), 1_usize);
-    checker.ctx.global_symbol_file_index = Some(Arc::new(base));
-
-    // Override SymbolId(1) in local overlay to file 5
-    checker
-        .ctx
-        .cross_file_symbol_targets
-        .borrow_mut()
-        .insert(SymbolId(1), 5);
-
-    // Local overlay wins for SymbolId(1)
-    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(5));
-    // Shared base provides SymbolId(2)
-    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(2)), Some(1));
-    // Unknown symbol returns None
-    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(99)), None);
-}
-
-#[test]
-fn has_symbol_file_index_checks_both_layers() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    // Only in shared base
-    let mut base = FxHashMap::default();
-    base.insert(SymbolId(1), 0_usize);
-    checker.ctx.global_symbol_file_index = Some(Arc::new(base));
-
-    // Only in local overlay
-    checker
-        .ctx
-        .cross_file_symbol_targets
-        .borrow_mut()
-        .insert(SymbolId(2), 1);
-
-    assert!(checker.ctx.has_symbol_file_index(SymbolId(1)));
-    assert!(checker.ctx.has_symbol_file_index(SymbolId(2)));
-    assert!(!checker.ctx.has_symbol_file_index(SymbolId(99)));
-}
-
-#[test]
-fn copy_cross_file_state_copies_global_symbol_file_index() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut parent = make_checker(&arena, &binder, &query_cache);
-
-    let mut base = FxHashMap::default();
-    base.insert(SymbolId(7), 3_usize);
-    parent.ctx.global_symbol_file_index = Some(Arc::new(base));
-
-    let mut child = make_checker(&arena, &binder, &query_cache);
-    child.ctx.copy_cross_file_state_from(&parent.ctx);
-
-    // Child should share the same Arc
-    assert!(child.ctx.global_symbol_file_index.is_some());
-    assert_eq!(child.ctx.resolve_symbol_file_index(SymbolId(7)), Some(3));
-    // Verify it's the same allocation (Arc clone, not deep copy)
-    assert!(Arc::ptr_eq(
-        child.ctx.global_symbol_file_index.as_ref().unwrap(),
-        parent.ctx.global_symbol_file_index.as_ref().unwrap(),
-    ));
 }
