@@ -1709,7 +1709,7 @@ impl<'a> CheckerState<'a> {
 
             // Some binder states keep the namespace merge partner as a distinct symbol.
             // Search same-name symbols with module namespace flags for members.
-            for merged_candidate_id in binder
+            for &merged_candidate_id in binder
                 .get_symbols()
                 .find_all_by_name(&target_symbol.escaped_name)
             {

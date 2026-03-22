@@ -148,8 +148,8 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbols()
             .find_all_by_name(&name)
-            .into_iter()
-            .any(|sym_id| {
+            .iter()
+            .any(|&sym_id| {
                 self.ctx
                     .binder
                     .get_symbol(sym_id)

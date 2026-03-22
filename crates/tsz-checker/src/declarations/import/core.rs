@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
             // Some binder paths keep function/class + namespace merges split across
             // sibling symbols with the same escaped name. Probe those namespace-shaped
             // siblings as a fallback for `export =` member lookup.
-            for candidate_id in self
+            for &candidate_id in self
                 .ctx
                 .binder
                 .get_symbols()

@@ -435,7 +435,7 @@ impl<'a> CheckerState<'a> {
                         {
                             let symbols = self.ctx.binder.get_symbols();
                             let candidates = symbols.find_all_by_name(name);
-                            for sym_id in candidates {
+                            for &sym_id in candidates {
                                 let Some(sym) = symbols.get(sym_id) else {
                                     continue;
                                 };
@@ -1114,9 +1114,10 @@ impl<'a> CheckerState<'a> {
             let symbols = self.ctx.binder.get_symbols();
             symbols
                 .find_all_by_name(base_name)
-                .into_iter()
-                .find(|sym_id| {
-                    self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
+                .iter()
+                .copied()
+                .find(|&sym_id| {
+                    self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
                         (symbol.flags
                             & (symbol_flags::TYPE_ALIAS
                                 | symbol_flags::CLASS

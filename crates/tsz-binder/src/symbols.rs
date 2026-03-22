@@ -332,13 +332,16 @@ impl SymbolArena {
     }
 
     /// Create a new symbol arena with pre-allocated capacity.
+    ///
+    /// Pre-allocates both the symbol vector and the name index to avoid
+    /// repeated reallocations during bulk insertion (e.g., the merge path).
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
         Self {
             symbols: Vec::with_capacity(safe_capacity),
             base_offset: 0,
-            name_index: FxHashMap::default(),
+            name_index: FxHashMap::with_capacity_and_hasher(safe_capacity, Default::default()),
         }
     }
 
@@ -354,7 +357,10 @@ impl SymbolArena {
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
         if !name.is_empty() {
-            self.name_index.entry(name.clone()).or_default().push(id);
+            self.name_index
+                .entry(name.clone())
+                .or_default()
+                .push(id);
         }
         self.symbols.push(Symbol::new(id, flags, name));
         id
@@ -385,6 +391,7 @@ impl SymbolArena {
     }
 
     /// Get a symbol by ID.
+    #[inline]
     #[must_use]
     pub fn get(&self, id: SymbolId) -> Option<&Symbol> {
         if id.is_none() {
@@ -398,6 +405,7 @@ impl SymbolArena {
     }
 
     /// Get a mutable symbol by ID.
+    #[inline]
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
         if id.is_none() {
             None
@@ -450,23 +458,27 @@ impl SymbolArena {
     ///
     /// The name index is always populated: incrementally via `alloc`/`alloc_from`,
     /// and automatically rebuilt after deserialization.
+    #[inline]
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
-        self.name_index
-            .get(name)
-            .and_then(|ids| ids.first().copied())
+        self.name_index.get(name).and_then(|ids| ids.first().copied())
     }
 
     /// Find all symbols with a given name (O(1) lookup via name index).
     ///
-    /// Returns all symbol IDs that have the specified name, which can happen
-    /// when declarations shadow each other or when there are conflicts.
+    /// Returns a slice of symbol IDs that have the specified name, which can
+    /// happen when declarations shadow each other or when there are conflicts.
+    /// Returns an empty slice when no symbols match.
     ///
     /// The name index is always populated: incrementally via `alloc`/`alloc_from`,
     /// and automatically rebuilt after deserialization.
+    #[inline]
     #[must_use]
-    pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
-        self.name_index.get(name).cloned().unwrap_or_default()
+    pub fn find_all_by_name(&self, name: &str) -> &[SymbolId] {
+        self.name_index
+            .get(name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Iterate over all symbols in the arena.
