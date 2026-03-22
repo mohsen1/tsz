@@ -33,6 +33,7 @@ fn empty_project_env() -> ProjectEnv {
         typescript_dom_replacement_globals: (false, false, false),
         has_deprecation_diagnostics: false,
         last_skeleton_fingerprint: None,
+        global_arena_index: None,
     }
 }
 
@@ -160,6 +161,9 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             span_start: 0,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
@@ -195,6 +199,9 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             span_start: 0,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
     let mut binder_b = BinderState::new();
@@ -207,6 +214,9 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             span_start: 100,
             type_param_count: 0,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
@@ -248,6 +258,9 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             span_start: 0,
             type_param_count: 3,
             is_exported: false,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
         },
     );
 
