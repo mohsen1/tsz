@@ -218,10 +218,8 @@ impl<'a> CheckerContext<'a> {
         self.global_module_exports_index = parent.global_module_exports_index.clone();
         self.global_declared_modules = parent.global_declared_modules.clone();
         self.global_expando_index = parent.global_expando_index.clone();
-        self.global_module_augmentations_index =
-            parent.global_module_augmentations_index.clone();
-        self.global_augmentation_targets_index =
-            parent.global_augmentation_targets_index.clone();
+        self.global_module_augmentations_index = parent.global_module_augmentations_index.clone();
+        self.global_augmentation_targets_index = parent.global_augmentation_targets_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.module_specifiers = parent.module_specifiers.clone();
     }
