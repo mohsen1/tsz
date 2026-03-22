@@ -354,10 +354,7 @@ impl SymbolArena {
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
         if !name.is_empty() {
-            self.name_index
-                .entry(name.clone())
-                .or_default()
-                .push(id);
+            self.name_index.entry(name.clone()).or_default().push(id);
         }
         self.symbols.push(Symbol::new(id, flags, name));
         id
@@ -455,7 +452,9 @@ impl SymbolArena {
     /// and automatically rebuilt after deserialization.
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
-        self.name_index.get(name).and_then(|ids| ids.first().copied())
+        self.name_index
+            .get(name)
+            .and_then(|ids| ids.first().copied())
     }
 
     /// Find all symbols with a given name (O(1) lookup via name index).
@@ -467,10 +466,7 @@ impl SymbolArena {
     /// and automatically rebuilt after deserialization.
     #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
-        self.name_index
-            .get(name)
-            .cloned()
-            .unwrap_or_default()
+        self.name_index.get(name).cloned().unwrap_or_default()
     }
 
     /// Iterate over all symbols in the arena.
