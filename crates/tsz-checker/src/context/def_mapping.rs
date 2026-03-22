@@ -130,6 +130,7 @@ impl<'a> CheckerContext<'a> {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(file_idx),
@@ -732,6 +733,7 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
+                heritage_names: Vec::new(),
                 enum_members,
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),

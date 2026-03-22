@@ -152,6 +152,8 @@ pub struct DefinitionInfo {
 
     /// For classes/interfaces: implemented interfaces
     pub implements: Vec<DefId>,
+    /// Heritage names for cross-batch resolution (extends/implements names as strings).
+    pub heritage_names: Vec<String>,
 
     /// For enums: member names and values
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
@@ -197,6 +199,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -232,6 +235,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -270,6 +274,7 @@ impl DefinitionInfo {
             static_shape: Some(Arc::new(static_shape)),
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -289,6 +294,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: members,
             exports: Vec::new(),
             file_id: None,
@@ -308,6 +314,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports,
             file_id: None,
