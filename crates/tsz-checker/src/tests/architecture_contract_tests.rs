@@ -1937,6 +1937,9 @@ fn test_solver_imports_go_through_query_boundaries() {
 // RATCHET GUARDS (debt tracking):
 // - [x] TEMPORARILY_ALLOWED bypass list capped at 45      -> test_temporarily_allowed_bypass_list_does_not_grow
 // - [x] Direct interner type construction capped at 15    -> test_direct_interner_type_construction_ceiling
+// - [x] Checker file size ceiling (15 files > 2000 LOC)   -> test_checker_file_size_ceiling
+// - [x] Max single file LOC ceiling (2650 lines)          -> test_checker_file_size_ceiling
+// - [x] CLI must not import checker internals             -> test_cli_must_not_import_checker_internals
 //
 
 // =============================================================================
@@ -3365,6 +3368,140 @@ fn test_error_reporter_does_not_perform_type_construction() {
         violations.is_empty(),
         "error_reporter modules must remain a pure formatting layer. \
          The following files contain forbidden patterns:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Guard that the number of checker source files exceeding ~2000 LOC does not increase.
+///
+/// Per CLAUDE.md section 12: "Checker files should stay under ~2000 LOC."
+/// This ratchet captures the current state (15 files over 2000 lines) and prevents
+/// regression. As files are split, this ceiling must be lowered.
+///
+/// Current ceiling: 15 files over 2000 lines. This number must only decrease over time.
+#[test]
+fn test_checker_file_size_ceiling() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut oversized = Vec::new();
+    let mut max_lines = 0usize;
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Skip test files — they are not subject to the LOC guideline
+        if rel.starts_with("tests/") || rel.contains("/test") {
+            continue;
+        }
+
+        let line_count = match fs::read_to_string(path) {
+            Ok(s) => s.lines().count(),
+            Err(_) => continue,
+        };
+
+        if line_count > max_lines {
+            max_lines = line_count;
+        }
+
+        if line_count > 2000 {
+            oversized.push(format!("  {} ({} lines)", rel, line_count));
+        }
+    }
+
+    // Ceiling: number of checker source files exceeding 2000 LOC.
+    // This number must only shrink as files are split into smaller modules.
+    const FILE_COUNT_CEILING: usize = 15;
+    assert!(
+        oversized.len() <= FILE_COUNT_CEILING,
+        "Number of checker source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
+         Split oversized files into smaller modules before adding new code. \
+         Current oversized files:\n{}",
+        oversized.len(),
+        oversized.join("\n")
+    );
+
+    // Ceiling: maximum line count of any single checker source file.
+    // This prevents existing large files from growing further.
+    const MAX_LOC_CEILING: usize = 2650;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
+
+/// Guard that CLI and ancillary crates consume checker only through public API paths.
+///
+/// Per CLAUDE.md section 4: "CLI and ancillary crates must consume checker diagnostics
+/// via `tsz_checker::diagnostics`."
+///
+/// This prevents the CLI from reaching into checker internals (types, state, flow,
+/// checkers, symbols, etc.) which would create tight coupling.
+#[test]
+fn test_cli_must_not_import_checker_internals() {
+    let cli_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-cli/src");
+    if !cli_src.exists() {
+        // Skip if CLI crate doesn't exist in this workspace layout
+        return;
+    }
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&cli_src, &mut files);
+
+    // These are checker-internal module paths that CLI must not import.
+    // `tsz_checker::diagnostics` and `tsz_checker::context` are the allowed public API.
+    const FORBIDDEN_IMPORTS: &[&str] = &[
+        "tsz_checker::types::",
+        "tsz_checker::state::",
+        "tsz_checker::flow::",
+        "tsz_checker::checkers::",
+        "tsz_checker::symbols::",
+        "tsz_checker::error_reporter::",
+        "tsz_checker::declarations::",
+    ];
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&cli_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for &forbidden in FORBIDDEN_IMPORTS {
+                if line.contains(forbidden) {
+                    violations.push(format!("  {}:{} — imports {}", rel, line_num + 1, forbidden));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "CLI crate must not import checker internals. \
+         Use `tsz_checker::diagnostics` for diagnostic codes and types. \
+         Violations found:\n{}",
         violations.join("\n")
     );
 }
