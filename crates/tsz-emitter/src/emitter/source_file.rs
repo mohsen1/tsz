@@ -1008,8 +1008,8 @@ impl<'a> Printer<'a> {
 
         self.prepare_logical_assignment_value_temps(source_idx);
 
-        let hoisted_var_byte_offset = self.writer.len();
-        let hoisted_var_line = self.writer.current_line();
+        let mut hoisted_var_byte_offset = self.writer.len();
+        let mut hoisted_var_line = self.writer.current_line();
 
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
@@ -1409,6 +1409,20 @@ impl<'a> Printer<'a> {
             // have positions that are BEFORE the next top-level statement's actual
             // start, so they won't be emitted at the wrong level. They'll be
             // naturally consumed when we encounter the statement that contains them.
+
+            // After emitting a prologue directive (string literal expression statement
+            // like "use strict"), update the hoisted var insertion point to AFTER it.
+            // tsc places hoisted temp vars after all prologue directives.
+            if emitted_output && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                if let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) {
+                    if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+                        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
+                            hoisted_var_byte_offset = self.writer.len();
+                            hoisted_var_line = self.writer.current_line();
+                        }
+                    }
+                }
+            }
         }
 
         // TypeScript emits CommonJS `export =` assignments after declaration output,
