@@ -1111,3 +1111,124 @@ fn test_store_statistics_merge_includes_estimated_size() {
     assert_eq!(stats_a.total_definitions, 15);
     assert_eq!(stats_a.estimated_size_bytes, 8000);
 }
+
+#[test]
+fn test_find_def_by_name_basic() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let error_name = interner.intern_string("Error");
+    let info = DefinitionInfo {
+        kind: DefKind::Interface,
+        name: error_name,
+        type_params: Vec::new(),
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: Some(0),
+        span: None,
+        symbol_id: Some(1),
+    };
+
+    let def_id = store.register(info);
+    assert_eq!(
+        store.find_def_by_name(error_name),
+        Some(def_id),
+        "Should find definition by name"
+    );
+
+    let unknown = interner.intern_string("DoesNotExist");
+    assert_eq!(
+        store.find_def_by_name(unknown),
+        None,
+        "Unknown name should return None"
+    );
+}
+
+#[test]
+fn test_find_def_by_name_keeps_first_registered() {
+    // When multiple definitions have the same name, find_def_by_name
+    // should return the first registered (stable identity).
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Shared");
+
+    let info1 = DefinitionInfo {
+        kind: DefKind::Interface,
+        name,
+        type_params: Vec::new(),
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: Some(0),
+        span: Some((0, 10)),
+        symbol_id: Some(1),
+    };
+
+    let info2 = DefinitionInfo {
+        kind: DefKind::Interface,
+        name,
+        type_params: Vec::new(),
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: Some(1),
+        span: Some((100, 110)),
+        symbol_id: Some(2),
+    };
+
+    let def_id_1 = store.register(info1);
+    let _def_id_2 = store.register(info2);
+
+    assert_eq!(
+        store.find_def_by_name(name),
+        Some(def_id_1),
+        "Should return the first registered DefId"
+    );
+}
+
+#[test]
+fn test_name_index_cleared_on_store_clear() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Foo");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    store.register(info);
+
+    assert!(store.find_def_by_name(name).is_some());
+    store.clear();
+    assert!(
+        store.find_def_by_name(name).is_none(),
+        "Name index should be cleared"
+    );
+}
+
+#[test]
+fn test_name_index_in_statistics() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Bar");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    store.register(info);
+
+    let stats = store.statistics();
+    assert_eq!(
+        stats.name_to_def_entries, 1,
+        "Statistics should report name_to_def entries"
+    );
+}
