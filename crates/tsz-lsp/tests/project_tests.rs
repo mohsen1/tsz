@@ -5415,10 +5415,7 @@ fn test_set_file_populates_dependency_graph_from_binder() {
     // the dependency graph automatically, without a separate AST walk.
     let mut project = Project::new();
 
-    project.set_file(
-        "a.ts".to_string(),
-        "export const x = 1;".to_string(),
-    );
+    project.set_file("a.ts".to_string(), "export const x = 1;".to_string());
     project.set_file(
         "b.ts".to_string(),
         "import { x } from \"./a\";\nexport const y = x + 1;".to_string(),
