@@ -133,21 +133,13 @@ impl<'a> CheckerContext<'a> {
         let info = DefinitionInfo {
             kind,
             name,
-            type_params: Vec::new(), // Will be populated when type is resolved
-            body: None,              // Lazy: computed on first access
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
-            heritage_names: Vec::new(),
             is_abstract,
             is_const,
             is_exported,
+            ..Default::default()
         };
 
         let def_id = self.definition_store.register(info);
@@ -740,13 +732,7 @@ impl<'a> CheckerContext<'a> {
                 kind,
                 name,
                 type_params,
-                body: None,
-                instance_shape: None,
-                static_shape: None,
-                extends: None,
-                implements: Vec::new(),
                 enum_members,
-                exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
@@ -754,6 +740,7 @@ impl<'a> CheckerContext<'a> {
                 is_abstract: entry.is_abstract,
                 is_const: entry.is_const,
                 is_exported: entry.is_exported,
+                ..Default::default()
             };
 
             let def_id = self.definition_store.register(info);
