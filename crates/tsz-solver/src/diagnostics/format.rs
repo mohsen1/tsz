@@ -3215,6 +3215,7 @@ mod tests {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            heritage_names: Vec::new(),
         };
         let def_id = def_store.register(info);
 
@@ -3271,6 +3272,7 @@ mod tests {
             is_abstract: false,
             is_const: false,
             is_exported: false,
+            heritage_names: Vec::new(),
         };
         let def_id = def_store.register(info);
 
