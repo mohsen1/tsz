@@ -480,6 +480,3 @@ pub(crate) fn collect_all_types(
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
 }
-
-/// Check whether the type structure contains any `Application` nodes.
-/// Check whether the type is deeply `any` (all leaf elements are `any`).
