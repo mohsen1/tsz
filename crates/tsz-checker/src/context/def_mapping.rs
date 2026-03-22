@@ -525,42 +525,48 @@ impl<'a> CheckerContext<'a> {
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
     /// paths can resolve the type during evaluation.
     ///
+    /// The SymbolRef mapping is written to `type_environment` only (legacy flow-analyzer
+    /// path). The DefId mapping is written to **both** environments via the dual-env
+    /// helpers so the evaluator (`type_env`) and flow analyzer (`type_environment`)
+    /// stay consistent.
+    ///
     /// Should be called when a symbol's type is resolved via `get_type_of_symbol`.
     pub fn register_resolved_type(
-        &mut self,
+        &self,
         sym_id: SymbolId,
         type_id: TypeId,
         type_params: Vec<tsz_solver::TypeParamInfo>,
     ) {
         use tsz_solver::SymbolRef;
 
-        // Try to borrow mutably - skip if already borrowed (during recursive resolution)
+        // Insert SymbolRef key into type_environment only (legacy path —
+        // type_env never uses SymbolRef-keyed lookups).
         if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            // Insert with SymbolRef key (existing path)
             if type_params.is_empty() {
                 env.insert(SymbolRef(sym_id.0), type_id);
             } else {
                 env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params.clone());
             }
+        }
 
-            // Also insert with DefId key if one exists (Phase 4.3 migration)
-            if let Some(def_id) = self.get_existing_def_id(sym_id) {
-                if type_params.is_empty() {
-                    env.insert_def(def_id, type_id);
-                } else {
-                    env.insert_def_with_params(def_id, type_id, type_params);
-                }
+        // Insert DefId key into BOTH environments via dual-env helpers.
+        // Previously this only wrote to type_environment, leaving type_env
+        // without the DefId mapping — a consistency bug that could cause
+        // resolve_lazy(DefId) to return None in the evaluator.
+        if let Some(def_id) = self.get_existing_def_id(sym_id) {
+            self.register_def_auto_params_in_envs(def_id, type_id, type_params);
 
-                // Register mapping for InheritanceGraph bridge (Phase 3.2)
-                // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
+            // Register mapping for InheritanceGraph bridge (Phase 3.2)
+            // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
+            if let Ok(mut env) = self.type_environment.try_borrow_mut() {
                 env.register_def_symbol_mapping(def_id, sym_id);
-
-                // Set the body on the DefinitionInfo so the type formatter can
-                // find type alias names via find_type_alias_by_body(). Without
-                // this, type aliases show their structural expansion in diagnostics
-                // (e.g., "{ r: number; g: number; b: number }" instead of "Color").
-                self.definition_store.set_body(def_id, type_id);
             }
+
+            // Set the body on the DefinitionInfo so the type formatter can
+            // find type alias names via find_type_alias_by_body(). Without
+            // this, type aliases show their structural expansion in diagnostics
+            // (e.g., "{ r: number; g: number; b: number }" instead of "Color").
+            self.definition_store.set_body(def_id, type_id);
         }
     }
 
