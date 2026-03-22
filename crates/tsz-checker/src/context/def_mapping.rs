@@ -130,13 +130,11 @@ impl<'a> CheckerContext<'a> {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
-            heritage_names: Vec::new(),
         };
 
         let def_id = self.definition_store.register(info);
@@ -189,17 +187,6 @@ impl<'a> CheckerContext<'a> {
             "lib symbol not pre-populated, creating DefId on demand"
         );
         self.get_or_create_def_id(sym_id)
-    }
-
-    /// Map a raw `SymbolId` value (as `u32`) to a `DefId` via the stable lib path.
-    ///
-    /// This is the canonical one-liner used by lib-lowering resolver closures to
-    /// turn a `resolve_lib_node_in_arenas` result into a `DefId`. Extracting it
-    /// here eliminates the identical `.map(|raw| get_lib_def_id(SymbolId(raw)))`
-    /// closure body that was previously inlined at every call site.
-    #[inline]
-    pub fn lib_def_id_for_raw(&self, raw_sym: u32) -> DefId {
-        self.get_lib_def_id(SymbolId(raw_sym))
     }
 
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
@@ -310,11 +297,11 @@ impl<'a> CheckerContext<'a> {
     /// Register a `DefKind` for a `DefId` in **both** type environments.
     ///
     /// This ensures the evaluator (`type_env`) and flow-analyzer (`type_environment`)
-    /// both see the `DefKind`, which is needed for Lazy(DefId) resolution and
+    /// both see the DefKind, which is needed for Lazy(DefId) resolution and
     /// semantic queries (e.g., distinguishing class vs interface callables).
     ///
     /// Prior to this helper, pre-population and fallback paths only propagated
-    /// `DefKind` to `type_env`, leaving `type_environment` without the mapping
+    /// DefKind to `type_env`, leaving `type_environment` without the mapping
     /// until the full checker walk populated it incidentally.
     fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
         if let Ok(mut env) = self.type_env.try_borrow_mut() {
@@ -745,13 +732,11 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
-                heritage_names: Vec::new(),
                 enum_members,
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
-                heritage_names: Vec::new(),
             };
 
             let def_id = self.definition_store.register(info);
@@ -792,14 +777,99 @@ impl<'a> CheckerContext<'a> {
     /// complete, this method resolves the remaining heritage using the
     /// `DefinitionStore`'s name index, which now contains entries from all batches.
     ///
+    /// Iterates all binder `semantic_defs` entries that have `heritage_names`,
+    /// looks up each name in the `DefinitionStore`'s name index, and wires
+    /// `extends`/`implements` on the corresponding `DefinitionInfo`.
+    ///
     /// Called once during checker construction after all `pre_populate_*` methods.
-    /// Returns the number of heritage links resolved.
-    pub const fn resolve_cross_batch_heritage(&self) -> usize {
-        // Heritage resolution via SemanticDefEntry.extends_names/implements_names
-        // was removed when the binder heritage model was simplified. The method
-        // is kept as a no-op stub because callers (checker construction, tests)
-        // still reference it. Heritage is now resolved through the checker's
-        // class/interface type resolution pipeline instead.
-        0
+    /// Returns the total number of heritage links resolved.
+    pub fn resolve_cross_batch_heritage(&self) -> usize {
+        let mut resolved = 0;
+
+        // Collect heritage_names from the primary binder's semantic_defs.
+        let all_entries = self.collect_heritage_entries_from_binder(&self.binder.semantic_defs);
+
+        // Also collect from lib binders.
+        let mut lib_entries = Vec::new();
+        for lib_ctx in &self.lib_contexts {
+            lib_entries.extend(
+                self.collect_heritage_entries_from_binder(&lib_ctx.binder.semantic_defs),
+            );
+        }
+
+        // Also collect from all_binders (multi-file mode).
+        let mut multi_entries = Vec::new();
+        if let Some(ref binders) = self.all_binders {
+            for binder in binders.iter() {
+                multi_entries.extend(
+                    self.collect_heritage_entries_from_binder(&binder.semantic_defs),
+                );
+            }
+        }
+
+        // Process all entries.
+        for (sym_id, kind, heritage_names) in all_entries
+            .into_iter()
+            .chain(lib_entries)
+            .chain(multi_entries)
+        {
+            let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() else {
+                continue;
+            };
+
+            let mut found_extends = false;
+            for name_str in &heritage_names {
+                // Skip qualified names (e.g., "ns.Base") - requires scope-aware resolution.
+                if name_str.contains('.') {
+                    continue;
+                }
+
+                let name_atom = self.types.intern_string(name_str);
+                let Some(target_def_id) =
+                    self.definition_store.resolve_heritage_name(name_atom, def_id)
+                else {
+                    continue;
+                };
+
+                match kind {
+                    tsz_binder::SemanticDefKind::Class => {
+                        // First class target -> extends, rest -> implements.
+                        let target_kind = self.definition_store.get_kind(target_def_id);
+                        if !found_extends
+                            && target_kind == Some(tsz_solver::def::DefKind::Class)
+                        {
+                            self.definition_store.set_extends(def_id, target_def_id);
+                            found_extends = true;
+                        } else {
+                            self.definition_store
+                                .add_implements(def_id, target_def_id);
+                        }
+                    }
+                    tsz_binder::SemanticDefKind::Interface => {
+                        self.definition_store
+                            .add_implements(def_id, target_def_id);
+                    }
+                    _ => {}
+                }
+                resolved += 1;
+            }
+        }
+
+        resolved
+    }
+
+    /// Collect (SymbolId, kind, heritage_names) from a binder's semantic_defs.
+    fn collect_heritage_entries_from_binder(
+        &self,
+        semantic_defs: &rustc_hash::FxHashMap<
+            tsz_binder::SymbolId,
+            tsz_binder::SemanticDefEntry,
+        >,
+    ) -> Vec<(tsz_binder::SymbolId, tsz_binder::SemanticDefKind, Vec<String>)> {
+        semantic_defs
+            .iter()
+            .filter(|(_, entry)| !entry.heritage_names.is_empty())
+            .map(|(&sym_id, entry)| (sym_id, entry.kind, entry.heritage_names.clone()))
+            .collect()
     }
 }

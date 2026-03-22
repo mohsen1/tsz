@@ -350,7 +350,6 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn apply_to_pre_populates_enum_member_names() {
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
@@ -629,6 +628,105 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
     );
 }
 
-// heritage_names_propagated_to_definition_info test removed:
-// DefinitionInfo no longer has heritage_names field. Heritage resolution
-// was moved to the checker's class/interface type resolution pipeline.
+#[test]
+fn heritage_names_resolved_to_extends_implements() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut cross_binder = BinderState::new();
+
+    // Register Base class and IFoo interface first.
+    let base_sym_id = SymbolId(99);
+    cross_binder.semantic_defs.insert(
+        base_sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Base".to_string(),
+            file_id: 5,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    let ifoo_sym_id = SymbolId(98);
+    cross_binder.semantic_defs.insert(
+        ifoo_sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "IFoo".to_string(),
+            file_id: 5,
+            span_start: 50,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: Vec::new(),
+        },
+    );
+
+    // Register MyClass with heritage_names referencing Base and IFoo.
+    let sym_id = SymbolId(100);
+    cross_binder.semantic_defs.insert(
+        sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "MyClass".to_string(),
+            file_id: 5,
+            span_start: 100,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            heritage_names: vec!["Base".to_string(), "IFoo".to_string()],
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(cross_binder)]);
+    env.apply_to(&mut checker.ctx);
+
+    let def_id = checker
+        .ctx
+        .get_existing_def_id(sym_id)
+        .expect("MyClass should have a DefId");
+
+    let info = checker
+        .ctx
+        .definition_store
+        .get(def_id)
+        .expect("DefId should be in store");
+
+    assert_eq!(interner.resolve_atom(info.name), "MyClass");
+
+    // After resolve_cross_batch_heritage (called in apply_to), heritage_names
+    // should be resolved to extends/implements DefIds.
+    let base_def = checker
+        .ctx
+        .get_existing_def_id(base_sym_id)
+        .expect("Base should have a DefId");
+    let ifoo_def = checker
+        .ctx
+        .get_existing_def_id(ifoo_sym_id)
+        .expect("IFoo should have a DefId");
+
+    assert_eq!(
+        info.extends,
+        Some(base_def),
+        "MyClass should extend Base"
+    );
+    assert!(
+        info.implements.contains(&ifoo_def),
+        "MyClass should implement IFoo, got: {:?}",
+        info.implements
+    );
+}
