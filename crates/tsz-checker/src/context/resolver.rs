@@ -643,13 +643,9 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 .iter()
                 .find_map(|lib| lib.binder.get_symbol(sym_id))
         });
-        // O(1) fast-path: check cross_file_symbol_targets before O(N) binder scan
+        // O(1) fast-path: check symbol file index before O(N) binder scan
         let symbol = symbol.or_else(|| {
-            let file_idx = self
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .copied();
+            let file_idx = self.resolve_symbol_file_index(sym_id);
             if let Some(file_idx) = file_idx
                 && let Some(binder) = self.get_binder_for_file(file_idx)
             {

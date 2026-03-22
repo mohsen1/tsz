@@ -713,22 +713,14 @@ impl<'a> CheckerState<'a> {
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = target_file_idx;
-        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                self.ctx.cross_file_symbol_targets.borrow().clone();
-        }
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
         let mut ty = checker
             .literal_type_from_initializer(rhs_expr)
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
         ty = tsz_solver::relations::freshness::widen_freshness(checker.ctx.types, ty);
-        for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(sym_id, target_idx);
-        }
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }
 

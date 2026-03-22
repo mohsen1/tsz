@@ -393,15 +393,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Cross-file fallback: the module specifier is relative to the
-            // declaring file, not the current file.  Use cross_file_symbol_targets
+            // declaring file, not the current file.  Use resolve_symbol_file_index
             // to find the source file and resolve_import_target_from_file to
             // convert the relative specifier into a target file index.
             let source_file_idx = self
                 .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .copied()
+                .resolve_symbol_file_index(sym_id)
                 .unwrap_or(self.ctx.current_file_idx);
             if let Some(target_idx) = self
                 .ctx
@@ -418,9 +415,8 @@ impl<'a> CheckerState<'a> {
                         || (symbol.import_name.is_none() && symbol.escaped_name != "default");
                     if is_namespace_import {
                         if let Some(exports) = target_binder.module_exports.get(file_name) {
-                            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
                             for (_, &sid) in exports.iter() {
-                                targets.insert(sid, target_idx);
+                                self.ctx.register_symbol_file_target(sid, target_idx);
                             }
                         }
                         // Return the alias symbol itself — the caller
@@ -430,20 +426,14 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(exports) = target_binder.module_exports.get(file_name) {
                         if let Some(target_sym_id) = exports.get(export_name) {
-                            self.ctx
-                                .cross_file_symbol_targets
-                                .borrow_mut()
-                                .insert(target_sym_id, target_idx);
+                            self.ctx.register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                         // For require imports, also try "export="
                         if symbol.import_name.is_none()
                             && let Some(target_sym_id) = exports.get("export=")
                         {
-                            self.ctx
-                                .cross_file_symbol_targets
-                                .borrow_mut()
-                                .insert(target_sym_id, target_idx);
+                            self.ctx.register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                     }
@@ -468,10 +458,7 @@ impl<'a> CheckerState<'a> {
                                     reexport_binder.module_exports.get(reexport_file)
                                 && let Some(target_sym_id) = re_exports.get(name_to_lookup)
                             {
-                                self.ctx
-                                    .cross_file_symbol_targets
-                                    .borrow_mut()
-                                    .insert(target_sym_id, reexport_target_idx);
+                                self.ctx.register_symbol_file_target(target_sym_id, reexport_target_idx);
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
@@ -495,10 +482,7 @@ impl<'a> CheckerState<'a> {
                                     && let Some(wc_exports) = wc_binder.module_exports.get(wc_file)
                                     && let Some(target_sym_id) = wc_exports.get(export_name)
                                 {
-                                    self.ctx
-                                        .cross_file_symbol_targets
-                                        .borrow_mut()
-                                        .insert(target_sym_id, wc_target_idx);
+                                    self.ctx.register_symbol_file_target(target_sym_id, wc_target_idx);
                                     return self
                                         .resolve_alias_symbol(target_sym_id, visited_aliases);
                                 }
@@ -611,17 +595,8 @@ impl<'a> CheckerState<'a> {
     /// SymbolId must also be recorded as cross-file so `get_type_of_symbol`
     /// delegates to the correct file's binder.
     fn propagate_cross_file_target(&self, parent_sym_id: SymbolId, member_id: SymbolId) {
-        let cross_file_idx = self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&parent_sym_id)
-            .copied();
-        if let Some(file_idx) = cross_file_idx {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(member_id, file_idx);
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(parent_sym_id) {
+            self.ctx.register_symbol_file_target(member_id, file_idx);
         }
     }
 

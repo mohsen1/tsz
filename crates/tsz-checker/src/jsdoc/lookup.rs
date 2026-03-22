@@ -108,21 +108,12 @@ impl<'a> CheckerState<'a> {
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.current_file_idx = file_idx;
-            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                    self.ctx.cross_file_symbol_targets.borrow().clone();
-            }
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
             if let Some(ty) =
                 checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
             {
-                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter()
-                {
-                    self.ctx
-                        .cross_file_symbol_targets
-                        .borrow_mut()
-                        .insert(sym_id, target_idx);
-                }
+                self.ctx.merge_symbol_file_targets_from(&checker.ctx);
                 self.register_jsdoc_typedef_def(name, ty);
                 return Some(ty);
             }

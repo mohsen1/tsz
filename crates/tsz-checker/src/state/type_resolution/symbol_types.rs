@@ -348,12 +348,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Find the arena containing the value declaration (may be cross-file).
-        let file_idx = self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&target_sym_id)
-            .copied();
+        let file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
         let arena: &NodeArena = if let Some(file_idx) = file_idx {
             self.ctx.get_arena_for_file(file_idx as u32)
         } else {
@@ -397,10 +392,7 @@ impl<'a> CheckerState<'a> {
 
         // Record cross-file symbol tracking if necessary.
         if let Some(file_idx) = file_idx {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(member_sym_id, file_idx);
+            self.ctx.register_symbol_file_target(member_sym_id, file_idx);
         }
 
         // For cross-file symbols, use delegation to compute the type in the
@@ -443,10 +435,7 @@ impl<'a> CheckerState<'a> {
         // since locally-declared import symbols may not have decl_file_idx set.
         let source_file_idx = self
             .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied()
+            .resolve_symbol_file_index(sym_id)
             .unwrap_or(self.ctx.current_file_idx);
 
         let target_idx = self
@@ -463,10 +452,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|exports| exports.get(import_name))
             .or_else(|| target_binder.file_locals.get(import_name))?;
 
-        self.ctx
-            .cross_file_symbol_targets
-            .borrow_mut()
-            .insert(target_sym_id, target_idx);
+        self.ctx.register_symbol_file_target(target_sym_id, target_idx);
         Some(target_sym_id)
     }
 
