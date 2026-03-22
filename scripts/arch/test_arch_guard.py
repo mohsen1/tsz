@@ -250,5 +250,68 @@ class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
             self.assertTrue(hits[0].endswith("/mixed.rs:4"))
 
 
+class ArchGuardRatchetDirectionTests(unittest.TestCase):
+    """Ensure the exclusion lists can only shrink, never grow."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_line_limit_exclusion_count_cannot_grow(self):
+        """The number of excluded files in LINE_LIMIT_CHECKS must not increase."""
+        # Current ceiling: 17 excluded files.
+        # When a file drops below 2000 lines, remove it and lower this ceiling.
+        MAX_EXCLUDED = 17
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            excludes = entry[3] if len(entry) > 3 else set()
+            self.assertLessEqual(
+                len(excludes),
+                MAX_EXCLUDED,
+                f"LINE_LIMIT_CHECKS exclusion list has {len(excludes)} entries, "
+                f"max allowed is {MAX_EXCLUDED}. Remove files that dropped below the limit.",
+            )
+
+    def test_excluded_files_actually_exist(self):
+        """Every file in the exclusion list must exist on disk."""
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            excludes = entry[3] if len(entry) > 3 else set()
+            for rel_path in excludes:
+                full_path = ROOT / rel_path
+                self.assertTrue(
+                    full_path.exists(),
+                    f"Excluded file {rel_path} does not exist. Remove it from the exclusion list.",
+                )
+
+    def test_excluded_files_actually_exceed_limit(self):
+        """Every excluded file must actually be over the limit (raw line count)."""
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            limit = entry[2]
+            excludes = entry[3] if len(entry) > 3 else set()
+            for rel_path in excludes:
+                full_path = ROOT / rel_path
+                if not full_path.exists():
+                    continue  # caught by test_excluded_files_actually_exist
+                with full_path.open("r", encoding="utf-8", errors="ignore") as fh:
+                    line_count = sum(1 for _ in fh)
+                self.assertGreater(
+                    line_count,
+                    limit,
+                    f"Excluded file {rel_path} has {line_count} lines "
+                    f"(limit {limit}). Remove it from the exclusion list.",
+                )
+
+    def test_lookup_exclusion_files_actually_exist(self):
+        """Every file in the lookup() exclusion list must exist on disk."""
+        for name, _base, _pattern, excludes in self.arch_guard.CHECKS:
+            if "exclude_files" not in excludes:
+                continue
+            for rel_path in excludes["exclude_files"]:
+                full_path = ROOT / rel_path
+                self.assertTrue(
+                    full_path.exists(),
+                    f"Excluded file {rel_path} in check '{name}' does not exist. "
+                    f"Remove it from the exclusion list.",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
