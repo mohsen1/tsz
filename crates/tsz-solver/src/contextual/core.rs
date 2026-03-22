@@ -748,6 +748,16 @@ impl<'a> ContextualTypeContext<'a> {
         None
     }
 
+    /// Alias for [`get_this_type_from_marker_with_resolver`] — kept for
+    /// callers that reference the previous name.
+    #[inline]
+    pub fn get_this_type_from_marker_expanding(
+        &self,
+        resolver: &dyn crate::TypeResolver,
+    ) -> Option<TypeId> {
+        self.get_this_type_from_marker_with_resolver(resolver)
+    }
+
     /// Get the contextual return type for a function.
     pub fn get_return_type(&self) -> Option<TypeId> {
         let expected = self.expected?;

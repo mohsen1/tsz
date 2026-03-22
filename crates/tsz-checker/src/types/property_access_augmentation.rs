@@ -59,12 +59,19 @@ impl<'a> CheckerState<'a> {
         let all_binders = self.ctx.all_binders.clone();
         let lib_contexts = self.ctx.lib_contexts.clone();
         let file_locals_idx = self.ctx.global_file_locals_index.clone();
+        let arena_idx = self.ctx.global_arena_index.clone();
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
-            let arenas = all_arenas.as_ref()?;
             let binders = all_binders.as_ref()?;
-            let arena_ptr = arena_ref as *const NodeArena;
+            let arena_ptr = arena_ref as *const NodeArena as usize;
+            // O(1) path via pre-built arena index
+            if let Some(idx) = arena_idx.as_ref() {
+                let file_idx = *idx.get(&arena_ptr)?;
+                return binders.get(file_idx).map(Arc::as_ref);
+            }
+            // O(N) fallback when index not built
+            let arenas = all_arenas.as_ref()?;
             for (idx, arena) in arenas.iter().enumerate() {
-                if Arc::as_ptr(arena) == arena_ptr {
+                if Arc::as_ptr(arena) as usize == arena_ptr {
                     return binders.get(idx).map(Arc::as_ref);
                 }
             }
@@ -336,13 +343,20 @@ impl<'a> CheckerState<'a> {
         let all_binders = self.ctx.all_binders.clone();
         let lib_contexts = self.ctx.lib_contexts.clone();
         let file_locals_idx = self.ctx.global_file_locals_index.clone();
+        let arena_idx = self.ctx.global_arena_index.clone();
 
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
-            let arenas = all_arenas.as_ref()?;
             let binders = all_binders.as_ref()?;
-            let arena_ptr = arena_ref as *const NodeArena;
+            let arena_ptr = arena_ref as *const NodeArena as usize;
+            // O(1) path via pre-built arena index
+            if let Some(idx) = arena_idx.as_ref() {
+                let file_idx = *idx.get(&arena_ptr)?;
+                return binders.get(file_idx).map(Arc::as_ref);
+            }
+            // O(N) fallback when index not built
+            let arenas = all_arenas.as_ref()?;
             for (idx, arena) in arenas.iter().enumerate() {
-                if Arc::as_ptr(arena) == arena_ptr {
+                if Arc::as_ptr(arena) as usize == arena_ptr {
                     return binders.get(idx).map(Arc::as_ref);
                 }
             }
