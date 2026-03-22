@@ -147,19 +147,6 @@ pub(crate) fn classify_identity_mapped(
     tsz_solver::type_queries::classify_identity_mapped(db, mapped_id)
 }
 
-/// Evaluate identity mapped type passthrough for a primitive argument.
-///
-/// Delegates the semantic decision about whether a primitive type passes
-/// through an identity mapped type (e.g., `Partial<number>` → `number`)
-/// to the solver. Returns `Some(result)` if passthrough applies.
-pub(crate) fn evaluate_identity_mapped_passthrough(
-    db: &dyn TypeDatabase,
-    mapped_id: tsz_solver::MappedTypeId,
-    arg: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::evaluate_identity_mapped_passthrough(db, mapped_id, arg)
-}
-
 /// Get the inner type of a `keyof T` type.
 ///
 /// Returns `Some(T)` if the type is `KeyOf(T)`, `None` otherwise.
