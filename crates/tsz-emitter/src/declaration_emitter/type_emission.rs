@@ -344,11 +344,12 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write("unique ");
                     }
                     // Our parser doesn't create ParenthesizedType nodes, so we must
-                    // add parens when the operand is a union or intersection type
-                    // (keyof/readonly bind tighter than | and &).
+                    // add parens when the operand is a union, intersection, or conditional type
+                    // (keyof/readonly bind tighter than |, &, and extends).
                     let needs_parens = self.arena.get(type_op.type_node).is_some_and(|n| {
                         n.kind == syntax_kind_ext::UNION_TYPE
                             || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
                     });
                     if needs_parens {
                         self.write("(");
@@ -560,11 +561,12 @@ impl<'a> DeclarationEmitter<'a> {
             // Optional type (T? in tuple elements)
             k if k == syntax_kind_ext::OPTIONAL_TYPE => {
                 if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
-                    // Parenthesize union/intersection types before `?` to avoid ambiguity
+                    // Parenthesize complex types before `?` to avoid ambiguity
                     let needs_parens = if let Some(inner) = self.arena.get(wrapped.type_node) {
                         inner.kind == syntax_kind_ext::UNION_TYPE
                             || inner.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || inner.kind == syntax_kind_ext::FUNCTION_TYPE
+                            || inner.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                             || inner.kind == syntax_kind_ext::CONDITIONAL_TYPE
                     } else {
                         false
