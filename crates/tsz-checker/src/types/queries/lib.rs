@@ -4,7 +4,7 @@
 //! Type-only symbol detection has been extracted to
 //! `queries/type_only.rs`.
 
-use super::lib_resolution::{resolve_augmentation_symbol, resolve_symbol_in_scope};
+use super::lib_resolution::resolve_augmentation_node;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -89,11 +89,11 @@ impl<'a> CheckerState<'a> {
                     None
                 };
 
-                // Lib symbols are pre-populated at checker init; use existing DefIds.
+                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
+                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).and_then(|sym_id| {
-                        self.ctx.get_existing_def_id(tsz_binder::SymbolId(sym_id))
-                    })
+                    resolver(node_idx)
+                        .map(|sym_id| self.ctx.get_lib_def_id(tsz_binder::SymbolId(sym_id)))
                 };
 
                 // Name-based resolver: resolves both simple identifiers and qualified
@@ -237,7 +237,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Helper: lower augmentation declarations using a given arena.
-            // Uses stable helpers instead of per-call resolver closures.
+            // Uses `resolve_augmentation_node` (the shared stable helper) instead
+            // of building per-call resolver closures with duplicated logic.
             let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
                 let decl_binder = self
                     .ctx
@@ -246,29 +247,15 @@ impl<'a> CheckerState<'a> {
                 let global_idx = self.ctx.global_file_locals_index.as_deref();
                 let all_binders_slice = self.ctx.all_binders.as_ref().map(|v| v.as_slice());
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                        return Some(sym_id.0);
-                    }
-                    if let Some(sym_id) = resolve_symbol_in_scope(decl_binder, arena_ref, node_idx)
-                    {
-                        return Some(sym_id);
-                    }
-                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    resolve_augmentation_symbol(
-                        ident_name,
+                    resolve_augmentation_node(
                         decl_binder,
+                        arena_ref,
+                        node_idx,
                         global_idx,
                         all_binders_slice,
                         lib_contexts,
                     )
-                    .map(|sym| sym.0)
                 };
-                // DefId resolver: delegates to the SymbolId resolver above.
-                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
-                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     resolver(node_idx)
                         .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
