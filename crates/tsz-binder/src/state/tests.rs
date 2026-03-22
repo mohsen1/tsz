@@ -5321,3 +5321,120 @@ export class List<T> {}
         }
     }
 }
+
+#[test]
+fn semantic_defs_parent_namespace_is_none_for_top_level() {
+    // Top-level (source-file scope) declarations should have parent_namespace = None.
+    let binder = bind_source(
+        "
+class Foo {}
+interface Bar {}
+type Baz = string;
+enum Color { Red }
+",
+    );
+    for entry in binder.semantic_defs.values() {
+        assert!(
+            entry.parent_namespace.is_none(),
+            "top-level '{}' should have parent_namespace = None, got {:?}",
+            entry.name,
+            entry.parent_namespace
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_parent_namespace_set_for_namespace_members() {
+    // Declarations inside a namespace body should have parent_namespace
+    // pointing to the namespace's SymbolId.
+    let binder = bind_source(
+        "
+namespace NS {
+    export interface Inner {}
+    export type Alias = string;
+    export class Klass {}
+    export enum E { A }
+}
+",
+    );
+    let ns_sym = binder
+        .file_locals
+        .get("NS")
+        .expect("expected NS in file_locals");
+
+    // The namespace itself should have no parent_namespace
+    let ns_entry = binder
+        .semantic_defs
+        .get(&ns_sym)
+        .expect("expected semantic def for NS");
+    assert!(
+        ns_entry.parent_namespace.is_none(),
+        "namespace NS itself should have no parent_namespace"
+    );
+
+    // Each member should reference NS as its parent_namespace
+    let member_names = ["Inner", "Alias", "Klass", "E"];
+    for name in &member_names {
+        let entry = binder
+            .semantic_defs
+            .values()
+            .find(|e| e.name == *name)
+            .unwrap_or_else(|| panic!("expected semantic def for '{name}'"));
+        assert_eq!(
+            entry.parent_namespace,
+            Some(ns_sym),
+            "'{name}' should have parent_namespace = NS (SymbolId {:?}), got {:?}",
+            ns_sym,
+            entry.parent_namespace
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_nested_namespace_parent_chain() {
+    // Declarations in nested namespaces should reference the
+    // immediate containing namespace, not the outermost one.
+    let binder = bind_source(
+        "
+namespace Outer {
+    export namespace Inner {
+        export class Deep {}
+    }
+}
+",
+    );
+    let outer_sym = binder
+        .file_locals
+        .get("Outer")
+        .expect("expected Outer in file_locals");
+
+    // Inner should reference Outer as parent
+    let inner_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Inner")
+        .expect("expected semantic def for Inner");
+    assert_eq!(
+        inner_entry.parent_namespace,
+        Some(outer_sym),
+        "Inner should have Outer as parent_namespace"
+    );
+
+    // Deep should reference Inner as parent (not Outer)
+    let inner_sym = binder
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Inner")
+        .map(|(&id, _)| id)
+        .expect("expected to find Inner's SymbolId");
+    let deep_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Deep")
+        .expect("expected semantic def for Deep");
+    assert_eq!(
+        deep_entry.parent_namespace,
+        Some(inner_sym),
+        "Deep should have Inner as parent_namespace, not Outer"
+    );
+}

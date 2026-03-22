@@ -505,6 +505,17 @@ pub struct SemanticDefEntry {
     /// Used by `FileSkeleton` fingerprinting so that heritage changes (which
     /// affect cross-file type resolution) trigger re-merge.
     pub heritage_names: Vec<String>,
+    /// The `SymbolId` of the containing namespace/module, if this declaration
+    /// lives inside one.
+    ///
+    /// Captured at bind time when the declaration is in a `ContainerKind::Module`
+    /// scope (but not the source-file root scope). During merge, this is remapped
+    /// to the global `SymbolId`. During `pre_populate_definition_store`, this is
+    /// used to wire up `DefinitionInfo.exports` so namespace members have stable
+    /// export identity without checker-side repair.
+    ///
+    /// `None` for top-level (source-file scope) declarations.
+    pub parent_namespace: Option<SymbolId>,
 }
 
 // =============================================================================

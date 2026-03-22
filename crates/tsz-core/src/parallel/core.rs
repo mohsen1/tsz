@@ -1716,6 +1716,23 @@ pub fn pre_populate_definition_store(
         store.register_symbol_mapping(sym_id.0, entry.file_id, def_id);
     }
 
+    // Pass 2: Wire namespace exports from parent_namespace relationships.
+    //
+    // Now that all DefIds exist, walk entries that have a parent_namespace and
+    // add them as exports of their parent's DefinitionInfo. This moves
+    // namespace-member export identity from checker repair into stable
+    // binder-owned identity that survives merge/rebind.
+    for (&sym_id, entry) in semantic_defs {
+        if let Some(parent_sym) = entry.parent_namespace {
+            let child_def = store.find_def_by_symbol(sym_id.0);
+            let parent_def = store.find_def_by_symbol(parent_sym.0);
+            if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                let name = interner.intern_string(&entry.name);
+                store.add_export(parent_def_id, name, child_def_id);
+            }
+        }
+    }
+
     store
 }
 
@@ -2134,6 +2151,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     remapped.file_id = global_symbols
                         .get(global_id)
                         .map_or(entry.file_id, |s| s.decl_file_idx);
+                    // Remap parent_namespace to global SymbolId
+                    remapped.parent_namespace = entry.parent_namespace.and_then(|old_parent| {
+                        lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
+                    });
                     remapped
                 });
             }
@@ -2516,6 +2537,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Update file_id to use the global file index
                 let mut remapped_entry = entry.clone();
                 remapped_entry.file_id = file_idx as u32;
+                // Remap parent_namespace to global SymbolId
+                remapped_entry.parent_namespace = entry
+                    .parent_namespace
+                    .and_then(|old_parent| id_remap.get(&old_parent).copied());
                 // Collect per-file entry (always insert — no cross-file merging here)
                 file_semantic_defs.insert(new_sym_id, remapped_entry.clone());
                 // Only insert the first occurrence (declaration merging keeps first identity)
