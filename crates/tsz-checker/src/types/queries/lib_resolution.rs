@@ -185,6 +185,52 @@ pub(crate) fn resolve_name_to_lib_symbol(
         .find_map(|ctx| ctx.binder.file_locals.get(name))
 }
 
+/// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
+/// declaration arenas and then all lib context binders.
+///
+/// This is the stable resolution path for per-lib-context lowering (e.g.,
+/// `resolve_lib_type_with_params`) where the main file's merged binder is
+/// not yet available or the symbol lookup must span individual lib binders.
+///
+/// The lookup order is:
+/// 1. Iterate `decl_arenas`; for each arena that yields identifier text at
+///    `node_idx`, search all `lib_contexts` binders for a matching symbol.
+/// 2. If no declaration arena matched, try `fallback_arena` with the same
+///    lib-contexts search.
+///
+/// Returns `None` when the identifier is a compiler-managed type (e.g.,
+/// `__String`) or when no matching symbol is found.
+pub(crate) fn resolve_lib_node_in_lib_contexts(
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+    lib_contexts: &[crate::context::LibContext],
+) -> Option<u32> {
+    for (_, arena) in decl_arenas {
+        if let Some(ident_name) = arena.get_identifier_text(node_idx) {
+            if is_compiler_managed_type(ident_name) {
+                return None;
+            }
+            for ctx in lib_contexts {
+                if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                    return Some(found_sym.0);
+                }
+            }
+            break;
+        }
+    }
+    let ident_name = fallback_arena.get_identifier_text(node_idx)?;
+    if is_compiler_managed_type(ident_name) {
+        return None;
+    }
+    for ctx in lib_contexts {
+        if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+            return Some(found_sym.0);
+        }
+    }
+    None
+}
+
 /// Resolve a `NodeIndex` to a raw `SymbolId` value using the augmentation
 /// resolution strategy: node-symbol lookup → scope-chain walk → name-based
 /// multi-tier fallback.
