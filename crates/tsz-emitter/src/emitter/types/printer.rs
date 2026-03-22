@@ -634,9 +634,10 @@ impl<'a> TypePrinter<'a> {
         }
         if let Some(inner_id) = visitor::keyof_inner_type(self.interner, type_id) {
             let inner_str = self.print_type(inner_id);
-            // Parenthesize union/intersection operand of keyof
+            // Parenthesize union/intersection/conditional operand of keyof
             let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
-                || visitor::intersection_list_id(self.interner, inner_id).is_some();
+                || visitor::intersection_list_id(self.interner, inner_id).is_some()
+                || visitor::conditional_type_id(self.interner, inner_id).is_some();
             if needs_parens {
                 return format!("keyof ({inner_str})");
             }
@@ -644,9 +645,10 @@ impl<'a> TypePrinter<'a> {
         }
         if let Some(inner_id) = visitor::readonly_inner_type(self.interner, type_id) {
             let inner_str = self.print_type(inner_id);
-            // Parenthesize union/intersection operand of readonly
+            // Parenthesize union/intersection/conditional operand of readonly
             let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
-                || visitor::intersection_list_id(self.interner, inner_id).is_some();
+                || visitor::intersection_list_id(self.interner, inner_id).is_some()
+                || visitor::conditional_type_id(self.interner, inner_id).is_some();
             if needs_parens {
                 return format!("readonly ({inner_str})");
             }
