@@ -25,6 +25,7 @@ fn empty_project_env() -> ProjectEnv {
         global_module_exports_index: None,
         global_module_augmentations_index: None,
         global_augmentation_targets_index: None,
+        global_module_binder_index: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -280,6 +281,44 @@ fn build_global_indices_if_changed_rebuilds_on_first_call() {
     assert!(env.global_module_exports_index.is_some());
     assert!(env.global_module_augmentations_index.is_some());
     assert!(env.global_augmentation_targets_index.is_some());
+    assert!(env.global_module_binder_index.is_some());
+}
+
+#[test]
+fn build_global_indices_populates_module_binder_index() {
+    let mut binder_a = BinderState::new();
+    binder_a
+        .module_exports
+        .entry("\"my-lib\"".to_string())
+        .or_default()
+        .set("foo".to_string(), SymbolId(1));
+
+    let mut binder_b = BinderState::new();
+    binder_b
+        .module_exports
+        .entry("\"other-lib\"".to_string())
+        .or_default()
+        .set("bar".to_string(), SymbolId(2));
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
+    env.build_global_indices();
+
+    let idx = env.global_module_binder_index.as_ref().unwrap();
+
+    // Raw key (with quotes) should map to binder index
+    let binders_raw = idx.get("\"my-lib\"").unwrap();
+    assert!(binders_raw.contains(&0));
+    assert!(!binders_raw.contains(&1));
+
+    // Normalized key (without quotes) should also map to the same binder
+    let binders_norm = idx.get("my-lib").unwrap();
+    assert!(binders_norm.contains(&0));
+
+    // other-lib maps to binder 1
+    let binders_other = idx.get("other-lib").unwrap();
+    assert!(binders_other.contains(&1));
+    assert!(!binders_other.contains(&0));
 }
 
 #[test]
