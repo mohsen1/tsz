@@ -235,9 +235,11 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
-        // If all 5 global indices are already pre-populated (e.g., from ProjectEnv),
+        // If the 5 name-based global indices are already pre-populated (from ProjectEnv),
         // skip the O(N) binder scans entirely. This is the fast path for multi-file
         // checking where ProjectEnv::build_global_indices was called once at the driver level.
+        // Note: global_arena_index, global_declared_modules, and global_expando_index
+        // are handled separately below (they're built on demand if not pre-set).
         let has_prebuilt_indices = self.global_file_locals_index.is_some()
             && self.global_module_exports_index.is_some()
             && self.global_module_augmentations_index.is_some()
