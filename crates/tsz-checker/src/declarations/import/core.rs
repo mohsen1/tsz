@@ -997,7 +997,10 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(all_binders) = &self.ctx.all_binders {
                     // Fallback: O(N) scan when index not built
                     let normalized = module_name.trim_matches('"').trim_matches('\'');
-                    tracing::trace!(num_binders = all_binders.len(), "Checking all binders (fallback)");
+                    tracing::trace!(
+                        num_binders = all_binders.len(),
+                        "Checking all binders (fallback)"
+                    );
                     for binder in all_binders.iter() {
                         if binder.module_exports.contains_key(module_name)
                             || binder.module_exports.contains_key(normalized)
