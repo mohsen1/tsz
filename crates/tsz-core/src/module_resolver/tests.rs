@@ -1,4 +1,5 @@
 use super::*;
+use crate::module_resolver_helpers::*;
 
 #[test]
 fn test_parse_package_specifier_simple() {
