@@ -9683,3 +9683,86 @@ fn fix_enum_self_ref_still_works() {
     assert!(output.contains("B = 2"), "B = 2: {output}");
     assert!(output.contains("C = 3"), "C = 3: {output}");
 }
+
+#[test]
+fn dump_const_literal_preservation() {
+    let cases = vec![
+        ("const-string", "export const a = '1.0';"),
+        ("const-number", "export const b = 42;"),
+        ("const-boolean", "export const c = true;"),
+        ("const-array", "export const d = [1, 2, 3];"),
+        ("let-string", "export let e = '1.0';"),
+        ("let-number", "export let f = 42;"),
+        ("static-readonly-string", "export class C { static readonly VERSION = '1.0'; }"),
+        ("static-readonly-number", "export class C { static readonly COUNT = 42; }"),
+        ("static-readonly-bool", "export class C { static readonly FLAG = true; }"),
+        ("static-readonly-array", "export class C { static readonly ITEMS = [1, 2, 3]; }"),
+        ("static-non-readonly", "export class C { static x = 42; }"),
+        ("const-negative", "export const x = -42;"),
+        ("const-template", "export const x = `hello`;"),
+    ];
+
+    for (label, source) in &cases {
+        let output = emit_dts(source);
+        println!("=== {label} ===");
+        println!("{output}");
+        println!();
+    }
+}
+
+#[test]
+fn fix_static_readonly_string_literal_preserved() {
+    // tsc preserves literal values for static readonly properties
+    let output = emit_dts("export class C { static readonly VERSION = '1.0'; }");
+    println!("static readonly string:\n{output}");
+    assert!(output.contains("= \"1.0\"") || output.contains("= '1.0'"),
+        "static readonly string should be preserved as literal: {output}");
+}
+
+#[test]
+fn fix_static_readonly_number_literal_preserved() {
+    let output = emit_dts("export class C { static readonly COUNT = 42; }");
+    println!("static readonly number:\n{output}");
+    assert!(output.contains("= 42"), "static readonly number should be preserved: {output}");
+}
+
+#[test]
+fn fix_static_readonly_boolean_literal_preserved() {
+    let output = emit_dts("export class C { static readonly FLAG = true; }");
+    println!("static readonly bool:\n{output}");
+    assert!(output.contains("= true"), "static readonly boolean should be preserved: {output}");
+}
+
+#[test]
+fn fix_static_readonly_array_not_preserved() {
+    // Arrays should widen to type, not preserve literal
+    let output = emit_dts("export class C { static readonly ITEMS = [1, 2, 3]; }");
+    println!("static readonly array:\n{output}");
+    // Should NOT have = [...], should have : any[] or similar
+    assert!(!output.contains("= ["), "array should widen, not preserve literal: {output}");
+}
+
+#[test]
+fn fix_static_non_readonly_widens() {
+    // Non-readonly static should widen to type
+    let output = emit_dts("export class C { static x = 42; }");
+    println!("static non-readonly:\n{output}");
+    assert!(output.contains(": number"), "non-readonly should widen: {output}");
+    assert!(!output.contains("= 42"), "non-readonly should not preserve literal: {output}");
+}
+
+#[test]
+fn fix_readonly_nonstatic_literal_preserved() {
+    // Readonly (non-static) should also preserve literals
+    let output = emit_dts("export class C { readonly name = 'hello'; }");
+    println!("readonly nonstatic:\n{output}");
+    assert!(output.contains("= \"hello\"") || output.contains("= 'hello'"),
+        "readonly string should be preserved: {output}");
+}
+
+#[test]
+fn fix_static_readonly_negative_number() {
+    let output = emit_dts("export class C { static readonly OFFSET = -42; }");
+    println!("static readonly negative:\n{output}");
+    assert!(output.contains("= -42"), "negative number preserved: {output}");
+}
