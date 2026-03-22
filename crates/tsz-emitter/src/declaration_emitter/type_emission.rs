@@ -272,15 +272,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 let is_last = i == tlt.template_spans.nodes.len() - 1;
                                 if is_last {
                                     self.write("}");
-                                    self.write(
-                                        &escape_template_literal_text(&lit.text),
-                                    );
+                                    self.write(&escape_template_literal_text(&lit.text));
                                     self.write("`");
                                 } else {
                                     self.write("}");
-                                    self.write(
-                                        &escape_template_literal_text(&lit.text),
-                                    );
+                                    self.write(&escape_template_literal_text(&lit.text));
                                     self.write("${");
                                 }
                             }

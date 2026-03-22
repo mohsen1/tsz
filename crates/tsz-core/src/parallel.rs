@@ -512,16 +512,20 @@ impl BindResult {
         }
 
         // node_symbols
-        size += self.node_symbols.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
+        size += self.node_symbols.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
 
         // module_declaration_exports_publicly
-        size += self.module_declaration_exports_publicly.capacity() * (std::mem::size_of::<u32>() + 1 + 8);
+        size += self.module_declaration_exports_publicly.capacity()
+            * (std::mem::size_of::<u32>() + 1 + 8);
 
         // symbol_arenas (map overhead; shared Arc data not counted)
-        size += self.symbol_arenas.capacity() * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<Arc<NodeArena>>() + 8);
+        size += self.symbol_arenas.capacity()
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<Arc<NodeArena>>() + 8);
 
         // declaration_arenas
-        size += self.declaration_arenas.len() * (std::mem::size_of::<(SymbolId, NodeIndex)>() + 32 + 8);
+        size +=
+            self.declaration_arenas.len() * (std::mem::size_of::<(SymbolId, NodeIndex)>() + 32 + 8);
 
         // scopes
         size += self.scopes.capacity() * std::mem::size_of::<Scope>();
@@ -530,7 +534,8 @@ impl BindResult {
         }
 
         // node_scope_ids
-        size += self.node_scope_ids.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<ScopeId>() + 8);
+        size += self.node_scope_ids.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<ScopeId>() + 8);
 
         // parse_diagnostics
         size += self.parse_diagnostics.capacity() * std::mem::size_of::<ParseDiagnostic>();
@@ -600,7 +605,8 @@ impl BindResult {
         size += self.lib_symbol_ids.len() * (std::mem::size_of::<SymbolId>() + 8);
 
         // lib_symbol_reverse_remap
-        size += self.lib_symbol_reverse_remap.capacity() * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<(usize, SymbolId)>() + 8);
+        size += self.lib_symbol_reverse_remap.capacity()
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<(usize, SymbolId)>() + 8);
 
         // flow_nodes
         size += self.flow_nodes.len() * std::mem::size_of::<crate::binder::FlowNode>();
@@ -609,10 +615,12 @@ impl BindResult {
         }
 
         // node_flow
-        size += self.node_flow.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<FlowNodeId>() + 8);
+        size += self.node_flow.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<FlowNodeId>() + 8);
 
         // switch_clause_to_switch
-        size += self.switch_clause_to_switch.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
+        size += self.switch_clause_to_switch.capacity()
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
 
         // expando_properties
         for (k, v) in &self.expando_properties {
@@ -627,7 +635,9 @@ impl BindResult {
 
         // semantic_defs
         for (_, def) in &self.semantic_defs {
-            size += std::mem::size_of::<SymbolId>() + std::mem::size_of::<crate::binder::SemanticDefEntry>() + 8;
+            size += std::mem::size_of::<SymbolId>()
+                + std::mem::size_of::<crate::binder::SemanticDefEntry>()
+                + 8;
             size += def.name.capacity();
         }
 
