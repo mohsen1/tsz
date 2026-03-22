@@ -19,4 +19,4 @@ pub use self::core::{
     FileRename, FileResidencyInfo, Project, ProjectFile, ProjectPerformance, ProjectRequestKind,
     ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
-pub use self::eviction::{EvictedFile, EvictionCandidate, EvictionResult};
+pub use self::eviction::{EvictedFile, EvictionResult};
