@@ -179,22 +179,8 @@ fn test_definition_store_concurrent() {
                     let info = DefinitionInfo {
                         kind: DefKind::TypeAlias,
                         name: tsz_common::interner::Atom(i * 1000 + j),
-                        type_params: vec![],
                         body: Some(TypeId::NUMBER),
-                        instance_shape: None,
-                        static_shape: None,
-                        extends: None,
-                        implements: Vec::new(),
-                        enum_members: Vec::new(),
-                        exports: Vec::new(),
-                        file_id: None,
-                        span: None,
-                        symbol_id: None,
-                        heritage_names: Vec::new(),
-                        is_abstract: false,
-                        is_const: false,
-                        is_exported: false,
-                        heritage_names: Vec::new(),
+                        ..Default::default()
                     };
                     let id = store.register(info);
                     assert!(store.contains(id));
@@ -386,22 +372,7 @@ fn test_find_type_alias_by_body_via_set_body() {
     let info = DefinitionInfo {
         kind: DefKind::TypeAlias,
         name,
-        type_params: vec![],
-        body: None,
-        instance_shape: None,
-        static_shape: None,
-        extends: None,
-        implements: Vec::new(),
-        enum_members: Vec::new(),
-        exports: Vec::new(),
-        file_id: None,
-        span: None,
-        symbol_id: None,
-        heritage_names: Vec::new(),
-        is_abstract: false,
-        is_const: false,
-        is_exported: false,
-        heritage_names: Vec::new(),
+        ..Default::default()
     };
     let def_id = store.register(info);
 
@@ -555,22 +526,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
     let info = DefinitionInfo {
         kind: DefKind::Interface,
         name,
-        type_params: vec![],
-        body: None,
-        instance_shape: None,
-        static_shape: None,
-        extends: None,
-        implements: Vec::new(),
-        enum_members: Vec::new(),
-        exports: Vec::new(),
-        file_id: None,
-        span: None,
-        symbol_id: None,
-        heritage_names: Vec::new(),
-        is_abstract: false,
-        is_const: false,
-        is_exported: false,
-        heritage_names: Vec::new(),
+        ..Default::default()
     };
     let def_id = store.register(info);
 

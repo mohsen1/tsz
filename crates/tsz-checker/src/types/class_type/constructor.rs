@@ -210,21 +210,9 @@ impl<'a> CheckerState<'a> {
                 .register(tsz_solver::def::DefinitionInfo {
                     kind: tsz_solver::def::DefKind::ClassConstructor,
                     name,
-                    type_params: Vec::new(),
                     body: Some(result),
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: None,
-                    span: None,
                     symbol_id,
-                    heritage_names: Vec::new(),
-                    is_abstract: false,
-                    is_const: false,
-                    is_exported: false,
+                    ..Default::default()
                 });
             self.ctx
                 .definition_store

@@ -84,10 +84,11 @@ impl DefId {
 /// | Namespace | Export lookup | No | `namespace NS { export type T = number }` |
 /// | Function | Value-space | No | `function foo(): void {}` |
 /// | Variable | Value-space | No | `const x: number = 1` |
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum DefKind {
     /// Type alias: always expand (transparent).
     /// `type Foo<T> = T | null`
+    #[default]
     TypeAlias,
 
     /// Interface: keep opaque until needed.
@@ -126,7 +127,7 @@ pub enum DefKind {
 /// Complete information about a type definition.
 ///
 /// This is stored in `DefinitionStore` and retrieved by `DefId`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DefinitionInfo {
     /// Kind of definition (affects evaluation strategy)
     pub kind: DefKind,
