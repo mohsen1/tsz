@@ -2400,31 +2400,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             priority,
                         );
                     }
-                    // Check write type compatibility for mutable targets
-                    // A readonly source cannot satisfy a mutable target
-                    if !target.readonly {
-                        // If source is readonly but target is mutable, this is a mismatch
-                        // We constrain with ERROR to signal the failure
-                        if source.readonly {
-                            if let Some(&var) = var_map.get(&target.write_type) {
-                                ctx.add_property_candidate_with_index(
-                                    var,
-                                    TypeId::ERROR,
-                                    priority,
-                                    property_index,
-                                    Some(source.name),
-                                    source_is_fresh,
-                                );
-                            } else {
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    TypeId::ERROR,
-                                    target.write_type,
-                                    priority,
-                                );
-                            }
-                        }
+                    // Constrain write type for mutable targets.
+                    // Note: readonly source → writable target is allowed during
+                    // inference constraint collection (TypeScript's inferFromProperties
+                    // ignores readonly).  Readonly mismatches are caught later during
+                    // assignability checking, not here.
+                    if !target.readonly && !source.readonly {
                         if let Some(&var) = var_map.get(&target.write_type) {
                             ctx.add_property_candidate_with_index(
                                 var,
