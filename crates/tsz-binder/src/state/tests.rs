@@ -5094,3 +5094,191 @@ interface Stable extends Extra { b: number }
         "heritage should include Extra from later declaration"
     );
 }
+
+// =============================================================================
+// FileSkeleton tests
+// =============================================================================
+
+#[test]
+fn file_skeleton_captures_exported_defs() {
+    let source = r#"
+export class Animal {}
+export interface Movable { move(): void; }
+export type ID = string;
+class Internal {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.file_idx = 42;
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+
+    assert_eq!(skeleton.file_idx, 42);
+    assert!(skeleton.is_external_module, "has exports so should be external module");
+
+    let names: Vec<&str> = skeleton.exported_defs.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Animal"), "expected Animal in exported_defs, got: {:?}", names);
+    assert!(names.contains(&"Movable"), "expected Movable in exported_defs, got: {:?}", names);
+    assert!(names.contains(&"ID"), "expected ID in exported_defs, got: {:?}", names);
+    assert!(!names.contains(&"Internal"), "Internal should not be in exported_defs");
+}
+
+#[test]
+fn file_skeleton_captures_import_sources() {
+    let source = r#"
+import { foo } from "./utils";
+import * as React from "react";
+export { bar } from "./helpers";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+
+    assert!(skeleton.import_sources.contains(&"./utils".to_string()));
+    assert!(skeleton.import_sources.contains(&"react".to_string()));
+    assert!(skeleton.import_sources.contains(&"./helpers".to_string()));
+}
+
+#[test]
+fn file_skeleton_captures_heritage_deps() {
+    let source = r#"
+export class Dog extends Animal implements Movable {}
+export interface FastAnimal extends Animal {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+
+    assert!(
+        skeleton.heritage_deps.contains(&"Animal".to_string()),
+        "expected Animal in heritage_deps, got: {:?}",
+        skeleton.heritage_deps
+    );
+    assert!(
+        skeleton.heritage_deps.contains(&"Movable".to_string()),
+        "expected Movable in heritage_deps, got: {:?}",
+        skeleton.heritage_deps
+    );
+}
+
+#[test]
+fn file_skeleton_dependency_specifiers_deduplicates() {
+    let source = r#"
+import { a } from "./shared";
+import { b } from "./shared";
+export { c } from "./other";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+    let specs = skeleton.dependency_specifiers();
+
+    // Should deduplicate "./shared"
+    let shared_count = specs.iter().filter(|&&s| s == "./shared").count();
+    assert_eq!(shared_count, 1, "dependency_specifiers should deduplicate, got: {:?}", specs);
+    assert!(specs.contains(&"./other"));
+}
+
+#[test]
+fn file_skeleton_has_exports_and_heritage_helpers() {
+    let source = r#"
+const x = 1;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+
+    assert!(!skeleton.has_exports(), "script file should have no exports");
+    assert!(!skeleton.has_heritage_deps(), "simple script should have no heritage deps");
+}
+
+#[test]
+fn file_skeleton_api_fingerprint_changes_on_export_change() {
+    // Two files with different exports should have different fingerprints
+    let source_a = r#"export class Foo {}"#;
+    let source_b = r#"export class Bar {}"#;
+
+    let mut parser_a = ParserState::new("a.ts".to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new("b.ts".to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let fp_a = binder_a.file_skeleton().api_fingerprint();
+    let fp_b = binder_b.file_skeleton().api_fingerprint();
+
+    assert_ne!(fp_a, fp_b, "different exports should produce different fingerprints");
+}
+
+#[test]
+fn file_skeleton_api_fingerprint_stable_across_calls() {
+    let source = r#"export interface I { x: number; }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let fp1 = binder.file_skeleton().api_fingerprint();
+    let fp2 = binder.file_skeleton().api_fingerprint();
+    assert_eq!(fp1, fp2, "fingerprint should be deterministic");
+}
+
+#[test]
+fn file_skeleton_exported_defs_sorted_deterministically() {
+    let source = r#"
+export class Zebra {}
+export class Alpha {}
+export class Middle {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+    let names: Vec<&str> = skeleton.exported_defs.iter().map(|e| e.name.as_str()).collect();
+
+    assert_eq!(names, vec!["Alpha", "Middle", "Zebra"], "exported_defs should be sorted by name");
+}
+
+#[test]
+fn file_skeleton_generic_type_param_count() {
+    let source = r#"
+export interface Map<K, V> {}
+export type Pair<A, B> = [A, B];
+export class List<T> {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let skeleton = binder.file_skeleton();
+
+    for exp in &skeleton.exported_defs {
+        match exp.name.as_str() {
+            "Map" => assert_eq!(exp.type_param_count, 2, "Map should have 2 type params"),
+            "Pair" => assert_eq!(exp.type_param_count, 2, "Pair should have 2 type params"),
+            "List" => assert_eq!(exp.type_param_count, 1, "List should have 1 type param"),
+            other => panic!("unexpected export: {}", other),
+        }
+    }
+}
