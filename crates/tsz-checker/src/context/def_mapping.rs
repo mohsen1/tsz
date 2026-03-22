@@ -709,10 +709,17 @@ impl<'a> CheckerContext<'a> {
 
             // Pre-populate enum member names from binder-captured data.
             // Values are Computed stubs; the checker walk fills in real values.
-            // enum_member_names was removed from SemanticDefEntry.
-            // The checker walk fills in real enum member values later.
             let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
-                Vec::new();
+                entry
+                    .enum_member_names
+                    .iter()
+                    .map(|m| {
+                        (
+                            self.types.intern_string(m),
+                            tsz_solver::def::EnumMemberValue::Computed,
+                        )
+                    })
+                    .collect();
 
             let info = DefinitionInfo {
                 kind,
