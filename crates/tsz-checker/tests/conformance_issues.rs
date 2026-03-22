@@ -1753,6 +1753,62 @@ function g(callback) {
 }
 
 #[test]
+fn test_jsdoc_type_function_constructor_does_not_report_ts7014() {
+    // `function(new: object, string, number)` is a constructor type — the `new: object`
+    // part implies the return type, so TS7014 must not fire.
+    let source = r#"
+/** @type {function(new: object, string, number)} */
+const g = null;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7014),
+        "TS7014 should NOT be emitted for constructor function types. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_type_function_no_implicit_any_guard() {
+    // Without noImplicitAny, TS7014 must not be emitted even for function types
+    // without a return annotation.
+    let source = r#"
+/** @type {function(string)} */
+const f = null;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: false,
+            no_implicit_any: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7014),
+        "TS7014 should NOT be emitted without noImplicitAny. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_function_object_type_does_not_suppress_implicit_any_parameter() {
     let source = r#"
 // @ts-check
