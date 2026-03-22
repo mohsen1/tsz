@@ -210,6 +210,7 @@ impl<'a> CheckerContext<'a> {
             global_module_augmentations_index: None,
             global_augmentation_targets_index: None,
             global_module_binder_index: None,
+            global_arena_index: None,
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,

@@ -221,6 +221,7 @@ impl<'a> CheckerContext<'a> {
         self.global_module_augmentations_index = parent.global_module_augmentations_index.clone();
         self.global_augmentation_targets_index = parent.global_augmentation_targets_index.clone();
         self.global_module_binder_index = parent.global_module_binder_index.clone();
+        self.global_arena_index = parent.global_arena_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.module_specifiers = parent.module_specifiers.clone();
     }
@@ -285,6 +286,9 @@ impl<'a> CheckerContext<'a> {
                     }
                 }
                 self.global_expando_index = Some(Arc::new(expando_index));
+            }
+            if self.global_arena_index.is_none() {
+                self.build_arena_index();
             }
             self.all_binders = Some(binders);
             return;
@@ -400,7 +404,21 @@ impl<'a> CheckerContext<'a> {
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
         self.global_module_binder_index = Some(Arc::new(module_binder_index));
+        self.build_arena_index();
         self.all_binders = Some(binders);
+    }
+
+    /// Build the `global_arena_index` from `all_arenas`.
+    ///
+    /// Maps `Arc::as_ptr(arena) as usize` → file index for O(1) arena→binder lookups.
+    fn build_arena_index(&mut self) {
+        if let Some(arenas) = self.all_arenas.as_ref() {
+            let mut arena_idx: FxHashMap<usize, usize> = FxHashMap::default();
+            for (file_idx, arena) in arenas.iter().enumerate() {
+                arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
+            }
+            self.global_arena_index = Some(Arc::new(arena_idx));
+        }
     }
 
     /// Validate that skeleton-derived declared modules match the binder-built ones.
@@ -543,12 +561,19 @@ impl<'a> CheckerContext<'a> {
     /// directly (via `symbol_arenas` / `declaration_arenas`) without already
     /// knowing the originating file index.
     pub fn get_binder_for_arena(&self, arena: &NodeArena) -> Option<&BinderState> {
-        let arenas = self.all_arenas.as_ref()?;
         let binders = self.all_binders.as_ref()?;
-        let arena_ptr = arena as *const NodeArena;
+        let arena_ptr = arena as *const NodeArena as usize;
 
+        // O(1) path via pre-built arena index
+        if let Some(arena_idx) = self.global_arena_index.as_ref() {
+            let file_idx = *arena_idx.get(&arena_ptr)?;
+            return binders.get(file_idx).map(Arc::as_ref);
+        }
+
+        // O(N) fallback when index not built
+        let arenas = self.all_arenas.as_ref()?;
         arenas.iter().enumerate().find_map(|(idx, candidate)| {
-            (Arc::as_ptr(candidate) == arena_ptr)
+            (Arc::as_ptr(candidate) as usize == arena_ptr)
                 .then(|| binders.get(idx).map(Arc::as_ref))
                 .flatten()
         })
@@ -559,13 +584,18 @@ impl<'a> CheckerContext<'a> {
     /// This keeps delegated child contexts aligned with the declaring file when
     /// cross-file resolution discovers an arena directly from declaration metadata.
     pub fn get_file_idx_for_arena(&self, arena: &NodeArena) -> Option<usize> {
-        let arenas = self.all_arenas.as_ref()?;
-        let arena_ptr = arena as *const NodeArena;
+        let arena_ptr = arena as *const NodeArena as usize;
 
-        arenas
-            .iter()
-            .enumerate()
-            .find_map(|(idx, candidate)| (Arc::as_ptr(candidate) == arena_ptr).then_some(idx))
+        // O(1) path via pre-built arena index
+        if let Some(arena_idx) = self.global_arena_index.as_ref() {
+            return arena_idx.get(&arena_ptr).copied();
+        }
+
+        // O(N) fallback when index not built
+        let arenas = self.all_arenas.as_ref()?;
+        arenas.iter().enumerate().find_map(|(idx, candidate)| {
+            (Arc::as_ptr(candidate) as usize == arena_ptr).then_some(idx)
+        })
     }
 
     /// Resolve an import specifier to its target file index.

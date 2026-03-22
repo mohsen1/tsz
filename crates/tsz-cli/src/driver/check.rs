@@ -404,6 +404,7 @@ pub(super) fn collect_diagnostics(
         global_module_augmentations_index: None,
         global_augmentation_targets_index: None,
         global_module_binder_index: None,
+        global_arena_index: None,
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_errors: Arc::clone(&resolved_module_errors),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),
