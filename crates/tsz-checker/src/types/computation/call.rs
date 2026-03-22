@@ -738,6 +738,7 @@ impl<'a> CheckerState<'a> {
                 // Extract ThisType<T> from shape params via alias expansion.
                 // Store for re-use across retry arg typing calls.
                 if shape_this_type.is_none() {
+                    let env = self.ctx.type_env.borrow();
                     for param in &shape.params {
                         use tsz_solver::ContextualTypeContext;
                         let ctx_helper = ContextualTypeContext::with_expected_and_options(
@@ -745,41 +746,9 @@ impl<'a> CheckerState<'a> {
                             param.type_id,
                             self.ctx.compiler_options.no_implicit_any,
                         );
-                        if let Some(tt) = ctx_helper.get_this_type_from_marker() {
+                        if let Some(tt) = ctx_helper.get_this_type_from_marker_expanding(&*env) {
                             shape_this_type = Some(tt);
                             break;
-                        }
-                        // Look through type alias Applications
-                        if let Some(tsz_solver::TypeData::Application(app_id)) =
-                            self.ctx.types.lookup(param.type_id)
-                        {
-                            let app = self.ctx.types.type_application(app_id);
-                            if let Some(tsz_solver::TypeData::Lazy(def_id)) =
-                                self.ctx.types.lookup(app.base)
-                            {
-                                use tsz_solver::TypeResolver;
-                                let env = self.ctx.type_env.borrow();
-                                if let Some(body) = env.resolve_lazy(def_id, self.ctx.types) {
-                                    let type_params =
-                                        env.get_lazy_type_params(def_id).unwrap_or_default();
-                                    let expanded = tsz_solver::instantiate_generic(
-                                        self.ctx.types,
-                                        body,
-                                        &type_params,
-                                        &app.args,
-                                    );
-                                    let expanded_ctx =
-                                        ContextualTypeContext::with_expected_and_options(
-                                            self.ctx.types,
-                                            expanded,
-                                            self.ctx.compiler_options.no_implicit_any,
-                                        );
-                                    if let Some(tt) = expanded_ctx.get_this_type_from_marker() {
-                                        shape_this_type = Some(tt);
-                                        break;
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -1087,7 +1056,6 @@ impl<'a> CheckerState<'a> {
                                 .map(|tp| self.ctx.types.resolve_atom(tp.name))
                                 .collect::<Vec<_>>(),
                             contextual_type = ctx_type.0,
-                            contextual_type_key = ?self.ctx.types.lookup(ctx_type),
                             contextual_type_display = %self.format_type(ctx_type),
                             contextual_type_union_members = ?tsz_solver::type_queries::get_union_members(
                                 self.ctx.types,
@@ -1097,7 +1065,6 @@ impl<'a> CheckerState<'a> {
                                 .into_iter()
                                 .map(|member| (
                                     self.format_type(member),
-                                    self.ctx.types.lookup(member),
                                     tsz_solver::type_queries::get_application_info(self.ctx.types, member)
                                         .map(|(_, args)| args),
                                 ))
@@ -2181,10 +2148,8 @@ impl<'a> CheckerState<'a> {
             // even when node_types is temporarily emptied during overload resolution
             // of a containing call expression (e.g., `console.log(thing.toUpperCase())`
             // triggers overload resolution which empties node_types before checking args).
-            let is_sound_union = if matches!(
-                self.ctx.types.lookup(callee_type_for_call),
-                Some(tsz_solver::TypeData::Union(_))
-            ) {
+            let is_sound_union = if tsz_solver::is_union_type(self.ctx.types, callee_type_for_call)
+            {
                 tsz_solver::type_queries::flow::is_valid_union_predicate(
                     self.ctx.types,
                     callee_type_for_call,
