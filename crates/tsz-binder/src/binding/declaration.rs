@@ -2476,6 +2476,24 @@ impl BinderState {
             }
             return;
         }
+        // Determine containing namespace symbol, if any.
+        // A declaration is namespace-parented when its scope is Module but not
+        // the source-file root (ScopeId(0)).
+        let parent_namespace = if self.current_scope_id != crate::ScopeId(0) {
+            self.scopes
+                .get(self.current_scope_id.0 as usize)
+                .and_then(|scope| {
+                    if scope.kind == crate::ContainerKind::Module {
+                        // Look up the namespace symbol from the scope's container node.
+                        self.node_symbols.get(&scope.container_node.0).copied()
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            None
+        };
+
         self.semantic_defs.insert(
             sym_id,
             crate::state::SemanticDefEntry {
@@ -2492,6 +2510,7 @@ impl BinderState {
                 is_const,
                 is_abstract,
                 heritage_names,
+                parent_namespace,
             },
         );
     }

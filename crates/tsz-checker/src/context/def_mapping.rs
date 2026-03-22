@@ -786,6 +786,21 @@ impl<'a> CheckerContext<'a> {
             count += 1;
         }
 
+        // Pass 2: Wire namespace exports from parent_namespace relationships.
+        // After all DefIds are created/warmed, walk entries with parent_namespace
+        // and register them as exports of their parent's DefinitionInfo.
+        for (&sym_id, entry) in semantic_defs {
+            if let Some(parent_sym) = entry.parent_namespace {
+                let child_def = self.definition_store.find_def_by_symbol(sym_id.0);
+                let parent_def = self.definition_store.find_def_by_symbol(parent_sym.0);
+                if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                    let name = self.types.intern_string(&entry.name);
+                    self.definition_store
+                        .add_export(parent_def_id, name, child_def_id);
+                }
+            }
+        }
+
         count
     }
 
