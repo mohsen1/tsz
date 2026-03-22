@@ -334,10 +334,7 @@ fn query_cache_estimated_size_grows_with_entries() {
     cache.evaluate_type(num_type);
 
     // Add subtype cache entries
-    cache.insert_subtype_cache(
-        RelationCacheKey::subtype(str_type, num_type, 0, 0),
-        false,
-    );
+    cache.insert_subtype_cache(RelationCacheKey::subtype(str_type, num_type, 0, 0), false);
 
     // Add assignability cache entries
     cache.insert_assignability_cache(

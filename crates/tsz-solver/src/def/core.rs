@@ -1007,9 +1007,7 @@ impl DefinitionStore {
 
         // symbol_only_index: u32 -> DefId
         size += self.symbol_only_index.len()
-            * (std::mem::size_of::<u32>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
+            * (std::mem::size_of::<u32>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
 
         // body_to_alias: TypeId -> DefId
         size += self.body_to_alias.len()
@@ -1019,9 +1017,7 @@ impl DefinitionStore {
 
         // shape_to_def: u64 -> DefId
         size += self.shape_to_def.len()
-            * (std::mem::size_of::<u64>()
-                + std::mem::size_of::<DefId>()
-                + DASHMAP_ENTRY_OVERHEAD);
+            * (std::mem::size_of::<u64>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
 
         // file_to_defs: u32 -> Vec<DefId>
         for entry in &self.file_to_defs {
