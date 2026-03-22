@@ -407,3 +407,6 @@ mod variance_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
+#[cfg(test)]
+#[path = "tests/solver_file_size_ceiling_tests.rs"]
+mod solver_file_size_ceiling_tests;
