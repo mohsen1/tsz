@@ -229,11 +229,20 @@ impl BinderState {
     /// Mark symbols associated with a declaration node as exported.
     /// This is required because the parser wraps exported declarations in `ExportDeclaration`
     /// nodes instead of attaching modifiers to the declaration itself.
+    ///
+    /// Also updates the `semantic_defs` entry for the symbol to reflect the
+    /// export visibility, since `record_semantic_def` may have fired before the
+    /// `ExportDeclaration` wrapper was processed.
     pub(crate) fn mark_exported_symbols(&mut self, arena: &NodeArena, idx: NodeIndex) {
         // 1. Try direct symbol lookup (Function, Class, Enum, Module, Interface, TypeAlias)
-        if let Some(sym_id) = self.node_symbols.get(&idx.0) {
-            if let Some(sym) = self.symbols.get_mut(*sym_id) {
+        if let Some(&sym_id) = self.node_symbols.get(&idx.0) {
+            if let Some(sym) = self.symbols.get_mut(sym_id) {
                 sym.is_exported = true;
+            }
+            // Propagate to semantic_defs (record_semantic_def was called before
+            // the ExportDeclaration wrapper set is_exported on the symbol).
+            if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
+                entry.is_exported = true;
             }
             return;
         }
@@ -249,10 +258,13 @@ impl BinderState {
                     && let Some(list) = arena.get_variable(list_node)
                 {
                     for &decl_idx in &list.declarations.nodes {
-                        if let Some(sym_id) = self.node_symbols.get(&decl_idx.0)
-                            && let Some(sym) = self.symbols.get_mut(*sym_id)
-                        {
-                            sym.is_exported = true;
+                        if let Some(&sym_id) = self.node_symbols.get(&decl_idx.0) {
+                            if let Some(sym) = self.symbols.get_mut(sym_id) {
+                                sym.is_exported = true;
+                            }
+                            if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
+                                entry.is_exported = true;
+                            }
                         }
                     }
                 }
