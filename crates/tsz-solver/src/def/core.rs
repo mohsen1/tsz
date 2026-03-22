@@ -84,10 +84,11 @@ impl DefId {
 /// | Namespace | Export lookup | No | `namespace NS { export type T = number }` |
 /// | Function | Value-space | No | `function foo(): void {}` |
 /// | Variable | Value-space | No | `const x: number = 1` |
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum DefKind {
     /// Type alias: always expand (transparent).
     /// `type Foo<T> = T | null`
+    #[default]
     TypeAlias,
 
     /// Interface: keep opaque until needed.
@@ -126,7 +127,7 @@ pub enum DefKind {
 /// Complete information about a type definition.
 ///
 /// This is stored in `DefinitionStore` and retrieved by `DefId`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DefinitionInfo {
     /// Kind of definition (affects evaluation strategy)
     pub kind: DefKind,
@@ -207,25 +208,13 @@ pub enum EnumMemberValue {
 
 impl DefinitionInfo {
     /// Create a new type alias definition.
-    pub const fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
+    pub fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
         Self {
             kind: DefKind::TypeAlias,
             name,
             type_params,
             body: Some(body),
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(),
-            file_id: None,
-            span: None,
-            symbol_id: None,
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
+            ..Default::default()
         }
     }
 
@@ -251,20 +240,8 @@ impl DefinitionInfo {
             kind: DefKind::Interface,
             name,
             type_params,
-            body: None, // Body computed on demand
             instance_shape: Some(Arc::new(shape)),
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(),
-            file_id: None,
-            span: None,
-            symbol_id: None,
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
+            ..Default::default()
         }
     }
 
@@ -293,66 +270,29 @@ impl DefinitionInfo {
             kind: DefKind::Class,
             name,
             type_params,
-            body: None,
             instance_shape: Some(Arc::new(instance_shape)),
             static_shape: Some(Arc::new(static_shape)),
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
-            exports: Vec::new(),
-            file_id: None,
-            span: None,
-            symbol_id: None,
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
+            ..Default::default()
         }
     }
 
     /// Create a new enum definition.
-    pub const fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
+    pub fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
         Self {
             kind: DefKind::Enum,
             name,
-            type_params: Vec::new(),
-            body: None,
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
             enum_members: members,
-            exports: Vec::new(),
-            file_id: None,
-            span: None,
-            symbol_id: None,
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
+            ..Default::default()
         }
     }
 
     /// Create a new namespace definition.
-    pub const fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
+    pub fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
         Self {
             kind: DefKind::Namespace,
             name,
-            type_params: Vec::new(),
-            body: None,
-            instance_shape: None,
-            static_shape: None,
-            extends: None,
-            implements: Vec::new(),
-            enum_members: Vec::new(),
             exports,
-            file_id: None,
-            span: None,
-            symbol_id: None,
-            heritage_names: Vec::new(),
-            is_abstract: false,
-            is_const: false,
-            is_exported: false,
+            ..Default::default()
         }
     }
 
