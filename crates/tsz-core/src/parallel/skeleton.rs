@@ -885,13 +885,13 @@ mod tests {
             module_augmentations: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
-            expando_properties: FxHashMap::default(),
-            module_exports: FxHashMap::default(),
             declared_modules: vec![],
-            has_shorthand_ambient: false,
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            expando_properties: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
             fingerprint,
-            file_count: 1,
-            total_symbol_count: 0,
         }
     }
 
