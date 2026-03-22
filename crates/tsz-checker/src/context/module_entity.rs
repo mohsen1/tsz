@@ -425,10 +425,10 @@ impl<'a> CheckerContext<'a> {
         }
 
         if let Some(all_binders) = self.all_binders.as_ref() {
-            for (idx, binder) in all_binders.iter().enumerate() {
-                if let Some(exports) = binder.module_exports.get(module_specifier)
-                    && let Some(non_module) = export_equals_is_non_module(binder, exports)
-                {
+            let check_binder_at =
+                |idx: usize, binder: &BinderState, saw: &mut bool| -> Option<bool> {
+                    let exports = binder.module_exports.get(module_specifier)?;
+                    let non_module = export_equals_is_non_module(binder, exports)?;
                     tracing::trace!(
                         module_specifier = module_specifier,
                         branch = "all_binders",
@@ -447,12 +447,29 @@ impl<'a> CheckerContext<'a> {
                             binder_idx = idx,
                             "module_resolves_to_non_module_entity: source fallback override"
                         );
-                        return false;
+                        return Some(false);
                     }
                     if !non_module {
-                        return false;
+                        return Some(false);
                     }
-                    saw_non_module = true;
+                    *saw = true;
+                    None
+                };
+
+            // Use O(1) module binder index when available.
+            if let Some(file_indices) = self.files_for_module_specifier(module_specifier) {
+                for &idx in file_indices {
+                    if let Some(binder) = all_binders.get(idx) {
+                        if let Some(result) = check_binder_at(idx, binder, &mut saw_non_module) {
+                            return result;
+                        }
+                    }
+                }
+            } else {
+                for (idx, binder) in all_binders.iter().enumerate() {
+                    if let Some(result) = check_binder_at(idx, binder, &mut saw_non_module) {
+                        return result;
+                    }
                 }
             }
         }

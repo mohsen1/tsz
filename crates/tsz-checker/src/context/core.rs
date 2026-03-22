@@ -525,6 +525,18 @@ impl<'a> CheckerContext<'a> {
             .map(Arc::as_ref)
     }
 
+    /// Look up which file indices have `module_exports` for the given specifier.
+    ///
+    /// Uses the O(1) `global_module_binder_index` when available,
+    /// otherwise returns `None` (caller should fall back to linear scan).
+    #[inline]
+    pub fn files_for_module_specifier(&self, specifier: &str) -> Option<&[usize]> {
+        self.global_module_binder_index
+            .as_ref()
+            .and_then(|idx| idx.get(specifier))
+            .map(Vec::as_slice)
+    }
+
     /// Get the binder that owns a specific arena.
     ///
     /// This is used when cross-file resolution discovers a declaration arena
