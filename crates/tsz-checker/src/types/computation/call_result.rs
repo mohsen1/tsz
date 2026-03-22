@@ -1,6 +1,7 @@
 //! Call-result handling helpers shared by call expression computation.
 
 use crate::query_boundaries::assignability as assign_query;
+use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -587,8 +588,8 @@ impl<'a> CheckerState<'a> {
         if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
             return false;
         }
-        let callable_mismatch = tsz_solver::type_queries::is_callable_type(self.ctx.types, actual)
-            && tsz_solver::type_queries::is_callable_type(self.ctx.types, expected);
+        let callable_mismatch = common::is_callable_type(self.ctx.types, actual)
+            && common::is_callable_type(self.ctx.types, expected);
         if assign_query::contains_infer_types(self.ctx.types, actual)
             || assign_query::contains_infer_types(self.ctx.types, expected)
         {
@@ -625,9 +626,7 @@ impl<'a> CheckerState<'a> {
             normalized.params = shape
                 .params
                 .iter()
-                .flat_map(|param| {
-                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
-                })
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
             normalized
         };
@@ -655,11 +654,8 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if !tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, expected_rest.type_id)
-            && !tsz_solver::type_queries::contains_type_parameters_db(
-                self.ctx.types,
-                expected_rest.type_id,
-            )
+        if !common::is_type_parameter_like(self.ctx.types, expected_rest.type_id)
+            && !common::contains_type_parameters(self.ctx.types, expected_rest.type_id)
         {
             return false;
         }

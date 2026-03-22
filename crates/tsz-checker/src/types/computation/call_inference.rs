@@ -4,7 +4,9 @@ use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::common::LiteralTypeKind;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
@@ -19,7 +21,7 @@ use tsz_solver::{FunctionShape, TypeId};
 /// (non-`any`) parameter types provides better contextual typing for callbacks.
 /// Returns 0 for non-callable types.
 fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
-    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, ty) {
+    if let Some(shape) = common::function_shape_for_type(db, ty) {
         shape
             .params
             .iter()
@@ -43,16 +45,16 @@ fn contextual_constraint_preserves_literals(
     }
 
     if matches!(
-        tsz_solver::type_queries::extended::classify_literal_type(db, type_id),
-        tsz_solver::type_queries::extended::LiteralTypeKind::String(_)
-            | tsz_solver::type_queries::extended::LiteralTypeKind::Number(_)
-            | tsz_solver::type_queries::extended::LiteralTypeKind::BigInt(_)
-            | tsz_solver::type_queries::extended::LiteralTypeKind::Boolean(_)
+        common::classify_literal_type(db, type_id),
+        LiteralTypeKind::String(_)
+            | LiteralTypeKind::Number(_)
+            | LiteralTypeKind::BigInt(_)
+            | LiteralTypeKind::Boolean(_)
     ) {
         return true;
     }
 
-    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+    if let Some(members) = common::union_members(db, type_id) {
         return members
             .iter()
             .copied()
@@ -87,18 +89,18 @@ pub(crate) fn should_preserve_contextual_application_shape(
     db: &dyn tsz_solver::TypeDatabase,
     ty: TypeId,
 ) -> bool {
-    if tsz_solver::type_queries::get_application_info(db, ty).is_some() {
+    if common::application_info(db, ty).is_some() {
         return true;
     }
 
-    if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
+    if let Some(members) = common::union_members(db, ty) {
         return members
             .iter()
             .copied()
             .any(|member| should_preserve_contextual_application_shape(db, member));
     }
 
-    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, ty) {
+    if let Some(members) = common::intersection_members(db, ty) {
         return members
             .iter()
             .copied()
@@ -258,7 +260,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         tracked_type_params: &FxHashSet<Atom>,
     ) -> bool {
-        if tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, target) {
+        if common::contains_infer_types(self.ctx.types, target) {
             return true;
         }
 
@@ -278,7 +280,7 @@ impl<'a> CheckerState<'a> {
         let should_drop_self = substitution.get(tp_info.name).is_some_and(|ty| {
             ty == TypeId::ERROR
                 || ty == TypeId::UNKNOWN
-                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
+                || common::contains_infer_types(self.ctx.types, ty)
         });
         let mut contextual_substitution = crate::query_boundaries::common::TypeSubstitution::new();
         for (&name, &type_id) in substitution.map() {
@@ -319,7 +321,7 @@ impl<'a> CheckerState<'a> {
         let ty = substitution.get(tp_info.name)?;
         (ty == TypeId::ERROR
             || ty == TypeId::UNKNOWN
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty))
+            || common::contains_infer_types(self.ctx.types, ty))
         .then_some(ty)
     }
 
@@ -352,9 +354,7 @@ impl<'a> CheckerState<'a> {
             normalized.params = shape
                 .params
                 .iter()
-                .flat_map(|param| {
-                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
-                })
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
             normalized
         };
@@ -413,9 +413,7 @@ impl<'a> CheckerState<'a> {
             normalized.params = shape
                 .params
                 .iter()
-                .flat_map(|param| {
-                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
-                })
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
             normalized
         };
@@ -435,7 +433,7 @@ impl<'a> CheckerState<'a> {
         let has_concrete_param_context = target_param_types.iter().any(|&param_ty| {
             param_ty != TypeId::ANY
                 && param_ty != TypeId::UNKNOWN
-                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, param_ty)
+                && !common::contains_infer_types(self.ctx.types, param_ty)
         });
         if !has_concrete_param_context {
             return source_ty;
@@ -470,8 +468,8 @@ impl<'a> CheckerState<'a> {
         return_ty != TypeId::ANY
             && return_ty != TypeId::UNKNOWN
             && return_ty != TypeId::ERROR
-            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, return_ty)
-            && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, return_ty)
+            && !common::contains_infer_types(self.ctx.types, return_ty)
+            && !common::contains_type_parameters(self.ctx.types, return_ty)
     }
 
     pub(crate) fn contextual_param_types_from_instantiated_params(
@@ -481,9 +479,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<Option<TypeId>> {
         let unpacked_params: Vec<_> = instantiated_params
             .iter()
-            .flat_map(|param| {
-                tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
-            })
+            .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
             .collect();
         let rest_start = if unpacked_params.last().is_some_and(|param| param.rest) {
             unpacked_params.len().saturating_sub(1)
@@ -581,9 +577,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(target_members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, target)
-        {
+        if let Some(target_members) = common::union_members(self.ctx.types, target) {
             let before_len = substitution.len();
             for member in target_members
                 .into_iter()
@@ -701,8 +695,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let (Some(source_elems), Some(target_elems)) = (
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source),
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, target),
+            common::tuple_elements(self.ctx.types, source),
+            common::tuple_elements(self.ctx.types, target),
         ) {
             for (source_elem, target_elem) in source_elems.iter().zip(target_elems.iter()) {
                 self.collect_return_context_substitution(
@@ -717,8 +711,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let (Some(source_elem), Some(target_elem)) = (
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, source),
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, target),
+            common::array_element_type(self.ctx.types, source),
+            common::array_element_type(self.ctx.types, target),
         ) {
             self.collect_return_context_substitution(
                 source_elem,
@@ -730,10 +724,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
             && let Some((_target_base, target_args)) =
-                tsz_solver::type_queries::get_application_info(self.ctx.types, target)
+                common::application_info(self.ctx.types, target)
             && target_args.len() == 1
         {
             self.collect_return_context_substitution(
@@ -746,8 +739,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
             && let Some(iterator_info) =
                 tsz_solver::operations::get_iterator_info(self.ctx.types, target, false)
         {
@@ -762,8 +754,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
-            tsz_solver::type_queries::get_application_info(self.ctx.types, source),
-            tsz_solver::type_queries::get_application_info(self.ctx.types, target),
+            common::application_info(self.ctx.types, source),
+            common::application_info(self.ctx.types, target),
         ) && source_base == target_base
             && source_args.len() == target_args.len()
         {
@@ -923,16 +915,13 @@ impl<'a> CheckerState<'a> {
             return arg_type;
         }
 
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)
-        {
+        if let Some(shape) = common::function_shape_for_type(self.ctx.types, arg_type) {
             let sanitized = sanitize_function_shape_binding_pattern_params(
                 &shape,
                 &binding_pattern_param_positions,
             );
             self.ctx.types.factory().function(sanitized)
-        } else if let Some(shape) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, arg_type)
-        {
+        } else if let Some(shape) = common::callable_shape_for_type(self.ctx.types, arg_type) {
             let mut sanitized = shape.as_ref().clone();
             sanitized.call_signatures = sanitized
                 .call_signatures
@@ -977,26 +966,24 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(elem) = tsz_solver::type_queries::get_array_element_type(self.ctx.types, ty) {
+        if let Some(elem) = common::array_element_type(self.ctx.types, ty) {
             return self.inference_type_is_anyish(elem, visited);
         }
 
-        if let Some(elems) = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, ty) {
+        if let Some(elems) = common::tuple_elements(self.ctx.types, ty) {
             return elems
                 .iter()
                 .all(|elem| self.inference_type_is_anyish(elem.type_id, visited));
         }
 
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, ty) {
+        if let Some(members) = common::union_members(self.ctx.types, ty) {
             return !members.is_empty()
                 && members
                     .iter()
                     .all(|member| self.inference_type_is_anyish(*member, visited));
         }
 
-        if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty)
-        {
+        if let Some(members) = common::intersection_members(self.ctx.types, ty) {
             return !members.is_empty()
                 && members
                     .iter()
@@ -1023,7 +1010,7 @@ impl<'a> CheckerState<'a> {
                 // the inference engine needs to see the namespace Object type with
                 // named member properties. This mirrors tsc's behavior where `typeof E1`
                 // (the enum namespace) has an implicit string index signature.
-                let enum_def = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, arg_type);
+                let enum_def = common::enum_def_id(self.ctx.types, arg_type);
                 let arg_type = if let Some(def_id) = enum_def {
                     let sym_id = self.ctx.def_to_symbol_id(def_id);
                     let ns_type =
@@ -1088,24 +1075,20 @@ impl<'a> CheckerState<'a> {
                         k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
                             || k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
                     )
-                }) && (tsz_solver::type_queries::contains_type_parameters_db(
-                    self.ctx.types,
-                    expected,
-                ) || tsz_solver::type_queries::contains_infer_types_db(
-                    self.ctx.types,
-                    expected,
-                )) && crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    expected,
-                )
-                .or_else(|| {
-                    let evaluated = self.evaluate_type_with_env(expected);
-                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                }) && (common::contains_type_parameters(self.ctx.types, expected)
+                    || common::contains_infer_types(self.ctx.types, expected))
+                    && crate::query_boundaries::checkers::call::get_contextual_signature(
                         self.ctx.types,
-                        evaluated,
+                        expected,
                     )
-                })
-                .is_some()
+                    .or_else(|| {
+                        let evaluated = self.evaluate_type_with_env(expected);
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some()
                     && crate::query_boundaries::checkers::call::get_contextual_signature(
                         self.ctx.types,
                         cached_actual,
@@ -1158,8 +1141,8 @@ impl<'a> CheckerState<'a> {
                 });
             let expected_is_concrete = expected != TypeId::UNKNOWN
                 && expected != TypeId::ERROR
-                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
-                && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, expected);
+                && !common::contains_infer_types(self.ctx.types, expected)
+                && !common::contains_type_parameters(self.ctx.types, expected);
             if expected_is_concrete && !refreshed_object_literal_param_has_implicit_any {
                 self.ctx.diagnostics.retain(|diag| {
                     !matches!(
@@ -1240,23 +1223,12 @@ impl<'a> CheckerState<'a> {
                         .contains(&TypeId::ERROR);
                 let prefer_fresh_instantiation = is_sensitive
                     || round1_has_error
-                    || tsz_solver::type_queries::contains_infer_types_db(
-                        self.ctx.types,
-                        param_type,
-                    )
-                    || tsz_solver::type_queries::contains_type_parameters_db(
-                        self.ctx.types,
-                        param_type,
-                    )
+                    || common::contains_infer_types(self.ctx.types, param_type)
+                    || common::contains_type_parameters(self.ctx.types, param_type)
                     || fresh_instantiated_from_shape.is_some_and(|fresh| {
                         (round1_has_unknown || round1_has_error)
-                            && (tsz_solver::type_queries::contains_infer_types_db(
-                                self.ctx.types,
-                                fresh,
-                            ) || tsz_solver::type_queries::contains_type_parameters_db(
-                                self.ctx.types,
-                                fresh,
-                            ))
+                            && (common::contains_infer_types(self.ctx.types, fresh)
+                                || common::contains_type_parameters(self.ctx.types, fresh))
                     });
                 let instantiated = if round1_instantiated_params.is_some()
                     && !prefer_fresh_instantiation
@@ -1282,10 +1254,7 @@ impl<'a> CheckerState<'a> {
                         };
                         let evaluated_constraint =
                             self.evaluate_type_with_env(instantiated_constraint);
-                        if !tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            evaluated_constraint,
-                        ) {
+                        if !common::contains_type_parameters(self.ctx.types, evaluated_constraint) {
                             let constraint_specificity =
                                 callable_param_specificity(self.ctx.types, evaluated_constraint);
                             let round1_specificity =
@@ -1356,10 +1325,7 @@ impl<'a> CheckerState<'a> {
                             None => inst,
                         };
                         let evaluated = self.evaluate_type_with_env(instantiated_constraint);
-                        if !tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            evaluated,
-                        ) {
+                        if !common::contains_type_parameters(self.ctx.types, evaluated) {
                             evaluated
                         } else {
                             inst
@@ -1370,13 +1336,9 @@ impl<'a> CheckerState<'a> {
                 };
                 let preserve_application_shape =
                     should_preserve_contextual_application_shape(self.ctx.types, instantiated);
-                let evaluated = if tsz_solver::type_queries::contains_type_parameters_db(
-                    self.ctx.types,
-                    instantiated,
-                ) || tsz_solver::type_queries::contains_infer_types_db(
-                    self.ctx.types,
-                    instantiated,
-                ) || preserve_application_shape
+                let evaluated = if common::contains_type_parameters(self.ctx.types, instantiated)
+                    || common::contains_infer_types(self.ctx.types, instantiated)
+                    || preserve_application_shape
                 {
                     instantiated
                 } else {
@@ -1442,7 +1404,7 @@ impl<'a> CheckerState<'a> {
         let expected_is_unresolved = expected_type.is_some_and(|expected| {
             expected == TypeId::UNKNOWN
                 || expected == TypeId::ERROR
-                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
+                || common::contains_infer_types(self.ctx.types, expected)
         });
         let needs_contextual_signature_instantiation =
             self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
@@ -1451,7 +1413,7 @@ impl<'a> CheckerState<'a> {
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
-            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+            common::contains_type_parameters(self.ctx.types, ty)
                 || should_preserve_contextual_application_shape(self.ctx.types, ty)
         });
         let callable_context_requires_generic_epc_skip =
@@ -1460,13 +1422,11 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                 ctx.get_parameter_type_for_call(effective_index, arg_count)
                     .is_some_and(|param_type| {
-                        tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            param_type,
-                        ) || should_preserve_contextual_application_shape(
-                            self.ctx.types,
-                            param_type,
-                        )
+                        common::contains_type_parameters(self.ctx.types, param_type)
+                            || should_preserve_contextual_application_shape(
+                                self.ctx.types,
+                                param_type,
+                            )
                     })
             });
 

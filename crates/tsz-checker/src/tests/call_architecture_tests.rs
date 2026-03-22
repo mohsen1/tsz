@@ -318,3 +318,167 @@ const result: string | undefined = fn1?.(42);
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+// === Regression tests for boundary query refactoring ===
+// These tests exercise code paths that were migrated from direct
+// tsz_solver::type_queries:: calls to common:: boundary wrappers.
+
+/// Regression: literal type classification goes through boundary wrapper.
+/// Exercises common::classify_literal_type via generic call inference
+/// where contextual constraint preserves literal types.
+#[test]
+fn generic_call_preserves_literal_types_in_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function pick<K extends "a" | "b">(key: K): K;
+const result: "a" = pick("a");
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322 for literal type preserved in generic constraint, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: application_info boundary wrapper used in return context
+/// substitution collection for Application types (e.g., Promise<T>).
+/// Exercises the code path where collect_return_context_substitution
+/// compares Application types via common::application_info.
+#[test]
+fn generic_call_application_info_return_context() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Box<T> { value: T }
+declare function wrap<T>(value: T): Box<T>;
+const boxed = wrap(42);
+"#,
+    );
+
+    // The call should resolve without panics. The inferred return type
+    // is Box<number>. We don't assert the exact type here since that
+    // depends on full conformance with tsc's generic inference.
+    let panics: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2349 || d.code == 2554)
+        .collect();
+    assert_eq!(
+        panics.len(),
+        0,
+        "Expected no call resolution errors for generic application return, got: {:?}",
+        panics.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: function_shape_for_type boundary wrapper used during
+/// sanitization of generic inference arguments (binding patterns).
+#[test]
+fn generic_call_binding_pattern_sanitization() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function process<T>(fn: (item: T) => void, items: T[]): void;
+process(({ x, y }: { x: number; y: string }) => {}, [{ x: 1, y: "a" }]);
+"#,
+    );
+
+    // Should not crash. The binding pattern sanitization replaces destructured
+    // params with UNKNOWN to prevent contaminating inference.
+    let _ = diags;
+}
+
+/// Regression: unpack_tuple_rest_parameter boundary wrapper used in
+/// contextual signature normalization for spread calls.
+#[test]
+fn spread_call_tuple_rest_unpacking() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function sum(...args: [number, number, number]): number;
+const args: [number, number, number] = [1, 2, 3];
+const result: number = sum(...args);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2556)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for spread call with tuple rest, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: is_callable_type boundary wrapper used in contextual
+/// call param type normalization (normalize_contextual_call_param_type).
+#[test]
+fn callable_param_type_normalization() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function apply<T>(fn: (x: T) => T, value: T): T;
+const result: number = apply(x => x + 1, 42);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 7006)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for callable param type normalization, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: find_property_in_object boundary wrapper used in
+/// constructor_type_from_new_property for construct signature lookup.
+#[test]
+fn new_property_constructor_lookup() {
+    let diags = check_source_diagnostics(
+        r#"
+interface MyClass {
+    value: number;
+}
+interface MyClassConstructor {
+    new(value: number): MyClass;
+}
+declare const Ctor: MyClassConstructor;
+const instance: MyClass = new Ctor(42);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322 for new property constructor lookup, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: enum_def_id boundary wrapper used during generic inference
+/// argument sanitization for enum types.
+#[test]
+fn generic_call_with_enum_argument() {
+    let diags = check_source_diagnostics(
+        r#"
+enum Color { Red, Green, Blue }
+declare function describe<T>(value: T): string;
+const result: string = describe(Color.Red);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS2322 for generic call with enum argument, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
