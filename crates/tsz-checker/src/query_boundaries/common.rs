@@ -480,3 +480,4 @@ pub(crate) fn collect_all_types(
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
 }
+
