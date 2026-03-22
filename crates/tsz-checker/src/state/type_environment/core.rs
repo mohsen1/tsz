@@ -366,6 +366,34 @@ impl<'a> CheckerState<'a> {
                 if should_passthrough {
                     return arg;
                 }
+
+                // tsc rule: for `Objectish<any>` (identity mapped type where
+                // T=any with non-array constraint), produce an object with
+                // string+number index signatures, NOT `any`. The evaluator's
+                // shortcut returns `any` for mapped types over `any`, but tsc
+                // distinguishes: array-constrained → passthrough, non-array →
+                // object with index signatures. This ensures `Objectish<any>`
+                // is NOT assignable to `any[]`.
+                if arg == TypeId::ANY {
+                    let factory = self.ctx.types.factory();
+                    return factory.object_with_index(tsz_solver::ObjectShape {
+                        flags: tsz_solver::ObjectFlags::empty(),
+                        properties: vec![],
+                        string_index: Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::STRING,
+                            value_type: TypeId::ANY,
+                            readonly: false,
+                            param_name: None,
+                        }),
+                        number_index: Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::NUMBER,
+                            value_type: TypeId::ANY,
+                            readonly: false,
+                            param_name: None,
+                        }),
+                        symbol: None,
+                    });
+                }
             }
         }
 
@@ -407,21 +435,46 @@ impl<'a> CheckerState<'a> {
                     self.evaluate_type_with_resolution(instantiated_source)
                 };
 
+                // tsc rule: when a homomorphic mapped type is instantiated with `any`
+                // and the type parameter has an array/tuple constraint, use the
+                // constraint's shape instead of `any` as the source. This preserves
+                // array/tuple identity: e.g., `{ -readonly [K in keyof T]: string }`
+                // with T=any (T extends readonly any[]) produces `string[]`, not
+                // `{ [x: string]: string }`. Matches tsc's instantiateMappedArrayType.
+                //
+                // Only applies when no `as` clause or identity name mapping, matching
+                // the solver's array/tuple preservation condition.
+                let effective_source = if evaluated_source == TypeId::ANY {
+                    let is_identity_or_no_name = mapped.name_type.is_none()
+                        || query::is_identity_name_mapping(self.ctx.types, &mapped);
+                    if is_identity_or_no_name {
+                        self.find_array_tuple_constraint_for_keyof_source(
+                            keyof_source,
+                            &type_params,
+                        )
+                        .unwrap_or(evaluated_source)
+                    } else {
+                        evaluated_source
+                    }
+                } else {
+                    evaluated_source
+                };
+
                 let inst_template = instantiate_type(self.ctx.types, mapped.template, &subst);
                 let inst_name_type = mapped
                     .name_type
                     .map(|nt| instantiate_type(self.ctx.types, nt, &subst));
                 let inst_mapped = tsz_solver::MappedType {
                     type_param: mapped.type_param,
-                    constraint: self.ctx.types.keyof(evaluated_source),
+                    constraint: self.ctx.types.keyof(effective_source),
                     name_type: inst_name_type,
                     template: inst_template,
                     readonly_modifier: mapped.readonly_modifier,
                     optional_modifier: mapped.optional_modifier,
                 };
                 let mapped_type_id = self.ctx.types.mapped(inst_mapped);
-                if query::is_union_or_intersection(self.ctx.types, evaluated_source)
-                    && self.contains_type_parameters_cached(evaluated_source)
+                if query::is_union_or_intersection(self.ctx.types, effective_source)
+                    && self.contains_type_parameters_cached(effective_source)
                 {
                     return mapped_type_id;
                 }
@@ -605,6 +658,33 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         if changed { Some(new_sigs) } else { None }
+    }
+
+    /// For a `keyof T` source in a homomorphic mapped type, check if the type
+    /// parameter T has an array/tuple constraint. If so, return the evaluated
+    /// constraint type. Used when T is instantiated to `any` to preserve array/tuple
+    /// shape in mapped type evaluation.
+    fn find_array_tuple_constraint_for_keyof_source(
+        &mut self,
+        keyof_source: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> Option<TypeId> {
+        // The keyof_source should be a TypeParameter matching one of the type_params
+        let param_info = if let Some(tsz_solver::TypeData::TypeParameter(param)) =
+            self.ctx.types.lookup(keyof_source)
+        {
+            type_params.iter().find(|p| p.name == param.name)
+        } else {
+            None
+        }?;
+
+        let constraint = param_info.constraint?;
+        let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
+        if query::is_array_or_tuple_type(self.ctx.types, evaluated_constraint) {
+            Some(evaluated_constraint)
+        } else {
+            None
+        }
     }
 
     /// Check if a type body is a Conditional type whose `extends_type` contains infer patterns.

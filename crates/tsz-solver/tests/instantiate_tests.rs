@@ -2040,14 +2040,15 @@ fn test_instantiate_homomorphic_mapped_with_any_unconstrained() {
     let instantiated = instantiate_type(&interner, mapped, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    // tsc returns bare `any` for homomorphic mapped types instantiated with T=any
-    // when T is unconstrained. This matches tsc's instantiateMappedType behavior:
-    // keyof any = string | number | symbol, and mapping over any yields any.
+    // The solver returns `any` for homomorphic mapped types over `any` as a
+    // performance optimization (avoids expanding keyof any). The checker's
+    // identity passthrough handles the `Objectish<any>` distinction — it
+    // produces an object with index signatures for non-array-constrained types.
     assert_eq!(
         result,
         TypeId::ANY,
-        "Homomorphic mapped type with T=any (unconstrained) should produce bare `any`, \
-         matching tsc behavior."
+        "Homomorphic mapped type with T=any (unconstrained) should produce bare `any` \
+         at the solver level. The checker handles the distinction for Objectish<any>."
     );
 }
 

@@ -146,15 +146,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // tsc rule: When a homomorphic mapped type like `{ [P in keyof T]: F<T[P]> }` is
-        // instantiated with T=any, the entire mapped type should resolve to `any`.
-        // After instantiation, the constraint becomes `string | number | symbol` (keyof any)
-        // and the template has `any[P]` inside. Detect this by checking if the template
-        // contains an IndexAccess into `any` with the type parameter as key.
-        if self.template_accesses_any(mapped) {
-            return TypeId::ANY;
-        }
-
         // Evaluate the constraint to get concrete keys
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
@@ -218,7 +209,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // tsc rule: homomorphic mapped types over `any` produce `any`.
             // E.g., `{ -readonly [P in keyof T]: Awaited<T[P]> }` with T=any → any.
-            // This is critical for Promise.all(any) → Promise<any[]>.
+            // This is important for generic inference chains where intermediate
+            // mapped types over `any` must remain `any` to preserve assignability.
+            //
+            // NOTE: For non-array-constrained types like `Objectish<any>`, tsc
+            // actually produces `{ [x: string]: any }`. The checker's Application
+            // type evaluation handles this distinction using the type parameter's
+            // original constraint info, which the evaluator doesn't have.
             if is_homomorphic && resolved_source == TypeId::ANY {
                 return TypeId::ANY;
             }
@@ -929,57 +926,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             // Can't extract literals from other types
             _ => None,
-        }
-    }
-
-    /// Check if a mapped type is homomorphic (template is T[K] indexed access).
-    /// Returns `Some(source)` with the source type T if homomorphic, `None` otherwise.
-    /// Homomorphic mapped types preserve modifiers from the source type.
-    ///
-    /// Check if a mapped type's template contains an `IndexAccess` into `any`.
-    /// This handles the post-instantiation case where `{ [P in keyof T]: F<T[P]> }` with T=any
-    /// has the constraint resolved to `string | number | symbol` and template to `F<any[P]>`.
-    /// tsc resolves such mapped types to `any`.
-    fn template_accesses_any(&self, mapped: &MappedType) -> bool {
-        self.find_index_access_into_any(mapped.template, mapped.type_param.name)
-    }
-
-    /// Recursively search a type for an IndexAccess(any, P) pattern where P is the
-    /// mapped type's iteration parameter.
-    fn find_index_access_into_any(&self, type_id: TypeId, param_name: Atom) -> bool {
-        match self.interner().lookup(type_id) {
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                // Check if this is `any[P]` where P is the mapped type parameter
-                if obj == TypeId::ANY
-                    && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
-                    && param.name == param_name
-                {
-                    return true;
-                }
-                // Recurse into both sides
-                self.find_index_access_into_any(obj, param_name)
-                    || self.find_index_access_into_any(idx, param_name)
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner().type_application(app_id);
-                app.args
-                    .iter()
-                    .any(|&arg| self.find_index_access_into_any(arg, param_name))
-            }
-            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
-                let member_list = self.interner().type_list(members);
-                member_list
-                    .iter()
-                    .any(|&m| self.find_index_access_into_any(m, param_name))
-            }
-            Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner().get_conditional(cond_id);
-                self.find_index_access_into_any(cond.check_type, param_name)
-                    || self.find_index_access_into_any(cond.extends_type, param_name)
-                    || self.find_index_access_into_any(cond.true_type, param_name)
-                    || self.find_index_access_into_any(cond.false_type, param_name)
-            }
-            _ => false,
         }
     }
 
