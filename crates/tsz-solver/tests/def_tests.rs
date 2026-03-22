@@ -1232,7 +1232,7 @@ fn test_find_defs_by_name_partial_invalidation() {
 // =============================================================================
 
 #[test]
-fn test_resolve_heritage_name_basic() {
+fn test_resolve_heritage_basic() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
@@ -1241,47 +1241,50 @@ fn test_resolve_heritage_name_basic() {
     let animal_info = DefinitionInfo::class(animal_name, vec![], vec![], vec![]);
     let animal_id = store.register(animal_info);
 
-    // Register a derived class "Dog".
+    // Register a derived class "Dog" with heritage_names pointing to "Animal".
     let dog_name = interner.intern_string("Dog");
-    let dog_info = DefinitionInfo::class(dog_name, vec![], vec![], vec![]);
+    let mut dog_info = DefinitionInfo::class(dog_name, vec![], vec![], vec![]);
+    dog_info.heritage_names = vec!["Animal".to_string()];
     let dog_id = store.register(dog_info);
 
-    // Resolve "Animal" heritage name for Dog.
-    let resolved = store.resolve_heritage_name(animal_name, dog_id);
-    assert_eq!(resolved, Some(animal_id));
+    // Resolve heritage for Dog — should find Animal.
+    let resolved = store.resolve_heritage(dog_id, &|s| interner.intern_string(s));
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0], ("Animal".to_string(), animal_id));
 }
 
 #[test]
-fn test_resolve_heritage_name_unresolved() {
+fn test_resolve_heritage_unresolved() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
     let name = interner.intern_string("Orphan");
-    let info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["NonExistent".to_string()];
     let id = store.register(info);
 
-    // Try to resolve a name that doesn't exist.
-    let nonexistent = interner.intern_string("NonExistent");
-    let resolved = store.resolve_heritage_name(nonexistent, id);
-    assert!(resolved.is_none());
+    // Try to resolve a heritage name that doesn't exist — should return empty.
+    let resolved = store.resolve_heritage(id, &|s| interner.intern_string(s));
+    assert!(resolved.is_empty());
 }
 
 #[test]
-fn test_resolve_heritage_name_skips_self() {
+fn test_resolve_heritage_skips_self() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
     let name = interner.intern_string("SelfRef");
-    let info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["SelfRef".to_string()];
     let id = store.register(info);
 
     // Self-references should be skipped.
-    let resolved = store.resolve_heritage_name(name, id);
-    assert!(resolved.is_none());
+    let resolved = store.resolve_heritage(id, &|s| interner.intern_string(s));
+    assert!(resolved.is_empty());
 }
 
 #[test]
-fn test_resolve_heritage_name_skips_non_class_interface() {
+fn test_resolve_heritage_skips_non_class_interface() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
@@ -1290,17 +1293,19 @@ fn test_resolve_heritage_name_skips_non_class_interface() {
     let target_info = DefinitionInfo::type_alias(target_name, vec![], TypeId::NUMBER);
     store.register(target_info);
 
-    // Try to resolve "Target" as heritage - type aliases should not match.
+    // Register a derived class with heritage_names pointing to "Target".
     let derived_name = interner.intern_string("Derived");
-    let derived_info = DefinitionInfo::class(derived_name, vec![], vec![], vec![]);
+    let mut derived_info = DefinitionInfo::class(derived_name, vec![], vec![], vec![]);
+    derived_info.heritage_names = vec!["Target".to_string()];
     let derived_id = store.register(derived_info);
 
-    let resolved = store.resolve_heritage_name(target_name, derived_id);
-    assert!(resolved.is_none());
+    // Type aliases should not match heritage resolution.
+    let resolved = store.resolve_heritage(derived_id, &|s| interner.intern_string(s));
+    assert!(resolved.is_empty());
 }
 
 #[test]
-fn test_set_extends_and_add_implements() {
+fn test_set_heritage() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
@@ -1316,18 +1321,18 @@ fn test_set_extends_and_add_implements() {
     let child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
     let child_id = store.register(child_info);
 
-    // Wire extends and implements via the new helpers.
-    store.set_extends(child_id, base_id);
-    store.add_implements(child_id, iface_id);
+    // Wire extends and implements via set_heritage.
+    store.set_heritage(child_id, Some(base_id), vec![iface_id]);
 
     let child = store.get(child_id).unwrap();
     assert_eq!(child.extends, Some(base_id));
     assert_eq!(child.implements, vec![iface_id]);
 
-    // Adding the same implements should be idempotent.
-    store.add_implements(child_id, iface_id);
+    // Calling set_heritage again overwrites previous values.
+    store.set_heritage(child_id, Some(base_id), vec![iface_id, iface_id]);
     let child = store.get(child_id).unwrap();
-    assert_eq!(child.implements, vec![iface_id]);
+    assert_eq!(child.extends, Some(base_id));
+    assert_eq!(child.implements, vec![iface_id, iface_id]);
 }
 
 #[test]
