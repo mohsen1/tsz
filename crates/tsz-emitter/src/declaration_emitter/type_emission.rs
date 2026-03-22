@@ -36,6 +36,8 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::SymbolKeyword as u16 => self.write("symbol"),
             k if k == SyntaxKind::BigIntKeyword as u16 => self.write("bigint"),
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),
+            // THIS_TYPE is a distinct node kind created by the parser for `this` in type position
+            k if k == syntax_kind_ext::THIS_TYPE => self.write("this"),
 
             // Type predicate (for type guards and assertion functions)
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
