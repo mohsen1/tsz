@@ -1,7 +1,9 @@
-use super::lib_resolution::resolve_lib_node_in_arenas;
+use super::lib_resolution::{
+    collect_lib_decls_with_arenas, resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
+};
 use crate::state::CheckerState;
 use tsz_lowering::TypeLowering;
-use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn prime_lib_type_params(&mut self, name: &str) {
@@ -21,29 +23,18 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
-        let fallback_arena: &NodeArena = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref)
-            .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
-            .unwrap_or(self.ctx.arena);
+        let fallback_arena =
+            resolve_lib_fallback_arena(self.ctx.binder, sym_id, lib_contexts, self.ctx.arena);
 
-        let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
-            .declarations
-            .iter()
-            .flat_map(|&decl_idx| {
-                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                    arenas
-                        .iter()
-                        .map(|arc| (decl_idx, arc.as_ref()))
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![(decl_idx, fallback_arena)]
-                }
-            })
-            .collect();
+        // prime_lib_type_params has no user-arena context (no local augmentations),
+        // so pass None for user_arena.
+        let decls_with_arenas = collect_lib_decls_with_arenas(
+            self.ctx.binder,
+            sym_id,
+            &symbol.declarations,
+            fallback_arena,
+            None,
+        );
         if decls_with_arenas.is_empty() {
             return;
         }
