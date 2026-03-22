@@ -1408,10 +1408,46 @@ impl<'a> HoverProvider<'a> {
             return String::new();
         }
         let parsed = parse_jsdoc(doc);
+        let mut parts = Vec::new();
         if let Some(summary) = parsed.summary.as_ref() {
-            summary.clone()
-        } else {
+            if !summary.is_empty() {
+                parts.push(summary.clone());
+            }
+        }
+        // Include relevant tags in plain documentation
+        for tag in &parsed.tags {
+            match tag.name.as_str() {
+                "example" => {
+                    if tag.text.is_empty() {
+                        parts.push("@example".to_string());
+                    } else {
+                        parts.push(format!("@example {}", tag.text));
+                    }
+                }
+                "returns" | "return" => {
+                    if !tag.text.is_empty() {
+                        parts.push(format!("@returns {}", tag.text));
+                    }
+                }
+                "deprecated" => {
+                    if tag.text.is_empty() {
+                        parts.push("@deprecated".to_string());
+                    } else {
+                        parts.push(format!("@deprecated {}", tag.text));
+                    }
+                }
+                "see" => {
+                    if !tag.text.is_empty() {
+                        parts.push(format!("@see {}", tag.text));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if parts.is_empty() {
             doc.to_string()
+        } else {
+            parts.join("\n\n")
         }
     }
 
@@ -1446,6 +1482,47 @@ impl<'a> HoverProvider<'a> {
                 }
             }
             sections.push(lines.join("\n"));
+        }
+
+        // Include relevant JSDoc tags
+        for tag in &parsed.tags {
+            match tag.name.as_str() {
+                "returns" => {
+                    if !tag.text.is_empty() {
+                        sections.push(format!("Returns: {}", tag.text));
+                    }
+                }
+                "example" => {
+                    if tag.text.is_empty() {
+                        sections.push("Example:".to_string());
+                    } else {
+                        sections.push(format!("Example:\n```\n{}\n```", tag.text));
+                    }
+                }
+                "deprecated" => {
+                    if tag.text.is_empty() {
+                        sections.push("**@deprecated**".to_string());
+                    } else {
+                        sections.push(format!("**@deprecated** {}", tag.text));
+                    }
+                }
+                "see" => {
+                    if !tag.text.is_empty() {
+                        sections.push(format!("See: {}", tag.text));
+                    }
+                }
+                "throws" | "exception" => {
+                    if !tag.text.is_empty() {
+                        sections.push(format!("Throws: {}", tag.text));
+                    }
+                }
+                "since" => {
+                    if !tag.text.is_empty() {
+                        sections.push(format!("Since: {}", tag.text));
+                    }
+                }
+                _ => {}
+            }
         }
 
         let formatted = sections.join("\n\n");

@@ -3013,7 +3013,6 @@ fn hover_jsdoc_deprecated() {
 }
 
 #[test]
-#[ignore = "requires JSDoc @example tag extraction in hover"]
 fn hover_jsdoc_example() {
     let mut t = FourslashTest::new(
         "
