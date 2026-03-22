@@ -7,6 +7,9 @@ use tsz::checker::context::RequestCacheCounters;
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
+    /// Aggregate query-cache statistics from the sequential path's shared `QueryCache`.
+    /// `None` in the parallel path (each thread has its own short-lived cache).
+    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
 }
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
@@ -864,9 +867,16 @@ pub(super) fn collect_diagnostics(
         program, options, base_dir,
     ));
 
+    // Capture query-cache statistics. In the sequential (cached) path, the
+    // shared `query_cache` accumulates stats across all files. In the parallel
+    // path each thread creates its own short-lived cache, so these reflect the
+    // aggregate from the last-created cache (still useful for type counts).
+    let query_cache_stats = Some(query_cache.statistics());
+
     CollectDiagnosticsResult {
         diagnostics,
         request_cache_counters,
+        query_cache_stats,
     }
 }
 

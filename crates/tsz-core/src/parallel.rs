@@ -1620,6 +1620,68 @@ impl SkeletonIndex {
         hasher.finish()
     }
 
+    /// Estimate the in-memory size of this `SkeletonIndex` in bytes.
+    ///
+    /// Accounts for the struct itself, all heap-allocated strings, vecs, and
+    /// hash map entries. Used by `MergedProgramResidencyStats` to report
+    /// skeleton memory pressure for eviction decisions.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // Merge candidates
+        size += self.merge_candidates.capacity() * std::mem::size_of::<SkeletonMergeCandidate>();
+        for mc in &self.merge_candidates {
+            size += mc.name.capacity();
+            size += mc.source_files.capacity() * std::mem::size_of::<usize>();
+        }
+
+        // Global augmentation targets (HashMap<String, Vec<usize>>)
+        // Each bucket: key string + vec of usize
+        for (key, files) in &self.global_augmentation_targets {
+            size += key.capacity();
+            size += files.capacity() * std::mem::size_of::<usize>();
+            size += std::mem::size_of::<(String, Vec<usize>)>(); // bucket overhead
+        }
+
+        // Module augmentation targets
+        for (key, files) in &self.module_augmentation_targets {
+            size += key.capacity();
+            size += files.capacity() * std::mem::size_of::<usize>();
+            size += std::mem::size_of::<(String, Vec<usize>)>();
+        }
+
+        // Declared modules (HashSet<String>)
+        for s in &self.declared_modules {
+            size += s.capacity();
+            size += std::mem::size_of::<String>(); // set bucket
+        }
+
+        // Shorthand ambient modules
+        for s in &self.shorthand_ambient_modules {
+            size += s.capacity();
+            size += std::mem::size_of::<String>();
+        }
+
+        // Module export specifiers
+        for s in &self.module_export_specifiers {
+            size += s.capacity();
+            size += std::mem::size_of::<String>();
+        }
+
+        // Expando properties (HashMap<String, HashSet<String>>)
+        for (key, props) in &self.expando_properties {
+            size += key.capacity();
+            size += std::mem::size_of::<(String, FxHashSet<String>)>();
+            for p in props {
+                size += p.capacity();
+                size += std::mem::size_of::<String>();
+            }
+        }
+
+        size
+    }
+
     /// Build the set of all known declared/ambient module names from the skeleton data.
     ///
     /// This produces the same result as the `set_all_binders` loop in the checker
@@ -1897,6 +1959,9 @@ pub struct MergedProgramResidencyStats {
     pub skeleton_merge_candidate_count: usize,
     /// Total top-level symbols tracked by the skeleton (before merge).
     pub skeleton_total_symbol_count: usize,
+    /// Estimated in-memory size of the skeleton index in bytes.
+    /// Zero if no skeleton index is present.
+    pub skeleton_estimated_size_bytes: usize,
 }
 
 impl MergedProgram {
@@ -1917,11 +1982,16 @@ impl MergedProgram {
             }
         }
 
-        let (has_skeleton, skel_merge_count, skel_sym_count) =
+        let (has_skeleton, skel_merge_count, skel_sym_count, skel_size) =
             if let Some(ref idx) = self.skeleton_index {
-                (true, idx.merge_candidates.len(), idx.total_symbol_count)
+                (
+                    true,
+                    idx.merge_candidates.len(),
+                    idx.total_symbol_count,
+                    idx.estimated_size_bytes(),
+                )
             } else {
-                (false, 0, 0)
+                (false, 0, 0, 0)
             };
 
         MergedProgramResidencyStats {
@@ -1938,6 +2008,7 @@ impl MergedProgram {
             has_skeleton_index: has_skeleton,
             skeleton_merge_candidate_count: skel_merge_count,
             skeleton_total_symbol_count: skel_sym_count,
+            skeleton_estimated_size_bytes: skel_size,
         }
     }
 }
