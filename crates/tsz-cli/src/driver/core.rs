@@ -900,7 +900,7 @@ fn compile_inner(
                     def_store_stats: None,
                     phase_timings: PhaseTimings::default(),
                     residency_stats: None,
-            invalidation_summaries: Vec::new(),
+                    invalidation_summaries: Vec::new(),
                 });
             }
             return Err(e);
