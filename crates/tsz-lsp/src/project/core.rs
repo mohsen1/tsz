@@ -1632,9 +1632,27 @@ impl Project {
     }
 
     /// Remove a file from the project.
+    ///
+    /// Cleans up:
+    /// - Symbol index entries for the file
+    /// - Dependency graph edges (both imports and dependents)
+    /// - Cached diagnostics/types in files that depended on the removed file
     pub fn remove_file(&mut self, file_name: &str) -> Option<ProjectFile> {
         // Remove from symbol index
         self.symbol_index.remove_file(file_name);
+
+        // Invalidate caches in files that depend on the removed file,
+        // since the removed file's exports are no longer available.
+        let affected_files = self.dependency_graph.get_affected_files(file_name);
+        for affected_file in affected_files {
+            if let Some(dep_file) = self.files.get_mut(&affected_file) {
+                dep_file.invalidate_caches();
+            }
+        }
+
+        // Remove from dependency graph (cleans up both outgoing and incoming edges)
+        self.dependency_graph.remove_file(file_name);
+
         // Remove from files map
         self.files.remove(file_name)
     }

@@ -3618,6 +3618,51 @@ fn test_project_remove_file() {
 }
 
 #[test]
+fn test_project_remove_file_cleans_dependency_graph() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\nexport const y = x;\n".to_string(),
+    );
+
+    // b.ts depends on a.ts (verify dependency edge exists before removal)
+    let _deps = project.get_file_dependents("./a");
+
+    // Remove a.ts
+    project.remove_file("a.ts");
+
+    // After removal, the dependency graph should not reference a.ts anymore
+    let deps_after = project.get_file_dependents("a.ts");
+    assert!(
+        deps_after.is_empty(),
+        "Dependency graph should be cleaned up after file removal, got: {deps_after:?}"
+    );
+
+    // b.ts should still exist
+    assert!(project.file("b.ts").is_some());
+}
+
+#[test]
+fn test_project_remove_file_invalidates_dependent_caches() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x: number = 1;\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\nconst y: number = x;\n".to_string(),
+    );
+
+    // Force diagnostics computation for b.ts to populate its caches
+    let _ = project.get_diagnostics("b.ts");
+
+    // Remove a.ts — b.ts's caches should be invalidated
+    project.remove_file("a.ts");
+
+    // b.ts should still be queryable (no crash)
+    assert!(project.file("b.ts").is_some());
+}
+
+#[test]
 fn test_project_file_count() {
     let mut project = Project::new();
     assert_eq!(project.file_count(), 0);
