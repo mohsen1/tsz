@@ -491,7 +491,7 @@ impl StoreStatistics {
     ///
     /// Used to aggregate per-file statistics from parallel checking,
     /// where each checker has its own `DefinitionStore`.
-    pub fn merge(&mut self, other: &StoreStatistics) {
+    pub const fn merge(&mut self, other: &StoreStatistics) {
         self.total_definitions += other.total_definitions;
         self.type_aliases += other.type_aliases;
         self.interfaces += other.interfaces;

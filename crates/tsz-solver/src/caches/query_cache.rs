@@ -72,7 +72,7 @@ pub struct QueryCacheStatistics {
 
 impl QueryCacheStatistics {
     /// Merge another snapshot into this one (for aggregating per-file caches in parallel builds).
-    pub fn merge(&mut self, other: &QueryCacheStatistics) {
+    pub const fn merge(&mut self, other: &QueryCacheStatistics) {
         self.eval_cache_entries += other.eval_cache_entries;
         self.application_eval_cache_entries += other.application_eval_cache_entries;
         self.element_access_cache_entries += other.element_access_cache_entries;

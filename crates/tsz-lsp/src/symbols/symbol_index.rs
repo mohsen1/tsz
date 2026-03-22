@@ -379,8 +379,8 @@ impl SymbolIndex {
                     symbol.value_declaration
                 };
                 if let Some(node) = arena.get(decl_node_idx) {
-                    let start = line_map.offset_to_position(node.pos as u32, source_text);
-                    let end = line_map.offset_to_position(node.end as u32, source_text);
+                    let start = line_map.offset_to_position(node.pos, source_text);
+                    let end = line_map.offset_to_position(node.end, source_text);
                     let location = Location::new(file_name_owned.clone(), Range::new(start, end));
                     self.definitions
                         .entry(name.clone())
