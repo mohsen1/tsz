@@ -1872,10 +1872,7 @@ impl<'a> CheckerState<'a> {
                 CallableContext::none(),
             );
             return if nullish_cause.is_some() {
-                self.ctx
-                    .types
-                    .factory()
-                    .union(vec![TypeId::ANY, TypeId::UNDEFINED])
+                common::union_with_undefined(self.ctx.types, TypeId::ANY)
             } else {
                 TypeId::ANY
             };
