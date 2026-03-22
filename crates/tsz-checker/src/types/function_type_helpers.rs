@@ -661,6 +661,16 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return;
         };
+        // Class methods and constructors have their return completeness checked
+        // by ambient_signature_checks.rs during the class checking phase, where
+        // enclosing_class is properly set. Skip them here to avoid false
+        // positives during the type building phase when enclosing_class is not
+        // yet available (needed for `this.method()` never-returning call detection).
+        if node.kind == syntax_kind_ext::METHOD_DECLARATION
+            || node.kind == syntax_kind_ext::CONSTRUCTOR
+        {
+            return;
+        }
         // Determine if this is an async function or generator
         let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node) {
             (func.is_async, func.asterisk_token)

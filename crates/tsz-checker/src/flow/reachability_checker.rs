@@ -101,16 +101,39 @@ impl<'a> CheckerState<'a> {
         if expr_node.kind == SyntaxKind::ThisKeyword as u16
             && let Some(ref class_info) = self.ctx.enclosing_class.clone()
         {
-            // Look up the class symbol via the binder's node_symbols map
-            if let Some(&class_sym) = self.ctx.binder.node_symbols.get(&class_info.class_idx.0)
-                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym)
-            {
-                // Check instance members
-                if let Some(ref members) = class_symbol.members
-                    && let Some(member_sym_id) = members.get(property_name)
-                {
-                    return self.symbol_explicitly_returns_never(member_sym_id);
+            // Directly search class member nodes for a method with matching name
+            // and check its return type annotation. This avoids reliance on the
+            // binder's class symbol members map which may not be available in all
+            // checking paths.
+            for &member_idx in &class_info.member_nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                    continue;
                 }
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                let Some(method_name) = self.get_property_name(method.name) else {
+                    continue;
+                };
+                if method_name == *property_name {
+                    return self.declaration_explicitly_returns_never(member_idx);
+                }
+            }
+        }
+
+        // For namespace-qualified calls (e.g., `Debug.fail()`), resolve the
+        // receiver identifier to its namespace symbol and look up the member
+        // in its exports table.
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ns_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
+                && let Some(ref exports) = ns_symbol.exports
+                && let Some(member_sym_id) = exports.get(property_name)
+            {
+                return self.symbol_explicitly_returns_never(member_sym_id);
             }
         }
 
