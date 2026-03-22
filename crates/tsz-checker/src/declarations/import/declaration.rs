@@ -1294,9 +1294,10 @@ impl<'a> CheckerState<'a> {
                         // the target module can't be resolved.
                         if !import_has_value
                             && let Some(binding_node) = self.ctx.arena.get(binding_node_idx)
-                                && binding_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
-                                    import_has_value = true;
-                                }
+                            && binding_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        {
+                            import_has_value = true;
+                        }
 
                         if !import_has_value {
                             continue;

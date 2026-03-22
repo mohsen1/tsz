@@ -3349,9 +3349,10 @@ impl<'a> DeclarationEmitter<'a> {
         let rightmost_idx = self.get_rightmost_name(module_spec_idx);
         for &idx in &[module_spec_idx, rightmost_idx] {
             if let Some(&sym_id) = binder.node_symbols.get(&idx.0)
-                && let Some(symbol) = binder.symbols.get(sym_id) {
-                    return !self.symbol_is_value_only(symbol);
-                }
+                && let Some(symbol) = binder.symbols.get(sym_id)
+            {
+                return !self.symbol_is_value_only(symbol);
+            }
         }
 
         // Fall back to name-based lookup on the rightmost identifier.
@@ -3369,15 +3370,17 @@ impl<'a> DeclarationEmitter<'a> {
         for scope in &binder.scopes {
             if let Some(sym_id) = scope.table.get(name)
                 && let Some(symbol) = binder.symbols.get(sym_id)
-                    && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
-                        return !self.symbol_is_value_only(symbol);
-                    }
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            {
+                return !self.symbol_is_value_only(symbol);
+            }
         }
         if let Some(sym_id) = binder.file_locals.get(name)
             && let Some(symbol) = binder.symbols.get(sym_id)
-                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
-                    return !self.symbol_is_value_only(symbol);
-                }
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+        {
+            return !self.symbol_is_value_only(symbol);
+        }
 
         // All symbols found were aliases — can't determine target.
         // Preserve conservatively.

@@ -1581,9 +1581,10 @@ impl Project {
         // Fast path: skip re-parse if file exists with identical content.
         let new_hash = hash_source_content(&source_text);
         if let Some(existing) = self.files.get(&file_name)
-            && existing.content_hash == new_hash {
-                return;
-            }
+            && existing.content_hash == new_hash
+        {
+            return;
+        }
 
         let file = ProjectFile::with_shared_interner_and_def_store(
             file_name.clone(),
