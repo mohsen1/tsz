@@ -1436,9 +1436,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             };
             println!(
                 "Subtype cache:                 {} entries ({} hits, {} misses, {sub_rate:.1}%)",
-                qc.relation.subtype_entries,
-                qc.relation.subtype_hits,
-                qc.relation.subtype_misses,
+                qc.relation.subtype_entries, qc.relation.subtype_hits, qc.relation.subtype_misses,
             );
             println!(
                 "Assignability cache:           {} entries ({} hits, {} misses, {assign_rate:.1}%)",
@@ -1446,10 +1444,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
                 qc.relation.assignability_hits,
                 qc.relation.assignability_misses,
             );
-            println!(
-                "Eval cache:                    {}",
-                qc.eval_cache_entries
-            );
+            println!("Eval cache:                    {}", qc.eval_cache_entries);
             println!(
                 "Property cache:                {}",
                 qc.property_cache_entries
@@ -1481,10 +1476,10 @@ fn get_memory_usage_kb() -> u64 {
     // We only need fields through ru_maxrss; remaining fields are padding.
     #[repr(C)]
     struct Rusage {
-        ru_utime: [i64; 2],  // struct timeval (tv_sec + tv_usec), 16 bytes on 64-bit
-        ru_stime: [i64; 2],  // struct timeval
-        ru_maxrss: i64,      // max resident set size
-        _pad: [i64; 13],     // remaining fields (ixrss through nivcsw)
+        ru_utime: [i64; 2], // struct timeval (tv_sec + tv_usec), 16 bytes on 64-bit
+        ru_stime: [i64; 2], // struct timeval
+        ru_maxrss: i64,     // max resident set size
+        _pad: [i64; 13],    // remaining fields (ixrss through nivcsw)
     }
 
     const RUSAGE_SELF: i32 = 0;
