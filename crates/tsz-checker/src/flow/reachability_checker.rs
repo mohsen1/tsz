@@ -12,7 +12,7 @@ use tsz_solver::{NarrowingContext, TypeId};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn call_expression_terminates_control_flow(&mut self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn call_expression_terminates_control_flow(&mut self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
@@ -180,8 +180,30 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(func) = self.ctx.arena.get_function(decl_node) {
-            return func.type_annotation.is_some()
-                && self.get_type_from_type_node(func.type_annotation) == TypeId::NEVER;
+            if func.type_annotation.is_some() {
+                return self.get_type_from_type_node(func.type_annotation) == TypeId::NEVER;
+            }
+            // For function/arrow expressions without an explicit return type annotation,
+            // check if the body always throws (never completes normally). This handles
+            // IIFEs like `(function() { throw "x" })()` which tsc recognizes as
+            // never-returning calls.
+            //
+            // IMPORTANT: We only check for "always throws," NOT "doesn't fall through."
+            // A function that always returns (e.g., `(() => { return 1; })()`) completes
+            // normally from the caller's perspective - only throw/never-call terminates
+            // the caller's control flow.
+            if decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                let body_idx = func.body;
+                if let Some(body_node) = self.ctx.arena.get(body_idx) {
+                    if let Some(block) = self.ctx.arena.get_block(body_node) {
+                        return !block.statements.nodes.is_empty()
+                            && self.block_always_throws(&block.statements.nodes);
+                    }
+                }
+            }
+            return false;
         }
 
         if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
@@ -451,6 +473,59 @@ impl<'a> CheckerState<'a> {
             }
         }
         true
+    }
+
+    /// Check if a block of statements always terminates via `throw` or a
+    /// call to a never-returning function. Unlike `block_falls_through`,
+    /// this returns `false` for blocks that terminate via `return` - because
+    /// a `return` inside a function body means the call completes normally.
+    ///
+    /// Used for IIFE body analysis: `(function() { throw "x" })()` terminates
+    /// control flow, but `(() => { return 1; })()` does NOT.
+    fn block_always_throws(&mut self, statements: &[NodeIndex]) -> bool {
+        for &stmt_idx in statements {
+            if self.statement_always_throws(stmt_idx) {
+                return true;
+            }
+            if !self.statement_falls_through(stmt_idx) {
+                // Block terminates but not via throw - e.g., `return`
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Check if a statement always terminates via `throw` or a call to a
+    /// never-returning function (not via `return`).
+    fn statement_always_throws(&mut self, stmt_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::THROW_STATEMENT => true,
+            syntax_kind_ext::BLOCK => self
+                .ctx
+                .arena
+                .get_block(node)
+                .is_some_and(|block| self.block_always_throws(&block.statements.nodes)),
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
+                    return false;
+                };
+                self.call_expression_terminates_control_flow(expr_stmt.expression)
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_data) = self.ctx.arena.get_if_statement(node) else {
+                    return false;
+                };
+                if if_data.else_statement.is_none() {
+                    return false;
+                }
+                self.statement_always_throws(if_data.then_statement)
+                    && self.statement_always_throws(if_data.else_statement)
+            }
+            _ => false,
+        }
     }
 
     // =========================================================================
