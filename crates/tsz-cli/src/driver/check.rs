@@ -523,7 +523,13 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics)> = {
+        let file_results: Vec<(
+            Vec<Diagnostic>,
+            Option<TypeCache>,
+            RequestCacheCounters,
+            tsz_solver::QueryCacheStatistics,
+            tsz_solver::StoreStatistics,
+        )> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -577,28 +583,33 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics)> =
-            work_items
-                .iter()
-                .zip(per_file_binders.into_iter())
-                .map(|(&file_idx, binder)| {
-                    let context = CheckFileForParallelContext {
-                        file_idx,
-                        binder,
-                        program,
-                        compiler_options: &compiler_options,
-                        project_env: &project_env,
-                        resolved_module_specifiers: &resolved_module_specifiers,
-                        shared_lib_cache: Arc::clone(&shared_lib_cache),
-                        no_check,
-                        check_js,
-                        explicit_check_js_false,
-                        skip_lib_check,
-                        program_has_real_syntax_errors,
-                    };
-                    check_file_for_parallel(context)
-                })
-                .collect();
+        let file_results: Vec<(
+            Vec<Diagnostic>,
+            Option<TypeCache>,
+            RequestCacheCounters,
+            tsz_solver::QueryCacheStatistics,
+            tsz_solver::StoreStatistics,
+        )> = work_items
+            .iter()
+            .zip(per_file_binders.into_iter())
+            .map(|(&file_idx, binder)| {
+                let context = CheckFileForParallelContext {
+                    file_idx,
+                    binder,
+                    program,
+                    compiler_options: &compiler_options,
+                    project_env: &project_env,
+                    resolved_module_specifiers: &resolved_module_specifiers,
+                    shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                };
+                check_file_for_parallel(context)
+            })
+            .collect();
 
         // Aggregate per-file query cache and definition store statistics from the parallel path.
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
@@ -1004,7 +1015,13 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics, tsz_solver::StoreStatistics) {
+) -> (
+    Vec<Diagnostic>,
+    Option<TypeCache>,
+    RequestCacheCounters,
+    tsz_solver::QueryCacheStatistics,
+    tsz_solver::StoreStatistics,
+) {
     let CheckFileForParallelContext {
         file_idx,
         binder,
@@ -1022,7 +1039,13 @@ pub(super) fn check_file_for_parallel<'a>(
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (Vec::new(), None, RequestCacheCounters::default(), tsz_solver::QueryCacheStatistics::default(), tsz_solver::StoreStatistics::default());
+        return (
+            Vec::new(),
+            None,
+            RequestCacheCounters::default(),
+            tsz_solver::QueryCacheStatistics::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
     }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
@@ -1163,7 +1186,13 @@ pub(super) fn check_file_for_parallel<'a>(
     let qc_stats = query_cache.statistics();
     let ds_stats = checker.ctx.definition_store.statistics();
     let type_cache = checker.extract_cache();
-    (file_diagnostics, Some(type_cache), checker_counters, qc_stats, ds_stats)
+    (
+        file_diagnostics,
+        Some(type_cache),
+        checker_counters,
+        qc_stats,
+        ds_stats,
+    )
 }
 
 #[cfg(test)]
