@@ -36,7 +36,6 @@ pub use request_types::*;
 use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::diagnostics::DiagnosticBag;
 use crate::emitter::ModuleKind;
-use crate::module_resolver_helpers::*;
 use crate::span::Span;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
