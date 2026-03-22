@@ -544,10 +544,7 @@ mod tests {
     #[test]
     fn dependents_and_dependencies() {
         // a.ts -> b.ts
-        let skeletons = vec![
-            make_skeleton("a.ts", &["b.ts"]),
-            make_skeleton("b.ts", &[]),
-        ];
+        let skeletons = vec![make_skeleton("a.ts", &["b.ts"]), make_skeleton("b.ts", &[])];
         let graph = DepGraph::build_simple(&skeletons);
         assert!(graph.dependencies(0).contains(&1));
         assert!(graph.dependencies(1).is_empty());

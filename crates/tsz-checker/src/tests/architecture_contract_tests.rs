@@ -3197,8 +3197,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
     // The authoritative list lives in test_solver_imports_go_through_query_boundaries.
     // We cannot inspect it at runtime, so we count the items in source.
     let src = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/tests/architecture_contract_tests.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/architecture_contract_tests.rs"),
     )
     .expect("failed to read architecture_contract_tests.rs");
 
@@ -3307,23 +3306,26 @@ fn test_direct_interner_type_construction_ceiling() {
 /// Error reporters should only read type data and format diagnostics.
 #[test]
 fn test_error_reporter_does_not_perform_type_construction() {
-    let error_reporter_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/error_reporter");
+    let error_reporter_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/error_reporter");
     let mut files = Vec::new();
     walk_rs_files_recursive(&error_reporter_dir, &mut files);
 
     const FORBIDDEN_PATTERNS: &[(&[&str], &str)] = &[
-        (&[
-            "interner.union(",
-            "interner.intersection(",
-            "interner.object(",
-            "interner.array(",
-            "interner.tuple(",
-            "interner.function(",
-        ], "direct type construction via interner"),
-        (&[
-            "TypeEvaluator::new(",
-        ], "type evaluation (should be in checker/query_boundaries)"),
+        (
+            &[
+                "interner.union(",
+                "interner.intersection(",
+                "interner.object(",
+                "interner.array(",
+                "interner.tuple(",
+                "interner.function(",
+            ],
+            "direct type construction via interner",
+        ),
+        (
+            &["TypeEvaluator::new("],
+            "type evaluation (should be in checker/query_boundaries)",
+        ),
     ];
 
     let mut violations = Vec::new();
@@ -3349,12 +3351,7 @@ fn test_error_reporter_does_not_perform_type_construction() {
             for (patterns, description) in FORBIDDEN_PATTERNS {
                 for pattern in *patterns {
                     if line.contains(pattern) {
-                        violations.push(format!(
-                            "  {}:{} — {}",
-                            rel,
-                            line_num + 1,
-                            description,
-                        ));
+                        violations.push(format!("  {}:{} — {}", rel, line_num + 1, description,));
                     }
                 }
             }
