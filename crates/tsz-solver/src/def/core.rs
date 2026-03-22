@@ -906,11 +906,7 @@ impl DefinitionStore {
     ///
     /// Used by the checker's `resolve_cross_batch_heritage` to wire up
     /// `extends`/`implements` on `DefinitionInfo` after all batches are registered.
-    pub fn resolve_heritage_name(
-        &self,
-        name_atom: Atom,
-        exclude_id: DefId,
-    ) -> Option<DefId> {
+    pub fn resolve_heritage_name(&self, name_atom: Atom, exclude_id: DefId) -> Option<DefId> {
         let candidates = self.name_to_defs.get(&name_atom)?;
         for &candidate_id in candidates.value() {
             if candidate_id == exclude_id {
