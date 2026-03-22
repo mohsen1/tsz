@@ -959,7 +959,18 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 };
-                if constrained_object_type != TypeId::ERROR {
+                if constrained_object_type != TypeId::ERROR
+                    // When the constrained object is still a deferred indexed access
+                    // (e.g., T[keyof T] where T is unconstrained), or resolves to
+                    // `any` (recursive/circular constraints), property lookups may
+                    // spuriously succeed. Skip this block so the error is caught
+                    // by the deferred-suppression or final error path below.
+                    && constrained_object_type != TypeId::ANY
+                    && !tsz_solver::is_index_access_type(
+                        self.ctx.types,
+                        constrained_object_type,
+                    )
+                {
                     // Check broad index types (string/number/symbol)
                     if is_broad_index_type(self.ctx.types, index_type_for_check)
                         && let Some((wants_string, wants_number)) =
@@ -981,11 +992,12 @@ impl<'a> CheckerState<'a> {
                         index_type_for_check,
                     ) {
                         let property_name = self.ctx.types.resolve_atom(prop_atom);
+                        let prop_result = self.resolve_property_access_with_env(
+                            constrained_object_type,
+                            &property_name,
+                        );
                         if matches!(
-                            self.resolve_property_access_with_env(
-                                constrained_object_type,
-                                &property_name
-                            ),
+                            prop_result,
                             tsz_solver::operations::property::PropertyAccessResult::Success { .. }
                         ) {
                             return;
@@ -998,6 +1010,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // When the index is a concrete string literal (not a type parameter or
+            // deferred type), do NOT suppress TS2536 just because the object type
+            // is a deferred indexed access — tsc still emits TS2536 for patterns
+            // like `T[keyof T]["foo"]` where the literal can't be validated as a
+            // key of the unresolved indexed access result.
+            let index_is_concrete_literal = tsz_solver::type_queries::get_string_literal_value(
+                self.ctx.types,
+                index_type_for_check,
+            )
+            .is_some();
             // Suppress TS2536 when the index type is deferred — i.e., it involves
             // a conditional, application, keyof, or error type that can't be fully
             // resolved at the generic level. TSC defers these checks to instantiation
@@ -1025,14 +1047,16 @@ impl<'a> CheckerState<'a> {
             // error, index-access). tsc defers these checks to instantiation time.
             if is_deferred_index_type(index_type_for_check)
                 || is_deferred_index_type(index_type)
-                || is_deferred_object_type(object_type_for_check)
-                || is_deferred_object_type(object_type)
-                || self.is_deferred_indexed_access_object(object_type_for_check)
+                || (is_deferred_object_type(object_type_for_check) && !index_is_concrete_literal)
+                || (is_deferred_object_type(object_type) && !index_is_concrete_literal)
+                || (self.is_deferred_indexed_access_object(object_type_for_check)
+                    && !index_is_concrete_literal)
                 // Only fall back to checking the pre-resolution object_type when the
                 // resolved type is also still an indexed access. If constraint resolution
                 // produced a concrete type (e.g., T['value'] → number), trust it.
                 || (tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
-                    && self.is_deferred_indexed_access_object(object_type))
+                    && self.is_deferred_indexed_access_object(object_type)
+                    && !index_is_concrete_literal)
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type_for_check)
                 || tsz_solver::is_index_access_type(self.ctx.types, index_type)
             {
@@ -1081,10 +1105,20 @@ impl<'a> CheckerState<'a> {
                     );
                     return;
                 }
-                if matches!(
-                    self.resolve_property_access_with_env(object_type_for_check, &property_name),
-                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
-                ) {
+                // Don't trust property access results on deferred types (indexed
+                // access, conditional, generic application) — the solver may
+                // spuriously report success on types it can't fully resolve.
+                if !tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
+                    && !tsz_solver::is_conditional_type(self.ctx.types, object_type_for_check)
+                    && !tsz_solver::is_generic_application(self.ctx.types, object_type_for_check)
+                    && matches!(
+                        self.resolve_property_access_with_env(
+                            object_type_for_check,
+                            &property_name
+                        ),
+                        tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                    )
+                {
                     return;
                 }
             }

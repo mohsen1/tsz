@@ -100,6 +100,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             checker.check_function_declaration(func_idx);
         }
 
+        // Validate indexed access types in the return type annotation of ambient
+        // (declare) function declarations. This catches TS2536 for patterns like
+        // `T[keyof T]["foo"]` in return types. Limited to declare functions to
+        // avoid triggering side effects from type evaluation in function bodies.
+        if let Some(func) = self.ctx.arena.get_function(node)
+            && self
+                .ctx
+                .arena
+                .has_modifier(&func.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+            && func.type_annotation != tsz_parser::parser::NodeIndex::NONE
+        {
+            self.check_type_node(func.type_annotation);
+        }
+
         // TS8030: In JS files, if a function declaration has a @type tag that doesn't
         // resolve to a callable type, emit "The type of a function declaration must match
         // the function's signature." TSC points the error at the type expression inside

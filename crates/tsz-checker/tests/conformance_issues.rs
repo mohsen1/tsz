@@ -17226,3 +17226,54 @@ fn test_chain_summary_deep_hierarchy_property_access() {
          \nActual: {diagnostics:#?}"
     );
 }
+
+#[test]
+#[ignore = "TS2536 inside mapped type values requires pushing mapped type param into scope"]
+fn test_infinite_constraints_ts2536_nested_indexed_access_literal() {
+    // From infiniteConstraints.ts:
+    // T2<B extends { [K in keyof B]: B[Exclude<keyof B, K>]["val"] }> = B
+    // tsc emits TS2536: Type '"val"' cannot be used to index type 'B[Exclude<keyof B, K>]'
+    // NOTE: This specific TS2536 inside a mapped type value type requires the mapped type
+    // parameter to be in scope during check_type_node, which is not yet implemented.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type T2<B extends { [K in keyof B]: B[Exclude<keyof B, K>]["val"] }> = B;
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536 when string literal indexes unresolvable indexed access type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_literal_index_on_generic_indexed_access_simple() {
+    // Non-recursive version: T[keyof T] indexed with a literal "foo"
+    // tsc emits TS2536
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type X<T> = T[keyof T]["foo"];
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536 when string literal indexes generic T[keyof T].\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_infinite_constraints_ts2536_keyof_indexed_access_literal() {
+    // From infiniteConstraints.ts line 39:
+    // declare function function1<T extends {[K in keyof T]: Cond<T[K]>}>(): T[keyof T]["foo"];
+    // tsc emits TS2536: Type '"foo"' cannot be used to index type 'T[keyof T]'
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Cond<T> = T extends number ? number : never;
+declare function function1<T extends {[K in keyof T]: Cond<T[K]>}>(): T[keyof T]["foo"];
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536 when string literal indexes unresolvable T[keyof T] result.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
