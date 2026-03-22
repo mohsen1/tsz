@@ -12,6 +12,8 @@ pub(super) struct CollectDiagnosticsResult {
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
+    /// Module dependency graph statistics (populated for `--extendedDiagnostics`).
+    pub module_dep_stats: Option<super::ModuleDependencyStats>,
 }
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
@@ -904,12 +906,101 @@ pub(super) fn collect_diagnostics(
     // if neither path set the aggregated stats (shouldn't happen in practice).
     let query_cache_stats = aggregated_qc_stats.or_else(|| Some(query_cache.statistics()));
 
+    // Compute module dependency graph statistics for --extendedDiagnostics.
+    let module_dep_stats = {
+        let file_count = program.files.len();
+        // Build a deduplicated adjacency list from resolved_module_paths.
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); file_count];
+        let mut edge_count: usize = 0;
+        for ((src, _specifier), &tgt) in resolved_module_paths.iter() {
+            if *src < file_count && tgt < file_count && !adj[*src].contains(&tgt) {
+                adj[*src].push(tgt);
+                edge_count += 1;
+            }
+        }
+        let sccs = tarjan_scc(file_count, &adj);
+        let cycles: Vec<&Vec<usize>> = sccs.iter().filter(|scc| scc.len() > 1).collect();
+        let import_cycles = cycles.len();
+        let largest_cycle_size = cycles.iter().map(|c| c.len()).max().unwrap_or(0);
+        Some(super::ModuleDependencyStats {
+            file_count,
+            dependency_edges: edge_count,
+            import_cycles,
+            largest_cycle_size,
+        })
+    };
+
     CollectDiagnosticsResult {
         diagnostics,
         request_cache_counters,
         query_cache_stats,
         def_store_stats: aggregated_ds_stats,
+        module_dep_stats,
     }
+}
+
+/// Tarjan's algorithm for finding strongly connected components.
+///
+/// Returns SCCs in reverse topological order. Each SCC is a `Vec<usize>` of node indices.
+/// Import cycles correspond to SCCs with more than one node.
+fn tarjan_scc(n: usize, adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    struct State<'a> {
+        adj: &'a [Vec<usize>],
+        index_counter: usize,
+        stack: Vec<usize>,
+        on_stack: Vec<bool>,
+        indices: Vec<Option<usize>>,
+        lowlinks: Vec<usize>,
+        result: Vec<Vec<usize>>,
+    }
+
+    fn strongconnect(v: usize, state: &mut State<'_>) {
+        state.indices[v] = Some(state.index_counter);
+        state.lowlinks[v] = state.index_counter;
+        state.index_counter += 1;
+        state.stack.push(v);
+        state.on_stack[v] = true;
+
+        for &w in &state.adj[v] {
+            if state.indices[w].is_none() {
+                strongconnect(w, state);
+                state.lowlinks[v] = state.lowlinks[v].min(state.lowlinks[w]);
+            } else if state.on_stack[w] {
+                state.lowlinks[v] = state.lowlinks[v].min(state.indices[w].unwrap());
+            }
+        }
+
+        if state.lowlinks[v] == state.indices[v].unwrap() {
+            let mut scc = Vec::new();
+            loop {
+                let w = state.stack.pop().unwrap();
+                state.on_stack[w] = false;
+                scc.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            state.result.push(scc);
+        }
+    }
+
+    let mut state = State {
+        adj,
+        index_counter: 0,
+        stack: Vec::new(),
+        on_stack: vec![false; n],
+        indices: vec![None; n],
+        lowlinks: vec![0; n],
+        result: Vec::new(),
+    };
+
+    for v in 0..n {
+        if state.indices[v].is_none() {
+            strongconnect(v, &mut state);
+        }
+    }
+
+    state.result
 }
 
 fn propagate_module_export_maps(
@@ -1707,6 +1798,56 @@ let x2: string = f;
                 .any(|diag| diag.file == "/b.ts" && diag.code == 2457),
             "expected TS2457 to survive program-level syntax suppression: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn tarjan_scc_no_edges() {
+        let adj = vec![vec![], vec![], vec![]];
+        let sccs = tarjan_scc(3, &adj);
+        // Each node is its own SCC
+        assert_eq!(sccs.len(), 3);
+        for scc in &sccs {
+            assert_eq!(scc.len(), 1);
+        }
+    }
+
+    #[test]
+    fn tarjan_scc_linear_chain() {
+        // 0 -> 1 -> 2 (no cycles)
+        let adj = vec![vec![1], vec![2], vec![]];
+        let sccs = tarjan_scc(3, &adj);
+        assert_eq!(sccs.len(), 3);
+        for scc in &sccs {
+            assert_eq!(scc.len(), 1);
+        }
+    }
+
+    #[test]
+    fn tarjan_scc_simple_cycle() {
+        // 0 -> 1 -> 0 (one cycle of size 2)
+        let adj = vec![vec![1], vec![0]];
+        let sccs = tarjan_scc(2, &adj);
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].len(), 2);
+    }
+
+    #[test]
+    fn tarjan_scc_triangle_cycle() {
+        // 0 -> 1 -> 2 -> 0 (one cycle of size 3)
+        let adj = vec![vec![1], vec![2], vec![0]];
+        let sccs = tarjan_scc(3, &adj);
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].len(), 3);
+    }
+
+    #[test]
+    fn tarjan_scc_mixed() {
+        // 0 -> 1 -> 2 -> 1 (cycle {1,2}), 3 standalone
+        let adj = vec![vec![1], vec![2], vec![1], vec![]];
+        let sccs = tarjan_scc(4, &adj);
+        let cycles: Vec<_> = sccs.iter().filter(|s| s.len() > 1).collect();
+        assert_eq!(cycles.len(), 1, "expected exactly one cycle");
+        assert_eq!(cycles[0].len(), 2, "cycle should have 2 nodes");
     }
 
     #[test]
