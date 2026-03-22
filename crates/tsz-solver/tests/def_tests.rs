@@ -881,19 +881,11 @@ fn test_statistics_index_counts() {
     let store = DefinitionStore::new();
 
     // Type alias with body -> populates body_to_alias.
-    let info = DefinitionInfo::type_alias(
-        interner.intern_string("A"),
-        vec![],
-        TypeId(200),
-    );
+    let info = DefinitionInfo::type_alias(interner.intern_string("A"), vec![], TypeId(200));
     let def_a = store.register(info);
 
     // Interface with shape -> populates shape_to_def.
-    let mut info_b = DefinitionInfo::interface(
-        interner.intern_string("B"),
-        vec![],
-        vec![],
-    );
+    let mut info_b = DefinitionInfo::interface(interner.intern_string("B"), vec![], vec![]);
     info_b.file_id = Some(1);
     info_b.symbol_id = Some(10);
     let def_b = store.register(info_b);
@@ -922,11 +914,7 @@ fn test_statistics_after_invalidation() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    let mut info = DefinitionInfo::type_alias(
-        interner.intern_string("X"),
-        vec![],
-        TypeId::NUMBER,
-    );
+    let mut info = DefinitionInfo::type_alias(interner.intern_string("X"), vec![], TypeId::NUMBER);
     info.file_id = Some(5);
     info.symbol_id = Some(42);
     store.register(info);

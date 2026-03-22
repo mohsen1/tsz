@@ -5073,10 +5073,8 @@ mod tests {
 
     #[test]
     fn test_classify_failed() {
-        let result = ModuleLookupResult::failed(
-            CANNOT_FIND_MODULE,
-            "Cannot find module 'foo'".to_string(),
-        );
+        let result =
+            ModuleLookupResult::failed(CANNOT_FIND_MODULE, "Cannot find module 'foo'".to_string());
         let outcome = result.classify();
 
         assert!(outcome.resolved_path.is_none());
@@ -5091,7 +5089,10 @@ mod tests {
         let outcome = result.classify();
 
         assert!(outcome.resolved_path.is_none());
-        assert!(outcome.is_resolved, "ambient modules should be treated as resolved");
+        assert!(
+            outcome.is_resolved,
+            "ambient modules should be treated as resolved"
+        );
         assert!(outcome.error.is_none());
     }
 
@@ -5111,11 +5112,7 @@ mod tests {
 
     #[test]
     fn test_classify_untyped_js_with_no_implicit_any() {
-        let result = ModuleLookupResult::untyped_js(
-            PathBuf::from("/tmp/foo.js"),
-            true,
-            "foo",
-        );
+        let result = ModuleLookupResult::untyped_js(PathBuf::from("/tmp/foo.js"), true, "foo");
         let outcome = result.classify();
 
         assert!(outcome.resolved_path.is_none());
@@ -5126,11 +5123,7 @@ mod tests {
 
     #[test]
     fn test_classify_untyped_js_without_no_implicit_any() {
-        let result = ModuleLookupResult::untyped_js(
-            PathBuf::from("/tmp/foo.js"),
-            false,
-            "foo",
-        );
+        let result = ModuleLookupResult::untyped_js(PathBuf::from("/tmp/foo.js"), false, "foo");
         let outcome = result.classify();
 
         assert!(outcome.resolved_path.is_none());

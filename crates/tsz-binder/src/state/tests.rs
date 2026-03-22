@@ -3914,7 +3914,10 @@ namespace MyNS {}
         .values()
         .find(|e| e.name == "MyClass")
         .expect("MyClass");
-    assert_eq!(class_entry.type_param_count, 2, "MyClass should have 2 type params");
+    assert_eq!(
+        class_entry.type_param_count, 2,
+        "MyClass should have 2 type params"
+    );
 
     // Generic interface: 3 type params
     let iface_entry = binder
@@ -3922,7 +3925,10 @@ namespace MyNS {}
         .values()
         .find(|e| e.name == "MyInterface")
         .expect("MyInterface");
-    assert_eq!(iface_entry.type_param_count, 3, "MyInterface should have 3 type params");
+    assert_eq!(
+        iface_entry.type_param_count, 3,
+        "MyInterface should have 3 type params"
+    );
 
     // Generic type alias: 1 type param
     let alias_entry = binder
@@ -3930,7 +3936,10 @@ namespace MyNS {}
         .values()
         .find(|e| e.name == "MyType")
         .expect("MyType");
-    assert_eq!(alias_entry.type_param_count, 1, "MyType should have 1 type param");
+    assert_eq!(
+        alias_entry.type_param_count, 1,
+        "MyType should have 1 type param"
+    );
 
     // Generic function: 1 type param
     let func_entry = binder
@@ -3938,7 +3947,10 @@ namespace MyNS {}
         .values()
         .find(|e| e.name == "myFunc")
         .expect("myFunc");
-    assert_eq!(func_entry.type_param_count, 1, "myFunc should have 1 type param");
+    assert_eq!(
+        func_entry.type_param_count, 1,
+        "myFunc should have 1 type param"
+    );
 
     // Non-generic declarations: 0 type params
     let enum_entry = binder
@@ -3946,21 +3958,30 @@ namespace MyNS {}
         .values()
         .find(|e| e.name == "MyEnum")
         .expect("MyEnum");
-    assert_eq!(enum_entry.type_param_count, 0, "MyEnum should have 0 type params");
+    assert_eq!(
+        enum_entry.type_param_count, 0,
+        "MyEnum should have 0 type params"
+    );
 
     let var_entry = binder
         .semantic_defs
         .values()
         .find(|e| e.name == "myVar")
         .expect("myVar");
-    assert_eq!(var_entry.type_param_count, 0, "myVar should have 0 type params");
+    assert_eq!(
+        var_entry.type_param_count, 0,
+        "myVar should have 0 type params"
+    );
 
     let ns_entry = binder
         .semantic_defs
         .values()
         .find(|e| e.name == "MyNS")
         .expect("MyNS");
-    assert_eq!(ns_entry.type_param_count, 0, "MyNS should have 0 type params");
+    assert_eq!(
+        ns_entry.type_param_count, 0,
+        "MyNS should have 0 type params"
+    );
 }
 
 #[test]
