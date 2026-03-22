@@ -552,7 +552,10 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       ? variant.strictnullchecks === 'true'
       : typeof directives.strictnullchecks === 'boolean'
         ? directives.strictnullchecks
-        : undefined;
+        // When @strict: false, derive strictNullChecks as false (matches tsc)
+        : directives.strict === false
+          ? false
+          : undefined;
     const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
     const moduleDetection =
       variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
