@@ -831,7 +831,7 @@ pub struct CheckerContext<'a> {
     /// Constructed once in `set_all_binders` from all binders' `module_exports`.
     /// Eliminates O(N) scans in `resolve_import_from_ambient_module`.
     pub global_module_exports_index:
-        Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
+        Option<Arc<FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>>>>,
 
     /// Pre-built global index of all declared/ambient module names across all binders.
     /// Split into exact names (O(1) lookup) and wildcard patterns (small linear scan).
@@ -1074,7 +1074,7 @@ pub struct ProjectEnv {
     /// Pre-computed global `module_exports` index: (specifier, `export_name`) -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_exports_index:
-        Option<Arc<FxHashMap<(String, String), Vec<(usize, SymbolId)>>>>,
+        Option<Arc<FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>>>>,
     /// Pre-computed global module augmentations index: specifier -> Vec<(`file_idx`, `ModuleAugmentation`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_augmentations_index:
@@ -1176,7 +1176,7 @@ impl ProjectEnv {
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
+        let mut module_exports_index: FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>> =
             FxHashMap::default();
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
@@ -1212,7 +1212,9 @@ impl ProjectEnv {
                 }
                 for (export_name, &sym_id) in exports.iter() {
                     module_exports_index
-                        .entry((module_spec.clone(), export_name.to_string()))
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .entry(export_name.to_string())
                         .or_default()
                         .push((file_idx, sym_id));
                 }

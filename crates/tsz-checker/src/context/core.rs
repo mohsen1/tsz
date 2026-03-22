@@ -297,7 +297,7 @@ impl<'a> CheckerContext<'a> {
         // Fallback: build all indices from scratch (legacy path for tests and
         // callers that don't use ProjectEnv).
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
+        let mut module_exports_index: FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>> =
             FxHashMap::default();
         let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
@@ -330,7 +330,9 @@ impl<'a> CheckerContext<'a> {
                 }
                 for (export_name, &sym_id) in exports.iter() {
                     module_exports_index
-                        .entry((module_spec.clone(), export_name.to_string()))
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .entry(export_name.to_string())
                         .or_default()
                         .push((file_idx, sym_id));
                 }
@@ -773,11 +775,12 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(sym_id);
         }
-        // Use the pre-built global module_exports index for O(1) lookup
+        // Use the pre-built global module_exports index for O(1) lookup (no allocation)
         if let Some(entries) = self
             .global_module_exports_index
             .as_ref()
-            .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+            .and_then(|idx| idx.get(module_specifier))
+            .and_then(|inner| inner.get(import_name))
             && let Some(&(_file_idx, sym_id)) = entries.first()
         {
             return Some(sym_id);
@@ -799,11 +802,12 @@ impl<'a> CheckerContext<'a> {
         {
             return Some((sym_id, self.current_file_idx));
         }
-        // Use the pre-built global module_exports index for O(1) lookup
+        // Use the pre-built global module_exports index for O(1) lookup (no allocation)
         if let Some(entries) = self
             .global_module_exports_index
             .as_ref()
-            .and_then(|idx| idx.get(&(module_specifier.to_string(), import_name.to_string())))
+            .and_then(|idx| idx.get(module_specifier))
+            .and_then(|inner| inner.get(import_name))
             && let Some(&(file_idx, sym_id)) = entries.first()
         {
             return Some((sym_id, file_idx));

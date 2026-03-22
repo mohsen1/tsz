@@ -26,6 +26,7 @@ fn empty_project_env() -> ProjectEnv {
         global_module_augmentations_index: None,
         global_augmentation_targets_index: None,
         global_module_binder_index: None,
+        global_arena_index: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),
