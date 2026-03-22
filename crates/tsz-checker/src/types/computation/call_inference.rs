@@ -107,7 +107,7 @@ pub(crate) fn should_preserve_contextual_application_shape(
             .any(|member| should_preserve_contextual_application_shape(db, member));
     }
 
-    if let Some(inner) = tsz_solver::unwrap_readonly_or_noinfer(db, ty) {
+    if let Some(inner) = common::unwrap_readonly_or_noinfer(db, ty) {
         return should_preserve_contextual_application_shape(db, inner);
     }
 
@@ -219,7 +219,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let widened_current = tsz_solver::widen_type(self.ctx.types, current);
+            let widened_current = common::widen_type(self.ctx.types, current);
             if widened_current == current {
                 continue;
             }
@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn rest_argument_element_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         let evaluated = self.evaluate_type_with_env(type_id);
-        tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+        common::rest_argument_element_type(self.ctx.types, evaluated)
     }
 
     pub(crate) fn target_contains_blocking_return_context_type_params(
@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        tsz_solver::references_any_type_param_named(self.ctx.types, target, tracked_type_params)
+        common::references_any_type_param_named(self.ctx.types, target, tracked_type_params)
     }
 
     fn instantiate_contextual_constraint_without_unresolved_self(
@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
         // With `O → unknown`, the constraint evaluates to `RepeatOptions<A>`,
         // giving the correct contextual type for properties like `until`.
         if substitution.get(tp_info.name).is_none()
-            && tsz_solver::contains_type_parameter_named(self.ctx.types, constraint, tp_info.name)
+            && common::contains_type_parameter_named(self.ctx.types, constraint, tp_info.name)
         {
             contextual_substitution.insert(tp_info.name, TypeId::UNKNOWN);
         }
@@ -559,7 +559,7 @@ impl<'a> CheckerState<'a> {
         substitution: &mut crate::query_boundaries::common::TypeSubstitution,
         visited: &mut FxHashSet<(TypeId, TypeId)>,
     ) {
-        if let Some(tp) = tsz_solver::type_param_info(self.ctx.types, source)
+        if let Some(tp) = common::type_param_info(self.ctx.types, source)
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
@@ -591,7 +591,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(inner) = tsz_solver::unwrap_readonly_or_noinfer(self.ctx.types, target) {
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, target) {
             self.collect_return_context_substitution(
                 source,
                 inner,
@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(inner) = tsz_solver::unwrap_readonly_or_noinfer(self.ctx.types, source) {
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, source) {
             self.collect_return_context_substitution(
                 inner,
                 target,
@@ -1207,9 +1207,9 @@ impl<'a> CheckerState<'a> {
                         )
                     });
                 let round1_has_unknown =
-                    tsz_solver::contains_type_by_id(self.ctx.types, param_type, TypeId::UNKNOWN);
+                    common::contains_type_by_id(self.ctx.types, param_type, TypeId::UNKNOWN);
                 let round1_has_error =
-                    tsz_solver::contains_type_by_id(self.ctx.types, param_type, TypeId::ERROR);
+                    common::contains_type_by_id(self.ctx.types, param_type, TypeId::ERROR);
                 let prefer_fresh_instantiation = is_sensitive
                     || round1_has_error
                     || common::contains_infer_types(self.ctx.types, param_type)
@@ -1224,7 +1224,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let original_param = shape_round2_param.map(|(type_id, _)| type_id);
                     if let Some(orig) = original_param
-                        && let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, orig)
+                        && let Some(tp_info) = common::type_param_info(self.ctx.types, orig)
                         && self
                             .unresolved_contextual_substitution_target(
                                 &tp_info,
@@ -1268,7 +1268,7 @@ impl<'a> CheckerState<'a> {
                         param_type
                     };
                     let inst = if let Some(tp_info) =
-                        tsz_solver::type_param_info(self.ctx.types, base_param_type)
+                        common::type_param_info(self.ctx.types, base_param_type)
                     {
                         if self
                             .unresolved_contextual_substitution_target(
@@ -1303,7 +1303,7 @@ impl<'a> CheckerState<'a> {
                             current_substitution,
                         )
                     };
-                    if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, inst) {
+                    if let Some(tp_info) = common::type_param_info(self.ctx.types, inst) {
                         let instantiated_constraint = match self
                             .instantiate_contextual_constraint_without_unresolved_self(
                                 inst,
@@ -1408,7 +1408,7 @@ impl<'a> CheckerState<'a> {
         let callable_context_requires_generic_epc_skip =
             callable_ctx.callable_type.is_some_and(|callable_type| {
                 let ctx =
-                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                    common::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                 ctx.get_parameter_type_for_call(effective_index, arg_count)
                     .is_some_and(|param_type| {
                         common::contains_type_parameters(self.ctx.types, param_type)
@@ -1424,8 +1424,7 @@ impl<'a> CheckerState<'a> {
         // interface marker, so intersection simplification removes it. We need to
         // preserve it for object literal methods' `this` type.
         let pushed_this_type = if let Some(et) = expected_type {
-            use tsz_solver::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            let ctx_helper = common::ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 et,
                 self.ctx.compiler_options.no_implicit_any,

@@ -325,6 +325,46 @@ pub(crate) fn type_param_info(
     tsz_solver::type_param_info(db, type_id)
 }
 
+// ── Type unwrapping / widening wrappers ──
+
+/// Unwrap `ReadonlyType` or `NoInfer` wrappers, returning the inner type if present.
+pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::unwrap_readonly_or_noinfer(db, type_id)
+}
+
+/// Widen a literal type to its base primitive (e.g. `"hello"` → `string`).
+pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widen_type(db, type_id)
+}
+
+/// Extract the element type from a rest-argument array/tuple type.
+pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::rest_argument_element_type(db, type_id)
+}
+
+/// Check if a type transitively references any type parameter whose name is in the given set.
+pub(crate) fn references_any_type_param_named(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    names: &rustc_hash::FxHashSet<tsz_common::interner::Atom>,
+) -> bool {
+    tsz_solver::references_any_type_param_named(db, type_id, names)
+}
+
+/// Check if a type transitively contains a type parameter with the given name.
+pub(crate) fn contains_type_parameter_named(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: tsz_common::interner::Atom,
+) -> bool {
+    tsz_solver::contains_type_parameter_named(db, type_id, name)
+}
+
+/// Check if a type transitively contains a specific `TypeId`.
+pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, type_id: TypeId, target: TypeId) -> bool {
+    tsz_solver::contains_type_by_id(db, type_id, target)
+}
+
 // ── Call-related query wrappers ──
 
 /// Get the full function shape for a type, if it is a Function type.

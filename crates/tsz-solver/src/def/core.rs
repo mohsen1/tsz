@@ -174,6 +174,11 @@ pub struct DefinitionInfo {
     /// stays the same. This enables coinductive cycle detection for recursive
     /// generic interfaces (e.g., `Promise<T>` vs `PromiseLike<T>`).
     pub symbol_id: Option<u32>,
+
+    /// Heritage names for cross-batch heritage resolution.
+    /// Populated by the binder with unresolved class/interface heritage names.
+    #[allow(dead_code)]
+    pub heritage_names: Vec<String>,
 }
 
 /// Enum member value.
@@ -205,6 +210,7 @@ impl DefinitionInfo {
             file_id: None,
             span: None,
             symbol_id: None,
+            heritage_names: Vec::new(),
         }
     }
 
@@ -241,6 +247,7 @@ impl DefinitionInfo {
             file_id: None,
             span: None,
             symbol_id: None,
+            heritage_names: Vec::new(),
         }
     }
 
@@ -280,6 +287,7 @@ impl DefinitionInfo {
             file_id: None,
             span: None,
             symbol_id: None,
+            heritage_names: Vec::new(),
         }
     }
 
@@ -300,6 +308,7 @@ impl DefinitionInfo {
             file_id: None,
             span: None,
             symbol_id: None,
+            heritage_names: Vec::new(),
         }
     }
 
@@ -320,6 +329,7 @@ impl DefinitionInfo {
             file_id: None,
             span: None,
             symbol_id: None,
+            heritage_names: Vec::new(),
         }
     }
 
