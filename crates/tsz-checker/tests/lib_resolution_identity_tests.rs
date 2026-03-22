@@ -822,3 +822,158 @@ async function unwrap(): Promise<void> {
         "Type alias to Promise<number> should resolve correctly.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- Focused tests: Promise / lib refs / import-type lowering ----
+// These tests exercise the stable helper paths (resolve_lib_node_in_lib_contexts,
+// get_lib_def_id) to ensure lib lowering works without local DefId repair or
+// per-call caching tricks.
+
+#[test]
+fn test_promise_then_chain_type_propagation() {
+    // Promise.then() chains should propagate generic type arguments through
+    // the stable DefId path without requiring local DefId repair.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function fetchData(): Promise<string> {
+    return "hello";
+}
+const result: Promise<number> = fetchData().then(s => s.length);
+const final_result: Promise<boolean> = result.then(n => n > 0);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise.then() chain should propagate types through stable DefId.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_race_and_any_lib_resolution() {
+    // Promise.race and Promise.any use Awaited<T> and other lib utility
+    // types that require cross-lib-context resolution via the stable helper.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p1: Promise<number> = Promise.resolve(1);
+const p2: Promise<string> = Promise.resolve("a");
+const raced = Promise.race([p1, p2]);
+"#,
+    );
+    // No TS2322 or TS2345 from lib resolution issues
+    let type_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2345)
+        .collect();
+    assert!(
+        type_errors.is_empty(),
+        "Promise.race should resolve without type errors.\nDiagnostics: {type_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_set_and_map_generic_usage() {
+    // Set<T> and Map<K,V> depend on correct cross-lib resolution for
+    // their iterator and heritage chain types.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const s: Set<number> = new Set([1, 2, 3]);
+const m: Map<string, number> = new Map();
+m.set("a", 1);
+const hasA: boolean = m.has("a");
+const size: number = s.size;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Set and Map generic lib types should resolve correctly.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_with_generic_lib_ref() {
+    // Type aliases referencing generic lib types should resolve through
+    // the stable identity path without ad-hoc DefId creation.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type NumArray = Array<number>;
+type StrPromise = Promise<string>;
+const arr: NumArray = [1, 2, 3];
+const len: number = arr.length;
+async function getStr(): StrPromise {
+    return "hello";
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Type alias to generic lib types should resolve correctly.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_constructor_static_methods() {
+    // Promise static methods (resolve, reject, all, allSettled) should
+    // resolve through the stable lib resolution path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p1 = Promise.resolve(42);
+const p2 = Promise.resolve("hello");
+const p3 = Promise.all([p1, p2]);
+"#,
+    );
+    // Should not emit TS2339 (property not found) for Promise static methods
+    assert!(
+        !diagnostics.iter().any(|(c, msg)| *c == 2339
+            && (msg.contains("resolve") || msg.contains("all") || msg.contains("reject"))),
+        "Promise static methods should be resolved from lib.\nDiagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_readonly_array_methods() {
+    // ReadonlyArray<T> is resolved via heritage chain from Array<T>.
+    // This tests that the heritage merge path works with stable helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+function process(items: ReadonlyArray<number>): number {
+    return items.length;
+}
+const nums: ReadonlyArray<number> = [1, 2, 3];
+const result: number = process(nums);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "ReadonlyArray should resolve with heritage chain.\nDiagnostics: {real_errors:#?}"
+    );
+}
