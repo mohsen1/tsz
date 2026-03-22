@@ -193,6 +193,20 @@ impl<'a> CheckerContext<'a> {
         self.get_or_create_def_id(sym_id)
     }
 
+    /// Return the canonical `SymbolId` for a lib symbol name.
+    ///
+    /// Prefers the main (merged) binder's `file_locals` entry because that
+    /// identity is what `DefId`s are keyed to after `merge_lib_contexts_into_binder`.
+    /// Falls back to `per_lib_sym_id` (from an individual lib context binder)
+    /// only when the main binder doesn't carry the symbol yet — a scenario that
+    /// can happen with lazily-loaded or target-gated lib files.
+    ///
+    /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
+    /// recovery pattern.
+    pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
+        self.binder.file_locals.get(name).unwrap_or(per_lib_sym_id)
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the

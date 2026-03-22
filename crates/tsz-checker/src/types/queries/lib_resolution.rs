@@ -127,6 +127,28 @@ pub(crate) fn collect_lib_decls_with_arenas<'a>(
         .collect()
 }
 
+/// Deduplicate `(NodeIndex, &NodeArena)` pairs by both index and arena pointer.
+///
+/// The lib merger can produce duplicate entries when the same lib file is loaded
+/// from multiple lib contexts.  Comparing by both `NodeIndex` AND arena pointer
+/// avoids dropping entries from different lib files that happen to share the same
+/// `NodeIndex` (e.g., `SymbolConstructor` in `es2015.symbol.wellknown.d.ts` vs
+/// `es2020.symbol.wellknown.d.ts`).
+pub(crate) fn dedup_decl_arenas<'a>(
+    decls: &[(NodeIndex, &'a NodeArena)],
+) -> Vec<(NodeIndex, &'a NodeArena)> {
+    let mut seen = Vec::with_capacity(decls.len());
+    let mut out = Vec::with_capacity(decls.len());
+    for &(idx, arena) in decls {
+        let key = (idx, arena as *const NodeArena);
+        if !seen.contains(&key) {
+            seen.push(key);
+            out.push((idx, arena));
+        }
+    }
+    out
+}
+
 /// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
 /// multiple declaration arenas.
 ///
@@ -740,26 +762,7 @@ impl<'a> CheckerState<'a> {
                     let is_type_alias = (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
 
                     if !is_type_alias {
-                        // Deduplicate declaration entries: the lib merger can produce
-                        // duplicate (NodeIndex, arena) pairs when the same lib file is
-                        // loaded from multiple lib contexts.  Compare by BOTH NodeIndex
-                        // AND arena pointer — different lib files can legitimately have
-                        // the same NodeIndex for different interface declarations (e.g.,
-                        // SymbolConstructor in es2015.symbol.wellknown.d.ts and
-                        // es2020.symbol.wellknown.d.ts). Deduplicating by NodeIndex alone
-                        // would drop the second file's members.
-                        let deduped: Vec<(NodeIndex, &NodeArena)> = {
-                            let mut seen = Vec::with_capacity(decls_with_arenas.len());
-                            let mut out = Vec::with_capacity(decls_with_arenas.len());
-                            for &(idx, arena) in &decls_with_arenas {
-                                let key = (idx, arena as *const NodeArena);
-                                if !seen.contains(&key) {
-                                    seen.push(key);
-                                    out.push((idx, arena));
-                                }
-                            }
-                            out
-                        };
+                        let deduped = dedup_decl_arenas(&decls_with_arenas);
 
                         // Use lower_merged_interface_declarations for proper multi-arena support
                         let (ty, params) = lowering.lower_merged_interface_declarations(&deduped);
