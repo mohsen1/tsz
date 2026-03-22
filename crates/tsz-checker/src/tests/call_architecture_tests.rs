@@ -1313,3 +1313,179 @@ const result: string | undefined = svc?.fetch(1);
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Boundary regression tests: ensure call.rs uses solver query APIs
+// for overload, property-call, and generic inference paths without
+// direct TypeData/TypeKey inspection.
+// ---------------------------------------------------------------------------
+
+/// Regression: overload resolution with mixed generic and non-generic signatures
+/// exercises `classify_for_call_signatures` and `get_overload_call_signatures`
+/// boundary queries rather than direct TypeData pattern matching.
+#[test]
+fn overload_mixed_generic_nongeneric_no_internal_inspection() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function overloaded(x: string): number;
+declare function overloaded<T>(x: T, y: T): T;
+
+const a: number = overloaded("hello");
+const b: string = overloaded("a", "b");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2554)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no type errors for mixed generic/non-generic overloads, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: property call on intersection type exercises callable shape
+/// extraction via boundary queries (not direct intersection member inspection).
+#[test]
+fn property_call_intersection_callable_boundary() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Logger {
+    log(msg: string): void;
+}
+interface Formatter {
+    format(data: number): string;
+}
+
+declare const obj: Logger & Formatter;
+obj.log("test");
+const s: string = obj.format(42);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2339 || d.code == 2345 || d.code == 2322)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for intersection property calls, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: overload resolution where only later signatures match exercises
+/// iteration through `get_overload_call_signatures` without internal TypeKey/TypeData.
+#[test]
+fn overload_later_signature_match() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function choose(x: string): string;
+declare function choose(x: number): number;
+declare function choose(x: boolean): boolean;
+
+const r: boolean = choose(true);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors when later overload signature matches, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: generic call with contextual callback where param type contains
+/// intersection with type parameter exercises `contains_type_parameters` and
+/// `intersection_members` boundary queries.
+#[test]
+fn generic_call_callback_intersection_type_param_boundary() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Base {
+    id: number;
+}
+
+declare function withBase<T extends Base>(init: (item: T & { extra: string }) => void): void;
+withBase<Base>((item) => {
+    const id: number = item.id;
+    const extra: string = item.extra;
+});
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for callback with intersection type param, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: property call on method returning generic application exercises
+/// `evaluate_application_type` and `resolve_lazy_type` boundary paths.
+/// The return type is inferred and assigned; property access on the result
+/// must resolve through query boundaries without direct TypeData inspection.
+#[test]
+fn property_call_generic_application_return_type() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Container<T> {
+    value: T;
+}
+interface Factory {
+    create<T>(val: T): Container<T>;
+}
+
+declare const factory: Factory;
+const c = factory.create(42);
+const v: number = c.value;
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for property access on generic application return, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: overloaded method call with type predicate exercises
+/// `extract_predicate_signature` and `is_valid_union_predicate` boundary queries.
+#[test]
+fn overloaded_method_type_predicate_boundary() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Guard {
+    check(x: unknown): x is string;
+    check(x: unknown, strict: boolean): x is number;
+}
+
+declare const g: Guard;
+declare const val: unknown;
+if (g.check(val)) {
+    const s: string = val;
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for overloaded method type predicate, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
