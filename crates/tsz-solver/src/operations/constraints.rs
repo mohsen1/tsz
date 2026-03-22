@@ -2239,14 +2239,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             // Try the false branch if it's not `never` (the source might come from the
             // false branch in a conditional like `T[K] extends string ? string : T[K]`).
-            if cond.false_type != TypeId::NEVER {
-                if let Some(reversed) = self.reverse_infer_through_template(
+            if cond.false_type != TypeId::NEVER
+                && let Some(reversed) = self.reverse_infer_through_template(
                     source_value,
                     cond.false_type,
                     target_placeholder,
-                ) {
-                    return Some(reversed);
-                }
+                )
+            {
+                return Some(reversed);
             }
             return None;
         }

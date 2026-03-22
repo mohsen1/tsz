@@ -757,8 +757,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// When evaluation produces a deferred Mapped type (e.g., from Omit/Pick where
     /// the constraint contains Application types like `Exclude<keyof T, K>`), the
-    /// solver's TypeEvaluator may have failed because lib type DefIds weren't
-    /// registered in the TypeEnvironment. This method resolves the constraint through
+    /// solver's `TypeEvaluator` may have failed because lib type `DefIds` weren't
+    /// registered in the `TypeEnvironment`. This method resolves the constraint through
     /// the checker's evaluation path and retries the Mapped type evaluation.
     pub(crate) fn resolve_deferred_mapped_type(&mut self, type_id: TypeId) -> TypeId {
         let Some(mapped_id) = crate::query_boundaries::state::type_environment::mapped_type_id(
