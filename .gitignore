@@ -134,3 +134,4 @@ crates/tsz-website/data/
 .ctx-target/
 .work-expand
 .local-target-main/
+__pycache__
