@@ -4504,140 +4504,105 @@ const myVar = 1;
     }
 }
 
-// =============================================================================
-// Heritage names captured at bind time
-// =============================================================================
-
 #[test]
-fn class_extends_captured_in_semantic_def() {
-    let (binder, _parser) = parse_and_bind(
-        "class Base {}
-         class Child extends Base {}",
-    );
-    let child = binder
+fn test_heritage_names_captured_for_class_extends() {
+    let source = "class Foo extends Bar {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
         .semantic_defs
         .values()
-        .find(|e| e.name == "Child")
-        .expect("Child should be in semantic_defs");
-    assert_eq!(
-        child.extends_names,
-        vec!["Base"],
-        "class extends heritage should be captured"
-    );
-    assert!(
-        child.implements_names.is_empty(),
-        "no implements for a plain class"
-    );
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Bar"]);
 }
 
 #[test]
-fn class_implements_captured_in_semantic_def() {
-    let (binder, _parser) = parse_and_bind(
-        "interface Foo {}
-         interface Bar {}
-         class Baz implements Foo, Bar {}",
-    );
-    let baz = binder
+fn test_heritage_names_captured_for_class_implements() {
+    let source = "class Foo implements Iface1, Iface2 {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
         .semantic_defs
         .values()
-        .find(|e| e.name == "Baz")
-        .expect("Baz should be in semantic_defs");
-    assert_eq!(
-        baz.implements_names,
-        vec!["Foo", "Bar"],
-        "class implements heritage should be captured"
-    );
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Iface1", "Iface2"]);
 }
 
 #[test]
-fn class_extends_and_implements_captured() {
-    let (binder, _parser) = parse_and_bind(
-        "class Base {}
-         interface Iface {}
-         class Derived extends Base implements Iface {}",
-    );
-    let derived = binder
+fn test_heritage_names_captured_for_class_extends_and_implements() {
+    let source = "class Foo extends Base implements I1, I2 {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
         .semantic_defs
         .values()
-        .find(|e| e.name == "Derived")
-        .expect("Derived should be in semantic_defs");
-    assert_eq!(derived.extends_names, vec!["Base"]);
-    assert_eq!(derived.implements_names, vec!["Iface"]);
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Base", "I1", "I2"]);
 }
 
 #[test]
-fn interface_extends_captured_in_semantic_def() {
-    let (binder, _parser) = parse_and_bind(
-        "interface A {}
-         interface B {}
-         interface C extends A, B {}",
-    );
-    let c = binder
+fn test_heritage_names_captured_for_interface_extends() {
+    let source = "interface Foo extends Bar, Baz {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
         .semantic_defs
         .values()
-        .find(|e| e.name == "C")
-        .expect("C should be in semantic_defs");
-    assert_eq!(
-        c.extends_names,
-        vec!["A", "B"],
-        "interface extends heritage should be captured"
-    );
-    assert!(
-        c.implements_names.is_empty(),
-        "interfaces don't have implements"
-    );
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Bar", "Baz"]);
 }
 
 #[test]
-fn type_alias_enum_have_empty_heritage() {
-    let (binder, _parser) = parse_and_bind(
-        "type Alias = string;
-         enum Color { Red, Green }",
-    );
-    let alias = binder
-        .semantic_defs
-        .values()
-        .find(|e| e.name == "Alias")
-        .expect("Alias should be in semantic_defs");
-    assert!(alias.extends_names.is_empty());
-    assert!(alias.implements_names.is_empty());
+fn test_heritage_names_empty_for_no_heritage() {
+    let source = "class Plain {} interface Empty {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
 
-    let color = binder
+    let plain = binder
         .semantic_defs
         .values()
-        .find(|e| e.name == "Color")
-        .expect("Color should be in semantic_defs");
-    assert!(color.extends_names.is_empty());
-    assert!(color.implements_names.is_empty());
+        .find(|e| e.name == "Plain")
+        .expect("expected semantic_def for Plain");
+    assert!(plain.heritage_names.is_empty());
+
+    let empty = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Empty")
+        .expect("expected semantic_def for Empty");
+    assert!(empty.heritage_names.is_empty());
 }
 
 #[test]
-fn heritage_names_survive_lib_merge() {
-    // Simulate lib merge: a lib binder with a class that extends another.
-    // After merge_lib_symbols, the semantic_defs should preserve heritage names.
-    let mut lib_binder = BinderState::new();
-    let sym_a = lib_binder
-        .symbols
-        .alloc(super::super::symbol_flags::CLASS, "A".to_string());
-    lib_binder.semantic_defs.insert(
-        sym_a,
-        super::SemanticDefEntry {
-            kind: super::SemanticDefKind::Class,
-            name: "A".to_string(),
-            file_id: 0,
-            span_start: 0,
-            type_param_count: 0,
-            is_exported: true,
-            enum_member_names: Vec::new(),
-            is_const: false,
-            is_abstract: false,
-            extends_names: vec!["Error".to_string()],
-            implements_names: Vec::new(),
-        },
-    );
+fn test_heritage_names_property_access_expression() {
+    let source = "class Foo extends ns.Base {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
 
-    // The entry's heritage should be intact after clone (simulating merge).
-    let cloned = lib_binder.semantic_defs.get(&sym_a).unwrap().clone();
-    assert_eq!(cloned.extends_names, vec!["Error"]);
-    assert!(cloned.implements_names.is_empty());
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["ns.Base"]);
 }
