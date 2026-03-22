@@ -1107,6 +1107,32 @@ pub struct ProjectEnv {
     pub last_skeleton_fingerprint: Option<u64>,
 }
 
+impl Default for ProjectEnv {
+    fn default() -> Self {
+        Self {
+            lib_contexts: vec![],
+            all_arenas: Arc::new(vec![]),
+            all_binders: Arc::new(vec![]),
+            skeleton_declared_modules: None,
+            skeleton_expando_index: None,
+            symbol_file_targets: Arc::new(vec![]),
+            global_file_locals_index: None,
+            global_module_exports_index: None,
+            global_module_augmentations_index: None,
+            global_augmentation_targets_index: None,
+            global_module_binder_index: None,
+            global_arena_index: None,
+            resolved_module_paths: Arc::new(FxHashMap::default()),
+            resolved_module_errors: Arc::new(FxHashMap::default()),
+            is_external_module_by_file: Arc::new(FxHashMap::default()),
+            file_is_esm_map: Arc::new(FxHashMap::default()),
+            typescript_dom_replacement_globals: (false, false, false),
+            has_deprecation_diagnostics: false,
+            last_skeleton_fingerprint: None,
+        }
+    }
+}
+
 impl ProjectEnv {
     /// Apply all project-level shared state to a checker context.
     ///

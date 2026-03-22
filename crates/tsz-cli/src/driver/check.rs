@@ -399,19 +399,13 @@ pub(super) fn collect_diagnostics(
         skeleton_declared_modules,
         skeleton_expando_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
-        global_file_locals_index: None,
-        global_module_exports_index: None,
-        global_module_augmentations_index: None,
-        global_augmentation_targets_index: None,
-        global_module_binder_index: None,
-        global_arena_index: None,
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_errors: Arc::clone(&resolved_module_errors),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),
         file_is_esm_map: Arc::clone(&file_is_esm_map),
         typescript_dom_replacement_globals,
         has_deprecation_diagnostics,
-        last_skeleton_fingerprint: None,
+        ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
     // On the first build this always rebuilds; on subsequent incremental builds
