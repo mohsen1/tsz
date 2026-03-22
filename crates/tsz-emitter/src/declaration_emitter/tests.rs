@@ -9783,3 +9783,33 @@ fn fix_enum_hex_separator_in_value() {
     println!("enum hex sep:\n{output}");
     assert!(output.contains("A = 65535"), "hex with sep should evaluate: {output}");
 }
+
+#[test]
+fn fix_regex_literal_inferred_type() {
+    // Regex literal initializer should infer RegExp type
+    let output = emit_dts("export const x = /hello/;");
+    println!("regex:\n{output}");
+    assert!(output.contains("RegExp"), "regex should infer RegExp: {output}");
+}
+
+#[test]
+fn fix_template_literal_initializer_inferred_type() {
+    // Template literal initializer should infer string type
+    let output = emit_dts("export const x = `hello`;");
+    println!("template init:\n{output}");
+    assert!(output.contains("string") || output.contains("\"hello\""), "template should infer string: {output}");
+}
+
+#[test]
+fn fix_template_expression_initializer_inferred_type() {
+    let output = emit_dts("export let x = `hello ${42}`;");
+    println!("template expr init:\n{output}");
+    assert!(output.contains("string"), "template expression should infer string: {output}");
+}
+
+#[test]
+fn fix_regex_in_const_with_flags() {
+    let output = emit_dts("export const re = /test/gi;");
+    println!("regex with flags:\n{output}");
+    assert!(output.contains("RegExp"), "regex with flags should infer RegExp: {output}");
+}

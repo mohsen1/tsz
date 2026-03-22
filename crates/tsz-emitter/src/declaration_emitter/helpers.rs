@@ -4347,6 +4347,12 @@ impl<'a> DeclarationEmitter<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
             k if k == SyntaxKind::StringLiteral as u16 => Some("string".to_string()),
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => Some("RegExp".to_string()),
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                Some("string".to_string())
+            }
             k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
                 Some("boolean".to_string())
             }
@@ -8386,6 +8392,15 @@ impl<'a> DeclarationEmitter<'a> {
                 || k == SyntaxKind::FalseKeyword as u16 =>
             {
                 self.js_literal_type_text(expr_idx)
+            }
+            // Template literal without substitutions: `hello` → "hello"
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(expr_node) {
+                    let escaped = escape_string_for_double_quote(&lit.text);
+                    Some(format!("\"{}\"", escaped))
+                } else {
+                    None
+                }
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 && self.is_negative_literal(expr_node) =>
