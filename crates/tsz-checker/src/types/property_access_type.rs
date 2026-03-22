@@ -1317,9 +1317,9 @@ impl<'a> CheckerState<'a> {
                     // deferring the check.
                     if is_this_access
                         && self.ctx.this_type_stack.last().is_some_and(|&top| {
-                            matches!(
-                                self.ctx.types.lookup(top),
-                                Some(tsz_solver::TypeData::ThisType)
+                            crate::query_boundaries::checkers::generic::is_this_type(
+                                self.ctx.types,
+                                top,
                             ) || crate::query_boundaries::state::checking::is_type_parameter_like(
                                 self.ctx.types,
                                 top,
