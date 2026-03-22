@@ -210,15 +210,18 @@ impl<'a> CheckerState<'a> {
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = delegate_arena
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
-            && self.ctx.resolve_symbol_file_index(sym_id).is_some_and(|file_idx| {
-                let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
-                if !std::ptr::eq(target_arena, self.ctx.arena) {
-                    cross_file_idx = Some(file_idx);
-                    true
-                } else {
-                    false
-                }
-            });
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| {
+                    let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    if !std::ptr::eq(target_arena, self.ctx.arena) {
+                        cross_file_idx = Some(file_idx);
+                        true
+                    } else {
+                        false
+                    }
+                });
 
         // Check if we have a valid delegate arena (either from symbol_arenas/declaration_arenas
         // or from cross_file_symbol_targets).

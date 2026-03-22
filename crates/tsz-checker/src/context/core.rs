@@ -854,7 +854,10 @@ impl<'a> CheckerContext<'a> {
     /// O(1) lookup: which file owns `sym_id`?
     #[inline]
     pub fn resolve_symbol_file_index(&self, sym_id: tsz_binder::SymbolId) -> Option<usize> {
-        self.cross_file_symbol_targets.borrow().get(&sym_id).copied()
+        self.cross_file_symbol_targets
+            .borrow()
+            .get(&sym_id)
+            .copied()
     }
 
     /// Register (or overwrite) the owning file for `sym_id`.
