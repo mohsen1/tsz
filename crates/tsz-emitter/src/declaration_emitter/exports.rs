@@ -2162,7 +2162,10 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),
-                        k if k == SyntaxKind::OverrideKeyword as u16 => self.write("override "),
+                        k if k == SyntaxKind::OverrideKeyword as u16 => {
+                            // tsc strips `override` in .d.ts output — it is not
+                            // part of the declaration surface.
+                        }
                         k if k == SyntaxKind::AsyncKeyword as u16 => {
                             // tsc strips `async` in .d.ts — the return type already
                             // encodes Promise<T>, so the modifier is redundant.

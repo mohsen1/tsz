@@ -4244,7 +4244,7 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write("readonly ");
                         }
                         k if k == SyntaxKind::OverrideKeyword as u16 => {
-                            self.write("override ");
+                            // tsc strips `override` in .d.ts output.
                         }
                         _ => {}
                     }

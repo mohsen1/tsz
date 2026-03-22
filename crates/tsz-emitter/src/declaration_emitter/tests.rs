@@ -5487,8 +5487,9 @@ export type Remap<T> = {
 }
 
 #[test]
-fn test_override_modifier_preserved_in_dts() {
-    // tsc preserves `override` on class members in .d.ts output.
+fn test_override_modifier_stripped_in_dts() {
+    // tsc strips `override` from class members in .d.ts output —
+    // it is not part of the declaration surface.
     let output = emit_dts(
         r#"
 declare class Base {
@@ -5502,12 +5503,16 @@ export declare class Derived extends Base {
 "#,
     );
     assert!(
-        output.contains("override method(): void;"),
-        "Expected override modifier on method in .d.ts: {output}"
+        !output.contains("override"),
+        "Expected override modifier to be stripped in .d.ts: {output}"
     );
     assert!(
-        output.contains("override prop: number;"),
-        "Expected override modifier on property in .d.ts: {output}"
+        output.contains("method(): void;"),
+        "Expected method in .d.ts: {output}"
+    );
+    assert!(
+        output.contains("prop: number;"),
+        "Expected prop in .d.ts: {output}"
     );
 }
 
