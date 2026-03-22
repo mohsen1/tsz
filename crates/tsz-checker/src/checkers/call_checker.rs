@@ -66,6 +66,25 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.evaluate_type_for_assignability(type_id)
     }
 
+    fn expand_type_alias_application(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::state::type_environment::application_info;
+
+        let (base, args) = application_info(self.state.ctx.types, type_id)?;
+        let sym_id = self.state.ctx.resolve_type_to_symbol_id(base)?;
+        let (body, type_params) = self.state.type_reference_symbol_type_with_params(sym_id);
+        if body == TypeId::ANY || body == TypeId::ERROR || type_params.is_empty() {
+            return None;
+        }
+        let subst = TypeSubstitution::from_args(self.state.ctx.types, &type_params, &args);
+        let instantiated = instantiate_type(self.state.ctx.types, body, &subst);
+        if instantiated == type_id {
+            None
+        } else {
+            Some(instantiated)
+        }
+    }
+
     fn promise_like_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.state
             .promise_like_return_type_argument(type_id)

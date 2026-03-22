@@ -809,6 +809,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     Some((rest_start + i, elem.type_id, trailing_count))
                 })
             }
+            // Application rest param: e.g., `...args: TupleMapper<Tuple>` where Tuple
+            // is an inference variable and TupleMapper is a mapped type alias.
+            // Pack rest args into a tuple and constrain against the Application.
+            // The constraint solver's (_, Application) handler will expand the alias
+            // to its mapped type body, enabling reverse-mapped tuple inference.
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let has_infer_arg = app.args.iter().any(|arg| var_map.contains_key(arg));
+                if has_infer_arg {
+                    Some((rest_start, rest_param_type, 0))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }?;
 

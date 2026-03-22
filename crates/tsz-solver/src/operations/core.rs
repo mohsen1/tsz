@@ -50,6 +50,19 @@ pub trait AssignabilityChecker {
         type_id
     }
 
+    /// Expand a type alias Application to its body type with the given type arguments.
+    ///
+    /// For `Application(Lazy(DefId), [args...])`, resolves the DefId to its body type
+    /// and instantiates it with the provided args. Returns `None` if the type is not
+    /// an expandable Application or the base can't be resolved.
+    ///
+    /// This is used during inference to expand mapped type aliases (e.g., `TupleMapper<T>`)
+    /// without evaluating the result (which would resolve inference variables to their
+    /// constraints). The default returns `None` (no resolver available).
+    fn expand_type_alias_application(&mut self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
     /// Extract the element type from a promise-like application when the checker
     /// has enough semantic context to do so.
     ///
