@@ -1030,8 +1030,8 @@ impl FunctionShape {
     }
 
     /// Return a copy of this shape with the params replaced.
-    /// Preserves type_params, this_type, return_type, type_predicate,
-    /// is_constructor, and is_method from the original.
+    /// Preserves `type_params`, `this_type`, `return_type`, `type_predicate`,
+    /// `is_constructor`, and `is_method` from the original.
     pub fn with_replaced_params(&self, params: Vec<ParamInfo>) -> Self {
         Self {
             type_params: self.type_params.clone(),

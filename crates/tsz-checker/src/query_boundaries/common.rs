@@ -591,9 +591,9 @@ pub(crate) fn params_to_tuple_elements(params: &[ParamInfo]) -> Vec<TupleElement
 ///
 /// Thin wrapper around `PropertyInfo::find_in_slice` so that checker code
 /// does not call solver static methods directly.
-pub(crate) fn find_matching_property<'a>(
-    properties: &'a [tsz_solver::PropertyInfo],
+pub(crate) fn find_matching_property(
+    properties: &[tsz_solver::PropertyInfo],
     name: tsz_common::interner::Atom,
-) -> Option<&'a tsz_solver::PropertyInfo> {
+) -> Option<&tsz_solver::PropertyInfo> {
     tsz_solver::PropertyInfo::find_in_slice(properties, name)
 }

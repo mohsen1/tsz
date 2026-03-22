@@ -59,7 +59,7 @@ fn test_solver_file_size_ceiling() {
         }
 
         if line_count > 2000 {
-            oversized.push(format!("  {} ({} lines)", rel, line_count));
+            oversized.push(format!("  {rel} ({line_count} lines)"));
         }
     }
 
@@ -131,7 +131,7 @@ fn test_binder_file_size_ceiling() {
         }
 
         if line_count > 2000 {
-            oversized.push(format!("  {} ({} lines)", rel, line_count));
+            oversized.push(format!("  {rel} ({line_count} lines)"));
         }
     }
 
@@ -193,7 +193,7 @@ fn test_emitter_file_size_ceiling() {
         }
 
         if line_count > 2000 {
-            oversized.push(format!("  {} ({} lines)", rel, line_count));
+            oversized.push(format!("  {rel} ({line_count} lines)"));
         }
     }
 
