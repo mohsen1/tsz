@@ -2515,6 +2515,70 @@ pub fn classify_identity_mapped(
     })
 }
 
+/// Evaluate identity mapped type passthrough for a given type argument.
+///
+/// For an identity homomorphic mapped type `{ [K in keyof T]: T[K] }`:
+/// - Concrete primitives (string, number, boolean, etc.) pass through: returns `Some(arg)`.
+/// - `any` with array/tuple constraint: passes through: returns `Some(any)`.
+/// - `any` without array constraint: produces `{ [x: string]: any; [x: number]: any }`.
+/// - `unknown`, `never`, `error` without array constraint: no passthrough: returns `None`.
+/// - Non-identity mapped types: no passthrough: returns `None`.
+///
+/// This centralizes the passthrough logic that was previously split between
+/// the checker (core.rs) and solver (evaluate.rs).
+pub fn evaluate_identity_mapped_passthrough(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    arg: TypeId,
+) -> Option<TypeId> {
+    let identity_info = classify_identity_mapped(db, mapped_id)?;
+
+    // Handle any/unknown/never/error first — these are NOT considered "primitive"
+    // by is_primitive_type, so they need separate handling.
+    let is_any_like = arg == TypeId::ANY
+        || arg == TypeId::UNKNOWN
+        || arg == TypeId::NEVER
+        || arg == TypeId::ERROR;
+    if is_any_like {
+        // Check if the type parameter has an array/tuple constraint
+        let has_array_constraint = identity_info
+            .source_constraint
+            .is_some_and(|c| matches!(db.lookup(c), Some(TypeData::Array(_) | TypeData::Tuple(_))));
+        if has_array_constraint {
+            return Some(arg);
+        }
+        // Objectish<any>: produce { [x: string]: any; [x: number]: any }
+        if arg == TypeId::ANY {
+            use crate::types::{IndexSignature, ObjectShape};
+            return Some(db.object_with_index(ObjectShape {
+                flags: crate::types::ObjectFlags::empty(),
+                properties: vec![],
+                string_index: Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                number_index: Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                symbol: None,
+            }));
+        }
+        // unknown/never/error without array constraint → no passthrough
+        return None;
+    }
+
+    // Concrete primitives (string, number, boolean, etc.) pass through directly.
+    if crate::is_primitive_type(db, arg) {
+        return Some(arg);
+    }
+    None
+}
+
 /// Check if a mapped type's template is callable (has call/construct signatures).
 ///
 /// This is used for TS2344 constraint checking: when an indexed access into a
@@ -2856,6 +2920,7 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 mod tests {
     use super::*;
     use crate::TypeInterner;
+    use crate::caches::db::QueryDatabase;
     use crate::types::{CallSignature, CallableShape, ParamInfo, TypeParamInfo};
 
     fn make_callable_with_construct_sig(
