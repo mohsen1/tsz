@@ -1085,6 +1085,15 @@ impl<'a> Printer<'a> {
                 self.emit_type_parameter(node);
             }
 
+            // Qualified name: A.B.C (used in type references, import types)
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                if let Some(qn) = self.arena.get_qualified_name(node) {
+                    self.emit(qn.left);
+                    self.write(".");
+                    self.emit(qn.right);
+                }
+            }
+
             // Literals
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 self.emit_numeric_literal(node);
