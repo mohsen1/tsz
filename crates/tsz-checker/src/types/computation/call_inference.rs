@@ -68,19 +68,11 @@ fn sanitize_function_shape_binding_pattern_params(
     shape: &tsz_solver::FunctionShape,
     binding_pattern_param_positions: &[usize],
 ) -> tsz_solver::FunctionShape {
-    tsz_solver::FunctionShape {
-        type_params: shape.type_params.clone(),
-        params: common::sanitize_params_at_positions(
-            &shape.params,
-            binding_pattern_param_positions,
-            TypeId::UNKNOWN,
-        ),
-        this_type: shape.this_type,
-        return_type: shape.return_type,
-        type_predicate: shape.type_predicate.clone(),
-        is_constructor: shape.is_constructor,
-        is_method: shape.is_method,
-    }
+    shape.with_replaced_params(common::sanitize_params_at_positions(
+        &shape.params,
+        binding_pattern_param_positions,
+        TypeId::UNKNOWN,
+    ))
 }
 
 pub(crate) fn should_preserve_contextual_application_shape(
@@ -568,17 +560,10 @@ impl<'a> CheckerState<'a> {
                     if remaining.len() == 1 && remaining[0].rest {
                         remaining[0].type_id
                     } else {
-                        self.ctx.types.factory().tuple(
-                            remaining
-                                .iter()
-                                .map(|param| tsz_solver::TupleElement {
-                                    type_id: param.type_id,
-                                    optional: param.optional,
-                                    rest: param.rest,
-                                    name: param.name,
-                                })
-                                .collect(),
-                        )
+                        self.ctx
+                            .types
+                            .factory()
+                            .tuple(common::params_to_tuple_elements(remaining))
                     }
                 } else {
                     let Some(target_param) = target_fn.params.get(target_index) else {
@@ -695,10 +680,9 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval),
         ) {
             for source_prop in &source_shape.properties {
-                if let Some(target_prop) = tsz_solver::PropertyInfo::find_in_slice(
-                    &target_shape.properties,
-                    source_prop.name,
-                ) {
+                if let Some(target_prop) =
+                    common::find_matching_property(&target_shape.properties, source_prop.name)
+                {
                     self.collect_return_context_substitution(
                         source_prop.type_id,
                         target_prop.type_id,

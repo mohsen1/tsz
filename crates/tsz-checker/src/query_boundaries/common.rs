@@ -569,3 +569,31 @@ pub(crate) fn sanitize_params_at_positions(
     }
     result
 }
+
+/// Convert a slice of function parameters to tuple elements.
+///
+/// Each parameter's `type_id`, `optional`, `rest`, and `name` fields are
+/// transferred directly.  Used when synthesizing a tuple type that mirrors
+/// a parameter list (e.g. collecting remaining params for a rest argument).
+pub(crate) fn params_to_tuple_elements(params: &[ParamInfo]) -> Vec<TupleElement> {
+    params
+        .iter()
+        .map(|param| TupleElement {
+            type_id: param.type_id,
+            optional: param.optional,
+            rest: param.rest,
+            name: param.name,
+        })
+        .collect()
+}
+
+/// Find a property by name in a property slice.
+///
+/// Thin wrapper around `PropertyInfo::find_in_slice` so that checker code
+/// does not call solver static methods directly.
+pub(crate) fn find_matching_property<'a>(
+    properties: &'a [tsz_solver::PropertyInfo],
+    name: tsz_common::interner::Atom,
+) -> Option<&'a tsz_solver::PropertyInfo> {
+    tsz_solver::PropertyInfo::find_in_slice(properties, name)
+}

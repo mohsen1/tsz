@@ -1028,6 +1028,21 @@ impl FunctionShape {
             is_method: false,
         }
     }
+
+    /// Return a copy of this shape with the params replaced.
+    /// Preserves type_params, this_type, return_type, type_predicate,
+    /// is_constructor, and is_method from the original.
+    pub fn with_replaced_params(&self, params: Vec<ParamInfo>) -> Self {
+        Self {
+            type_params: self.type_params.clone(),
+            params,
+            this_type: self.this_type,
+            return_type: self.return_type,
+            type_predicate: self.type_predicate.clone(),
+            is_constructor: self.is_constructor,
+            is_method: self.is_method,
+        }
+    }
 }
 
 /// Call signature for overloaded functions
