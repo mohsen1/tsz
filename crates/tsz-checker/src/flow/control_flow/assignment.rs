@@ -454,6 +454,17 @@ impl<'a> FlowAnalyzer<'a> {
                 if self.is_access_reference(target) && !self.is_this_access_reference(target) {
                     return None;
                 }
+                // When ++/-- is applied to a type that cannot accept number
+                // (e.g., unconstrained type parameter T), the operation is
+                // invalid (TS2356) and the operand should NOT be narrowed to
+                // number. This matches tsc: invalid ++/-- preserves the
+                // declared flow type.
+                if let Some(node_types) = self.node_types
+                    && let Some(&operand_type) = node_types.get(&unary.operand.0)
+                    && !self.is_assignable_to(TypeId::NUMBER, operand_type)
+                {
+                    return None;
+                }
                 return Some(TypeId::NUMBER);
             }
         }
