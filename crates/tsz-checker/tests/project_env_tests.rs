@@ -629,51 +629,6 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
     );
 }
 
-#[test]
-fn heritage_names_propagated_to_definition_info() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    let mut cross_binder = BinderState::new();
-    let sym_id = SymbolId(100);
-    cross_binder.semantic_defs.insert(
-        sym_id,
-        SemanticDefEntry {
-            kind: SemanticDefKind::Class,
-            name: "MyClass".to_string(),
-            file_id: 5,
-            span_start: 0,
-            type_param_count: 0,
-            is_exported: true,
-            enum_member_names: Vec::new(),
-            is_const: false,
-            is_abstract: false,
-            heritage_names: vec!["Base".to_string(), "IFoo".to_string()],
-        },
-    );
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(cross_binder)]);
-    env.apply_to(&mut checker.ctx);
-
-    let def_id = checker
-        .ctx
-        .get_existing_def_id(sym_id)
-        .expect("MyClass should have a DefId");
-
-    let info = checker
-        .ctx
-        .definition_store
-        .get(def_id)
-        .expect("DefId should be in store");
-
-    assert_eq!(interner.resolve_atom(info.name), "MyClass");
-    assert_eq!(
-        info.heritage_names,
-        vec!["Base", "IFoo"],
-        "heritage_names from binder should be propagated to DefinitionInfo"
-    );
-}
+// heritage_names_propagated_to_definition_info test removed:
+// DefinitionInfo no longer has heritage_names field. Heritage resolution
+// was moved to the checker's class/interface type resolution pipeline.
