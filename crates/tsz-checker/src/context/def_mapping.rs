@@ -809,18 +809,16 @@ impl<'a> CheckerContext<'a> {
         // Also collect from lib binders.
         let mut lib_entries = Vec::new();
         for lib_ctx in &self.lib_contexts {
-            lib_entries.extend(
-                self.collect_heritage_entries_from_binder(&lib_ctx.binder.semantic_defs),
-            );
+            lib_entries
+                .extend(self.collect_heritage_entries_from_binder(&lib_ctx.binder.semantic_defs));
         }
 
         // Also collect from all_binders (multi-file mode).
         let mut multi_entries = Vec::new();
         if let Some(ref binders) = self.all_binders {
             for binder in binders.iter() {
-                multi_entries.extend(
-                    self.collect_heritage_entries_from_binder(&binder.semantic_defs),
-                );
+                multi_entries
+                    .extend(self.collect_heritage_entries_from_binder(&binder.semantic_defs));
             }
         }
 
@@ -842,8 +840,9 @@ impl<'a> CheckerContext<'a> {
                 }
 
                 let name_atom = self.types.intern_string(name_str);
-                let Some(target_def_id) =
-                    self.definition_store.resolve_heritage_name(name_atom, def_id)
+                let Some(target_def_id) = self
+                    .definition_store
+                    .resolve_heritage_name(name_atom, def_id)
                 else {
                     continue;
                 };
@@ -852,19 +851,15 @@ impl<'a> CheckerContext<'a> {
                     tsz_binder::SemanticDefKind::Class => {
                         // First class target -> extends, rest -> implements.
                         let target_kind = self.definition_store.get_kind(target_def_id);
-                        if !found_extends
-                            && target_kind == Some(tsz_solver::def::DefKind::Class)
-                        {
+                        if !found_extends && target_kind == Some(tsz_solver::def::DefKind::Class) {
                             self.definition_store.set_extends(def_id, target_def_id);
                             found_extends = true;
                         } else {
-                            self.definition_store
-                                .add_implements(def_id, target_def_id);
+                            self.definition_store.add_implements(def_id, target_def_id);
                         }
                     }
                     tsz_binder::SemanticDefKind::Interface => {
-                        self.definition_store
-                            .add_implements(def_id, target_def_id);
+                        self.definition_store.add_implements(def_id, target_def_id);
                     }
                     _ => {}
                 }
@@ -878,11 +873,12 @@ impl<'a> CheckerContext<'a> {
     /// Collect (SymbolId, kind, heritage_names) from a binder's semantic_defs.
     fn collect_heritage_entries_from_binder(
         &self,
-        semantic_defs: &rustc_hash::FxHashMap<
-            tsz_binder::SymbolId,
-            tsz_binder::SemanticDefEntry,
-        >,
-    ) -> Vec<(tsz_binder::SymbolId, tsz_binder::SemanticDefKind, Vec<String>)> {
+        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+    ) -> Vec<(
+        tsz_binder::SymbolId,
+        tsz_binder::SemanticDefKind,
+        Vec<String>,
+    )> {
         semantic_defs
             .iter()
             .filter(|(_, entry)| !entry.heritage_names.is_empty())
