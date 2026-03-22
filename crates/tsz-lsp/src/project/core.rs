@@ -6,7 +6,7 @@ use web_time::{Duration, Instant};
 
 use globset::Glob;
 use regex::{Regex, RegexBuilder};
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use crate::code_actions::ImportCandidateKind;
 use crate::completions::{CompletionItem, Completions};
@@ -1510,6 +1510,11 @@ pub struct Project {
     /// and after a batch of edits, diff the snapshots, and apply invalidation
     /// in one pass.
     pub(crate) fingerprint_cache: SkeletonFingerprintCache,
+    /// Files currently open in the editor (tracked via `didOpen`/`didClose`).
+    ///
+    /// Open files are never evicted under memory pressure. The eviction module
+    /// uses this set to skip actively-edited files.
+    pub(crate) open_files: FxHashSet<String>,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -1696,6 +1701,7 @@ impl Project {
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
+            open_files: FxHashSet::default(),
         }
     }
 
@@ -1719,6 +1725,7 @@ impl Project {
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
+            open_files: FxHashSet::default(),
         }
     }
 
