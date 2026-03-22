@@ -265,11 +265,10 @@ impl<'a> CheckerState<'a> {
         {
             // Record cross-file origin so delegate_cross_arena_symbol_resolution
             // can find the correct arena/binder for this symbol.
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .entry(sym_id)
-                .or_insert(binder_idx);
+            // Register only if not already known (or_insert semantics)
+            if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
+                self.ctx.register_symbol_file_index(sym_id, binder_idx);
+            }
             return Some(sym_id);
         }
 
@@ -282,10 +281,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .resolve_import_target_from_file(from_file, module_specifier)
             {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_idx);
             }
             return Some(sym_id);
         }
@@ -311,10 +307,7 @@ impl<'a> CheckerState<'a> {
         // Helper: record the cross-file origin so delegate_cross_arena_symbol_resolution
         // can find the correct arena for this SymbolId.
         let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(sym_id, target_file_idx);
+            self.ctx.register_symbol_file_index(sym_id, target_file_idx);
             Some(sym_id)
         };
 
@@ -350,10 +343,7 @@ impl<'a> CheckerState<'a> {
         if let Some((sym_id, actual_file_idx)) =
             self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
         {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(sym_id, actual_file_idx);
+            self.ctx.register_symbol_file_index(sym_id, actual_file_idx);
             return Some(sym_id);
         }
 
@@ -545,9 +535,8 @@ impl<'a> CheckerState<'a> {
 
         // Helper: record cross-file origin for all symbols in a table.
         let record_symbols = |table: &tsz_binder::SymbolTable| {
-            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
             for (_, &sym_id) in table.iter() {
-                targets.insert(sym_id, target_file_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_file_idx);
             }
         };
 
@@ -603,9 +592,8 @@ impl<'a> CheckerState<'a> {
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
         let record_symbols = |table: &tsz_binder::SymbolTable| {
-            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
             for (_, &sym_id) in table.iter() {
-                targets.insert(sym_id, target_file_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_file_idx);
             }
         };
 
@@ -1258,13 +1246,7 @@ impl<'a> CheckerState<'a> {
             }
             // O(1) fast-path: check cross_file_symbol_targets before O(N) binder scan
             {
-                let file_idx = self
-                    .ctx
-                    .cross_file_symbol_targets
-                    .borrow()
-                    .get(&sym_id)
-                    .copied();
-                if let Some(file_idx) = file_idx
+                if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
                     && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
                 {
                     if let Some(sym) = binder.get_symbol(sym_id) {
@@ -1374,20 +1356,14 @@ impl<'a> CheckerState<'a> {
                 && let Some(exports) = target_binder.module_exports.get(&target_file_name)
                 && let Some(sym_id) = resolve_from_exports(exports)
             {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_idx);
                 return Some(sym_id);
             }
 
             if let Some(exports) = target_binder.module_exports.get(module_specifier)
                 && let Some(sym_id) = resolve_from_exports(exports)
             {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.ctx.register_symbol_file_index(sym_id, target_idx);
                 return Some(sym_id);
             }
         }

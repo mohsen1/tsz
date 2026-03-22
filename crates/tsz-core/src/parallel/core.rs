@@ -3046,11 +3046,8 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
-            {
-                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
-                for (sym_id, owner_idx) in &symbol_file_targets {
-                    targets.insert(*sym_id, *owner_idx);
-                }
+            for (sym_id, owner_idx) in &symbol_file_targets {
+                checker.ctx.register_symbol_file_index(*sym_id, *owner_idx);
             }
 
             let mut function_results = Vec::new();
@@ -3162,11 +3159,8 @@ pub fn check_files_parallel(
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
 
-            {
-                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
-                for (sym_id, owner_idx) in &symbol_file_targets {
-                    targets.insert(*sym_id, *owner_idx);
-                }
+            for (sym_id, owner_idx) in &symbol_file_targets {
+                checker.ctx.register_symbol_file_index(*sym_id, *owner_idx);
             }
 
             if !lib_contexts.is_empty() {

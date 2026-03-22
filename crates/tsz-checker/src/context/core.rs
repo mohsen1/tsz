@@ -689,11 +689,7 @@ impl<'a> CheckerContext<'a> {
         module_specifier: &str,
         member_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        let source_file_idx = self
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&alias_id)
-            .copied()?;
+        let source_file_idx = self.resolve_symbol_file_index(alias_id)?;
         let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
         let target_binder = self.get_binder_for_file(target_idx)?;
         let target_arena = self.get_arena_for_file(target_idx as u32);
@@ -703,9 +699,7 @@ impl<'a> CheckerContext<'a> {
         target_binder
             .resolve_import_with_reexports_type_only(file_name, member_name)
             .map(|(sym_id, _)| {
-                self.cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_idx);
+                self.register_symbol_file_index(sym_id, target_idx);
                 sym_id
             })
     }
@@ -775,9 +769,7 @@ impl<'a> CheckerContext<'a> {
         {
             let target_binder = self.get_binder_for_file(target_idx)?;
             let result = target_binder.file_locals.get(import_name)?;
-            self.cross_file_symbol_targets
-                .borrow_mut()
-                .insert(result, target_idx);
+            self.register_symbol_file_index(result, target_idx);
             return Some(result);
         }
 
@@ -789,9 +781,7 @@ impl<'a> CheckerContext<'a> {
         if let Some((result, file_idx)) =
             self.resolve_import_from_ambient_module_with_file_idx(module_specifier, import_name)
         {
-            self.cross_file_symbol_targets
-                .borrow_mut()
-                .insert(result, file_idx);
+            self.register_symbol_file_index(result, file_idx);
             return Some(result);
         }
         None
@@ -852,6 +842,56 @@ impl<'a> CheckerContext<'a> {
             return Some((sym_id, file_idx));
         }
         None
+    }
+
+    // ── cross_file_symbol_targets helpers ──────────────────────────────
+    //
+    // These three methods encapsulate all access to the
+    // `cross_file_symbol_targets` RefCell so that call-sites don't need
+    // to spell out `borrow()/borrow_mut()` chains and future backing
+    // changes (e.g. Arc-based sharing) can be done in one place.
+
+    /// O(1) lookup: which file owns `sym_id`?
+    #[inline]
+    pub fn resolve_symbol_file_index(&self, sym_id: tsz_binder::SymbolId) -> Option<usize> {
+        self.cross_file_symbol_targets.borrow().get(&sym_id).copied()
+    }
+
+    /// Register (or overwrite) the owning file for `sym_id`.
+    #[inline]
+    pub fn register_symbol_file_index(&self, sym_id: tsz_binder::SymbolId, file_idx: usize) {
+        self.cross_file_symbol_targets
+            .borrow_mut()
+            .insert(sym_id, file_idx);
+    }
+
+    /// Copy every entry from this context's `cross_file_symbol_targets`
+    /// into `dest`, without overwriting entries that `dest` already has.
+    /// Used when creating child checkers so they inherit the parent's
+    /// cross-file knowledge.
+    pub fn copy_symbol_file_targets_to(&self, dest: &Self) {
+        let src = self.cross_file_symbol_targets.borrow();
+        if src.is_empty() {
+            return;
+        }
+        let mut dst = dest.cross_file_symbol_targets.borrow_mut();
+        for (&sym_id, &file_idx) in src.iter() {
+            dst.entry(sym_id).or_insert(file_idx);
+        }
+    }
+
+    /// Merge all entries from `source` context's `cross_file_symbol_targets`
+    /// into this context. Used after a child checker finishes to absorb
+    /// any new mappings it discovered.
+    pub fn merge_symbol_file_targets_from(&self, source: &Self) {
+        let src = source.cross_file_symbol_targets.borrow();
+        if src.is_empty() {
+            return;
+        }
+        let mut dst = self.cross_file_symbol_targets.borrow_mut();
+        for (&sym_id, &file_idx) in src.iter() {
+            dst.insert(sym_id, file_idx);
+        }
     }
 
     /// Extract the persistent cache from this context.

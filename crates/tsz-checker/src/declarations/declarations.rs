@@ -1281,11 +1281,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         } else {
             symbol.decl_file_idx as usize
         };
-        self.ctx
-            .cross_file_symbol_targets
-            .borrow_mut()
-            .entry(sym_id)
-            .or_insert(source_file_idx);
+        // Register only if not already known (or_insert semantics)
+        if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
+            self.ctx.register_symbol_file_index(sym_id, source_file_idx);
+        }
         self.ctx
             .resolve_alias_import_member(sym_id, module_specifier, target_name)
     }
@@ -1296,12 +1295,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         enum_data: &tsz_parser::parser::node::EnumData,
         depth: u32,
     ) -> IsolatedEnumInitializerKind {
-        let cross_file_idx = self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied();
+        let cross_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
         // A symbol is truly cross-file only if its file index differs from
         // the file currently being checked. In project mode, cross_file_symbol_targets
         // contains ALL symbols (including same-file ones).

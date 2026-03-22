@@ -593,7 +593,7 @@ impl<'a> CheckerState<'a> {
         let mut target_binder = self.ctx.binder;
         let mut target_arena = self.ctx.arena;
 
-        if let Some(&file_idx) = self.ctx.cross_file_symbol_targets.borrow().get(&sym_id) {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
             if let Some(all_binders) = &self.ctx.all_binders
                 && let Some(b) = all_binders.get(file_idx)
             {

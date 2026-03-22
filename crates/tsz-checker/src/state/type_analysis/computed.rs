@@ -1496,10 +1496,7 @@ impl<'a> CheckerState<'a> {
             if let Some(ref module_name) = import_module {
                 let import_source_file_idx = self
                     .ctx
-                    .cross_file_symbol_targets
-                    .borrow()
-                    .get(&sym_id)
-                    .copied()
+                    .resolve_symbol_file_index(sym_id)
                     .or(Some(self.ctx.current_file_idx));
 
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
@@ -1545,12 +1542,7 @@ impl<'a> CheckerState<'a> {
                     // For cross-file symbols (e.g., `export * as ns from './b'` in
                     // another file), the module_name is relative to the declaring file,
                     // not the current file. Use the symbol's declaring file for resolution.
-                    let declaring_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
+                    let declaring_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
                     let exports_table = self.resolve_effective_module_exports_from_file(
                         module_name,
                         declaring_file_idx,

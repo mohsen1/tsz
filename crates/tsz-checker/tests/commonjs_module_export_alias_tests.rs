@@ -99,11 +99,7 @@ fn check_commonjs_two_files(
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(1);
     for (sym_id, file_idx) in &cross_file_targets {
-        checker
-            .ctx
-            .cross_file_symbol_targets
-            .borrow_mut()
-            .insert(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
     }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
