@@ -1662,6 +1662,21 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::statement_falls_through(self, stmt_idx)
     }
 
+    fn call_expression_terminates_control_flow(&mut self, expr_idx: NodeIndex) -> bool {
+        CheckerState::call_expression_terminates_control_flow(self, expr_idx)
+    }
+
+    fn report_unreachable_code_at_node(&mut self, node_idx: NodeIndex) {
+        if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
+            return;
+        }
+        self.error_at_node(
+            node_idx,
+            crate::diagnostics::diagnostic_messages::UNREACHABLE_CODE_DETECTED,
+            crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
+        );
+    }
+
     fn enter_iteration_statement(&mut self) {
         self.ctx.iteration_depth += 1;
     }
