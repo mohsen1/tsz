@@ -5073,3 +5073,112 @@ fn test_fingerprint_cache_update_via_incremental_edit() {
         "Incremental edit adding a new export should change fingerprint"
     );
 }
+
+// ===== Memory accounting tests =====
+
+#[test]
+fn test_project_file_estimated_size_is_nonzero() {
+    let file = ProjectFile::new("test.ts".to_string(), "const x = 1;".to_string());
+    let size = file.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "estimated_size_bytes should be nonzero for any file"
+    );
+    // Even the simplest file has the struct itself + parser arena + binder data
+    assert!(
+        size > std::mem::size_of::<ProjectFile>(),
+        "size should exceed the bare struct: got {size}"
+    );
+}
+
+#[test]
+fn test_project_file_estimated_size_grows_with_content() {
+    let small = ProjectFile::new("small.ts".to_string(), "const a = 1;".to_string());
+    let big = ProjectFile::new(
+        "big.ts".to_string(),
+        (0..100)
+            .map(|i| format!("export const v{i}: number = {i};\n"))
+            .collect::<String>(),
+    );
+    assert!(
+        big.estimated_size_bytes() > small.estimated_size_bytes(),
+        "Larger source should produce a larger memory estimate: small={}, big={}",
+        small.estimated_size_bytes(),
+        big.estimated_size_bytes(),
+    );
+}
+
+#[test]
+fn test_project_residency_stats_empty_project() {
+    let project = Project::new();
+    let stats = project.residency_stats();
+    assert_eq!(stats.file_count, 0);
+    assert_eq!(stats.total_estimated_bytes, 0);
+    assert!(stats.largest_file.is_none());
+    assert!(stats.smallest_file.is_none());
+}
+
+#[test]
+fn test_project_residency_stats_single_file() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "const x = 1;".to_string());
+
+    let stats = project.residency_stats();
+    assert_eq!(stats.file_count, 1);
+    assert!(stats.total_estimated_bytes > 0);
+    let (name, size) = stats.largest_file.as_ref().unwrap();
+    assert_eq!(name, "a.ts");
+    assert_eq!(*size, stats.total_estimated_bytes);
+    // largest == smallest for a single file
+    assert_eq!(stats.largest_file, stats.smallest_file);
+}
+
+#[test]
+fn test_project_residency_stats_multi_file() {
+    let mut project = Project::new();
+    project.set_file("small.ts".to_string(), "const a = 1;".to_string());
+    project.set_file(
+        "big.ts".to_string(),
+        (0..50)
+            .map(|i| format!("export const v{i}: number = {i};\n"))
+            .collect::<String>(),
+    );
+
+    let stats = project.residency_stats();
+    assert_eq!(stats.file_count, 2);
+
+    let (largest_name, largest_size) = stats.largest_file.as_ref().unwrap();
+    let (smallest_name, smallest_size) = stats.smallest_file.as_ref().unwrap();
+    assert_eq!(largest_name, "big.ts");
+    assert_eq!(smallest_name, "small.ts");
+    assert!(largest_size > smallest_size);
+    assert_eq!(stats.total_estimated_bytes, largest_size + smallest_size);
+}
+
+#[test]
+fn test_project_file_estimated_size_query() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "const x = 1;".to_string());
+
+    let size = project.file_estimated_size("a.ts");
+    assert!(size.is_some());
+    assert!(size.unwrap() > 0);
+
+    assert!(project.file_estimated_size("nonexistent.ts").is_none());
+}
+
+#[test]
+fn test_project_residency_stats_after_remove() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "const a = 1;".to_string());
+    project.set_file("b.ts".to_string(), "const b = 2;".to_string());
+
+    let before = project.residency_stats();
+    assert_eq!(before.file_count, 2);
+
+    project.remove_file("a.ts");
+
+    let after = project.residency_stats();
+    assert_eq!(after.file_count, 1);
+    assert!(after.total_estimated_bytes < before.total_estimated_bytes);
+}
