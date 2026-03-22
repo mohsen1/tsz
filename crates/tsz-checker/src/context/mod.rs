@@ -1069,7 +1069,7 @@ pub struct ProjectEnv {
     /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, `file_idx`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
-    /// Pre-computed global module binder index: module name -> Vec<binder_idx>.
+    /// Pre-computed global module binder index: module name -> Vec<`binder_idx`>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
