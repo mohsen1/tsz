@@ -1287,6 +1287,9 @@ pub struct ProjectResidencyStats {
     /// Estimated size of the shared `TypeInterner` in bytes.
     /// This is a project-wide cost shared across all files via `Arc`.
     pub type_interner_estimated_bytes: usize,
+    /// Estimated size of the shared `DefinitionStore` in bytes.
+    /// This is a project-wide cost shared across all files via `Arc`.
+    pub definition_store_estimated_bytes: usize,
 }
 
 impl ProjectResidencyStats {
@@ -1975,6 +1978,7 @@ impl Project {
             largest_file: largest.map(|(n, s)| (n.to_string(), s)),
             smallest_file: smallest.map(|(n, s)| (n.to_string(), s)),
             type_interner_estimated_bytes: self.type_interner.estimated_size_bytes(),
+            definition_store_estimated_bytes: self.definition_store.estimated_size_bytes(),
         }
     }
 
