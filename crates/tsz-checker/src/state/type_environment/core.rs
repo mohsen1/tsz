@@ -328,16 +328,10 @@ impl<'a> CheckerState<'a> {
             return body_type;
         }
 
-        // Homomorphic identity mapped type passthrough: if the body is
-        // `{ [K in keyof T]: T[K] }` (identity mapping) and the argument for T
-        // is a genuine primitive type, return the arg directly.
-        // This matches tsc behavior where e.g. `Partial<number>` evaluates to `number`.
-        // Only applies when the template is `T[K]` — NOT for non-identity templates
-        // like `{ [K in keyof T]: Data }` which should produce an index signature.
-        //
-        // For `any` arguments: passthrough only when the type parameter is constrained
-        // to array/tuple types. In tsc, `Arrayish<any>` (T extends unknown[]) produces
-        // an array, but `Objectish<any>` (T extends unknown) produces `{ [x: string]: any }`.
+        // Homomorphic identity mapped type passthrough: delegate to solver query.
+        // For identity mapped types `{ [K in keyof T]: T[K] }`, primitives pass
+        // through directly, `any` with array constraint passes through, and
+        // `any` without array constraint produces `{ [x: string]: any; [x: number]: any }`.
         if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type)
             && let Some(identity_info) = query::classify_identity_mapped(self.ctx.types, mapped_id)
             && let Some(idx) = type_params
@@ -346,30 +340,24 @@ impl<'a> CheckerState<'a> {
             && idx < args.len()
         {
             let arg = self.evaluate_type_with_env(args[idx]);
-            if query::is_primitive_type(self.ctx.types, arg) {
-                // For `any`: only passthrough when the type parameter has an
-                // array/tuple constraint. Otherwise, `any` must flow through
-                // mapped type expansion to produce { [x: string]: any }.
-                let should_passthrough = if arg == TypeId::ANY
-                    || arg == TypeId::UNKNOWN
-                    || arg == TypeId::NEVER
-                    || arg == TypeId::ERROR
-                {
-                    // Check if the type parameter is constrained to array/tuple
-                    identity_info.source_constraint.is_some_and(|c| {
-                        let evaluated_constraint = self.evaluate_type_for_assignability(c);
-                        query::is_array_or_tuple_type(self.ctx.types, evaluated_constraint)
-                    })
-                } else {
-                    true
-                };
-                if should_passthrough {
-                    return arg;
-                }
-                // Objectish<any> case (identity mapped type, T=any, non-array
-                // constraint) is now handled by the solver's Application
-                // evaluation, which produces { [x: string]: any; [x: number]: any }.
-                // No checker-local object construction needed.
+            // Use the solver's centralized passthrough query. For `any`-like
+            // args, the solver checks the raw constraint from IdentityMappedInfo.
+            // If the constraint is a Lazy(DefId), fall through to the checker's
+            // full evaluation path which resolves it.
+            if let Some(result) =
+                query::evaluate_identity_mapped_passthrough(self.ctx.types, mapped_id, arg)
+            {
+                return result;
+            }
+            // Fallback for `any`-like args where the constraint is unresolved
+            // (Lazy/Application). Evaluate the constraint and retry.
+            if (arg == TypeId::ANY || arg == TypeId::UNKNOWN || arg == TypeId::NEVER)
+                && identity_info.source_constraint.is_some_and(|c| {
+                    let evaluated = self.evaluate_type_for_assignability(c);
+                    query::is_array_or_tuple_type(self.ctx.types, evaluated)
+                })
+            {
+                return arg;
             }
         }
 

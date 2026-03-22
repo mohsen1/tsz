@@ -147,6 +147,24 @@ pub(crate) fn classify_identity_mapped(
     tsz_solver::type_queries::classify_identity_mapped(db, mapped_id)
 }
 
+/// Evaluate identity mapped type passthrough for a given type argument.
+///
+/// For an identity homomorphic mapped type `{ [K in keyof T]: T[K] }`:
+/// - Primitives pass through directly.
+/// - `any` with array constraint passes through.
+/// - `any` without array constraint → `{ [x: string]: any; [x: number]: any }`.
+/// - `unknown`/`never`/`error` without array constraint → no passthrough.
+/// - Non-identity → no passthrough.
+///
+/// Delegates to solver's centralized passthrough logic.
+pub(crate) fn evaluate_identity_mapped_passthrough(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+    arg: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::evaluate_identity_mapped_passthrough(db, mapped_id, arg)
+}
+
 /// Get the inner type of a `keyof T` type.
 ///
 /// Returns `Some(T)` if the type is `KeyOf(T)`, `None` otherwise.
