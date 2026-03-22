@@ -1390,8 +1390,7 @@ impl<'a> CheckerState<'a> {
 
                     // Fall back to all_binders for cross-file resolution
                     if !found && let Some(binders) = &self.ctx.all_binders {
-                        if let Some(file_indices) =
-                            self.ctx.files_for_module_specifier(module_name)
+                        if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name)
                         {
                             for &idx in file_indices {
                                 if let Some(b) = binders.get(idx) {

@@ -311,7 +311,10 @@ impl<'a> CheckerState<'a> {
                     }
                     let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
                         // Use global_file_locals_index for O(1) lookup instead of O(N) binder scan
-                        if let Some(entries) = self.ctx.global_file_locals_index.as_ref()
+                        if let Some(entries) = self
+                            .ctx
+                            .global_file_locals_index
+                            .as_ref()
                             .and_then(|idx| idx.get(ident_name))
                         {
                             if let Some(&(_file_idx, sym_id)) = entries.first() {
@@ -489,10 +492,8 @@ impl<'a> CheckerState<'a> {
                                 if let Some(exports) = binder.module_exports.get(module_name)
                                     && let Some(target_sym_id) = exports.get("export=")
                                 {
-                                    return self.resolve_alias_symbol(
-                                        target_sym_id,
-                                        visited_aliases,
-                                    );
+                                    return self
+                                        .resolve_alias_symbol(target_sym_id, visited_aliases);
                                 }
                             }
                         }
