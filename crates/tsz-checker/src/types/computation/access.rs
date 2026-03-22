@@ -304,8 +304,9 @@ impl<'a> CheckerState<'a> {
             object_type
         };
 
+        let is_this_global = self.is_this_resolving_to_global(access.expression);
         if let Some(name) = literal_string.as_deref()
-            && self.is_global_this_like_expression(access.expression)
+            && (self.is_global_this_like_expression(access.expression) || is_this_global)
         {
             // For element access (globalThis['y']), tsc reports TS2339 at the full
             // expression span. For property access (globalThis.y), at the property name.
@@ -317,6 +318,28 @@ impl<'a> CheckerState<'a> {
             let property_type = self.resolve_global_this_property_type(name, error_node);
             if property_type == TypeId::ERROR {
                 return TypeId::ERROR;
+            }
+            // TS7053: When noImplicitAny is enabled and `this` (resolving to typeof
+            // globalThis) is used with bracket access and the property is not found,
+            // emit the can't-index diagnostic. Only for `this` — the `globalThis`
+            // identifier path may return ANY for unresolved properties that exist
+            // in lib declarations.
+            if is_this_global
+                && property_type == TypeId::ANY
+                && self.ctx.no_implicit_any()
+                && !self.is_js_file()
+                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let index_str = format!("\"{}\"", name);
+                self.error_at_node(
+                    idx,
+                    &format_message(
+                        diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                        &[&index_str, "typeof globalThis"],
+                    ),
+                    diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                );
             }
             return if skip_flow_narrowing {
                 property_type

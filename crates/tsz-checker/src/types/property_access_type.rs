@@ -760,11 +760,36 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                 );
             }
-            if self.is_global_this_expression(access.expression) {
+            let is_this_global = self.is_this_resolving_to_global(access.expression);
+            if self.is_global_this_expression(access.expression) || is_this_global {
                 let property_type =
                     self.resolve_global_this_property_type(property_name, access.name_or_argument);
                 if property_type == TypeId::ERROR {
                     return TypeId::ERROR;
+                }
+                // TS7017: When noImplicitAny is enabled and `this` (not the `globalThis`
+                // identifier) resolves to typeof globalThis and the property is not found,
+                // emit "Element implicitly has an 'any' type because type 'typeof
+                // globalThis' has no index signature." — matching tsc behavior for dot
+                // access. Only for `this` — the `globalThis` identifier path uses the
+                // global property resolver which may return ANY for unresolved properties
+                // that do exist in lib declarations.
+                if is_this_global
+                    && property_type == TypeId::ANY
+                    && self.ctx.no_implicit_any()
+                    && !self.is_js_file()
+                {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format_message(
+                            diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                            &["typeof globalThis"],
+                        ),
+                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    );
                 }
                 return self.finalize_property_access_result(
                     idx,
