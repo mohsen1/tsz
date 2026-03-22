@@ -123,6 +123,8 @@ pub struct CompilationResult {
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
     pub phase_timings: PhaseTimings,
+    /// Merged-program residency stats (populated for `--extendedDiagnostics`).
+    pub residency_stats: Option<tsz::parallel::residency::MergedProgramResidencyStats>,
     /// Invalidation summaries for files changed in this compilation.
     ///
     /// Populated by `compile_with_cache_and_changes` (watch-mode incremental path).
@@ -862,6 +864,7 @@ fn compile_inner(
             query_cache_stats: None,
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
+            residency_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -896,7 +899,8 @@ fn compile_inner(
                     query_cache_stats: None,
                     def_store_stats: None,
                     phase_timings: PhaseTimings::default(),
-                    invalidation_summaries: Vec::new(),
+                    residency_stats: None,
+            invalidation_summaries: Vec::new(),
                 });
             }
             return Err(e);
@@ -984,6 +988,7 @@ fn compile_inner(
             query_cache_stats: None,
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
+            residency_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1056,6 +1061,7 @@ fn compile_inner(
             query_cache_stats: None,
             def_store_stats: None,
             phase_timings: PhaseTimings::default(),
+            residency_stats: None,
             invalidation_summaries: Vec::new(),
         });
     }
@@ -1511,6 +1517,7 @@ fn compile_inner(
             emit_ms: emit_duration.as_secs_f64() * 1000.0,
             total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
         },
+        residency_stats: Some(program.residency_stats()),
         invalidation_summaries: Vec::new(),
     })
 }
@@ -1530,6 +1537,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         query_cache_stats: None,
         def_store_stats: None,
         phase_timings: PhaseTimings::default(),
+        residency_stats: None,
         invalidation_summaries: Vec::new(),
     }
 }
