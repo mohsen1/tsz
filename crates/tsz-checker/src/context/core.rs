@@ -129,6 +129,10 @@ impl<'a> CheckerContext<'a> {
             .insert(sym_id, file_idx);
     }
 
+    pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
+        self.register_symbol_file_target(sym_id, file_idx);
+    }
+
     /// Copy the local overlay of symbol-file targets to a child checker context.
     ///
     /// This copies only the dynamically-discovered overlay entries, NOT the
