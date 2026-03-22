@@ -1326,6 +1326,17 @@ pub struct Project {
     /// When a file is removed or replaced, `invalidate_file(file_idx)` cleans
     /// up all stale definitions.
     pub(crate) file_id_allocator: FileIdAllocator,
+    /// Centralized export signature fingerprint cache.
+    ///
+    /// Tracks the most recent export signature (as a `u64` fingerprint) for
+    /// every file in the project, keyed by `file_idx`. Updated on every
+    /// `set_file`/`update_file`/`remove_file` call.
+    ///
+    /// Enables batch change detection via
+    /// [`tsz_solver::def::incremental::diff_fingerprints`] — snapshot before
+    /// and after a batch of edits, diff the snapshots, and apply invalidation
+    /// in one pass.
+    pub(crate) fingerprint_cache: SkeletonFingerprintCache,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -1390,6 +1401,75 @@ impl FileIdAllocator {
     }
 }
 
+/// Centralized cache of per-file export signature fingerprints.
+///
+/// Maintains a `file_idx -> fingerprint` mapping that tracks the most recent
+/// export signature for every file in the project. This enables:
+///
+/// 1. **O(1) change detection**: compare old and new fingerprints to determine
+///    whether a file's public API changed.
+/// 2. **Batch diffing**: snapshot the cache as `(file_idx, fingerprint)` pairs
+///    and feed them to [`tsz_solver::def::incremental::diff_fingerprints`] for
+///    coordinated multi-file invalidation.
+/// 3. **Separation of concerns**: the `Project` stores fingerprints in one
+///    central location rather than scattering them across `ProjectFile` fields.
+///
+/// The cache is updated on every `set_file`, `update_file`, and `remove_file`
+/// call. It is read-only during diagnostic computation.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SkeletonFingerprintCache {
+    /// Maps `file_idx` to the file's current export signature fingerprint.
+    entries: FxHashMap<u32, u64>,
+}
+
+impl SkeletonFingerprintCache {
+    /// Create an empty cache.
+    pub fn new() -> Self {
+        Self {
+            entries: FxHashMap::default(),
+        }
+    }
+
+    /// Record or update the fingerprint for a file.
+    ///
+    /// Returns the previous fingerprint if the file was already tracked,
+    /// or `None` if this is a new entry.
+    pub fn update(&mut self, file_idx: u32, fingerprint: u64) -> Option<u64> {
+        self.entries.insert(file_idx, fingerprint)
+    }
+
+    /// Remove a file's fingerprint from the cache.
+    ///
+    /// Returns the removed fingerprint, or `None` if the file was not tracked.
+    pub fn remove(&mut self, file_idx: u32) -> Option<u64> {
+        self.entries.remove(&file_idx)
+    }
+
+    /// Look up the current fingerprint for a file.
+    pub fn get(&self, file_idx: u32) -> Option<u64> {
+        self.entries.get(&file_idx).copied()
+    }
+
+    /// Snapshot all entries as `(file_idx, fingerprint)` pairs.
+    ///
+    /// The output is suitable for [`tsz_solver::def::incremental::diff_fingerprints`].
+    pub fn snapshot(&self) -> Vec<(u32, u64)> {
+        self.entries.iter().map(|(&k, &v)| (k, v)).collect()
+    }
+
+    /// Number of files tracked.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Parsed settings from tsconfig.json relevant to LSP operation.
 #[derive(Debug, Clone, Default)]
 pub struct TsConfigSettings {
@@ -1439,6 +1519,7 @@ impl Project {
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
+            fingerprint_cache: SkeletonFingerprintCache::new(),
         }
     }
 
@@ -1461,6 +1542,7 @@ impl Project {
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
+            fingerprint_cache: SkeletonFingerprintCache::new(),
         }
     }
 
@@ -1503,6 +1585,25 @@ impl Project {
     /// `DefId` consistency.
     pub fn definition_store(&self) -> Arc<DefinitionStore> {
         Arc::clone(&self.definition_store)
+    }
+
+    /// Snapshot the current export signature fingerprints for all files.
+    ///
+    /// Returns `(file_idx, fingerprint)` pairs suitable for feeding to
+    /// [`tsz_solver::def::incremental::diff_fingerprints`]. Take a snapshot
+    /// before a batch of edits, apply the edits, take another snapshot, and
+    /// diff them to determine which files' public APIs changed.
+    pub fn fingerprint_snapshot(&self) -> Vec<(u32, u64)> {
+        self.fingerprint_cache.snapshot()
+    }
+
+    /// Look up the current export signature fingerprint for a file.
+    ///
+    /// Returns `None` if the file is not in the project or has no assigned
+    /// file index.
+    pub fn fingerprint_for_file(&self, file_name: &str) -> Option<u64> {
+        let file_idx = self.file_id_allocator.lookup(file_name)?;
+        self.fingerprint_cache.get(file_idx)
     }
 
     /// Load and parse a tsconfig.json file, storing settings for the workspace root.
@@ -1752,6 +1853,10 @@ impl Project {
         self.symbol_index
             .index_file(&file_name, &file.binder, arena);
 
+        // Record the new export signature in the fingerprint cache.
+        let new_fp = file.export_signature.0;
+        self.fingerprint_cache.update(file_idx, new_fp);
+
         self.files.insert(file_name.clone(), file);
         // Update dependency graph with imports from this file
         self.update_dependencies(&file_name);
@@ -1805,10 +1910,15 @@ impl Project {
         self.symbol_index
             .update_file(file_name, &file.binder, arena);
 
+        // Update the fingerprint cache with the new export signature.
+        let new_signature = file.export_signature;
+        if let Some(file_idx) = self.file_id_allocator.lookup(file_name) {
+            self.fingerprint_cache.update(file_idx, new_signature.0);
+        }
+
         // Smart cache invalidation: only invalidate dependents if the public API changed.
         // Body-only edits, comment changes, and private symbol changes won't trigger
         // dependent re-checking — this is the key optimization.
-        let new_signature = file.export_signature;
         if old_signature != new_signature {
             let affected_files = self.dependency_graph.get_affected_files(file_name);
             let mut invalidated_count = 0;
@@ -1846,6 +1956,8 @@ impl Project {
         // is still available.
         if let Some(file_idx) = self.file_id_allocator.lookup(file_name) {
             self.definition_store.invalidate_file(file_idx);
+            // Remove from fingerprint cache.
+            self.fingerprint_cache.remove(file_idx);
         }
         // Remove the file ID (retired, not recycled).
         self.file_id_allocator.remove(file_name);
