@@ -7825,3 +7825,35 @@ fn ts6059_not_emitted_when_all_files_under_root_dir() {
         "Should NOT emit TS6059 when all files are under rootDir, got: {codes:?}"
     );
 }
+
+#[test]
+fn phase_timings_are_populated_after_compilation() {
+    let dir = TempDir::new().unwrap();
+    let base = &dir.path;
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "noEmit": true }, "include": ["*.ts"] }"#,
+    );
+    write_file(&base.join("index.ts"), "const x: number = 42;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let pt = &result.phase_timings;
+
+    // All phase timings should be non-negative
+    assert!(pt.io_read_ms >= 0.0, "io_read_ms should be non-negative");
+    assert!(pt.load_libs_ms >= 0.0, "load_libs_ms should be non-negative");
+    assert!(pt.parse_bind_ms >= 0.0, "parse_bind_ms should be non-negative");
+    assert!(pt.check_ms >= 0.0, "check_ms should be non-negative");
+    assert!(pt.emit_ms >= 0.0, "emit_ms should be non-negative");
+    assert!(pt.total_ms > 0.0, "total_ms should be positive");
+
+    // Total should be >= sum of individual phases (wall-clock includes overhead)
+    let sum = pt.io_read_ms + pt.load_libs_ms + pt.parse_bind_ms + pt.check_ms + pt.emit_ms;
+    assert!(
+        pt.total_ms >= sum * 0.9, // allow small floating-point margin
+        "total_ms ({}) should be >= sum of phases ({})",
+        pt.total_ms,
+        sum
+    );
+}
