@@ -666,4 +666,65 @@ impl<'a> CheckerState<'a> {
 
         saw_matching_namespace_decl.then(|| format!("typeof {parent_name}"))
     }
+
+    /// Resolve a property from module augmentations for an object type.
+    ///
+    /// When a property is not found on a class instance type, check if there are
+    /// module augmentations (`declare module "X" { interface Y { ... } }`) that add
+    /// the property to the class's interface.
+    pub(super) fn resolve_module_augmentation_property(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let type_name = self.format_type_for_assignability_message(object_type);
+        if type_name.is_empty()
+            || type_name == "any"
+            || type_name == "unknown"
+            || type_name == "never"
+        {
+            return None;
+        }
+
+        let module_specs: Vec<String> =
+            if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+                aug_index
+                    .iter()
+                    .filter(|(_, entries)| entries.iter().any(|(_, aug)| aug.name == type_name))
+                    .map(|(key, _)| key.clone())
+                    .collect()
+            } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                let mut specs = Vec::new();
+                for binder in all_binders.iter() {
+                    for (key, augs) in binder.module_augmentations.iter() {
+                        if augs.iter().any(|aug| aug.name == type_name) && !specs.contains(key) {
+                            specs.push(key.clone());
+                        }
+                    }
+                }
+                specs
+            } else {
+                let mut specs = Vec::new();
+                for (key, augs) in self.ctx.binder.module_augmentations.iter() {
+                    if augs.iter().any(|aug| aug.name == type_name) {
+                        specs.push(key.clone());
+                    }
+                }
+                specs
+            };
+
+        if module_specs.is_empty() {
+            return None;
+        }
+
+        let prop_name_atom = self.ctx.types.intern_string(property_name);
+        for module_spec in &module_specs {
+            let members = self.get_module_augmentation_members(module_spec, &type_name);
+            if let Some(matching_member) = members.iter().find(|m| m.name == prop_name_atom) {
+                return Some(matching_member.type_id);
+            }
+        }
+
+        None
+    }
 }

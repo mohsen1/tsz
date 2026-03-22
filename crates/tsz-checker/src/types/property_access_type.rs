@@ -1222,6 +1222,18 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
+                    // Check module augmentations (declare module "X" { interface Y { ... } })
+                    // for properties added by cross-file augmentation declarations.
+                    if let Some(augmented_type) = self
+                        .resolve_module_augmentation_property(object_type_for_access, property_name)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            augmented_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     // For callable/function types, check the Function interface
                     // for augmented members (e.g., declare global { interface Function { ... } })
                     if crate::query_boundaries::property_access::is_function_type(

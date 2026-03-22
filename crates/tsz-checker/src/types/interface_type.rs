@@ -12,6 +12,7 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use tsz_binder::ModuleAugmentation;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -1152,19 +1153,72 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<tsz_binder::ModuleAugmentation> {
         let mut result = Vec::new();
         let mut candidates = crate::module_resolution::module_specifier_candidates(module_spec);
-        let mut push_candidate = |candidate: String| {
+        fn push_unique(candidates: &mut Vec<String>, candidate: String) {
             if !candidate.is_empty() && !candidates.iter().any(|existing| existing == &candidate) {
                 candidates.push(candidate);
             }
-        };
+        }
 
         let trimmed = module_spec.trim().trim_matches('"').trim_matches('\'');
         let mut resolved_source_idx = None;
         for specifier in [module_spec, trimmed] {
             if let Some(target_idx) = self.ctx.resolve_import_target(specifier) {
-                push_candidate(format!("file_idx:{target_idx}"));
+                push_unique(&mut candidates, format!("file_idx:{target_idx}"));
                 if resolved_source_idx.is_none() {
                     resolved_source_idx = Some(target_idx);
+                }
+            }
+        }
+
+        // When module_spec is a resolved file path, augmentations may be keyed by a
+        // bare specifier. Reverse-lookup: resolve file path to file index, then find
+        // augmentation keys that resolve to the same target file.
+        if resolved_source_idx.is_none() {
+            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                for (idx, arena) in arenas.iter().enumerate() {
+                    if let Some(sf) = arena.source_files.first() {
+                        if sf.file_name == module_spec || sf.file_name == trimmed {
+                            resolved_source_idx = Some(idx);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(source_idx) = resolved_source_idx {
+            let all_aug_keys: Vec<(String, usize)> =
+                if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+                    aug_index
+                        .iter()
+                        .flat_map(|(key, entries)| {
+                            entries
+                                .first()
+                                .map(|(file_idx, _)| (key.clone(), *file_idx))
+                        })
+                        .collect()
+                } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                    let mut keys = Vec::new();
+                    for (file_idx, binder) in all_binders.iter().enumerate() {
+                        for aug_key in binder.module_augmentations.keys() {
+                            if !keys.iter().any(|(k, _): &(String, usize)| k == aug_key) {
+                                keys.push((aug_key.clone(), file_idx));
+                            }
+                        }
+                    }
+                    keys
+                } else {
+                    Vec::new()
+                };
+            for (aug_key, aug_file_idx) in all_aug_keys {
+                if candidates.contains(&aug_key) {
+                    continue;
+                }
+                if self
+                    .ctx
+                    .resolve_import_target_from_file(aug_file_idx, &aug_key)
+                    .is_some_and(|idx| idx == source_idx)
+                {
+                    candidates.push(aug_key);
                 }
             }
         }
@@ -1196,7 +1250,7 @@ impl<'a> CheckerState<'a> {
                         }
                         path
                     });
-            push_candidate(normalized.to_string_lossy().to_string());
+            push_unique(&mut candidates, normalized.to_string_lossy().to_string());
         }
 
         for candidate in &candidates {
@@ -1210,29 +1264,47 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Use global module augmentations index for O(1) lookup instead of O(N) binder scan
+        // Use global module augmentations index for O(1) lookup instead of O(N) binder scan.
+        // Cross-file augmentations need their arena populated so the node index is
+        // interpreted in the correct AST arena (not the current file's arena).
         if result.is_empty() {
             if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
                 for candidate in &candidates {
                     if let Some(entries) = aug_index.get(candidate) {
-                        result.extend(
-                            entries
-                                .iter()
-                                .filter(|(_, aug)| aug.name == interface_name)
-                                .map(|(_, aug)| aug.clone()),
-                        );
+                        for (file_idx, aug) in entries.iter() {
+                            if aug.name != interface_name {
+                                continue;
+                            }
+                            let mut cloned = aug.clone();
+                            if cloned.arena.is_none() {
+                                if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                                    if let Some(arena) = arenas.get(*file_idx) {
+                                        cloned.arena = Some(Arc::clone(arena));
+                                    }
+                                }
+                            }
+                            result.push(cloned);
+                        }
                     }
                 }
             } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                for binder in all_binders.iter() {
+                for (file_idx, binder) in all_binders.iter().enumerate() {
                     for candidate in &candidates {
                         if let Some(augmentations) = binder.module_augmentations.get(candidate) {
-                            result.extend(
-                                augmentations
-                                    .iter()
-                                    .filter(|aug| aug.name == interface_name)
-                                    .cloned(),
-                            );
+                            for aug in augmentations.iter() {
+                                if aug.name != interface_name {
+                                    continue;
+                                }
+                                let mut cloned = aug.clone();
+                                if cloned.arena.is_none() {
+                                    if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                                        if let Some(arena) = arenas.get(file_idx) {
+                                            cloned.arena = Some(Arc::clone(arena));
+                                        }
+                                    }
+                                }
+                                result.push(cloned);
+                            }
                         }
                     }
                 }
@@ -1311,12 +1383,20 @@ impl<'a> CheckerState<'a> {
                             })
                         });
                 if reexports_from_source {
-                    result.extend(
-                        indexed_augs
-                            .iter()
-                            .filter(|(_, aug)| aug.name == interface_name)
-                            .map(|(_, aug)| aug.clone()),
-                    );
+                    for (file_idx, aug) in indexed_augs.iter() {
+                        if aug.name != interface_name {
+                            continue;
+                        }
+                        let mut cloned = aug.clone();
+                        if cloned.arena.is_none() {
+                            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                                if let Some(arena) = arenas.get(*file_idx) {
+                                    cloned.arena = Some(Arc::clone(arena));
+                                }
+                            }
+                        }
+                        result.push(cloned);
+                    }
                 }
             }
         }
