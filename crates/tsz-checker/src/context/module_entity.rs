@@ -181,7 +181,23 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        if let Some(all_binders) = self.all_binders.as_ref() {
+        // Use global_module_binder_index for O(1) candidate lookup when available,
+        // falling back to O(N) binder scan only if the index wasn't built.
+        if self.global_module_binder_index.is_some() {
+            if let Some(all_binders) = self.all_binders.as_ref() {
+                for candidate in &candidates {
+                    if let Some(file_indices) = self.files_for_module_specifier(candidate) {
+                        for &idx in file_indices {
+                            if let Some(binder) = all_binders.get(idx) {
+                                if let Some(non_module) = lookup_cached(binder, candidate) {
+                                    return non_module;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let Some(all_binders) = self.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 for candidate in &candidates {
                     if let Some(non_module) = lookup_cached(binder, candidate) {
