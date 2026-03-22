@@ -67,7 +67,6 @@ function f5() {
 }
 
 #[test]
-#[ignore = "reverse mapped inference not yet complete"]
 fn reverse_mapped_index_signature_no_false_ts7053() {
     // When the source has a string index signature (dictionary type),
     // reverse inference should reverse through the template for the index
