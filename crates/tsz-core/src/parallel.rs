@@ -2878,12 +2878,23 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // have their exports populated yet, making recursive merge ineffective.
         let mut all_nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
 
-        for (old_id, &new_id) in &id_remap {
+        // Sort id_remap entries by old_id (ascending) so that symbol processing
+        // order is deterministic regardless of FxHashMap iteration order. This
+        // ensures declaration_arenas entries and nested merge pairs are always
+        // collected in the same order across runs, producing identical merged
+        // output for identical inputs.
+        let mut sorted_remap: Vec<(SymbolId, SymbolId)> = id_remap
+            .iter()
+            .map(|(&old, &new)| (old, new))
+            .collect();
+        sorted_remap.sort_unstable_by_key(|(old, _)| old.0);
+
+        for &(old_id, new_id) in &sorted_remap {
             // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
-            if result.lib_symbol_ids.contains(old_id) {
+            if result.lib_symbol_ids.contains(&old_id) {
                 continue;
             }
-            let Some(old_sym) = result.symbols.get(*old_id) else {
+            let Some(old_sym) = result.symbols.get(old_id) else {
                 continue;
             };
 

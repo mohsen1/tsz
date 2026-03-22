@@ -3672,3 +3672,153 @@ fn skeleton_index_fingerprint_changes_on_merge_topology() {
         "different merge topology should produce different aggregate fingerprints"
     );
 }
+
+#[test]
+fn test_merge_deterministic_symbol_order() {
+    // Merging the same set of files multiple times must produce identical
+    // global symbol arenas and declaration orderings.  This exercises the
+    // sorted id_remap iteration introduced for deterministic merge output.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export interface Shared { a: number; }\nexport function helper(): void {}".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export interface Shared { b: string; }\nexport const VAL = 42;".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "export namespace NS { export function inner(): void {} }\nexport type Alias = string;"
+                .to_string(),
+        ),
+    ];
+
+    // Run the full bind + merge pipeline several times.
+    let mut prev_symbol_names: Option<Vec<String>> = None;
+    let mut prev_globals_names: Option<Vec<String>> = None;
+    let mut prev_decl_counts: Option<Vec<usize>> = None;
+
+    for _run in 0..5 {
+        let bind_results = parse_and_bind_parallel(files.clone());
+        let merged = merge_bind_results(bind_results);
+
+        // Collect ordered lists of global symbol names and declaration counts.
+        let mut symbol_names: Vec<String> = Vec::new();
+        let mut decl_counts: Vec<usize> = Vec::new();
+        for i in 0..merged.symbols.len() {
+            let id = SymbolId(i as u32);
+            if let Some(sym) = merged.symbols.get(id) {
+                symbol_names.push(sym.escaped_name.clone());
+                decl_counts.push(sym.declarations.len());
+            }
+        }
+
+        let mut globals_names: Vec<String> = merged.globals.iter().map(|(n, _)| n.clone()).collect();
+        globals_names.sort();
+
+        if let Some(ref prev) = prev_symbol_names {
+            assert_eq!(
+                symbol_names, *prev,
+                "global symbol arena ordering must be deterministic across runs"
+            );
+        }
+        if let Some(ref prev) = prev_globals_names {
+            assert_eq!(
+                globals_names, *prev,
+                "globals table content must be deterministic across runs"
+            );
+        }
+        if let Some(ref prev) = prev_decl_counts {
+            assert_eq!(
+                decl_counts, *prev,
+                "declaration counts per symbol must be deterministic across runs"
+            );
+        }
+
+        prev_symbol_names = Some(symbol_names);
+        prev_globals_names = Some(globals_names);
+        prev_decl_counts = Some(decl_counts);
+    }
+}
+
+#[test]
+fn test_merge_deterministic_global_namespace() {
+    // Cross-file global namespace merging must produce deterministic export
+    // tables regardless of FxHashMap iteration order.  We use `declare
+    // namespace` (not `export namespace`) so symbols land in globals, not
+    // per-file module_exports.
+    let files = vec![
+        (
+            "x.d.ts".to_string(),
+            "declare namespace Deep { function fa(): void; }".to_string(),
+        ),
+        (
+            "y.d.ts".to_string(),
+            "declare namespace Deep { function fb(): void; }".to_string(),
+        ),
+    ];
+
+    let mut prev_deep_exports: Option<Vec<String>> = None;
+    let mut prev_symbol_names: Option<Vec<String>> = None;
+
+    for _run in 0..5 {
+        let bind_results = parse_and_bind_parallel(files.clone());
+        let merged = merge_bind_results(bind_results);
+
+        // Collect ordered list of global symbol names.
+        let mut symbol_names: Vec<String> = Vec::new();
+        for i in 0..merged.symbols.len() {
+            let id = SymbolId(i as u32);
+            if let Some(sym) = merged.symbols.get(id) {
+                symbol_names.push(sym.escaped_name.clone());
+            }
+        }
+
+        // Find the "Deep" symbol in globals.
+        let deep_id = merged
+            .globals
+            .get("Deep")
+            .expect("Deep namespace must be in globals");
+
+        let deep_sym = merged
+            .symbols
+            .get(deep_id)
+            .expect("Deep symbol must exist");
+
+        let deep_exports: Vec<String> = deep_sym
+            .exports
+            .as_ref()
+            .map(|e| {
+                let mut names: Vec<String> = e.iter().map(|(n, _)| n.clone()).collect();
+                names.sort();
+                names
+            })
+            .unwrap_or_default();
+
+        // Deep should have both fa and fb from cross-file merge.
+        assert!(
+            deep_exports.contains(&"fa".to_string()),
+            "Deep exports: {deep_exports:?} — must contain fa"
+        );
+        assert!(
+            deep_exports.contains(&"fb".to_string()),
+            "Deep exports: {deep_exports:?} — must contain fb"
+        );
+
+        if let Some(ref prev) = prev_symbol_names {
+            assert_eq!(
+                symbol_names, *prev,
+                "global symbol arena ordering must be deterministic"
+            );
+        }
+        if let Some(ref prev) = prev_deep_exports {
+            assert_eq!(
+                deep_exports, *prev,
+                "Deep namespace exports must be deterministic"
+            );
+        }
+        prev_symbol_names = Some(symbol_names);
+        prev_deep_exports = Some(deep_exports);
+    }
+}
