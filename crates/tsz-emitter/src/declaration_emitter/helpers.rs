@@ -266,12 +266,29 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    self.write(&lit.text);
+                    // Strip numeric separators (tsc strips them in .d.ts output)
+                    if lit.text.contains('_') {
+                        if let Some(v) = lit.value {
+                            if v.fract() == 0.0 && v.abs() < 1e20 {
+                                self.write(&format!("{}", v as i64));
+                            } else {
+                                self.write(&v.to_string());
+                            }
+                        } else {
+                            self.write(&lit.text.replace('_', ""));
+                        }
+                    } else {
+                        self.write(&lit.text);
+                    }
                 }
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    self.write(&lit.text);
+                    if lit.text.contains('_') {
+                        self.write(&lit.text.replace('_', ""));
+                    } else {
+                        self.write(&lit.text);
+                    }
                 }
             }
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
