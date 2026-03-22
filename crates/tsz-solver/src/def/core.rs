@@ -435,18 +435,6 @@ pub struct DefinitionStore {
     /// theoretically possible but astronomically unlikely with `FxHash`, and the
     /// formatter use case is best-effort diagnostic naming.
     shape_to_def: DashMap<u64, DefId>,
-
-    /// Reverse index: definition `name` (`Atom`) -> `DefId`.
-    ///
-    /// Populated during `register()` (keeps the first registered `DefId` per name).
-    /// Used for cross-batch heritage resolution: when a user class extends a lib
-    /// type (e.g., `class MyError extends Error`), the heritage can be resolved
-    /// by name after all pre-population batches have completed.
-    ///
-    /// This is a best-effort index for construction-time heritage resolution,
-    /// not a primary lookup mechanism. Multiple definitions may share a name
-    /// (different scopes/files); first-registered wins.
-    name_to_def: DashMap<Atom, DefId>,
 }
 
 // =============================================================================
@@ -491,8 +479,6 @@ pub struct StoreStatistics {
     pub body_to_alias_entries: usize,
     /// Number of entries in the shape hash -> `DefId` index.
     pub shape_to_def_entries: usize,
-    /// Number of entries in the name -> `DefId` index.
-    pub name_to_def_entries: usize,
     /// Number of files with registered definitions.
     pub file_count: usize,
 
@@ -526,7 +512,6 @@ impl StoreStatistics {
         self.symbol_only_index_entries += other.symbol_only_index_entries;
         self.body_to_alias_entries += other.body_to_alias_entries;
         self.shape_to_def_entries += other.shape_to_def_entries;
-        self.name_to_def_entries += other.name_to_def_entries;
         self.file_count += other.file_count;
         // next_def_id: take the maximum (high-water mark)
         if other.next_def_id > self.next_def_id {
@@ -560,7 +545,6 @@ impl std::fmt::Display for StoreStatistics {
         )?;
         writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
         writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
-        writeln!(f, "    name_to_def={}", self.name_to_def_entries)?;
         writeln!(f, "  files: {}", self.file_count)?;
         writeln!(f, "  next_def_id: {}", self.next_def_id)?;
         write!(
@@ -593,7 +577,6 @@ impl DefinitionStore {
             body_to_alias: DashMap::new(),
             shape_to_def: DashMap::new(),
             file_to_defs: DashMap::new(),
-            name_to_def: DashMap::new(),
         }
     }
 
@@ -630,12 +613,6 @@ impl DefinitionStore {
         // Uses entry API to keep the *first* registered DefId (stable identity).
         if let Some(sym_id) = info.symbol_id {
             self.symbol_only_index.entry(sym_id).or_insert(id);
-        }
-
-        // Populate name_to_def for cross-batch heritage resolution.
-        // Keeps the first registered DefId per name (stable identity).
-        if info.name.0 != 0 {
-            self.name_to_def.entry(info.name).or_insert(id);
         }
 
         // Populate body_to_alias for non-generic type aliases with a body.
@@ -777,7 +754,6 @@ impl DefinitionStore {
         self.body_to_alias.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
-        self.name_to_def.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -839,19 +815,6 @@ impl DefinitionStore {
     /// covering all registration paths.
     pub fn find_def_by_symbol(&self, symbol_id: u32) -> Option<DefId> {
         self.symbol_only_index.get(&symbol_id).map(|r| *r)
-    }
-
-    /// Find a `DefId` by its definition name.
-    ///
-    /// Used for cross-batch heritage resolution during pre-population: when a
-    /// user class extends a lib type (e.g., `class MyError extends Error`), the
-    /// lib type's DefId may have been registered in a previous batch. This method
-    /// enables resolving the heritage by name after all batches have completed.
-    ///
-    /// Returns the *first* registered `DefId` for the given name (stable identity).
-    /// O(1) via `name_to_def` index.
-    pub fn find_def_by_name(&self, name: Atom) -> Option<DefId> {
-        self.name_to_def.get(&name).map(|r| *r)
     }
 
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
@@ -988,7 +951,6 @@ impl DefinitionStore {
             symbol_only_index_entries: self.symbol_only_index.len(),
             body_to_alias_entries: self.body_to_alias.len(),
             shape_to_def_entries: self.shape_to_def.len(),
-            name_to_def_entries: self.name_to_def.len(),
             file_count: self.file_to_defs.len(),
             next_def_id: self.next_id.load(Ordering::Relaxed),
             ..Default::default()
@@ -1070,10 +1032,6 @@ impl DefinitionStore {
         // shape_to_def: u64 -> DefId
         size += self.shape_to_def.len()
             * (std::mem::size_of::<u64>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
-
-        // name_to_def: Atom -> DefId
-        size += self.name_to_def.len()
-            * (std::mem::size_of::<Atom>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
 
         // file_to_defs: u32 -> Vec<DefId>
         for entry in &self.file_to_defs {
