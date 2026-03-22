@@ -1114,3 +1114,187 @@ fn test_store_statistics_merge_includes_estimated_size() {
     assert_eq!(stats_a.total_definitions, 15);
     assert_eq!(stats_a.estimated_size_bytes, 8000);
 }
+
+// =============================================================================
+// Heritage Resolution Tests
+// =============================================================================
+
+#[test]
+fn test_resolve_heritage_class_extends_class() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register base class
+    let base_name = interner.intern_string("Base");
+    let base_info = DefinitionInfo::class(base_name, vec![], vec![], vec![]);
+    let base_id = store.register(base_info);
+
+    // Register child class with heritage_names
+    let child_name = interner.intern_string("Child");
+    let mut child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
+    child_info.heritage_names = vec!["Base".to_string()];
+    let child_id = store.register(child_info);
+
+    let summary = store.resolve_heritage(&interner);
+    assert_eq!(summary.definitions_processed, 1);
+    assert_eq!(summary.resolved_extends, 1);
+    assert_eq!(summary.unresolved, 0);
+
+    let child = store.get(child_id).unwrap();
+    assert_eq!(child.extends, Some(base_id));
+    assert!(child.implements.is_empty());
+}
+
+#[test]
+fn test_resolve_heritage_class_extends_and_implements() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register base class
+    let base_name = interner.intern_string("Base");
+    let base_info = DefinitionInfo::class(base_name, vec![], vec![], vec![]);
+    let base_id = store.register(base_info);
+
+    // Register interface
+    let iface_name = interner.intern_string("IFoo");
+    let iface_info = DefinitionInfo::interface(iface_name, vec![], vec![]);
+    let iface_id = store.register(iface_info);
+
+    // Register child class with both extends and implements
+    let child_name = interner.intern_string("Child");
+    let mut child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
+    child_info.heritage_names = vec!["Base".to_string(), "IFoo".to_string()];
+    let child_id = store.register(child_info);
+
+    let summary = store.resolve_heritage(&interner);
+    assert_eq!(summary.resolved_extends, 1);
+    assert_eq!(summary.resolved_implements, 1);
+
+    let child = store.get(child_id).unwrap();
+    assert_eq!(child.extends, Some(base_id));
+    assert_eq!(child.implements, vec![iface_id]);
+}
+
+#[test]
+fn test_resolve_heritage_interface_extends() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register parent interfaces
+    let bar_name = interner.intern_string("Bar");
+    let bar_info = DefinitionInfo::interface(bar_name, vec![], vec![]);
+    let bar_id = store.register(bar_info);
+
+    let baz_name = interner.intern_string("Baz");
+    let baz_info = DefinitionInfo::interface(baz_name, vec![], vec![]);
+    let baz_id = store.register(baz_info);
+
+    // Register child interface
+    let foo_name = interner.intern_string("Foo");
+    let mut foo_info = DefinitionInfo::interface(foo_name, vec![], vec![]);
+    foo_info.heritage_names = vec!["Bar".to_string(), "Baz".to_string()];
+    let foo_id = store.register(foo_info);
+
+    let summary = store.resolve_heritage(&interner);
+    assert_eq!(summary.definitions_processed, 1);
+    assert_eq!(summary.resolved_extends, 0); // interfaces don't use extends
+    assert_eq!(summary.resolved_implements, 2);
+
+    let foo = store.get(foo_id).unwrap();
+    assert!(foo.extends.is_none());
+    assert_eq!(foo.implements, vec![bar_id, baz_id]);
+}
+
+#[test]
+fn test_resolve_heritage_unresolved_name() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let child_name = interner.intern_string("Child");
+    let mut child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
+    child_info.heritage_names = vec!["NonExistent".to_string()];
+    store.register(child_info);
+
+    let summary = store.resolve_heritage(&interner);
+    assert_eq!(summary.definitions_processed, 1);
+    assert_eq!(summary.unresolved, 1);
+    assert_eq!(summary.resolved_extends, 0);
+}
+
+#[test]
+fn test_resolve_heritage_qualified_name_skipped() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let child_name = interner.intern_string("Child");
+    let mut child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
+    child_info.heritage_names = vec!["ns.Base".to_string()];
+    store.register(child_info);
+
+    let summary = store.resolve_heritage(&interner);
+    assert_eq!(summary.definitions_processed, 1);
+    assert_eq!(summary.skipped_qualified, 1);
+    assert_eq!(summary.resolved_extends, 0);
+}
+
+#[test]
+fn test_resolve_heritage_no_self_reference() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // A class referencing itself should not create a self-extends.
+    let name = interner.intern_string("Foo");
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["Foo".to_string()];
+    let def_id = store.register(info);
+
+    let summary = store.resolve_heritage(&interner);
+    let foo = store.get(def_id).unwrap();
+    assert!(foo.extends.is_none());
+    assert!(foo.implements.is_empty());
+    // Self-ref is silently skipped, not counted as unresolved.
+    assert_eq!(summary.unresolved, 0);
+}
+
+#[test]
+fn test_resolve_heritage_idempotent() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let base_name = interner.intern_string("Base");
+    let base_info = DefinitionInfo::class(base_name, vec![], vec![], vec![]);
+    let base_id = store.register(base_info);
+
+    let child_name = interner.intern_string("Child");
+    let mut child_info = DefinitionInfo::class(child_name, vec![], vec![], vec![]);
+    child_info.heritage_names = vec!["Base".to_string()];
+    let child_id = store.register(child_info);
+
+    // Call twice — should be idempotent.
+    store.resolve_heritage(&interner);
+    let summary2 = store.resolve_heritage(&interner);
+
+    // Second call should not add duplicates.
+    let child = store.get(child_id).unwrap();
+    assert_eq!(child.extends, Some(base_id));
+    assert!(child.implements.is_empty());
+    // On second call, extends is already set, so resolved_extends should be 0.
+    assert_eq!(summary2.resolved_extends, 0);
+}
+
+#[test]
+fn test_resolve_heritage_summary_display() {
+    let summary = HeritageResolutionSummary {
+        definitions_processed: 5,
+        resolved_extends: 3,
+        resolved_implements: 7,
+        unresolved: 2,
+        skipped_qualified: 1,
+    };
+    let display = format!("{}", summary);
+    assert!(display.contains("5 defs processed"));
+    assert!(display.contains("3 extends"));
+    assert!(display.contains("7 implements"));
+    assert!(display.contains("2 unresolved"));
+    assert!(display.contains("1 qualified-skipped"));
+}
