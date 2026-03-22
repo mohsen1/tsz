@@ -2438,7 +2438,6 @@ fn needs_property_name_quoting(name: &str) -> bool {
     !chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
-
 #[cfg(test)]
 #[path = "../../../tests/type_printer.rs"]
 mod tests;

@@ -5116,13 +5116,35 @@ class Internal {}
     let skeleton = binder.file_skeleton();
 
     assert_eq!(skeleton.file_idx, 42);
-    assert!(skeleton.is_external_module, "has exports so should be external module");
+    assert!(
+        skeleton.is_external_module,
+        "has exports so should be external module"
+    );
 
-    let names: Vec<&str> = skeleton.exported_defs.iter().map(|e| e.name.as_str()).collect();
-    assert!(names.contains(&"Animal"), "expected Animal in exported_defs, got: {:?}", names);
-    assert!(names.contains(&"Movable"), "expected Movable in exported_defs, got: {:?}", names);
-    assert!(names.contains(&"ID"), "expected ID in exported_defs, got: {:?}", names);
-    assert!(!names.contains(&"Internal"), "Internal should not be in exported_defs");
+    let names: Vec<&str> = skeleton
+        .exported_defs
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"Animal"),
+        "expected Animal in exported_defs, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"Movable"),
+        "expected Movable in exported_defs, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"ID"),
+        "expected ID in exported_defs, got: {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"Internal"),
+        "Internal should not be in exported_defs"
+    );
 }
 
 #[test]
@@ -5186,7 +5208,11 @@ export { c } from "./other";
 
     // Should deduplicate "./shared"
     let shared_count = specs.iter().filter(|&&s| s == "./shared").count();
-    assert_eq!(shared_count, 1, "dependency_specifiers should deduplicate, got: {:?}", specs);
+    assert_eq!(
+        shared_count, 1,
+        "dependency_specifiers should deduplicate, got: {:?}",
+        specs
+    );
     assert!(specs.contains(&"./other"));
 }
 
@@ -5202,8 +5228,14 @@ const x = 1;
 
     let skeleton = binder.file_skeleton();
 
-    assert!(!skeleton.has_exports(), "script file should have no exports");
-    assert!(!skeleton.has_heritage_deps(), "simple script should have no heritage deps");
+    assert!(
+        !skeleton.has_exports(),
+        "script file should have no exports"
+    );
+    assert!(
+        !skeleton.has_heritage_deps(),
+        "simple script should have no heritage deps"
+    );
 }
 
 #[test]
@@ -5225,7 +5257,10 @@ fn file_skeleton_api_fingerprint_changes_on_export_change() {
     let fp_a = binder_a.file_skeleton().api_fingerprint();
     let fp_b = binder_b.file_skeleton().api_fingerprint();
 
-    assert_ne!(fp_a, fp_b, "different exports should produce different fingerprints");
+    assert_ne!(
+        fp_a, fp_b,
+        "different exports should produce different fingerprints"
+    );
 }
 
 #[test]
@@ -5254,9 +5289,17 @@ export class Middle {}
     binder.bind_source_file(parser.get_arena(), root);
 
     let skeleton = binder.file_skeleton();
-    let names: Vec<&str> = skeleton.exported_defs.iter().map(|e| e.name.as_str()).collect();
+    let names: Vec<&str> = skeleton
+        .exported_defs
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
 
-    assert_eq!(names, vec!["Alpha", "Middle", "Zebra"], "exported_defs should be sorted by name");
+    assert_eq!(
+        names,
+        vec!["Alpha", "Middle", "Zebra"],
+        "exported_defs should be sorted by name"
+    );
 }
 
 #[test]
