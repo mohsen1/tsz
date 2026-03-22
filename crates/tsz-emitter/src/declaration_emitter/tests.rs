@@ -9592,3 +9592,37 @@ fn probe_dts_union_in_conditional_check() {
         "union in conditional check: {output}"
     );
 }
+
+#[test]
+fn test_this_type_in_type_position() {
+    // `this` as a type uses the parser's THIS_TYPE node kind (198),
+    // not ThisKeyword (110). Both must be handled.
+    let output = emit_dts(
+        "export interface Chainable {
+    chain(): this;
+    map(f: (x: this) => this): this;
+}",
+    );
+    println!("this type:\n{output}");
+    assert!(
+        output.contains("chain(): this"),
+        "this return type: {output}"
+    );
+    assert!(
+        output.contains("(x: this) => this"),
+        "this in function type: {output}"
+    );
+}
+
+#[test]
+fn test_this_type_in_type_alias() {
+    // `this` type in type alias
+    let output = emit_dts(
+        "export type SelfRef = { value: this };",
+    );
+    println!("this in type alias:\n{output}");
+    assert!(
+        output.contains("value: this"),
+        "this in type literal: {output}"
+    );
+}
