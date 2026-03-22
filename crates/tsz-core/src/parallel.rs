@@ -2503,8 +2503,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let skeleton_index = reduce_skeletons(&skeletons);
 
     // Capture aggregate pre-merge memory footprint before we start consuming data.
-    let pre_merge_bind_total_bytes: usize =
-        results.iter().map(|r| r.estimated_size_bytes()).sum();
+    let pre_merge_bind_total_bytes: usize = results.iter().map(|r| r.estimated_size_bytes()).sum();
 
     // Collect lib_binders from all results (deduplicated by address), paired with their arenas
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();

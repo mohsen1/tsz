@@ -4027,7 +4027,10 @@ fn test_pre_merge_bind_total_bytes_scales_with_file_count() {
 fn test_bound_file_estimated_size_bytes_nonzero() {
     let files = vec![
         ("a.ts".to_string(), "export const a = 1;".to_string()),
-        ("b.ts".to_string(), "export function b(x: number) { if (x > 0) return x; return -x; }".to_string()),
+        (
+            "b.ts".to_string(),
+            "export function b(x: number) { if (x > 0) return x; return -x; }".to_string(),
+        ),
     ];
 
     let bind_results = parse_and_bind_parallel(files);
@@ -4069,8 +4072,16 @@ fn test_bound_file_estimated_size_scales_with_complexity() {
     let bind_results = parse_and_bind_parallel(files);
     let program = merge_bind_results(bind_results);
 
-    let small = program.files.iter().find(|f| f.file_name.contains("small")).unwrap();
-    let large = program.files.iter().find(|f| f.file_name.contains("large")).unwrap();
+    let small = program
+        .files
+        .iter()
+        .find(|f| f.file_name.contains("small"))
+        .unwrap();
+    let large = program
+        .files
+        .iter()
+        .find(|f| f.file_name.contains("large"))
+        .unwrap();
 
     assert!(
         large.estimated_size_bytes() > small.estimated_size_bytes(),
