@@ -9,6 +9,31 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Re-escape a cooked template literal string so it can be placed back
+/// between backticks.  The parser stores the *cooked* (processed) value in
+/// `LiteralData::text`, so characters like `\n` have already been converted
+/// to a real newline.  This function converts them back to escape sequences.
+fn escape_template_literal_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '$' => {
+                // Only escape $ when followed by { (but we don't have lookahead here,
+                // so just push as-is; actual ${...} is handled structurally)
+                out.push('$');
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_type(&mut self, type_idx: NodeIndex) {
         let Some(type_node) = self.arena.get(type_idx) else {
@@ -221,13 +246,15 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(lit) = self.arena.get_literal(head_node)
                     {
                         if head_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                            // Re-escape the cooked text — the parser stores processed
+                            // values (e.g., `\n` as a real newline) in `lit.text`.
                             self.write("`");
-                            self.write(&lit.text);
+                            self.write(&escape_template_literal_text(&lit.text));
                             self.write("`");
                         } else {
                             // TemplateHead: text before first substitution
                             self.write("`");
-                            self.write(&lit.text);
+                            self.write(&escape_template_literal_text(&lit.text));
                             self.write("${");
                         }
                     }
@@ -245,11 +272,15 @@ impl<'a> DeclarationEmitter<'a> {
                                 let is_last = i == tlt.template_spans.nodes.len() - 1;
                                 if is_last {
                                     self.write("}");
-                                    self.write(&lit.text);
+                                    self.write(
+                                        &escape_template_literal_text(&lit.text),
+                                    );
                                     self.write("`");
                                 } else {
                                     self.write("}");
-                                    self.write(&lit.text);
+                                    self.write(
+                                        &escape_template_literal_text(&lit.text),
+                                    );
                                     self.write("${");
                                 }
                             }
@@ -364,7 +395,7 @@ impl<'a> DeclarationEmitter<'a> {
             // Literal type wrapper (wraps string/number/boolean/bigint literals)
             k if k == syntax_kind_ext::LITERAL_TYPE => {
                 if let Some(lit_type) = self.arena.get_literal_type(type_node) {
-                    self.emit_node(lit_type.literal);
+                    self.emit_literal_type_inner(lit_type.literal);
                 }
             }
 
@@ -375,12 +406,33 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
-                    self.write(&lit.text);
+                    // tsc strips numeric separators in .d.ts output and converts
+                    // non-decimal literals with separators to their decimal value.
+                    if lit.text.contains('_') {
+                        if let Some(v) = lit.value {
+                            // Use the pre-computed numeric value (handles hex/octal/binary with separators)
+                            if v.fract() == 0.0 && v.abs() < 1e20 {
+                                self.write(&format!("{}", v as i64));
+                            } else {
+                                self.write(&v.to_string());
+                            }
+                        } else {
+                            // Fallback: just strip underscores
+                            self.write(&lit.text.replace('_', ""));
+                        }
+                    } else {
+                        self.write(&lit.text);
+                    }
                 }
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
-                    self.write(&lit.text);
+                    // Strip numeric separators in .d.ts output (matching tsc)
+                    if lit.text.contains('_') {
+                        self.write(&lit.text.replace('_', ""));
+                    } else {
+                        self.write(&lit.text);
+                    }
                 }
             }
             k if k == SyntaxKind::TrueKeyword as u16 => self.write("true"),
@@ -760,5 +812,60 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_node(elem_idx);
+    }
+
+    /// Emit the inner node of a `LITERAL_TYPE`.
+    ///
+    /// This handles numeric separator stripping for numeric/bigint literals in
+    /// type position (tsc strips `_` separators in `.d.ts` output and converts
+    /// non-decimal literals with separators to their decimal value).
+    /// Other literal kinds (string, boolean) delegate to the normal `emit_node`.
+    fn emit_literal_type_inner(&mut self, inner_idx: NodeIndex) {
+        let Some(inner_node) = self.arena.get(inner_idx) else {
+            return;
+        };
+
+        match inner_node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(inner_node) {
+                    if lit.text.contains('_') {
+                        if let Some(v) = lit.value {
+                            if v.fract() == 0.0 && v.abs() < 1e20 {
+                                self.write(&format!("{}", v as i64));
+                            } else {
+                                self.write(&v.to_string());
+                            }
+                        } else {
+                            self.write(&lit.text.replace('_', ""));
+                        }
+                    } else {
+                        self.write(&lit.text);
+                    }
+                }
+            }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(inner_node) {
+                    if lit.text.contains('_') {
+                        self.write(&lit.text.replace('_', ""));
+                    } else {
+                        self.write(&lit.text);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                // Negative number literals: -1_000 → -1000
+                if let Some(unary) = self.arena.get_unary_expr(inner_node) {
+                    if unary.operator == SyntaxKind::MinusToken as u16 {
+                        self.write("-");
+                    } else if unary.operator == SyntaxKind::PlusToken as u16 {
+                        self.write("+");
+                    }
+                    self.emit_literal_type_inner(unary.operand);
+                }
+            }
+            _ => {
+                self.emit_node(inner_idx);
+            }
+        }
     }
 }

@@ -109,6 +109,26 @@ impl<'a> EnumEvaluator<'a> {
         }
     }
 
+    /// Create a new evaluator seeded with accumulated enum values from prior evaluations.
+    /// This enables cross-enum reference resolution (e.g., `enum B { Y = A.X }`).
+    pub fn with_prior_values(
+        arena: &'a NodeArena,
+        prior: FxHashMap<String, FxHashMap<String, EnumValue>>,
+    ) -> Self {
+        EnumEvaluator {
+            arena,
+            member_values: FxHashMap::default(),
+            current_enum_name: None,
+            current_source_file: None,
+            all_enum_values: prior,
+        }
+    }
+
+    /// Return the accumulated enum values (for persisting across evaluations).
+    pub fn take_all_enum_values(self) -> FxHashMap<String, FxHashMap<String, EnumValue>> {
+        self.all_enum_values
+    }
+
     /// Set the current enum name for resolving self-references
     pub fn set_current_enum(&mut self, name: &str) {
         self.current_enum_name = Some(name.to_string());
