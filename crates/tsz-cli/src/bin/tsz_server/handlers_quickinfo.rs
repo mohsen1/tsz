@@ -473,10 +473,22 @@ impl Server {
             .next()
             .map(str::trim)
             .unwrap_or_default();
-        let base_name = signature_name
+        let sig_base_name = signature_name
             .find('<')
             .map(|idx| signature_name[..idx].trim())
             .unwrap_or(signature_name);
+        // For `new` expressions, the signature label may say "new" instead of
+        // the class name.  Use the callee source text (the identifier after
+        // `new`) as the authoritative name.
+        let callee_text = source_text
+            .get(callee_node.pos as usize..callee_node.end as usize)
+            .map(str::trim)
+            .unwrap_or(sig_base_name);
+        let base_name = if sig_base_name == "new" && !callee_text.is_empty() {
+            callee_text
+        } else {
+            sig_base_name
+        };
         let generic_params: Vec<String> = signature_name
             .find('<')
             .and_then(|start| signature_name.rfind('>').map(|end| (start, end)))
