@@ -402,6 +402,51 @@ pub fn contains_type_parameter_named(
     )
 }
 
+/// Check if a type transitively references any type parameter whose name
+/// is in the given set.
+///
+/// This is more efficient than `collect_referenced_types` followed by
+/// per-element `type_param_info` checks, because it short-circuits on
+/// the first match.
+pub fn references_any_type_param_named(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    names: &rustc_hash::FxHashSet<Atom>,
+) -> bool {
+    contains_type_matching(
+        types,
+        type_id,
+        |td| matches!(td, TypeData::TypeParameter(info) if names.contains(&info.name)),
+    )
+}
+
+/// Check if a type transitively contains a specific `TypeId`.
+///
+/// This is more efficient than `collect_referenced_types(…).contains(&target)`
+/// because it short-circuits as soon as the target is found.
+pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeId) -> bool {
+    if root == target {
+        return true;
+    }
+    let mut visited = FxHashMap::default();
+    let mut stack = vec![root];
+    while let Some(current) = stack.pop() {
+        if current == target {
+            return true;
+        }
+        if visited.contains_key(&current) {
+            continue;
+        }
+        visited.insert(current, true);
+        super::visitor::for_each_child_by_id(types, current, |child| {
+            if !visited.contains_key(&child) {
+                stack.push(child);
+            }
+        });
+    }
+    false
+}
+
 struct ContainsTypeChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
