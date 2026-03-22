@@ -5,16 +5,11 @@ use std::path::{Path, PathBuf};
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
 use tsz::emitter::ModuleKind;
+use tsz::module_resolver::PackageType;
 use tsz::parser::NodeIndex;
 use tsz::parser::ParserState;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::scanner::SyntaxKind;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PackageType {
-    Module,
-    CommonJs,
-}
 
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
