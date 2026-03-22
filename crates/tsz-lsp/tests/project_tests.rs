@@ -4479,3 +4479,59 @@ fn test_standalone_project_file_has_own_interner() {
         "Standalone ProjectFiles should have independent TypeInterners"
     );
 }
+
+#[test]
+fn test_project_files_share_definition_store() {
+    // Verify that files created via Project::set_file share the project's DefinitionStore.
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x: number = 1;".to_string());
+    project.set_file("b.ts".to_string(), "export const y: string = 'hi';".to_string());
+
+    let project_def_store = project.definition_store();
+    let a_def_store = project.files["a.ts"]
+        .definition_store
+        .as_ref()
+        .expect("Project file should have a shared DefinitionStore");
+    let b_def_store = project.files["b.ts"]
+        .definition_store
+        .as_ref()
+        .expect("Project file should have a shared DefinitionStore");
+
+    assert!(
+        std::sync::Arc::ptr_eq(&project_def_store, a_def_store),
+        "File a.ts should share the project's DefinitionStore"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&project_def_store, b_def_store),
+        "File b.ts should share the project's DefinitionStore"
+    );
+}
+
+#[test]
+fn test_standalone_project_file_has_no_shared_def_store() {
+    // Standalone ProjectFile (outside Project) should not have a shared DefinitionStore.
+    use crate::project::ProjectFile;
+
+    let file = ProjectFile::new("test.ts".to_string(), "const x = 1;".to_string());
+    assert!(
+        file.definition_store.is_none(),
+        "Standalone ProjectFile should not have a shared DefinitionStore"
+    );
+}
+
+#[test]
+fn test_project_diagnostics_use_shared_def_store() {
+    // Verify that get_diagnostics works correctly when the shared DefinitionStore is wired.
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "let x: number = 42; let y: string = x;".to_string(),
+    );
+
+    // Should produce diagnostics (TS2322: number not assignable to string)
+    let diagnostics = project.get_diagnostics("test.ts").unwrap();
+    assert!(
+        !diagnostics.is_empty(),
+        "Should produce type-checking diagnostics with shared DefinitionStore"
+    );
+}

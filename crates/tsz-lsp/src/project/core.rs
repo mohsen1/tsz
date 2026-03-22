@@ -88,6 +88,12 @@ pub struct ProjectFile {
     /// comparisons use identity checks rather than structural matching.
     /// When used standalone (outside a `Project`), a per-file interner is created.
     pub(crate) type_interner: Arc<TypeInterner>,
+    /// Shared definition store for cross-file `DefId` consistency.
+    ///
+    /// When present, per-file checkers use `with_cache_and_shared_def_store` /
+    /// `new_with_shared_def_store` so that all `DefId`s resolve through a single
+    /// global `DefinitionStore` owned by the `Project`.
+    pub(crate) definition_store: Option<Arc<DefinitionStore>>,
     pub(crate) type_cache: Option<TypeCache>,
     pub(crate) scope_cache: ScopeCache,
     pub(crate) strict: bool,
@@ -147,12 +153,30 @@ impl ProjectFile {
             binder,
             line_map,
             type_interner,
+            definition_store: None,
             type_cache: None,
             scope_cache: ScopeCache::default(),
             strict,
             diagnostics_dirty: false,
             export_signature,
         }
+    }
+
+    /// Parse and bind a single source file with both a shared `TypeInterner`
+    /// and a shared `DefinitionStore`.
+    ///
+    /// This is the preferred constructor for files within a `Project`, ensuring
+    /// that both `TypeId`s and `DefId`s are globally unique across files.
+    pub fn with_shared_interner_and_def_store(
+        file_name: String,
+        source_text: String,
+        strict: bool,
+        type_interner: Arc<TypeInterner>,
+        definition_store: Arc<DefinitionStore>,
+    ) -> Self {
+        let mut file = Self::with_shared_interner(file_name, source_text, strict, type_interner);
+        file.definition_store = Some(definition_store);
+        file
     }
 
     /// File name used for LSP locations.
@@ -507,23 +531,47 @@ impl ProjectFile {
 
         let query_cache = tsz_solver::QueryCache::new(&self.type_interner);
 
-        let mut checker = if let Some(cache) = self.type_cache.take() {
-            CheckerState::with_cache(
-                self.parser.get_arena(),
-                &self.binder,
-                &query_cache,
-                file_name,
-                cache,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                self.parser.get_arena(),
-                &self.binder,
-                &query_cache,
-                file_name,
-                compiler_options,
-            )
+        let mut checker = match (self.type_cache.take(), &self.definition_store) {
+            (Some(cache), Some(def_store)) => {
+                CheckerState::with_cache_and_shared_def_store(
+                    self.parser.get_arena(),
+                    &self.binder,
+                    &query_cache,
+                    file_name,
+                    cache,
+                    compiler_options,
+                    Arc::clone(def_store),
+                )
+            }
+            (Some(cache), None) => {
+                CheckerState::with_cache(
+                    self.parser.get_arena(),
+                    &self.binder,
+                    &query_cache,
+                    file_name,
+                    cache,
+                    compiler_options,
+                )
+            }
+            (None, Some(def_store)) => {
+                CheckerState::new_with_shared_def_store(
+                    self.parser.get_arena(),
+                    &self.binder,
+                    &query_cache,
+                    file_name,
+                    compiler_options,
+                    Arc::clone(def_store),
+                )
+            }
+            (None, None) => {
+                CheckerState::new(
+                    self.parser.get_arena(),
+                    &self.binder,
+                    &query_cache,
+                    file_name,
+                    compiler_options,
+                )
+            }
         };
 
         checker.check_source_file(self.root);
@@ -1175,9 +1223,10 @@ pub struct Project {
     /// the same `DefinitionStore`, ensuring that `DefId`s are globally unique
     /// and cross-file type references resolve correctly.
     ///
-    /// Currently populated but not yet wired into per-file checker creation paths.
-    /// Next step: pass this to `CheckerState::with_cache_and_shared_def_store`
-    /// now that the `TypeInterner` is shared at the project level.
+    /// Wired into per-file checkers via `ProjectFile::definition_store` field.
+    /// When a `ProjectFile` has a shared `DefinitionStore`, its `get_diagnostics()`
+    /// method uses `CheckerState::with_cache_and_shared_def_store` (or
+    /// `new_with_shared_def_store`) to propagate it into the checker context.
     pub(crate) definition_store: Arc<DefinitionStore>,
 }
 
@@ -1502,11 +1551,12 @@ impl Project {
 
     /// Add or replace a file, re-parsing and re-binding its contents.
     pub fn set_file(&mut self, file_name: String, source_text: String) {
-        let file = ProjectFile::with_shared_interner(
+        let file = ProjectFile::with_shared_interner_and_def_store(
             file_name.clone(),
             source_text,
             self.strict,
             Arc::clone(&self.type_interner),
+            Arc::clone(&self.definition_store),
         );
 
         // Update symbol index with the new file's binder data and AST identifiers
