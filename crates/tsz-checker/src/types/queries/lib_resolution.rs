@@ -798,8 +798,8 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Cache type parameters for Application expansion.
-                                    // Prefer get_existing_def_id: lib symbols should be
-                                    // pre-populated via semantic_defs propagation.
+                                    // Uses `get_lib_def_id`: prefers pre-populated DefIds,
+                                    // falls back to on-demand creation.
                                     let def_id = self.ctx.get_lib_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
