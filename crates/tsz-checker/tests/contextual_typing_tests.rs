@@ -869,3 +869,39 @@ configure({
         "Expected no TS7006 errors with nested contextual typing, got {ts7006_errors:?}"
     );
 }
+
+/// The `satisfies` operator provides contextual typing (EPC, parameter types)
+/// while preserving the literal/narrow type of the expression.
+///
+/// This is the key difference from `: Type` annotations — `satisfies` checks
+/// compatibility but doesn't widen the expression type. Object literals used
+/// with `satisfies` should still trigger EPC for unknown properties.
+#[test]
+fn test_satisfies_provides_contextual_typing_and_epc() {
+    let source = r#"
+interface Theme {
+    primary: string;
+    secondary: string;
+}
+
+const theme = {
+    primary: "red",
+    secondary: "blue",
+    tertiary: "green",
+} satisfies Theme;
+"#;
+
+    let diagnostics = check_default(source);
+
+    // `satisfies` should trigger EPC for 'tertiary' which is not in Theme
+    let epc_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2353)
+        .collect();
+
+    assert!(
+        !epc_errors.is_empty(),
+        "Expected TS2353 (EPC) for 'tertiary' not in Theme via satisfies, \
+         got diagnostics={diagnostics:?}"
+    );
+}
