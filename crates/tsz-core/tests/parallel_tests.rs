@@ -4119,6 +4119,29 @@ fn test_residency_stats_total_bound_file_bytes_nonzero() {
     );
 }
 
+#[test]
+fn test_residency_stats_unique_arena_estimated_bytes_nonzero() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export function b(x: number): string { return String(x); }".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert!(
+        stats.unique_arena_estimated_bytes > 0,
+        "unique_arena_estimated_bytes should be nonzero for a program with files"
+    );
+
+    // Arena size should be larger than the struct overhead alone
+    assert!(
+        stats.unique_arena_estimated_bytes > std::mem::size_of::<tsz_parser::parser::NodeArena>(),
+        "arena estimate should exceed bare struct size when files have been parsed"
+    );
+}
+
 // =============================================================================
 // Skeleton extraction determinism and content validation
 // =============================================================================

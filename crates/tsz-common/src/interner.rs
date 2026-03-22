@@ -264,6 +264,32 @@ impl Interner {
             let _ = self.intern(s);
         }
     }
+
+    /// Estimate the heap memory footprint of this interner in bytes.
+    ///
+    /// Accounts for the hash map, the strings vector, and the `Arc<str>`
+    /// allocations themselves (header + string bytes). Used for memory
+    /// diagnostics reporting.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        use std::mem::size_of;
+
+        let mut size = size_of::<Self>();
+
+        // HashMap overhead: capacity * (key + value + metadata)
+        size += self.map.capacity() * (size_of::<Arc<str>>() + size_of::<Atom>() + 8);
+
+        // strings Vec capacity
+        size += self.strings.capacity() * size_of::<Arc<str>>();
+
+        // Actual string data behind each Arc<str> (Arc header + string bytes)
+        for s in &self.strings {
+            // Arc header (strong + weak counts) + string length
+            size += 16 + s.len();
+        }
+
+        size
+    }
 }
 
 #[derive(Default)]
