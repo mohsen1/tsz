@@ -958,6 +958,79 @@ impl DefinitionStore {
 
         stats
     }
+
+    /// Estimate the heap memory footprint of the store in bytes.
+    ///
+    /// Accounts for the `DashMap` overhead of each index and the `Vec`-backed
+    /// fields inside `DefinitionInfo`. The result is a rough lower bound —
+    /// `DashMap` shard overhead, alignment padding, and allocator metadata are
+    /// not included. Useful for memory pressure tracking and telemetry.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+
+        // Per-entry overhead for DashMap: key + value + ~64 bytes bucket/shard overhead.
+        const DASHMAP_ENTRY_OVERHEAD: usize = 64;
+
+        // definitions: DefId -> DefinitionInfo
+        for entry in &self.definitions {
+            let info = entry.value();
+            size += std::mem::size_of::<DefId>() + std::mem::size_of::<DefinitionInfo>();
+            size += DASHMAP_ENTRY_OVERHEAD;
+            // Vec fields inside DefinitionInfo
+            size += info.type_params.capacity() * std::mem::size_of::<TypeParamInfo>();
+            size += info.enum_members.capacity() * std::mem::size_of::<(Atom, EnumMemberValue)>();
+            size += info.implements.capacity() * std::mem::size_of::<DefId>();
+            size += info.exports.capacity() * std::mem::size_of::<(Atom, DefId)>();
+            // Arc<ObjectShape> — count the shape itself (shared, but we include it here)
+            if let Some(ref shape) = info.instance_shape {
+                size += std::mem::size_of::<ObjectShape>();
+                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
+            }
+            if let Some(ref shape) = info.static_shape {
+                size += std::mem::size_of::<ObjectShape>();
+                size += shape.properties.capacity() * std::mem::size_of::<PropertyInfo>();
+            }
+        }
+
+        // type_to_def: TypeId -> DefId
+        size += self.type_to_def.len()
+            * (std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // symbol_def_index: (u32, u32) -> DefId
+        size += self.symbol_def_index.len()
+            * (std::mem::size_of::<(u32, u32)>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // symbol_only_index: u32 -> DefId
+        size += self.symbol_only_index.len()
+            * (std::mem::size_of::<u32>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // body_to_alias: TypeId -> DefId
+        size += self.body_to_alias.len()
+            * (std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // shape_to_def: u64 -> DefId
+        size += self.shape_to_def.len()
+            * (std::mem::size_of::<u64>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // file_to_defs: u32 -> Vec<DefId>
+        for entry in &self.file_to_defs {
+            size += std::mem::size_of::<u32>() + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().capacity() * std::mem::size_of::<DefId>();
+        }
+
+        size
+    }
 }
 
 // =============================================================================

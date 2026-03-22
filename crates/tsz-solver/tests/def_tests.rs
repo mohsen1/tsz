@@ -983,3 +983,80 @@ fn test_store_statistics_merge() {
         stats_a.next_def_id.max(stats_b.next_def_id)
     );
 }
+
+#[test]
+fn estimated_size_bytes_empty_store_is_nonzero() {
+    let store = DefinitionStore::new();
+    let size = store.estimated_size_bytes();
+    // Even an empty store has its own struct size (DashMaps, atomics, etc.)
+    assert!(
+        size > 0,
+        "Empty DefinitionStore should have nonzero estimated size"
+    );
+}
+
+#[test]
+fn estimated_size_bytes_grows_with_definitions() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let size_before = store.estimated_size_bytes();
+
+    // Register several definitions.
+    for i in 0..10 {
+        let name = interner.intern_string(&format!("Type{i}"));
+        let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+        store.register(info);
+    }
+
+    let size_after = store.estimated_size_bytes();
+    assert!(
+        size_after > size_before,
+        "Adding definitions should increase estimated size: before={size_before}, after={size_after}"
+    );
+}
+
+#[test]
+fn estimated_size_bytes_accounts_for_type_params() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register without type params, measure.
+    let name_a = interner.intern_string("Foo");
+    let info = DefinitionInfo::type_alias(name_a, vec![], TypeId::NUMBER);
+    store.register(info);
+    let size_one = store.estimated_size_bytes();
+
+    // Register a second definition with type params in the same store.
+    let name_b = interner.intern_string("Bar");
+    let params = vec![
+        crate::TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        crate::TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        },
+    ];
+    let info = DefinitionInfo::type_alias(name_b, params, TypeId::NUMBER);
+    store.register(info);
+    let size_two = store.estimated_size_bytes();
+
+    // The second definition (with type params) should add more than
+    // what a zero-param definition adds, because TypeParamInfo entries
+    // consume additional heap space.
+    let delta = size_two - size_one;
+    // A zero-param DefinitionInfo in a DashMap uses ~DefinitionInfo + DefId + overhead.
+    // With 2 TypeParamInfo entries, it should be at least 2 * size_of::<TypeParamInfo>() larger.
+    let min_extra = 2 * std::mem::size_of::<crate::TypeParamInfo>();
+    assert!(
+        delta >= min_extra,
+        "Adding a definition with 2 type params should add at least {min_extra} bytes \
+         for the TypeParamInfo entries, but delta was only {delta}"
+    );
+}
