@@ -4484,8 +4484,14 @@ fn test_standalone_project_file_has_own_interner() {
 fn test_project_files_share_definition_store() {
     // Verify that files created via Project::set_file share the project's DefinitionStore.
     let mut project = Project::new();
-    project.set_file("a.ts".to_string(), "export const x: number = 1;".to_string());
-    project.set_file("b.ts".to_string(), "export const y: string = 'hi';".to_string());
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: number = 1;".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "export const y: string = 'hi';".to_string(),
+    );
 
     let project_def_store = project.definition_store();
     let a_def_store = project.files["a.ts"]
