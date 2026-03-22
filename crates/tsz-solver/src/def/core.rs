@@ -152,8 +152,6 @@ pub struct DefinitionInfo {
 
     /// For classes/interfaces: implemented interfaces
     pub implements: Vec<DefId>,
-    /// Heritage names for cross-batch resolution (extends/implements names as strings).
-    pub heritage_names: Vec<String>,
 
     /// For enums: member names and values
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
@@ -174,11 +172,6 @@ pub struct DefinitionInfo {
     /// stays the same. This enables coinductive cycle detection for recursive
     /// generic interfaces (e.g., `Promise<T>` vs `PromiseLike<T>`).
     pub symbol_id: Option<u32>,
-
-    /// Heritage names for cross-batch heritage resolution.
-    /// Populated by the binder with unresolved class/interface heritage names.
-    #[allow(dead_code)]
-    pub heritage_names: Vec<String>,
 }
 
 /// Enum member value.
@@ -204,13 +197,11 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
-            heritage_names: Vec::new(),
         }
     }
 
@@ -241,13 +232,11 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
-            heritage_names: Vec::new(),
         }
     }
 
@@ -281,13 +270,11 @@ impl DefinitionInfo {
             static_shape: Some(Arc::new(static_shape)),
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
-            heritage_names: Vec::new(),
         }
     }
 
@@ -302,13 +289,11 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: members,
             exports: Vec::new(),
             file_id: None,
             span: None,
             symbol_id: None,
-            heritage_names: Vec::new(),
         }
     }
 
@@ -323,13 +308,11 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
-            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports,
             file_id: None,
             span: None,
             symbol_id: None,
-            heritage_names: Vec::new(),
         }
     }
 
@@ -916,31 +899,46 @@ impl DefinitionStore {
         self.name_to_defs.get(&name).map(|r| r.clone())
     }
 
-    /// Resolve heritage names to `DefId`s using an intern function for
-    /// name comparison.
+    /// Resolve a heritage name to a `DefId` by looking up the `name_to_defs` index.
     ///
-    /// For each name in the definition's `heritage_names`, interns the name
-    /// string via `intern_fn`, looks up the `name_to_defs` index, and returns
-    /// the first matching `DefId` of kind `Class` or `Interface`.
+    /// Returns the first `DefId` of kind `Class` or `Interface` matching the
+    /// interned name, excluding the `exclude_id` (to prevent self-references).
     ///
-    /// This enables cross-batch heritage resolution: when a user class says
-    /// `class Foo extends Array`, the lib definition for `Array` can be found
-    /// by name after all batches are registered.
-    ///
-    /// Returns a list of `(heritage_name, resolved_def_id)` pairs.
-    /// Unresolved names are silently skipped.
-    /// Resolve heritage names to `DefId`s.
-    ///
-    /// Heritage resolution was moved to the checker's class/interface type
-    /// resolution pipeline. This stub is kept for API compatibility; it
-    /// always returns an empty vector. See `resolve_cross_batch_heritage`
-    /// in `def_mapping.rs` for context.
-    pub fn resolve_heritage(
+    /// Used by the checker's `resolve_cross_batch_heritage` to wire up
+    /// `extends`/`implements` on `DefinitionInfo` after all batches are registered.
+    pub fn resolve_heritage_name(
         &self,
-        _id: DefId,
-        _intern_fn: &dyn Fn(&str) -> Atom,
-    ) -> Vec<(String, DefId)> {
-        Vec::new()
+        name_atom: Atom,
+        exclude_id: DefId,
+    ) -> Option<DefId> {
+        let candidates = self.name_to_defs.get(&name_atom)?;
+        for &candidate_id in candidates.value() {
+            if candidate_id == exclude_id {
+                continue;
+            }
+            if let Some(candidate_info) = self.definitions.get(&candidate_id) {
+                if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
+                    return Some(candidate_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Set the `extends` field of a definition.
+    pub fn set_extends(&self, id: DefId, parent: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(parent);
+        }
+    }
+
+    /// Add an `implements` entry to a definition (if not already present).
+    pub fn add_implements(&self, id: DefId, iface: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if !entry.implements.contains(&iface) {
+                entry.implements.push(iface);
+            }
+        }
     }
 
     /// Get all `DefId`s originating from the given file.

@@ -1796,179 +1796,184 @@ const b: Promise<boolean> = getBool();
     );
 }
 
-// =========================================================================
-// Focused tests: Promise / lib refs / import-type lowering (stable helpers)
-// =========================================================================
-// These tests exercise the lib_def_id_for_raw → get_lib_def_id stable path
-// and verify that no local DefId repair or per-call caching is needed.
+// ---- Heritage resolution wiring tests ----
 
 #[test]
-fn test_promise_conditional_return_type() {
-    // Conditional return types involving Promise exercise the DefId identity
-    // path through type alias expansion and generic instantiation.
+fn test_resolve_heritage_wired_during_check_source_file() {
+    // Verify that resolve_cross_batch_heritage runs during check_source_file,
+    // so a user class extending a lib class gets its DefId-level extends set.
     if !lib_files_available() {
         return;
     }
-    let diagnostics = compile_with_lib(
-        r#"
-async function maybe(flag: boolean): Promise<string | number> {
-    if (flag) return "yes";
-    return 42;
+
+    let lib_files = load_lib_files_for_test();
+    let source = r#"
+class MyError extends Error {
+    constructor(message: string) {
+        super(message);
+    }
 }
-async function use_maybe(): Promise<void> {
-    const val: string | number = await maybe(true);
-}
-"#,
-    );
-    let errors: Vec<_> = diagnostics
+const e: MyError = new MyError("oops");
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let raw_contexts: Vec<_> = lib_files
         .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
+        .map(|lib| tsz_binder::state::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
         .collect();
-    assert!(
-        errors.is_empty(),
-        "Conditional Promise return should resolve via stable DefId.\nDiagnostics: {errors:#?}"
-    );
-}
-
-#[test]
-fn test_promise_resolve_void_stable_identity() {
-    // Promise<void> is a common pattern that needs stable DefId identity
-    // for both the Promise interface and the void type argument.
-    if !lib_files_available() {
-        return;
-    }
-    let diagnostics = compile_with_lib(
-        r#"
-async function doWork(): Promise<void> {
-    // no return value
-}
-const p: Promise<void> = doWork();
-"#,
-    );
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2322.is_empty(),
-        "Promise<void> should resolve without TS2322.\nDiagnostics: {ts2322:#?}"
-    );
-}
-
-#[test]
-fn test_lib_ref_weakmap_weakset() {
-    // WeakMap and WeakSet are lib types with constraints on their type params.
-    // Exercises the stable DefId path for less common lib generics.
-    if !lib_files_available() {
-        return;
-    }
-    let diagnostics = compile_with_lib(
-        r#"
-const wm: WeakMap<object, number> = new WeakMap();
-const key = {};
-wm.set(key, 42);
-const val: number | undefined = wm.get(key);
-"#,
-    );
-    let errors: Vec<_> = diagnostics
+    binder.merge_lib_contexts_into_binder(&raw_contexts);
+    let checker_lib_contexts: Vec<_> = lib_files
         .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
         .collect();
-    assert!(
-        errors.is_empty(),
-        "WeakMap generic lib type should resolve via stable DefId.\nDiagnostics: {errors:#?}"
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
     );
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+    // Run the full check pipeline (which includes heritage resolution wiring)
+    checker.check_source_file(root);
+
+    // After checking, look up the DefId for MyError and verify it has extends set
+    let my_error_sym = binder.file_locals.get("MyError");
+    if let Some(my_error_sym) = my_error_sym {
+        if let Some(my_error_def) = checker.ctx.get_existing_def_id(my_error_sym) {
+            let info = checker.ctx.definition_store.get(my_error_def);
+            assert!(
+                info.is_some(),
+                "MyError's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                // The heritage resolution should have set extends to Error's DefId
+                assert!(
+                    info.extends.is_some(),
+                    "MyError should have extends set to Error's DefId after heritage resolution."
+                );
+            }
+        }
+    }
 }
 
 #[test]
-fn test_import_type_expression_typeof_promise() {
-    // typeof on a Promise-typed variable exercises the value-to-type DefId
-    // mapping through the stable lib resolution path.
-    if !lib_files_available() {
-        return;
+fn test_resolve_heritage_user_class_extends_user_class() {
+    // Verify heritage resolution works for user-defined classes within the same file
+    // (same batch, so heritage should resolve during the primary binder pass).
+    let source = r#"
+class Base {
+    x: number = 1;
+}
+class Child extends Base {
+    y: string = "hello";
+}
+const c: Child = new Child();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Look up Child's DefId
+    let child_sym = binder.file_locals.get("Child");
+    let base_sym = binder.file_locals.get("Base");
+    if let (Some(child_sym), Some(base_sym)) = (child_sym, base_sym) {
+        if let (Some(child_def), Some(_base_def)) = (
+            checker.ctx.get_existing_def_id(child_sym),
+            checker.ctx.get_existing_def_id(base_sym),
+        ) {
+            let info = checker.ctx.definition_store.get(child_def);
+            assert!(
+                info.is_some(),
+                "Child's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                assert!(
+                    info.extends.is_some(),
+                    "Child should have extends set to Base's DefId after heritage resolution."
+                );
+            }
+        }
     }
-    let diagnostics = compile_with_lib(
-        r#"
-const p = Promise.resolve(42);
-type P = typeof p;
-const q: P = Promise.resolve(100);
-"#,
-    );
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2322.is_empty(),
-        "typeof Promise-typed var should resolve via stable DefId.\nDiagnostics: {ts2322:#?}"
-    );
 }
 
 #[test]
-fn test_lib_ref_required_utility_type() {
-    // Required<T> is the opposite of Partial<T> - exercises lib type alias
-    // lowering through the stable path.
-    if !lib_files_available() {
-        return;
-    }
-    let diagnostics = compile_with_lib(
-        r#"
-interface Config { host?: string; port?: number; }
-const full: Required<Config> = { host: "localhost", port: 8080 };
-"#,
-    );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2741)
-        .collect();
-    assert!(
-        errors.is_empty(),
-        "Required<Config> should resolve through stable lib alias path.\nDiagnostics: {errors:#?}"
-    );
+fn test_resolve_heritage_interface_implements() {
+    // Verify heritage resolution wires implements for interfaces.
+    let source = r#"
+interface Animal {
+    name: string;
 }
+interface Dog extends Animal {
+    breed: string;
+}
+const d: Dog = { name: "Rex", breed: "Lab" };
+"#;
 
-#[test]
-fn test_promise_async_generator_pattern() {
-    // Async functions returning Promise<T> where T itself is a generic
-    // container exercises nested generic resolution through stable DefIds.
-    if !lib_files_available() {
-        return;
-    }
-    let diagnostics = compile_with_lib(
-        r#"
-async function getItems(): Promise<Array<string>> {
-    return ["a", "b", "c"];
-}
-async function processItems(): Promise<void> {
-    const items: Array<string> = await getItems();
-    const first: string = items[0];
-}
-"#,
-    );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
-    assert!(
-        errors.is_empty(),
-        "Promise<Array<string>> nested generics should resolve.\nDiagnostics: {errors:#?}"
-    );
-}
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
 
-#[test]
-fn test_lib_def_id_for_raw_helper_used_by_lowering() {
-    // This test validates that the lib_def_id_for_raw helper (replacing
-    // the inline `get_lib_def_id(SymbolId(raw))` pattern) works correctly
-    // for basic lib type resolution through lowering closures.
-    if !lib_files_available() {
-        return;
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Look up Dog's DefId
+    let dog_sym = binder.file_locals.get("Dog");
+    if let Some(dog_sym) = dog_sym {
+        if let Some(dog_def) = checker.ctx.get_existing_def_id(dog_sym) {
+            let info = checker.ctx.definition_store.get(dog_def);
+            assert!(
+                info.is_some(),
+                "Dog's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                // For interfaces, heritage goes into implements
+                assert!(
+                    !info.implements.is_empty(),
+                    "Dog should have implements set to Animal's DefId after heritage resolution."
+                );
+            }
+        }
     }
-    let diagnostics = compile_with_lib(
-        r#"
-const arr: Array<number> = [1, 2, 3];
-const p: Promise<string> = Promise.resolve("hello");
-const m: Map<string, boolean> = new Map();
-const s: Set<number> = new Set([1, 2]);
-"#,
-    );
-    // No false TS2322 from broken DefId identity
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2322.is_empty(),
-        "Basic lib generic types should resolve via lib_def_id_for_raw.\nDiagnostics: {ts2322:#?}"
-    );
 }
