@@ -10,14 +10,16 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::TypeId;
 
 use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
@@ -497,14 +499,14 @@ impl<'a> CheckerState<'a> {
         // overload resolution accepts the call if ANY single signature matches.
         // Without this guard, `(F1 | F2)("a")` would succeed if F1 alone accepts
         // 1 arg, silently ignoring F2 which requires 2 args — missing TS2554.
-        let callee_is_union = tsz_solver::is_union_type(self.ctx.types, callee_type_for_resolution);
+        let callee_is_union = common::is_union_type(self.ctx.types, callee_type_for_resolution);
         let overload_signatures = if callee_is_union {
             None
         } else {
             match classification {
                 query::CallSignaturesKind::Callable(_) => {
                     // Delegate to solver query for overload detection
-                    tsz_solver::type_queries::data::get_overload_call_signatures(
+                    call_checker::get_overload_call_signatures(
                         self.ctx.types,
                         callee_type_for_resolution,
                     )
@@ -673,14 +675,14 @@ impl<'a> CheckerState<'a> {
                             // parameter type. Rest parameters use the last param, and the
                             // contextual helper handles that mapping.
                             let from_shape = if i < shape.params.len() {
-                                tsz_solver::type_queries::contains_type_parameters_db(
+                                common::contains_type_parameters(
                                     self.ctx.types,
                                     shape.params[i].type_id,
                                 )
                             } else if let Some(last) = shape.params.last() {
                                 // Rest parameter: check the rest param's type
                                 last.rest
-                                    && tsz_solver::type_queries::contains_type_parameters_db(
+                                    && common::contains_type_parameters(
                                         self.ctx.types,
                                         last.type_id,
                                     )
@@ -690,10 +692,7 @@ impl<'a> CheckerState<'a> {
                             let from_ctx = ctx_helper
                                 .get_parameter_type_for_call(i, arg_count)
                                 .is_some_and(|param_type| {
-                                    tsz_solver::type_queries::contains_type_parameters_db(
-                                        self.ctx.types,
-                                        param_type,
-                                    )
+                                    common::contains_type_parameters(self.ctx.types, param_type)
                                 });
                             from_shape || from_ctx
                         })
@@ -740,7 +739,6 @@ impl<'a> CheckerState<'a> {
                 if shape_this_type.is_none() {
                     let _env = self.ctx.type_env.borrow();
                     for param in &shape.params {
-                        use tsz_solver::ContextualTypeContext;
                         let ctx_helper = ContextualTypeContext::with_expected_and_options(
                             self.ctx.types,
                             param.type_id,
@@ -885,11 +883,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let unresolved = *arg_type == TypeId::ERROR
-                            || tsz_solver::type_queries::contains_infer_types_db(
-                                self.ctx.types,
-                                *arg_type,
-                            )
-                            || tsz_solver::collect_referenced_types(self.ctx.types, *arg_type)
+                            || common::contains_infer_types(self.ctx.types, *arg_type)
+                            || common::collect_referenced_types(self.ctx.types, *arg_type)
                                 .contains(&TypeId::ERROR);
                         if unresolved {
                             *arg_type = TypeId::UNKNOWN;
@@ -908,23 +903,16 @@ impl<'a> CheckerState<'a> {
                             .map(|(i, p)| {
                                 let arg_type = round1_arg_types.get(i).copied();
                                 let preserve_raw_application = arg_type.is_some_and(|arg_type| {
-                                    tsz_solver::type_queries::get_application_info(
-                                        self.ctx.types,
-                                        p.type_id,
-                                    )
-                                    .is_some()
-                                        && tsz_solver::type_queries::get_application_info(
-                                            self.ctx.types,
-                                            arg_type,
-                                        )
-                                        .is_some()
-                                        && tsz_solver::type_queries::contains_type_parameters_db(
+                                    query::get_application_info(self.ctx.types, p.type_id).is_some()
+                                        && query::get_application_info(self.ctx.types, arg_type)
+                                            .is_some()
+                                        && common::contains_type_parameters(
                                             self.ctx.types,
                                             p.type_id,
                                         )
                                 });
 
-                                tsz_solver::ParamInfo {
+                                common::ParamInfo {
                                     name: p.name,
                                     type_id: if preserve_raw_application {
                                         p.type_id
@@ -936,7 +924,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             })
                             .collect();
-                        tsz_solver::FunctionShape {
+                        common::FunctionShape {
                             params: new_params,
                             return_type: shape.return_type,
                             this_type: shape.this_type,
@@ -964,7 +952,6 @@ impl<'a> CheckerState<'a> {
                     // `this` to the inferred type.
                     if !pushed_this_type_from_shape {
                         for param in &shape.params {
-                            use tsz_solver::ContextualTypeContext;
                             let ctx_helper = ContextualTypeContext::with_expected_and_options(
                                 self.ctx.types,
                                 param.type_id,
@@ -1057,7 +1044,7 @@ impl<'a> CheckerState<'a> {
                                 .collect::<Vec<_>>(),
                             contextual_type = ctx_type.0,
                             contextual_type_display = %self.format_type(ctx_type),
-                            contextual_type_union_members = ?tsz_solver::type_queries::get_union_members(
+                            contextual_type_union_members = ?common::union_members(
                                 self.ctx.types,
                                 ctx_type,
                             )
@@ -1065,7 +1052,7 @@ impl<'a> CheckerState<'a> {
                                 .into_iter()
                                 .map(|member| (
                                     self.format_type(member),
-                                    tsz_solver::type_queries::get_application_info(self.ctx.types, member)
+                                    query::get_application_info(self.ctx.types, member)
                                         .map(|(_, args)| args),
                                 ))
                                 .collect::<Vec<_>>()),
@@ -1096,14 +1083,11 @@ impl<'a> CheckerState<'a> {
                                     existing == TypeId::UNKNOWN
                                         || existing == TypeId::ERROR
                                         || self.inference_type_is_anyish(existing, &mut visited)
-                                        || tsz_solver::type_queries::contains_type_parameters_db(
+                                        || common::contains_type_parameters(
                                             self.ctx.types,
                                             existing,
                                         )
-                                        || tsz_solver::type_queries::contains_infer_types_db(
-                                            self.ctx.types,
-                                            existing,
-                                        )
+                                        || common::contains_infer_types(self.ctx.types, existing)
                                         || !assign_query::is_fresh_subtype_of(
                                             self.ctx.types,
                                             existing,
@@ -1120,10 +1104,9 @@ impl<'a> CheckerState<'a> {
                     }
                     for param in &evaluated_shape.params {
                         for referenced in
-                            tsz_solver::collect_referenced_types(self.ctx.types, param.type_id)
+                            common::collect_referenced_types(self.ctx.types, param.type_id)
                         {
-                            if let Some(info) =
-                                tsz_solver::type_param_info(self.ctx.types, referenced)
+                            if let Some(info) = common::type_param_info(self.ctx.types, referenced)
                                 && round2_substitution.get(info.name).is_none()
                             {
                                 let param_name = self.ctx.types.resolve_atom(info.name);
@@ -1153,10 +1136,8 @@ impl<'a> CheckerState<'a> {
                         if i < sensitive_args.len()
                             && sensitive_args[i]
                             && let Some(shape_param_type) = shape.params.get(i).map(|p| p.type_id)
-                            && let Some(shape_fn) = tsz_solver::type_queries::get_function_shape(
-                                self.ctx.types,
-                                shape_param_type,
-                            )
+                            && let Some(shape_fn) =
+                                query::get_function_shape(self.ctx.types, shape_param_type)
                             && let Some(arg_node) = self.ctx.arena.get(arg_idx)
                             && let Some(func) = self.ctx.arena.get_function(arg_node)
                         {
@@ -1165,11 +1146,10 @@ impl<'a> CheckerState<'a> {
                                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                                     && param.type_annotation.is_some()
                                     && let Some(shape_fn_param) = shape_fn.params.get(j)
-                                    && let Some(tp_info) =
-                                        tsz_solver::type_queries::get_type_parameter_info(
-                                            self.ctx.types,
-                                            shape_fn_param.type_id,
-                                        )
+                                    && let Some(tp_info) = query::type_parameter_info(
+                                        self.ctx.types,
+                                        shape_fn_param.type_id,
+                                    )
                                 {
                                     let is_callee_tp =
                                         shape.type_params.iter().any(|tp| tp.name == tp_info.name);
@@ -1210,40 +1190,36 @@ impl<'a> CheckerState<'a> {
                     // Rule: only sanitize when the shape param IS or CONTAINS a top-level
                     // type parameter (bare T, T & Callable, etc). Leave generic callables
                     // like Predicate<A> alone since those handle the placeholder correctly.
-                    let sanitized_arg_types: Vec<TypeId> =
-                        round1_arg_types
-                            .iter()
-                            .enumerate()
-                            .map(|(i, &ty)| {
-                                if i < sensitive_args.len()
-                                    && sensitive_args[i]
-                                    && self.ctx.arena.get(args[i]).is_some_and(|n| {
-                                        n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                            || n.kind == syntax_kind_ext::ARROW_FUNCTION
-                                    })
-                                    && shape.params.get(i).is_some_and(|p| {
-                                        // Check if the param type is a bare type parameter
-                                        // or an intersection containing a type parameter
-                                        let pt = p.type_id;
-                                        tsz_solver::type_param_info(self.ctx.types, pt).is_some()
-                                            || tsz_solver::type_queries::get_intersection_members(
-                                                self.ctx.types,
-                                                pt,
-                                            )
+                    let sanitized_arg_types: Vec<TypeId> = round1_arg_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &ty)| {
+                            if i < sensitive_args.len()
+                                && sensitive_args[i]
+                                && self.ctx.arena.get(args[i]).is_some_and(|n| {
+                                    n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                        || n.kind == syntax_kind_ext::ARROW_FUNCTION
+                                })
+                                && shape.params.get(i).is_some_and(|p| {
+                                    // Check if the param type is a bare type parameter
+                                    // or an intersection containing a type parameter
+                                    let pt = p.type_id;
+                                    common::type_param_info(self.ctx.types, pt).is_some()
+                                        || common::intersection_members(self.ctx.types, pt)
                                             .is_some_and(|members| {
                                                 members.iter().any(|&m| {
-                                                    tsz_solver::type_param_info(self.ctx.types, m)
+                                                    common::type_param_info(self.ctx.types, m)
                                                         .is_some()
                                                 })
                                             })
-                                    })
-                                {
-                                    TypeId::UNKNOWN
-                                } else {
-                                    ty
-                                }
-                            })
-                            .collect();
+                                })
+                            {
+                                TypeId::UNKNOWN
+                            } else {
+                                ty
+                            }
+                        })
+                        .collect();
                     let round1_instantiated_params = self
                         .resolve_call_with_checker_adapter(
                             callee_type_for_context,
@@ -1288,10 +1264,7 @@ impl<'a> CheckerState<'a> {
                                     self.zero_param_callback_first_conditional_branch(arg_idx)
                                 && let Some(param_type) = shape.params.get(i).map(|p| p.type_id)
                                 && let Some(callback_shape) =
-                                    tsz_solver::type_queries::get_function_shape(
-                                        self.ctx.types,
-                                        param_type,
-                                    )
+                                    query::get_function_shape(self.ctx.types, param_type)
                             {
                                 let first_branch_type = self.get_type_of_node(first_branch_idx);
                                 let tracked_type_params: FxHashSet<_> =
@@ -1310,26 +1283,22 @@ impl<'a> CheckerState<'a> {
                                     let should_update = match round2_substitution.get(name) {
                                         None => true,
                                         Some(existing) if existing == ty => false,
-                                        Some(existing) => existing == TypeId::UNKNOWN
-                                            || tsz_solver::type_queries::contains_type_parameters_db(
-                                                self.ctx.types,
-                                                existing,
-                                            )
-                                            || tsz_solver::type_queries::contains_infer_types_db(
-                                                self.ctx.types,
-                                                existing,
-                                            ),
+                                        Some(existing) => {
+                                            existing == TypeId::UNKNOWN
+                                                || common::contains_type_parameters(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                                || common::contains_infer_types(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                        }
                                     };
                                     if ty != TypeId::UNKNOWN
                                         && ty != TypeId::ERROR
-                                        && !tsz_solver::type_queries::contains_type_parameters_db(
-                                            self.ctx.types,
-                                            ty,
-                                        )
-                                        && !tsz_solver::type_queries::contains_infer_types_db(
-                                            self.ctx.types,
-                                            ty,
-                                        )
+                                        && !common::contains_type_parameters(self.ctx.types, ty)
+                                        && !common::contains_infer_types(self.ctx.types, ty)
                                         && should_update
                                     {
                                         round2_substitution.insert(name, ty);
@@ -1357,14 +1326,8 @@ impl<'a> CheckerState<'a> {
                             let arg_type = if expected_type.is_some_and(|expected| {
                                 expected != TypeId::UNKNOWN
                                     && expected != TypeId::ERROR
-                                    && !tsz_solver::type_queries::contains_infer_types_db(
-                                        self.ctx.types,
-                                        expected,
-                                    )
-                                    && !tsz_solver::type_queries::contains_type_parameters_db(
-                                        self.ctx.types,
-                                        expected,
-                                    )
+                                    && !common::contains_infer_types(self.ctx.types, expected)
+                                    && !common::contains_type_parameters(self.ctx.types, expected)
                             }) {
                                 let (start, end) = self
                                     .ctx
@@ -1482,11 +1445,11 @@ impl<'a> CheckerState<'a> {
                                                     existing,
                                                     &mut FxHashSet::default(),
                                                 )
-                                                || tsz_solver::type_queries::contains_infer_types_db(
+                                                || common::contains_infer_types(
                                                     self.ctx.types,
                                                     existing,
                                                 )
-                                                || tsz_solver::type_queries::contains_type_parameters_db(
+                                                || common::contains_type_parameters(
                                                     self.ctx.types,
                                                     existing,
                                                 )
@@ -1499,24 +1462,13 @@ impl<'a> CheckerState<'a> {
                             }
 
                             let expected_still_unresolved = expected_type.is_some_and(|expected| {
-                                tsz_solver::type_queries::contains_infer_types_db(
-                                    self.ctx.types,
-                                    expected,
-                                ) || tsz_solver::type_queries::contains_type_parameters_db(
-                                    self.ctx.types,
-                                    expected,
-                                )
+                                common::contains_infer_types(self.ctx.types, expected)
+                                    || common::contains_type_parameters(self.ctx.types, expected)
                             });
-                            let arg_is_callable = tsz_solver::type_queries::get_function_shape(
-                                self.ctx.types,
-                                arg_type,
-                            )
-                            .is_some()
-                                || tsz_solver::type_queries::get_callable_shape(
-                                    self.ctx.types,
-                                    arg_type,
-                                )
-                                .is_some();
+                            let arg_is_callable =
+                                query::get_function_shape(self.ctx.types, arg_type).is_some()
+                                    || common::callable_shape_for_type(self.ctx.types, arg_type)
+                                        .is_some();
                             let skip_return_only_refinement = self
                                 .ctx
                                 .arena
@@ -1544,14 +1496,8 @@ impl<'a> CheckerState<'a> {
                                 let mut substitution_changed = false;
                                 for (&name, &ty) in refined_substitution.map().iter() {
                                     if ty == TypeId::UNKNOWN
-                                        || tsz_solver::type_queries::contains_infer_types_db(
-                                            self.ctx.types,
-                                            ty,
-                                        )
-                                        || tsz_solver::type_queries::contains_type_parameters_db(
-                                            self.ctx.types,
-                                            ty,
-                                        )
+                                        || common::contains_infer_types(self.ctx.types, ty)
+                                        || common::contains_type_parameters(self.ctx.types, ty)
                                     {
                                         continue;
                                     }
@@ -1561,11 +1507,11 @@ impl<'a> CheckerState<'a> {
                                         Some(existing) if existing == ty => false,
                                         Some(existing) => {
                                             existing == TypeId::UNKNOWN
-                                                || tsz_solver::type_queries::contains_infer_types_db(
+                                                || common::contains_infer_types(
                                                     self.ctx.types,
                                                     existing,
                                                 )
-                                                || tsz_solver::type_queries::contains_type_parameters_db(
+                                                || common::contains_type_parameters(
                                                     self.ctx.types,
                                                     existing,
                                                 )
@@ -1617,7 +1563,6 @@ impl<'a> CheckerState<'a> {
                     // to suppress false TS2339 errors.
                     if !pushed_this_type_from_shape {
                         for param in &shape.params {
-                            use tsz_solver::ContextualTypeContext;
                             let ctx_helper2 = ContextualTypeContext::with_expected_and_options(
                                 self.ctx.types,
                                 param.type_id,
@@ -2148,20 +2093,14 @@ impl<'a> CheckerState<'a> {
             // even when node_types is temporarily emptied during overload resolution
             // of a containing call expression (e.g., `console.log(thing.toUpperCase())`
             // triggers overload resolution which empties node_types before checking args).
-            let is_sound_union = if tsz_solver::is_union_type(self.ctx.types, callee_type_for_call)
-            {
-                tsz_solver::type_queries::flow::is_valid_union_predicate(
-                    self.ctx.types,
-                    callee_type_for_call,
-                )
+            let is_sound_union = if common::is_union_type(self.ctx.types, callee_type_for_call) {
+                call_checker::is_valid_union_predicate(self.ctx.types, callee_type_for_call)
             } else {
                 true
             };
             if is_sound_union
-                && let Some(extracted) = tsz_solver::type_queries::flow::extract_predicate_signature(
-                    self.ctx.types,
-                    callee_type_for_call,
-                )
+                && let Some(extracted) =
+                    call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
             {
                 self.ctx
                     .call_type_predicates
