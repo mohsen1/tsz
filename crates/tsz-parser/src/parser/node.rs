@@ -1234,8 +1234,7 @@ impl NodeArena {
         for sf in &self.source_files {
             size += sf.file_name.capacity();
             size += sf.text.len(); // Arc<str> heap data
-            size += sf.comments.capacity()
-                * size_of::<tsz_common::comments::CommentRange>();
+            size += sf.comments.capacity() * size_of::<tsz_common::comments::CommentRange>();
         }
 
         size

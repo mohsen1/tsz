@@ -601,10 +601,8 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
-                let heritage_names = Self::collect_heritage_clause_names(
-                    arena,
-                    class.heritage_clauses.as_ref(),
-                );
+                let heritage_names =
+                    Self::collect_heritage_clause_names(arena, class.heritage_clauses.as_ref());
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -866,10 +864,8 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
-            let heritage_names = Self::collect_heritage_clause_names(
-                arena,
-                iface.heritage_clauses.as_ref(),
-            );
+            let heritage_names =
+                Self::collect_heritage_clause_names(arena, iface.heritage_clauses.as_ref());
             self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
@@ -1061,7 +1057,7 @@ impl BinderState {
                 is_exported,
                 enum_member_names,
                 is_const,
-                false, // is_abstract
+                false,      // is_abstract
                 Vec::new(), // heritage_names
             );
 

@@ -614,8 +614,7 @@ fn estimated_size_bytes_grows_with_literals() {
 fn estimated_size_bytes_larger_arena_beats_smaller() {
     // Parse a small source
     let small_arena = {
-        let mut state =
-            ParserState::new("test.ts".into(), "let x = 1;".into());
+        let mut state = ParserState::new("test.ts".into(), "let x = 1;".into());
         state.parse_source_file();
         state.into_arena()
     };
@@ -635,8 +634,7 @@ fn estimated_size_bytes_larger_arena_beats_smaller() {
         enum Direction { Up, Down, Left, Right }
     "#;
     let large_arena = {
-        let mut state =
-            ParserState::new("test.ts".into(), large_src.into());
+        let mut state = ParserState::new("test.ts".into(), large_src.into());
         state.parse_source_file();
         state.into_arena()
     };
