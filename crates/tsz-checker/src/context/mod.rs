@@ -1300,7 +1300,7 @@ impl ProjectEnv {
     /// Returns `true` if indices were rebuilt, `false` if cached.
     pub fn build_global_indices_if_changed(&mut self, new_fingerprint: u64) -> bool {
         if self.last_skeleton_fingerprint == Some(new_fingerprint) {
-            // All 4 global indices + skeleton indices are still valid.
+            // All global indices (name-based + arena) + skeleton indices are still valid.
             return false;
         }
         self.build_global_indices();
