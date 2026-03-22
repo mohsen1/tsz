@@ -407,3 +407,6 @@ mod variance_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
+#[cfg(test)]
+#[path = "../tests/architecture_guards.rs"]
+mod architecture_guards;
