@@ -358,6 +358,7 @@ impl BinderState {
                                 name: entry.name.clone(),
                                 file_id,
                                 span_start: entry.span_start,
+                                type_param_count: entry.type_param_count,
                             },
                         );
                     }

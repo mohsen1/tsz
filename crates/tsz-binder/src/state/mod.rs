@@ -464,6 +464,15 @@ pub struct SemanticDefEntry {
     pub file_id: u32,
     /// Start position of the first declaration (for content-addressed stability).
     pub span_start: u32,
+    /// Number of type parameters on the declaration (0 for non-generic).
+    ///
+    /// Captured at bind time from `type_parameters.nodes.len()` for interfaces,
+    /// classes, type aliases, and functions. This allows the checker's DefId
+    /// pre-population to create `DefinitionInfo` with the correct type parameter
+    /// arity, enabling the `TypeFormatter` to display generic types with
+    /// placeholder parameters (e.g., `Map<unknown, unknown>`) before the full
+    /// checker walk fills in the real `TypeParamInfo`.
+    pub type_param_count: u16,
 }
 
 impl BinderState {

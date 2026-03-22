@@ -196,6 +196,7 @@ impl BinderState {
                     crate::state::SemanticDefKind::Namespace,
                     &name,
                     idx,
+                    0,
                 );
 
                 // `declare global { namespace X { ... } }` makes X visible at the global

@@ -3893,3 +3893,85 @@ foo.prop = true;
         binder.expando_properties
     );
 }
+
+#[test]
+fn semantic_defs_captures_type_param_count_for_generics() {
+    let binder = bind_source(
+        "
+class MyClass<T, U> {}
+interface MyInterface<A, B, C> {}
+type MyType<X> = X[];
+function myFunc<T>(): T { return undefined as any; }
+enum MyEnum { A }
+const myVar = 1;
+namespace MyNS {}
+",
+    );
+
+    // Generic class: 2 type params
+    let class_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyClass")
+        .expect("MyClass");
+    assert_eq!(class_entry.type_param_count, 2, "MyClass should have 2 type params");
+
+    // Generic interface: 3 type params
+    let iface_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyInterface")
+        .expect("MyInterface");
+    assert_eq!(iface_entry.type_param_count, 3, "MyInterface should have 3 type params");
+
+    // Generic type alias: 1 type param
+    let alias_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyType")
+        .expect("MyType");
+    assert_eq!(alias_entry.type_param_count, 1, "MyType should have 1 type param");
+
+    // Generic function: 1 type param
+    let func_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "myFunc")
+        .expect("myFunc");
+    assert_eq!(func_entry.type_param_count, 1, "myFunc should have 1 type param");
+
+    // Non-generic declarations: 0 type params
+    let enum_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyEnum")
+        .expect("MyEnum");
+    assert_eq!(enum_entry.type_param_count, 0, "MyEnum should have 0 type params");
+
+    let var_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "myVar")
+        .expect("myVar");
+    assert_eq!(var_entry.type_param_count, 0, "myVar should have 0 type params");
+
+    let ns_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyNS")
+        .expect("MyNS");
+    assert_eq!(ns_entry.type_param_count, 0, "MyNS should have 0 type params");
+}
+
+#[test]
+fn semantic_defs_type_param_count_zero_for_non_generic() {
+    let binder = bind_source("class Plain {} interface Simple {} type Alias = string;");
+
+    for entry in binder.semantic_defs.values() {
+        assert_eq!(
+            entry.type_param_count, 0,
+            "{} should have 0 type params",
+            entry.name
+        );
+    }
+}

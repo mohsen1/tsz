@@ -157,6 +157,7 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             name: "MyClass".to_string(),
             file_id: 1,
             span_start: 0,
+            type_param_count: 0,
         },
     );
 
@@ -190,6 +191,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             name: "Foo".to_string(),
             file_id: 0,
             span_start: 0,
+            type_param_count: 0,
         },
     );
     let mut binder_b = BinderState::new();
@@ -200,6 +202,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             name: "Bar".to_string(),
             file_id: 1,
             span_start: 100,
+            type_param_count: 0,
         },
     );
 
@@ -219,6 +222,49 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
     let def_a = checker.ctx.get_existing_def_id(SymbolId(10)).unwrap();
     let def_b = checker.ctx.get_existing_def_id(SymbolId(20)).unwrap();
     assert_ne!(def_a, def_b, "Different symbols must get distinct DefIds");
+}
+
+#[test]
+fn apply_to_pre_populates_generic_type_param_stubs() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Create a binder with a generic interface (3 type params).
+    let mut other_binder = BinderState::new();
+    let sym_id = SymbolId(99);
+    other_binder.semantic_defs.insert(
+        sym_id,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Triple".to_string(),
+            file_id: 0,
+            span_start: 0,
+            type_param_count: 3,
+        },
+    );
+
+    let mut env = empty_project_env();
+    env.all_binders = Arc::new(vec![Arc::new(other_binder)]);
+    env.apply_to(&mut checker.ctx);
+
+    // The pre-populated DefId should exist and have 3 stub type params.
+    let def_id = checker
+        .ctx
+        .get_existing_def_id(sym_id)
+        .expect("Triple should be pre-populated");
+    let info = checker
+        .ctx
+        .definition_store
+        .get(def_id)
+        .expect("DefId should exist in store");
+    assert_eq!(
+        info.type_params.len(),
+        3,
+        "Generic interface with 3 type params should have 3 stub TypeParamInfo entries"
+    );
 }
 
 #[test]
