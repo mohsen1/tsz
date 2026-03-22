@@ -36,7 +36,7 @@ pub enum RelationCacheProbe {
     MissNotCached,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RelationCacheStats {
     pub subtype_hits: u64,
     pub subtype_misses: u64,
@@ -44,6 +44,77 @@ pub struct RelationCacheStats {
     pub assignability_hits: u64,
     pub assignability_misses: u64,
     pub assignability_entries: usize,
+}
+
+/// Snapshot of all `QueryCache` sizes for observability.
+///
+/// Captures entry counts for every memoization cache and relation hit/miss
+/// counters. Intended for `--extendedDiagnostics` and performance monitoring.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueryCacheStatistics {
+    /// Number of memoized `evaluate_type` results.
+    pub eval_cache_entries: usize,
+    /// Number of memoized application evaluation results.
+    pub application_eval_cache_entries: usize,
+    /// Number of memoized element access results.
+    pub element_access_cache_entries: usize,
+    /// Number of memoized object spread property lists.
+    pub object_spread_cache_entries: usize,
+    /// Number of memoized property access results.
+    pub property_cache_entries: usize,
+    /// Number of memoized variance computations.
+    pub variance_cache_entries: usize,
+    /// Number of memoized canonical type mappings.
+    pub canonical_cache_entries: usize,
+    /// Relation (subtype + assignability) cache statistics.
+    pub relation: RelationCacheStats,
+}
+
+impl std::fmt::Display for QueryCacheStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "QueryCache statistics:")?;
+        writeln!(f, "  eval_cache:             {}", self.eval_cache_entries)?;
+        writeln!(
+            f,
+            "  application_eval_cache: {}",
+            self.application_eval_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  element_access_cache:   {}",
+            self.element_access_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  object_spread_cache:    {}",
+            self.object_spread_cache_entries
+        )?;
+        writeln!(f, "  property_cache:         {}", self.property_cache_entries)?;
+        writeln!(
+            f,
+            "  variance_cache:         {}",
+            self.variance_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  canonical_cache:        {}",
+            self.canonical_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  subtype_cache:          {} entries ({} hits, {} misses)",
+            self.relation.subtype_entries,
+            self.relation.subtype_hits,
+            self.relation.subtype_misses,
+        )?;
+        write!(
+            f,
+            "  assignability_cache:    {} entries ({} hits, {} misses)",
+            self.relation.assignability_entries,
+            self.relation.assignability_hits,
+            self.relation.assignability_misses,
+        )
+    }
 }
 
 /// Query database wrapper with basic caching.
@@ -121,6 +192,22 @@ impl<'a> QueryCache<'a> {
             assignability_hits: self.assignability_cache_hits.get(),
             assignability_misses: self.assignability_cache_misses.get(),
             assignability_entries,
+        }
+    }
+
+    /// Snapshot all cache sizes and hit/miss counters.
+    ///
+    /// Suitable for periodic logging or `--extendedDiagnostics`.
+    pub fn statistics(&self) -> QueryCacheStatistics {
+        QueryCacheStatistics {
+            eval_cache_entries: self.eval_cache.borrow().len(),
+            application_eval_cache_entries: self.application_eval_cache.borrow().len(),
+            element_access_cache_entries: self.element_access_cache.borrow().len(),
+            object_spread_cache_entries: self.object_spread_properties_cache.borrow().len(),
+            property_cache_entries: self.property_cache.borrow().len(),
+            variance_cache_entries: self.variance_cache.borrow().len(),
+            canonical_cache_entries: self.canonical_cache.borrow().len(),
+            relation: self.relation_cache_stats(),
         }
     }
 

@@ -1412,6 +1412,54 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             counters.property_access_request_cache_hits,
             counters.property_access_request_cache_lookups
         );
+        // Type interner statistics
+        if result.interned_types_count > 0 {
+            println!(
+                "Interned types:                {}",
+                result.interned_types_count
+            );
+        }
+
+        // Solver query-cache statistics
+        if let Some(ref qc) = result.query_cache_stats {
+            let sub_total = qc.relation.subtype_hits + qc.relation.subtype_misses;
+            let sub_rate = if sub_total == 0 {
+                0.0
+            } else {
+                qc.relation.subtype_hits as f64 * 100.0 / sub_total as f64
+            };
+            let assign_total = qc.relation.assignability_hits + qc.relation.assignability_misses;
+            let assign_rate = if assign_total == 0 {
+                0.0
+            } else {
+                qc.relation.assignability_hits as f64 * 100.0 / assign_total as f64
+            };
+            println!(
+                "Subtype cache:                 {} entries ({} hits, {} misses, {sub_rate:.1}%)",
+                qc.relation.subtype_entries,
+                qc.relation.subtype_hits,
+                qc.relation.subtype_misses,
+            );
+            println!(
+                "Assignability cache:           {} entries ({} hits, {} misses, {assign_rate:.1}%)",
+                qc.relation.assignability_entries,
+                qc.relation.assignability_hits,
+                qc.relation.assignability_misses,
+            );
+            println!(
+                "Eval cache:                    {}",
+                qc.eval_cache_entries
+            );
+            println!(
+                "Property cache:                {}",
+                qc.property_cache_entries
+            );
+            println!(
+                "Variance cache:                {}",
+                qc.variance_cache_entries
+            );
+        }
+
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }
