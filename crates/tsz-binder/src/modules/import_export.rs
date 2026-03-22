@@ -487,7 +487,7 @@ impl BinderState {
                                             let orig_is_type_only = self
                                                 .symbols
                                                 .get(sym_id)
-                                                .map_or(false, |s| s.is_type_only);
+                                                .is_some_and(|s| s.is_type_only);
                                             if spec_type_only && !orig_is_type_only {
                                                 let clone_id = {
                                                     let src =

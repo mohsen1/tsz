@@ -3407,7 +3407,7 @@ fn test_checker_file_size_ceiling() {
         }
 
         if line_count > 2000 {
-            oversized.push(format!("  {} ({} lines)", rel, line_count));
+            oversized.push(format!("  {rel} ({line_count} lines)"));
         }
     }
 
