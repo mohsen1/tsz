@@ -98,6 +98,8 @@ pub struct CompilationResult {
     pub interned_types_count: usize,
     /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
+    pub def_store_stats: Option<tsz_solver::StoreStatistics>,
 }
 
 const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
@@ -794,6 +796,7 @@ fn compile_inner(
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             query_cache_stats: None,
+            def_store_stats: None,
         });
     }
 
@@ -824,6 +827,7 @@ fn compile_inner(
                     request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
                     interned_types_count: 0,
                     query_cache_stats: None,
+                    def_store_stats: None,
                 });
             }
             return Err(e);
@@ -908,6 +912,7 @@ fn compile_inner(
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             query_cache_stats: None,
+            def_store_stats: None,
         });
     }
 
@@ -976,6 +981,7 @@ fn compile_inner(
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             query_cache_stats: None,
+            def_store_stats: None,
         });
     }
 
@@ -1410,6 +1416,7 @@ fn compile_inner(
         request_cache_counters: collected.request_cache_counters,
         interned_types_count: program.type_interner.len(),
         query_cache_stats: collected.query_cache_stats,
+        def_store_stats: collected.def_store_stats,
     })
 }
 
@@ -1425,6 +1432,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         interned_types_count: 0,
         query_cache_stats: None,
+        def_store_stats: None,
     }
 }
 

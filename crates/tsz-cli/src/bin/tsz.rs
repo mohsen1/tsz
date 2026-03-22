@@ -1455,6 +1455,25 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             );
         }
 
+        // Definition-store statistics
+        if let Some(ref ds) = result.def_store_stats {
+            println!(
+                "Definitions:                   {} total ({} aliases, {} interfaces, {} classes, {} enums)",
+                ds.total_definitions,
+                ds.type_aliases,
+                ds.interfaces,
+                ds.classes,
+                ds.enums,
+            );
+            println!(
+                "Def indices:                   type_to_def={}, symbol_def={}, body_to_alias={}, shape_to_def={}",
+                ds.type_to_def_entries,
+                ds.symbol_def_index_entries,
+                ds.body_to_alias_entries,
+                ds.shape_to_def_entries,
+            );
+        }
+
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }

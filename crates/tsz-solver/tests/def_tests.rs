@@ -949,3 +949,34 @@ fn test_statistics_display_format() {
     assert!(display.contains("files:"));
     assert!(display.contains("next_def_id:"));
 }
+
+#[test]
+fn test_store_statistics_merge() {
+    let interner = create_test_interner();
+
+    // Create two stores with different definitions.
+    let store_a = DefinitionStore::new();
+    let store_b = DefinitionStore::new();
+
+    let name_a = interner.intern_string("Foo");
+    let name_b = interner.intern_string("Bar");
+    let name_c = interner.intern_string("Baz");
+
+    store_a.register(DefinitionInfo::type_alias(name_a, vec![], TypeId::NUMBER));
+    store_a.register(DefinitionInfo::interface(name_b, vec![], vec![]));
+
+    store_b.register(DefinitionInfo::type_alias(name_c, vec![], TypeId::STRING));
+
+    let stats_a = store_a.statistics();
+    let stats_b = store_b.statistics();
+
+    let mut merged = StoreStatistics::default();
+    merged.merge(&stats_a);
+    merged.merge(&stats_b);
+
+    assert_eq!(merged.total_definitions, 3);
+    assert_eq!(merged.type_aliases, 2);
+    assert_eq!(merged.interfaces, 1);
+    // next_def_id should be max of both stores.
+    assert_eq!(merged.next_def_id, stats_a.next_def_id.max(stats_b.next_def_id));
+}
