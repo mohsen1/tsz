@@ -505,10 +505,9 @@ impl<'a> CheckerState<'a> {
         for symbol_ref in type_queries {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
             let _ = self.get_type_of_symbol(sym_id);
-            if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id)
-                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-            {
-                env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
+            if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id) {
+                self.ctx
+                    .insert_symbol_in_envs(tsz_solver::SymbolRef(sym_id.0), value_type);
             }
         }
     }
@@ -995,24 +994,21 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Use try_borrow_mut to avoid panic if type_env is already borrowed.
-        // This can happen during recursive type resolution.
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            if type_params.is_empty() {
-                env.insert(symbol_ref, resolved);
-                if let Some(def_id) = def_id {
-                    env.insert_def(def_id, resolved);
-                }
-            } else {
-                env.insert_with_params(symbol_ref, resolved, type_params.clone());
-                if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params);
-                }
+        // Use dual-env helpers to write to both type_env and type_environment.
+        if type_params.is_empty() {
+            self.ctx.insert_symbol_in_envs(symbol_ref, resolved);
+            if let Some(def_id) = def_id {
+                self.ctx.register_def_in_envs(def_id, resolved);
             }
-            true
         } else {
-            false
+            self.ctx
+                .insert_symbol_with_params_in_envs(symbol_ref, resolved, type_params.clone());
+            if let Some(def_id) = def_id {
+                self.ctx
+                    .register_def_with_params_in_envs(def_id, resolved, type_params);
+            }
         }
+        true
     }
 
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
@@ -1051,18 +1047,16 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_symbol(sym_id)
         };
 
-        if resolved != TypeId::ERROR
-            && resolved != TypeId::ANY
-            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-        {
+        if resolved != TypeId::ERROR && resolved != TypeId::ANY {
             // Insert the type params alongside the def type so that
             // Application evaluation via TypeEnvironment can instantiate
             // generic types correctly, even for DefIds created in different
             // checker contexts (e.g., PromiseLike mapped multiple times).
             if let Some(params) = self.ctx.get_def_type_params(def_id) {
-                env.insert_def_with_params(def_id, resolved, params);
+                self.ctx
+                    .register_def_with_params_in_envs(def_id, resolved, params);
             } else {
-                env.insert_def(def_id, resolved);
+                self.ctx.register_def_in_envs(def_id, resolved);
             }
         }
         Some(resolved)
@@ -1296,11 +1290,11 @@ impl<'a> CheckerState<'a> {
             // registers under the CLASS symbol's DefId, not the original DefId from
             // the Lazy type. Register under the original def_id so Lazy(DefId)
             // resolves correctly during property access.
-            if was_alias_resolved && let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if was_alias_resolved {
                 if is_class {
-                    env.insert_class_instance_type(def_id, resolved);
+                    self.ctx.register_class_instance_in_envs(def_id, resolved);
                 }
-                env.insert_def(def_id, resolved);
+                self.ctx.register_def_in_envs(def_id, resolved);
             }
 
             Some((inserted, resolved))
