@@ -135,6 +135,7 @@ impl<'a> CheckerContext<'a> {
             file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
+            heritage_names: Vec::new(),
         };
 
         let def_id = self.definition_store.register(info);
@@ -737,6 +738,7 @@ impl<'a> CheckerContext<'a> {
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
+                heritage_names: entry.heritage_names.clone(),
             };
 
             let def_id = self.definition_store.register(info);
