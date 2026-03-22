@@ -107,6 +107,7 @@ impl<'a> CheckerState<'a> {
         // rather than synthesizing fresh ones. This ensures the T used in Array's method
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
+        let array_type_params_for_flow = array_type_params.clone();
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
         // method signatures. Without registering these types' bodies in TypeEnvironment,
@@ -328,6 +329,53 @@ impl<'a> CheckerState<'a> {
                         env.register_boxed_def_id(kind, def_id);
                     }
                 }
+            }
+        }
+
+        // Mirror boxed DefId mappings into type_environment (flow-analyzer env)
+        // so both environments stay consistent for narrowing contexts.
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            for &(name, type_opt, kind) in boxed_names {
+                if let Some(ty) = type_opt {
+                    for ctx in &self.ctx.lib_contexts {
+                        if let Some(sym_id) = ctx.binder.file_locals.get(name) {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            env.insert_def(def_id, ty);
+                            env.register_boxed_def_id(kind, def_id);
+                        }
+                    }
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        env.insert_def(def_id, ty);
+                        env.register_boxed_def_id(kind, def_id);
+                    }
+                }
+            }
+
+            // Mirror boxed types and array base type into flow-analyzer env
+            if let Some(ty) = string_type {
+                env.set_boxed_type(IntrinsicKind::String, ty);
+            }
+            if let Some(ty) = number_type {
+                env.set_boxed_type(IntrinsicKind::Number, ty);
+            }
+            if let Some(ty) = boolean_type {
+                env.set_boxed_type(IntrinsicKind::Boolean, ty);
+            }
+            if let Some(ty) = symbol_type {
+                env.set_boxed_type(IntrinsicKind::Symbol, ty);
+            }
+            if let Some(ty) = bigint_type {
+                env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+            if let Some(ty) = object_type {
+                env.set_boxed_type(IntrinsicKind::Object, ty);
+            }
+            if let Some(ty) = function_type {
+                env.set_boxed_type(IntrinsicKind::Function, ty);
+            }
+            if let Some(ty) = array_instance_type {
+                env.set_array_base_type(ty, array_type_params_for_flow.clone());
             }
         }
     }

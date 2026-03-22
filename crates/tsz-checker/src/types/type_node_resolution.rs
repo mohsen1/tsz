@@ -643,12 +643,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Body not registered for this DefId — register it now
                 if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
                     let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    if type_params.is_empty() {
+                        self.ctx.register_def_in_envs(def_id, type_id);
+                    } else {
+                        self.ctx
+                            .register_def_with_params_in_envs(def_id, type_id, type_params);
+                    }
+                    // Register symbol mapping in both envs
                     if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        if type_params.is_empty() {
-                            env.insert_def(def_id, type_id);
-                        } else {
-                            env.insert_def_with_params(def_id, type_id, type_params);
-                        }
+                        env.register_def_symbol_mapping(def_id, sym_id);
+                    }
+                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
                         env.register_def_symbol_mapping(def_id, sym_id);
                     }
                 }
@@ -829,13 +834,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             let body = lowering.lower_type(type_alias.type_node);
 
-            // Register body in type_env so resolve_lazy can find it
+            // Register body in both type environments so resolve_lazy
+            // and flow-analysis narrowing can both find it
+            if params.is_empty() {
+                self.ctx.register_def_in_envs(def_id, body);
+            } else {
+                self.ctx
+                    .register_def_with_params_in_envs(def_id, body, params);
+            }
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                if params.is_empty() {
-                    env.insert_def(def_id, body);
-                } else {
-                    env.insert_def_with_params(def_id, body, params);
-                }
+                env.register_def_symbol_mapping(def_id, sym_id);
+            }
+            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
                 env.register_def_symbol_mapping(def_id, sym_id);
             }
         }
