@@ -77,12 +77,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // For type guards (x is Type) or assertion type guards (asserts x is Type),
                     // emit the "is Type" part. For simple asserts (asserts condition), omit it.
                     let type_node = self.arena.get(type_pred.type_node);
-                    // Check if type_node is a meaningful type (not an empty/error placeholder)
+                    // Check if type_node is a meaningful type (not an empty/error placeholder).
+                    // All keyword types including `never`, `unknown`, `void`, etc. are valid
+                    // type predicate targets (e.g., `asserts x is never`, `asserts x is unknown`).
                     let has_meaningful_type = type_node.is_some_and(|n| {
-                        // Exclude error type and unknown
-                        n.kind != SyntaxKind::UnknownKeyword as u16
-                            && n.kind != SyntaxKind::NeverKeyword as u16 // Never might be valid
-                            && n.kind != 1 // Error type
+                        n.kind != 1 // Exclude error recovery nodes only
                     });
 
                     if has_meaningful_type {

@@ -2171,6 +2171,11 @@ impl<'a> DeclarationEmitter<'a> {
                             // encodes Promise<T>, so the modifier is redundant.
                         }
                         k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
+                        k if k == SyntaxKind::DeclareKeyword as u16 => {
+                            // tsc strips `declare` from class members in .d.ts — it is
+                            // only meaningful at the top-level statement level
+                            // (`declare class`, `declare function`, etc.).
+                        }
                         _ => {}
                     }
                 }
