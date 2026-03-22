@@ -601,11 +601,6 @@ impl BinderState {
                     .type_parameters
                     .as_ref()
                     .map_or(0, |tp| tp.nodes.len() as u16);
-                let heritage_names = class
-                    .heritage_clauses
-                    .as_ref()
-                    .map(|hc| Self::extract_heritage_names(arena, hc))
-                    .unwrap_or_default();
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -616,7 +611,6 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
-                    heritage_names,
                 );
             }
 
@@ -867,22 +861,13 @@ impl BinderState {
                 .type_parameters
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
-            let heritage_names = iface
-                .heritage_clauses
-                .as_ref()
-                .map(|hc| Self::extract_heritage_names(arena, hc))
-                .unwrap_or_default();
-            self.record_semantic_def_ext(
+            self.record_semantic_def(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
                 name,
                 idx,
                 tp_count,
                 is_exported,
-                Vec::new(),
-                false,
-                false,
-                heritage_names,
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -1064,7 +1049,6 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 false, // is_abstract
-                Vec::new(),
             );
 
             // Get existing exports (for namespace merging)
@@ -2406,13 +2390,11 @@ impl BinderState {
             Vec::new(),
             false,
             false,
-            Vec::new(),
         );
     }
 
     /// Extended version of `record_semantic_def` that also captures enriched
-    /// identity data: enum member names, const-enum flag, abstract-class flag,
-    /// and heritage clause references.
+    /// identity data: enum member names, const-enum flag, and abstract-class flag.
     ///
     /// This captures stable identity information at bind time so the checker
     /// can pre-create solver `DefIds` during construction rather than inventing
@@ -2421,7 +2403,6 @@ impl BinderState {
     /// Only records entries for declarations at the source file scope (ScopeId(0))
     /// to avoid noise from nested declarations that are less likely to be
     /// cross-file semantic references.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_semantic_def_ext(
         &mut self,
         sym_id: SymbolId,
@@ -2433,7 +2414,6 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
-        heritage_names: Vec<crate::state::HeritageRef>,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2471,66 +2451,10 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
-                heritage_names,
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
             },
         );
-    }
-
-    /// Extract heritage clause references (extends/implements) from a declaration's
-    /// heritage clauses. Returns a `Vec<HeritageRef>` with one entry per base type.
-    ///
-    /// For simple identifiers (`extends Bar`), captures `"Bar"`. For qualified
-    /// names (`extends NS.Bar`), captures `"NS.Bar"` by walking the property
-    /// access chain. Skips entries where the name cannot be statically determined.
-    fn extract_heritage_names(
-        arena: &NodeArena,
-        heritage_clauses: &NodeList,
-    ) -> Vec<crate::state::HeritageRef> {
-        use tsz_scanner::SyntaxKind;
-        let mut refs = Vec::new();
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause_node) = arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage) = arena.get_heritage(clause_node) else {
-                continue;
-            };
-            let is_extends = heritage.token == SyntaxKind::ExtendsKeyword as u16;
-            for &type_idx in &heritage.types.nodes {
-                let Some(type_node) = arena.get(type_idx) else {
-                    continue;
-                };
-                // Heritage types are ExprWithTypeArgs nodes; get the expression.
-                let expr_idx = if let Some(ewta) = arena.get_expr_type_args(type_node) {
-                    ewta.expression
-                } else {
-                    // Might be a plain identifier or property access directly.
-                    type_idx
-                };
-                if let Some(name) = Self::resolve_heritage_expr_name(arena, expr_idx) {
-                    refs.push(crate::state::HeritageRef { name, is_extends });
-                }
-            }
-        }
-        refs
-    }
-
-    /// Resolve the name from a heritage expression. Handles simple identifiers
-    /// and dotted property access chains (e.g., `NS.Sub.Bar` -> `"NS.Sub.Bar"`).
-    fn resolve_heritage_expr_name(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-        let node = arena.get(idx)?;
-        // Simple identifier: `extends Bar`
-        if let Some(id) = arena.get_identifier(node) {
-            return Some(id.escaped_text.clone());
-        }
-        // Property access: `extends NS.Bar`
-        if let Some(access) = arena.get_access_expr(node) {
-            let left = Self::resolve_heritage_expr_name(arena, access.expression)?;
-            let right_node = arena.get(access.name_or_argument)?;
-            let right = arena.get_identifier(right_node)?;
-            return Some(format!("{}.{}", left, right.escaped_text));
-        }
-        None
     }
 
     fn is_global_scope(&self) -> bool {

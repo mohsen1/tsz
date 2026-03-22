@@ -224,7 +224,8 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -263,7 +264,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
     let mut binder_b = BinderState::new();
@@ -279,7 +281,8 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -324,7 +327,8 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -350,7 +354,6 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn apply_to_pre_populates_enum_member_names() {
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
@@ -378,7 +381,8 @@ fn apply_to_pre_populates_enum_member_names() {
             ],
             is_const: true,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -529,7 +533,8 @@ fn apply_to_pre_populates_def_ids_for_all_declaration_families() {
                 enum_member_names: Vec::new(),
                 is_const: false,
                 is_abstract: false,
-                heritage_names: Vec::new(),
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
             },
         );
     }
@@ -584,7 +589,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -601,7 +607,8 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
             enum_member_names: Vec::new(),
             is_const: false,
             is_abstract: false,
-            heritage_names: Vec::new(),
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
         },
     );
 
@@ -626,5 +633,317 @@ fn pre_populated_def_ids_survive_multi_binder_merge() {
         info.type_params.len(),
         1,
         "type_param_count should be preserved"
+    );
+}
+
+#[test]
+fn cross_batch_heritage_resolves_extends_across_binders() {
+    // When a class in one binder extends a class in another binder,
+    // the cross-batch heritage resolution should link them via DefId.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+
+    // Set up the primary binder with a class that extends "Base"
+    let mut binder = BinderState::new();
+    let child_sym = SymbolId(10);
+    binder.semantic_defs.insert(
+        child_sym,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Child".to_string(),
+            file_id: 0,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            extends_names: vec!["Base".to_string()],
+            implements_names: Vec::new(),
+        },
+    );
+
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    // Pre-populate from the primary binder first (no "Base" yet)
+    let count1 = checker.ctx.pre_populate_def_ids_from_binder();
+    assert_eq!(count1, 1, "Should pre-populate Child");
+
+    // Create a second binder with "Base" and set it as all_binders
+    let mut base_binder = BinderState::new();
+    let base_sym = SymbolId(20);
+    base_binder.semantic_defs.insert(
+        base_sym,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Base".to_string(),
+            file_id: 1,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+        },
+    );
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::new(base_binder)]));
+    let count2 = checker.ctx.pre_populate_def_ids_from_all_binders();
+    assert_eq!(count2, 1, "Should pre-populate Base");
+
+    // Now resolve cross-batch heritage
+    let resolved = checker.ctx.resolve_cross_batch_heritage();
+    assert!(
+        resolved >= 1,
+        "Should resolve at least 1 cross-batch heritage link (Child extends Base)"
+    );
+
+    // Verify the heritage link
+    let child_def = checker
+        .ctx
+        .get_existing_def_id(child_sym)
+        .expect("Child should have DefId");
+    let child_info = checker
+        .ctx
+        .definition_store
+        .get(child_def)
+        .expect("Child should be in store");
+    assert!(
+        child_info.extends.is_some(),
+        "Child should have extends set after cross-batch resolution"
+    );
+
+    let base_def = checker
+        .ctx
+        .get_existing_def_id(base_sym)
+        .expect("Base should have DefId");
+    assert_eq!(
+        child_info.extends,
+        Some(base_def),
+        "Child.extends should point to Base's DefId"
+    );
+}
+
+#[test]
+fn cross_batch_heritage_resolves_implements_across_binders() {
+    // Class implementing an interface from another binder.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+
+    let mut binder = BinderState::new();
+    let cls_sym = SymbolId(30);
+    binder.semantic_defs.insert(
+        cls_sym,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Widget".to_string(),
+            file_id: 0,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: vec!["Renderable".to_string(), "Serializable".to_string()],
+        },
+    );
+
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+    checker.ctx.pre_populate_def_ids_from_binder();
+
+    // Create binder with interfaces
+    let mut iface_binder = BinderState::new();
+    let renderable_sym = SymbolId(40);
+    let serializable_sym = SymbolId(41);
+    iface_binder.semantic_defs.insert(
+        renderable_sym,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Renderable".to_string(),
+            file_id: 1,
+            span_start: 0,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+        },
+    );
+    iface_binder.semantic_defs.insert(
+        serializable_sym,
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Serializable".to_string(),
+            file_id: 1,
+            span_start: 50,
+            type_param_count: 0,
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+        },
+    );
+
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::new(iface_binder)]));
+    checker.ctx.pre_populate_def_ids_from_all_binders();
+
+    let resolved = checker.ctx.resolve_cross_batch_heritage();
+    assert!(resolved >= 1, "Should resolve implements heritage");
+
+    let cls_def = checker.ctx.get_existing_def_id(cls_sym).unwrap();
+    let cls_info = checker.ctx.definition_store.get(cls_def).unwrap();
+    assert_eq!(
+        cls_info.implements.len(),
+        2,
+        "Widget should implement 2 interfaces"
+    );
+}
+
+#[test]
+fn stable_identity_survives_merge_rebind_for_all_families() {
+    // Pre-populate DefIds for all 7 declaration kinds, then verify
+    // the identity survives a simulated merge/rebind by re-populating
+    // from a second batch and checking DefIds are stable.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+
+    let entries = vec![
+        (SemanticDefKind::Class, SymbolId(100), "MyClass"),
+        (SemanticDefKind::Interface, SymbolId(101), "MyInterface"),
+        (SemanticDefKind::TypeAlias, SymbolId(102), "MyType"),
+        (SemanticDefKind::Enum, SymbolId(103), "MyEnum"),
+        (SemanticDefKind::Namespace, SymbolId(104), "MyNS"),
+        (SemanticDefKind::Function, SymbolId(105), "myFunc"),
+        (SemanticDefKind::Variable, SymbolId(106), "myVar"),
+    ];
+
+    let mut binder = BinderState::new();
+    for &(kind, sym_id, name) in &entries {
+        binder.semantic_defs.insert(
+            sym_id,
+            SemanticDefEntry {
+                kind,
+                name: name.to_string(),
+                file_id: 0,
+                span_start: sym_id.0 * 10,
+                type_param_count: 0,
+                is_exported: true,
+                enum_member_names: Vec::new(),
+                is_const: false,
+                is_abstract: false,
+                extends_names: Vec::new(),
+                implements_names: Vec::new(),
+            },
+        );
+    }
+
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+    let count = checker.ctx.pre_populate_def_ids_from_binder();
+    assert_eq!(count, 7, "All 7 families should be pre-populated");
+
+    // Record DefIds from first population
+    let first_def_ids: Vec<_> = entries
+        .iter()
+        .map(|&(_, sym_id, _)| {
+            checker
+                .ctx
+                .get_existing_def_id(sym_id)
+                .expect("Should have DefId")
+        })
+        .collect();
+
+    // Simulate merge/rebind: re-populate from same semantic_defs
+    // (same SymbolIds). DefIds should be stable (same values).
+    let count2 = checker.ctx.pre_populate_def_ids_from_binder();
+    assert_eq!(
+        count2, 0,
+        "Re-population should skip already-registered entries"
+    );
+
+    for (i, &(_, sym_id, _)) in entries.iter().enumerate() {
+        let def_id = checker
+            .ctx
+            .get_existing_def_id(sym_id)
+            .expect("Should still have DefId");
+        assert_eq!(
+            def_id, first_def_ids[i],
+            "DefId should be stable across re-population"
+        );
+    }
+
+    // Verify all DefIds have correct kinds in the DefinitionStore
+    for (i, &(kind, _, _)) in entries.iter().enumerate() {
+        let info = checker
+            .ctx
+            .definition_store
+            .get(first_def_ids[i])
+            .expect("DefId should be in store");
+        let expected_kind = match kind {
+            SemanticDefKind::Class => tsz_solver::def::DefKind::Class,
+            SemanticDefKind::Interface => tsz_solver::def::DefKind::Interface,
+            SemanticDefKind::TypeAlias => tsz_solver::def::DefKind::TypeAlias,
+            SemanticDefKind::Enum => tsz_solver::def::DefKind::Enum,
+            SemanticDefKind::Namespace => tsz_solver::def::DefKind::Namespace,
+            SemanticDefKind::Function => tsz_solver::def::DefKind::Function,
+            SemanticDefKind::Variable => tsz_solver::def::DefKind::Variable,
+        };
+        assert_eq!(
+            info.kind, expected_kind,
+            "DefKind should match SemanticDefKind"
+        );
+    }
+}
+
+#[test]
+fn name_index_enables_cross_batch_lookup() {
+    // Verify the DefinitionStore's name-based index works correctly
+    // for finding definitions by name across pre-population batches.
+    use tsz_solver::def::DefinitionStore;
+
+    let store = DefinitionStore::new();
+    let interner = TypeInterner::new();
+
+    let error_name = interner.intern_string("Error");
+    let info = tsz_solver::def::DefinitionInfo {
+        kind: tsz_solver::def::DefKind::Interface,
+        name: error_name,
+        type_params: Vec::new(),
+        body: None,
+        instance_shape: None,
+        static_shape: None,
+        extends: None,
+        implements: Vec::new(),
+        enum_members: Vec::new(),
+        exports: Vec::new(),
+        file_id: Some(0),
+        span: None,
+        symbol_id: Some(1),
+    };
+
+    let def_id = store.register(info);
+
+    // Should be findable by name
+    let found = store.find_def_by_name(error_name);
+    assert_eq!(found, Some(def_id), "Should find Error by name");
+
+    // Unknown name should return None
+    let unknown = interner.intern_string("Nonexistent");
+    assert_eq!(
+        store.find_def_by_name(unknown),
+        None,
+        "Unknown name should return None"
     );
 }
