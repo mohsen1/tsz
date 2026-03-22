@@ -1470,6 +1470,29 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             );
         }
 
+        // Solver/interner memory breakdown
+        {
+            let interner_kb = result.interner_estimated_bytes as f64 / 1024.0;
+            let qc_kb = result
+                .query_cache_stats
+                .as_ref()
+                .map_or(0.0, |qc| qc.estimated_size_bytes() as f64 / 1024.0);
+            let ds_kb = result
+                .def_store_stats
+                .as_ref()
+                .map_or(0.0, |ds| ds.estimated_size_bytes as f64 / 1024.0);
+            let total_kb = interner_kb + qc_kb + ds_kb;
+            if total_kb > 0.0 {
+                println!(
+                    "Type interner memory:          {interner_kb:.1}K ({} types)",
+                    result.interned_types_count,
+                );
+                println!("Query cache memory:            {qc_kb:.1}K");
+                println!("Definition store memory:       {ds_kb:.1}K");
+                println!("Solver total memory:           {total_kb:.1}K");
+            }
+        }
+
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }
