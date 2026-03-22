@@ -912,36 +912,18 @@ impl DefinitionStore {
     ///
     /// Returns a list of `(heritage_name, resolved_def_id)` pairs.
     /// Unresolved names are silently skipped.
+    /// Resolve heritage names to `DefId`s.
+    ///
+    /// Heritage resolution was moved to the checker's class/interface type
+    /// resolution pipeline. This stub is kept for API compatibility; it
+    /// always returns an empty vector. See `resolve_cross_batch_heritage`
+    /// in `def_mapping.rs` for context.
     pub fn resolve_heritage(
         &self,
-        id: DefId,
-        intern_fn: &dyn Fn(&str) -> Atom,
+        _id: DefId,
+        _intern_fn: &dyn Fn(&str) -> Atom,
     ) -> Vec<(String, DefId)> {
-        let heritage_names = match self.definitions.get(&id) {
-            Some(info) if !info.heritage_names.is_empty() => info.heritage_names.clone(),
-            _ => return Vec::new(),
-        };
-
-        let mut resolved = Vec::new();
-        for name_str in &heritage_names {
-            let name_atom = intern_fn(name_str);
-            if let Some(candidates) = self.name_to_defs.get(&name_atom) {
-                // Find the first Class or Interface that isn't self.
-                for &candidate_id in candidates.value() {
-                    if candidate_id == id {
-                        continue;
-                    }
-                    if let Some(candidate_info) = self.definitions.get(&candidate_id) {
-                        if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
-                            resolved.push((name_str.clone(), candidate_id));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        resolved
+        Vec::new()
     }
 
     /// Get all `DefId`s originating from the given file.

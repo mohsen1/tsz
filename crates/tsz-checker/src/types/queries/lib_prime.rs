@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
             resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-            resolver(node_idx).map(|found| self.ctx.get_lib_def_id(tsz_binder::SymbolId(found)))
+            resolver(node_idx).map(|raw| self.ctx.lib_def_id_for_raw(raw))
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
             self.resolve_entity_name_text_to_def_id_for_lowering(type_name)

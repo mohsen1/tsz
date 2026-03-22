@@ -189,6 +189,17 @@ impl<'a> CheckerContext<'a> {
         self.get_or_create_def_id(sym_id)
     }
 
+    /// Map a raw `SymbolId` value (as `u32`) to a `DefId` via the stable lib path.
+    ///
+    /// This is the canonical one-liner used by lib-lowering resolver closures to
+    /// turn a `resolve_lib_node_in_arenas` result into a `DefId`. Extracting it
+    /// here eliminates the identical `.map(|raw| get_lib_def_id(SymbolId(raw)))`
+    /// closure body that was previously inlined at every call site.
+    #[inline]
+    pub fn lib_def_id_for_raw(&self, raw_sym: u32) -> DefId {
+        self.get_lib_def_id(SymbolId(raw_sym))
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the

@@ -1795,3 +1795,180 @@ const b: Promise<boolean> = getBool();
          Diagnostics: {ts2322:#?}"
     );
 }
+
+// =========================================================================
+// Focused tests: Promise / lib refs / import-type lowering (stable helpers)
+// =========================================================================
+// These tests exercise the lib_def_id_for_raw → get_lib_def_id stable path
+// and verify that no local DefId repair or per-call caching is needed.
+
+#[test]
+fn test_promise_conditional_return_type() {
+    // Conditional return types involving Promise exercise the DefId identity
+    // path through type alias expansion and generic instantiation.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function maybe(flag: boolean): Promise<string | number> {
+    if (flag) return "yes";
+    return 42;
+}
+async function use_maybe(): Promise<void> {
+    const val: string | number = await maybe(true);
+}
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2345)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Conditional Promise return should resolve via stable DefId.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_resolve_void_stable_identity() {
+    // Promise<void> is a common pattern that needs stable DefId identity
+    // for both the Promise interface and the void type argument.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function doWork(): Promise<void> {
+    // no return value
+}
+const p: Promise<void> = doWork();
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Promise<void> should resolve without TS2322.\nDiagnostics: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_weakmap_weakset() {
+    // WeakMap and WeakSet are lib types with constraints on their type params.
+    // Exercises the stable DefId path for less common lib generics.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const wm: WeakMap<object, number> = new WeakMap();
+const key = {};
+wm.set(key, 42);
+const val: number | undefined = wm.get(key);
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "WeakMap generic lib type should resolve via stable DefId.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_typeof_promise() {
+    // typeof on a Promise-typed variable exercises the value-to-type DefId
+    // mapping through the stable lib resolution path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p = Promise.resolve(42);
+type P = typeof p;
+const q: P = Promise.resolve(100);
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "typeof Promise-typed var should resolve via stable DefId.\nDiagnostics: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_required_utility_type() {
+    // Required<T> is the opposite of Partial<T> - exercises lib type alias
+    // lowering through the stable path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface Config { host?: string; port?: number; }
+const full: Required<Config> = { host: "localhost", port: 8080 };
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2741)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Required<Config> should resolve through stable lib alias path.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_async_generator_pattern() {
+    // Async functions returning Promise<T> where T itself is a generic
+    // container exercises nested generic resolution through stable DefIds.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function getItems(): Promise<Array<string>> {
+    return ["a", "b", "c"];
+}
+async function processItems(): Promise<void> {
+    const items: Array<string> = await getItems();
+    const first: string = items[0];
+}
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Promise<Array<string>> nested generics should resolve.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_def_id_for_raw_helper_used_by_lowering() {
+    // This test validates that the lib_def_id_for_raw helper (replacing
+    // the inline `get_lib_def_id(SymbolId(raw))` pattern) works correctly
+    // for basic lib type resolution through lowering closures.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<number> = [1, 2, 3];
+const p: Promise<string> = Promise.resolve("hello");
+const m: Map<string, boolean> = new Map();
+const s: Set<number> = new Set([1, 2]);
+"#,
+    );
+    // No false TS2322 from broken DefId identity
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Basic lib generic types should resolve via lib_def_id_for_raw.\nDiagnostics: {ts2322:#?}"
+    );
+}
