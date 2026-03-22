@@ -89,7 +89,7 @@ pub(crate) fn should_preserve_contextual_application_shape(
     db: &dyn tsz_solver::TypeDatabase,
     ty: TypeId,
 ) -> bool {
-    common::contains_application_in_structure(db, ty)
+    tsz_solver::type_queries::contains_application_in_structure(db, ty)
 }
 
 fn instantiate_function_shape_with_substitution(
@@ -922,7 +922,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn inference_type_is_anyish(&self, ty: TypeId) -> bool {
-        common::is_type_deeply_any(self.ctx.types, ty)
+        tsz_solver::type_queries::is_type_deeply_any(self.ctx.types, ty)
     }
 
     pub(crate) fn sanitize_generic_inference_arg_types(
