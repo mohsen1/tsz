@@ -1542,7 +1542,6 @@ function foo() {}
 }
 
 #[test]
-#[ignore = "pre-existing failure"]
 fn test_duplicate_identifier_var_let_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;

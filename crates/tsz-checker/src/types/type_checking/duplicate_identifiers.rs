@@ -1222,22 +1222,9 @@ impl<'a> CheckerState<'a> {
                     false
                 } else if has_block_scoped_conflict {
                     // Same-file mixed case (var + let/const, no function):
-                    // TS2451 if first declaration is block-scoped, TS2300 otherwise.
-                    declarations
-                        .iter()
-                        .filter(|(decl_idx, _, is_local, _, _)| {
-                            *is_local && conflicts.contains(decl_idx)
-                        })
-                        .min_by_key(|(decl_idx, _, _, _, _)| {
-                            self.ctx
-                                .arena
-                                .get(*decl_idx)
-                                .map_or(u32::MAX, |node| node.pos)
-                        })
-                        .map(|(_, flags, _, _, _)| {
-                            (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
-                        })
-                        .unwrap_or(false)
+                    // tsc always uses TS2451 when a block-scoped variable is
+                    // involved, regardless of declaration order.
+                    true
                 } else if has_remote_declaration {
                     false
                 } else {
