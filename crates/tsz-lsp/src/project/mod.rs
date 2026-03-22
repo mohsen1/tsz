@@ -4,6 +4,7 @@
 //! LSP features can be extended across multiple files.
 
 mod core;
+pub(crate) mod eviction;
 pub(crate) mod features;
 pub(crate) mod imports;
 pub(crate) mod module_specifiers;
@@ -15,6 +16,7 @@ pub(crate) use self::core::{
     ExportMatch, ImportKind, ImportSpecifierTarget, ImportTarget, NamespaceReexportTarget,
 };
 pub use self::core::{
-    FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
-    ProjectResidencyStats, TsConfigSettings,
+    FileRename, FileResidencyInfo, Project, ProjectFile, ProjectPerformance, ProjectRequestKind,
+    ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
+pub use self::eviction::{EvictedFile, EvictionResult};
