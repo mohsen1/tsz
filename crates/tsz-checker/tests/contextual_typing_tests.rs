@@ -825,3 +825,47 @@ let obj = {
         "Expected no TS1117 for getter+setter pair, got diagnostics={diagnostics:?}"
     );
 }
+
+/// Nested object literal gets contextual typing from a deeply nested target type.
+///
+/// This exercises the recursive contextual property type extraction in
+/// object_literal.rs — when the target type has nested object properties,
+/// the checker must propagate contextual types through each level.
+#[test]
+fn test_nested_object_literal_contextual_typing_provides_parameter_types() {
+    let source = r#"
+interface Config {
+    handlers: {
+        onClick: (event: string) => void;
+        onError: (code: number) => void;
+    };
+}
+
+declare function configure(config: Config): void;
+
+configure({
+    handlers: {
+        onClick(event) {
+            event.toLowerCase();
+        },
+        onError(code) {
+            code.toFixed(2);
+        }
+    }
+});
+"#;
+
+    let diagnostics = check_default(source);
+
+    // `event` should be contextually typed as `string` and `code` as `number`
+    // from the nested interface — no TS7006 (implicit any).
+    let ts7006_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7006)
+        .collect();
+
+    assert!(
+        ts7006_errors.is_empty(),
+        "Expected no TS7006 errors with nested contextual typing, got {ts7006_errors:?}"
+    );
+}
