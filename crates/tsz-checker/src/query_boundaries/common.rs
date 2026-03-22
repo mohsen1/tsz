@@ -474,3 +474,17 @@ pub(crate) fn collect_all_types(
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
 }
+
+pub(crate) fn is_type_deeply_any(
+    db: &dyn tsz_solver::TypeDatabase,
+    type_id: tsz_solver::TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_type_deeply_any(db, type_id)
+}
+
+pub(crate) fn contains_application_in_structure(
+    db: &dyn tsz_solver::TypeDatabase,
+    type_id: tsz_solver::TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_application_in_structure(db, type_id)
+}
