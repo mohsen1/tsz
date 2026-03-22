@@ -532,46 +532,38 @@ impl ProjectFile {
         let query_cache = tsz_solver::QueryCache::new(&self.type_interner);
 
         let mut checker = match (self.type_cache.take(), &self.definition_store) {
-            (Some(cache), Some(def_store)) => {
-                CheckerState::with_cache_and_shared_def_store(
-                    self.parser.get_arena(),
-                    &self.binder,
-                    &query_cache,
-                    file_name,
-                    cache,
-                    compiler_options,
-                    Arc::clone(def_store),
-                )
-            }
-            (Some(cache), None) => {
-                CheckerState::with_cache(
-                    self.parser.get_arena(),
-                    &self.binder,
-                    &query_cache,
-                    file_name,
-                    cache,
-                    compiler_options,
-                )
-            }
-            (None, Some(def_store)) => {
-                CheckerState::new_with_shared_def_store(
-                    self.parser.get_arena(),
-                    &self.binder,
-                    &query_cache,
-                    file_name,
-                    compiler_options,
-                    Arc::clone(def_store),
-                )
-            }
-            (None, None) => {
-                CheckerState::new(
-                    self.parser.get_arena(),
-                    &self.binder,
-                    &query_cache,
-                    file_name,
-                    compiler_options,
-                )
-            }
+            (Some(cache), Some(def_store)) => CheckerState::with_cache_and_shared_def_store(
+                self.parser.get_arena(),
+                &self.binder,
+                &query_cache,
+                file_name,
+                cache,
+                compiler_options,
+                Arc::clone(def_store),
+            ),
+            (Some(cache), None) => CheckerState::with_cache(
+                self.parser.get_arena(),
+                &self.binder,
+                &query_cache,
+                file_name,
+                cache,
+                compiler_options,
+            ),
+            (None, Some(def_store)) => CheckerState::new_with_shared_def_store(
+                self.parser.get_arena(),
+                &self.binder,
+                &query_cache,
+                file_name,
+                compiler_options,
+                Arc::clone(def_store),
+            ),
+            (None, None) => CheckerState::new(
+                self.parser.get_arena(),
+                &self.binder,
+                &query_cache,
+                file_name,
+                compiler_options,
+            ),
         };
 
         checker.check_source_file(self.root);
