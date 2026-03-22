@@ -144,6 +144,11 @@ impl FlowNodeArena {
         self.nodes.clear();
     }
 
+    /// Iterate over all flow nodes in the arena.
+    pub fn iter(&self) -> impl Iterator<Item = &FlowNode> {
+        self.nodes.iter()
+    }
+
     /// Find the unreachable flow node in the arena.
     /// This is used when reconstructing a `BinderState` from serialized flow data.
     ///
