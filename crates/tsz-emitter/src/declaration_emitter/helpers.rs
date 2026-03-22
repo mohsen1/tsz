@@ -8347,9 +8347,19 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|lit| format!("\"{}\"", escape_string_for_double_quote(&lit.text))),
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 self.arena.get_literal(expr_node).map(|lit| {
+                    let text = &lit.text;
+                    // Strip numeric separators (tsc strips them in .d.ts output)
+                    if text.contains('_') {
+                        if let Some(v) = lit.value {
+                            if v.fract() == 0.0 && v.abs() < 1e20 {
+                                return format!("{}", v as i64);
+                            }
+                            return v.to_string();
+                        }
+                        return text.replace('_', "");
+                    }
                     // For large numbers (21+ digits), parse as f64 and format
                     // using JS Number.toString() semantics (scientific notation).
-                    let text = &lit.text;
                     let digits = text.chars().filter(|c| c.is_ascii_digit()).count();
                     if digits >= 21
                         && let Ok(n) = text.parse::<f64>()
@@ -8359,16 +8369,28 @@ impl<'a> DeclarationEmitter<'a> {
                     text.clone()
                 })
             }
-            k if k == SyntaxKind::BigIntLiteral as u16 => self
-                .arena
-                .get_literal(expr_node)
-                .map(|lit| lit.text.clone()),
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                self.arena.get_literal(expr_node).map(|lit| {
+                    // Strip numeric separators from bigint literals
+                    if lit.text.contains('_') {
+                        lit.text.replace('_', "")
+                    } else {
+                        lit.text.clone()
+                    }
+                })
+            }
             k if k == SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
             k if k == SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 && self.is_negative_literal(expr_node) =>
             {
-                self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
+                let raw = self.get_source_slice_no_semi(expr_node.pos, expr_node.end)?;
+                // Strip numeric separators from negative literals (e.g., -1_000 → -1000)
+                if raw.contains('_') {
+                    Some(raw.replace('_', ""))
+                } else {
+                    Some(raw)
+                }
             }
             _ => None,
         }
@@ -8405,7 +8427,12 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 && self.is_negative_literal(expr_node) =>
             {
-                self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
+                let raw = self.get_source_slice_no_semi(expr_node.pos, expr_node.end)?;
+                if raw.contains('_') {
+                    Some(raw.replace('_', ""))
+                } else {
+                    Some(raw)
+                }
             }
             _ => self.simple_enum_access_member_text(expr_idx),
         }
