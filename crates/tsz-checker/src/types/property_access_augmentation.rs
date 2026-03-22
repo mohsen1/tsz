@@ -3,6 +3,7 @@
 //!
 //! Extracted from `property_access_type.rs` to keep module size manageable.
 
+use super::queries::lib_resolution::resolve_augmentation_node;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -26,8 +27,7 @@ impl<'a> CheckerState<'a> {
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeArena;
-        use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::is_compiler_managed_type;
+
         let base_type =
             crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
 
@@ -78,22 +78,6 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        let resolve_in_scope = |binder: &tsz_binder::BinderState,
-                                arena_ref: &NodeArena,
-                                node_idx: NodeIndex|
-         -> Option<u32> {
-            let ident_name = arena_ref.get_identifier_text(node_idx)?;
-            let mut scope_id = binder.find_enclosing_scope(arena_ref, node_idx)?;
-            while scope_id != tsz_binder::ScopeId::NONE {
-                let scope = binder.scopes.get(scope_id.0 as usize)?;
-                if let Some(sym_id) = scope.table.get(ident_name) {
-                    return Some(sym_id.0);
-                }
-                scope_id = scope.parent;
-            }
-            None
-        };
-
         let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
             FxHashMap::default();
         for aug in augmentation_decls {
@@ -117,78 +101,21 @@ impl<'a> CheckerState<'a> {
         let mut found_types = Vec::new();
         for (_, (arena, decls)) in cross_file_groups {
             let decl_binder = binder_for_arena(arena.as_ref()).unwrap_or(self.ctx.binder);
+            let global_idx = file_locals_idx.as_deref();
+            let all_binders_slice = all_binders.as_ref().map(|v| v.as_slice());
             let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                    return Some(sym_id.0);
-                }
-                if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
-                    return Some(sym_id);
-                }
-                let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
-                if is_compiler_managed_type(ident_name) {
-                    return None;
-                }
-                if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
-                }
-                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
-                if let Some(idx) = file_locals_idx.as_ref() {
-                    if let Some(entries) = idx.get(ident_name)
-                        && let Some(&(_, sym_id)) = entries.first()
-                    {
-                        return Some(sym_id.0);
-                    }
-                } else if let Some(binders) = all_binders.as_ref() {
-                    for binder in binders.iter() {
-                        if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                            return Some(found_sym.0);
-                        }
-                    }
-                }
-                for ctx in &lib_contexts {
-                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                        return Some(found_sym.0);
-                    }
-                }
-                None
+                resolve_augmentation_node(
+                    decl_binder,
+                    arena.as_ref(),
+                    node_idx,
+                    global_idx,
+                    all_binders_slice,
+                    &lib_contexts,
+                )
             };
             let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                    return Some(
-                        self.ctx
-                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                    );
-                }
-                if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
-                    return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
-                }
-                let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
-                if is_compiler_managed_type(ident_name) {
-                    return None;
-                }
-                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
-                let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
-                    if let Some(idx) = file_locals_idx.as_ref() {
-                        if let Some(entries) = idx.get(ident_name)
-                            && let Some(&(_, sym_id)) = entries.first()
-                        {
-                            return Some(sym_id);
-                        }
-                    } else if let Some(binders) = all_binders.as_ref() {
-                        for binder in binders.iter() {
-                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                return Some(found_sym);
-                            }
-                        }
-                    }
-                    lib_contexts
-                        .iter()
-                        .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
-                })?;
-                Some(
-                    self.ctx
-                        .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                )
+                resolver(node_idx)
+                    .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
             };
 
             let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = decls
@@ -331,8 +258,6 @@ impl<'a> CheckerState<'a> {
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeArena;
-        use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::is_compiler_managed_type;
 
         let augmentation_decls = self.ctx.binder.global_augmentations.get(interface_name)?;
         if augmentation_decls.is_empty() {
@@ -363,22 +288,6 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        let resolve_in_scope = |binder: &tsz_binder::BinderState,
-                                arena_ref: &NodeArena,
-                                node_idx: tsz_parser::parser::NodeIndex|
-         -> Option<u32> {
-            let ident_name = arena_ref.get_identifier_text(node_idx)?;
-            let mut scope_id = binder.find_enclosing_scope(arena_ref, node_idx)?;
-            while scope_id != tsz_binder::ScopeId::NONE {
-                let scope = binder.scopes.get(scope_id.0 as usize)?;
-                if let Some(sym_id) = scope.table.get(ident_name) {
-                    return Some(sym_id.0);
-                }
-                scope_id = scope.parent;
-            }
-            None
-        };
-
         let mut cross_file_groups: FxHashMap<
             usize,
             (Arc<NodeArena>, Vec<tsz_parser::parser::NodeIndex>),
@@ -404,79 +313,22 @@ impl<'a> CheckerState<'a> {
         let mut found_types = Vec::new();
         for (_, (arena, decls)) in cross_file_groups {
             let decl_binder = binder_for_arena(arena.as_ref()).unwrap_or(self.ctx.binder);
+            let global_idx = file_locals_idx.as_deref();
+            let all_binders_slice = all_binders.as_ref().map(|v| v.as_slice());
             let resolver = |node_idx: tsz_parser::parser::NodeIndex| -> Option<u32> {
-                if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                    return Some(sym_id.0);
-                }
-                if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
-                    return Some(sym_id);
-                }
-                let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
-                if is_compiler_managed_type(ident_name) {
-                    return None;
-                }
-                if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
-                }
-                // Use global file_locals index for O(1) lookup instead of O(N) binder scan
-                if let Some(idx) = file_locals_idx.as_ref() {
-                    if let Some(entries) = idx.get(ident_name)
-                        && let Some(&(_, sym_id)) = entries.first()
-                    {
-                        return Some(sym_id.0);
-                    }
-                } else if let Some(binders) = all_binders.as_ref() {
-                    for binder in binders.iter() {
-                        if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                            return Some(found_sym.0);
-                        }
-                    }
-                }
-                for ctx in &lib_contexts {
-                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                        return Some(found_sym.0);
-                    }
-                }
-                None
+                resolve_augmentation_node(
+                    decl_binder,
+                    arena.as_ref(),
+                    node_idx,
+                    global_idx,
+                    all_binders_slice,
+                    &lib_contexts,
+                )
             };
             let def_id_resolver =
                 |node_idx: tsz_parser::parser::NodeIndex| -> Option<tsz_solver::DefId> {
-                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
-                        return Some(
-                            self.ctx
-                                .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                        );
-                    }
-                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
-                        return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
-                    }
-                    let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
-                    if is_compiler_managed_type(ident_name) {
-                        return None;
-                    }
-                    // Use global file_locals index for O(1) lookup instead of O(N) binder scan
-                    let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
-                        if let Some(idx) = file_locals_idx.as_ref() {
-                            if let Some(entries) = idx.get(ident_name)
-                                && let Some(&(_, sym_id)) = entries.first()
-                            {
-                                return Some(sym_id);
-                            }
-                        } else if let Some(binders) = all_binders.as_ref() {
-                            for binder in binders.iter() {
-                                if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                    return Some(found_sym);
-                                }
-                            }
-                        }
-                        lib_contexts
-                            .iter()
-                            .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
-                    })?;
-                    Some(
-                        self.ctx
-                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
-                    )
+                    resolver(node_idx)
+                        .map(|raw_sym| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw_sym)))
                 };
 
             let decls_with_arenas: Vec<(tsz_parser::parser::NodeIndex, &NodeArena)> = decls

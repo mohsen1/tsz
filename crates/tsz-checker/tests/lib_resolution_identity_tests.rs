@@ -1621,3 +1621,177 @@ const code: number = e.code;
         "Error subclass should inherit Error members via stable DefId.\nDiagnostics: {errors:#?}"
     );
 }
+
+// ---- Stable augmentation resolver tests (post-refactor) ----
+
+#[test]
+fn test_augmentation_resolver_uses_get_lib_def_id_for_array_augmentation() {
+    // Verifies that global augmentation property resolution for Array uses
+    // the stable `resolve_augmentation_node` + `get_lib_def_id` path
+    // (refactored from inline resolver closures with get_or_create_def_id).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Array<T> {
+        myFirst(): T | undefined;
+    }
+}
+const arr: number[] = [1, 2, 3];
+const first: number | undefined = arr.myFirst();
+const len: number = arr.length;
+const pushed: number = arr.push(4);
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Array augmentation via stable resolver should preserve both original \
+         and augmented members.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_augmentation_resolver_uses_get_lib_def_id_for_general_interface() {
+    // Verifies that resolve_augmentation_property_by_name uses the stable
+    // resolve_augmentation_node helper for non-Array global augmentations.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Number {
+        toFixed2(digits: number): string;
+    }
+}
+const n: number = 42;
+const s: string = n.toFixed(2);
+const s2: string = n.toFixed2(2);
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Number augmentation via stable resolver should preserve both original \
+         and augmented members.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_via_augmentation_stable_def_id() {
+    // Promise references within augmentation contexts should use get_lib_def_id
+    // (stable identity) rather than get_or_create_def_id (on-demand creation).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib_and_options(
+        r#"
+async function fetchData(): Promise<string> {
+    return "data";
+}
+const result: Promise<string> = fetchData();
+result.then(data => {
+    const s: string = data;
+});
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Promise resolution should use stable DefId path.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_lib_promise_stable_lowering() {
+    // import("...") type expressions for Promise should resolve through the
+    // stable lib lowering path without local DefId repair.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type MyPromise<T> = Promise<T>;
+const p: MyPromise<number> = Promise.resolve(42);
+"#,
+    );
+    // We check there are no false TS2322 errors from broken type identity.
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "import-type Promise alias should resolve without TS2322.\nDiagnostics: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_library_reference_heritage_chain_via_stable_helpers() {
+    // Tests that lib-type heritage chains (e.g., Array extends ReadonlyArray)
+    // resolve correctly through the stable identity helpers, ensuring that
+    // inherited methods like `concat`, `indexOf` etc. are available.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: number[] = [1, 2, 3];
+const idx: number = arr.indexOf(2);
+const sliced: number[] = arr.slice(0, 2);
+const joined: string = arr.join(",");
+const includes: boolean = arr.includes(1);
+"#,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339 || *c == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Array methods from ReadonlyArray heritage should resolve via stable helpers.\n\
+         Diagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_multiple_generic_instantiations_stable() {
+    // Multiple Promise instantiations with different type args should each
+    // resolve through the stable DefId path without identity confusion.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib_and_options(
+        r#"
+async function getString(): Promise<string> { return "a"; }
+async function getNumber(): Promise<number> { return 1; }
+async function getBool(): Promise<boolean> { return true; }
+const s: Promise<string> = getString();
+const n: Promise<number> = getNumber();
+const b: Promise<boolean> = getBool();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Multiple Promise<T> instantiations should all use stable DefId.\n\
+         Diagnostics: {ts2322:#?}"
+    );
+}
