@@ -812,3 +812,81 @@ const scores: Record<string, number> = {
          got {epc_errors:?}"
     );
 }
+
+/// Generic call inference: callback parameters get contextual types from
+/// the generic function's instantiated signature.
+///
+/// This exercises the round-2 contextual typing path in `call_inference.rs`
+/// where a generic function's type parameter is inferred from one argument
+/// and used to provide contextual types for callback parameters.
+#[test]
+fn test_generic_call_inference_callback_contextual_typing() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (item: T) => U): U[];
+const result = map([1, 2, 3], item => item + 1);
+"#;
+
+    let diagnostics = check_default(source);
+
+    // `item` should be contextually typed as `number` from the array argument.
+    // No TS7006 (implicit any) errors expected.
+    let ts7006_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7006)
+        .collect();
+
+    assert!(
+        ts7006_errors.is_empty(),
+        "Expected no TS7006 errors for generic callback parameter, got {ts7006_errors:?}"
+    );
+}
+
+/// Generic call inference with return-context substitution.
+///
+/// When a generic function's return type is used as a contextual type,
+/// the collect_return_context_substitution path in call_inference.rs
+/// matches type parameters between the source and target return types.
+#[test]
+fn test_generic_call_return_context_substitution() {
+    let source = r#"
+declare function identity<T>(value: T): T;
+const x: string = identity("hello");
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+
+    assert!(
+        ts2322_errors.is_empty(),
+        "Expected no TS2322 errors for identity with return context, got {ts2322_errors:?}"
+    );
+}
+
+/// Generic call inference: contextual instantiation of a generic callback
+/// argument against a non-generic target parameter type.
+///
+/// This exercises `instantiate_generic_function_argument_against_target_params`
+/// in call_inference.rs.
+#[test]
+fn test_generic_callback_argument_contextual_instantiation() {
+    let source = r#"
+declare function apply<T>(value: T, fn: (x: T) => T): T;
+const r = apply(42, x => x);
+"#;
+
+    let diagnostics = check_default(source);
+
+    let ts7006_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7006)
+        .collect();
+
+    assert!(
+        ts7006_errors.is_empty(),
+        "Expected no TS7006 errors for contextually instantiated callback, got {ts7006_errors:?}"
+    );
+}
