@@ -354,7 +354,7 @@ fn is_json_file(path: &Path) -> bool {
 fn is_config_json(path: &Path) -> bool {
     path.file_name()
         .and_then(|f| f.to_str())
-        .map_or(false, |name| {
+        .is_some_and(|name| {
             name.eq_ignore_ascii_case("tsconfig.json") || name.eq_ignore_ascii_case("jsconfig.json")
         })
 }

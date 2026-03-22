@@ -1454,7 +1454,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     /// Helper: compute export signature from source via the CLI pipeline
-    /// (parse_and_bind_single → merge → build_export_signature_input → from_input).
+    /// (`parse_and_bind_single` → merge → `build_export_signature_input` → `from_input`).
     fn cli_export_signature(source: &str) -> tsz_lsp::export_signature::ExportSignature {
         let bind_result =
             parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());

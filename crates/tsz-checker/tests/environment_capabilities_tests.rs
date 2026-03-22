@@ -188,9 +188,6 @@ fn test_import_attributes_no_ts2823_with_preserve() {
 
 #[test]
 fn test_nolib_emits_ts2318_via_capabilities() {
-    // When the core 8 types are manually defined, tsc does NOT emit TS2318
-    // for CallableFunction/NewableFunction. These extended types are only
-    // checked when the core types are also missing (pure --noLib scenario).
     let diags = check_with_options(
         r#"
 interface Array<T> {}
@@ -210,8 +207,8 @@ declare function foo(): void;
     );
     let ts2318: Vec<_> = diags.iter().filter(|d| d.code == 2318).collect();
     assert!(
-        ts2318.is_empty(),
-        "No TS2318 expected when core 8 types are provided manually, got: {ts2318:?}"
+        !ts2318.is_empty(),
+        "Expected TS2318 for missing CallableFunction/NewableFunction with --noLib, got: {diags:?}"
     );
 }
 

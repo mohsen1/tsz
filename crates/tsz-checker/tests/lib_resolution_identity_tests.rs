@@ -1856,20 +1856,20 @@ const e: MyError = new MyError("oops");
 
     // After checking, look up the DefId for MyError and verify it has extends set
     let my_error_sym = binder.file_locals.get("MyError");
-    if let Some(my_error_sym) = my_error_sym {
-        if let Some(my_error_def) = checker.ctx.get_existing_def_id(my_error_sym) {
-            let info = checker.ctx.definition_store.get(my_error_def);
+    if let Some(my_error_sym) = my_error_sym
+        && let Some(my_error_def) = checker.ctx.get_existing_def_id(my_error_sym)
+    {
+        let info = checker.ctx.definition_store.get(my_error_def);
+        assert!(
+            info.is_some(),
+            "MyError's DefinitionInfo should exist in the store"
+        );
+        if let Some(info) = info {
+            // The heritage resolution should have set extends to Error's DefId
             assert!(
-                info.is_some(),
-                "MyError's DefinitionInfo should exist in the store"
+                info.extends.is_some(),
+                "MyError should have extends set to Error's DefId after heritage resolution."
             );
-            if let Some(info) = info {
-                // The heritage resolution should have set extends to Error's DefId
-                assert!(
-                    info.extends.is_some(),
-                    "MyError should have extends set to Error's DefId after heritage resolution."
-                );
-            }
         }
     }
 }
@@ -1908,22 +1908,22 @@ const c: Child = new Child();
     // Look up Child's DefId
     let child_sym = binder.file_locals.get("Child");
     let base_sym = binder.file_locals.get("Base");
-    if let (Some(child_sym), Some(base_sym)) = (child_sym, base_sym) {
-        if let (Some(child_def), Some(_base_def)) = (
+    if let (Some(child_sym), Some(base_sym)) = (child_sym, base_sym)
+        && let (Some(child_def), Some(_base_def)) = (
             checker.ctx.get_existing_def_id(child_sym),
             checker.ctx.get_existing_def_id(base_sym),
-        ) {
-            let info = checker.ctx.definition_store.get(child_def);
+        )
+    {
+        let info = checker.ctx.definition_store.get(child_def);
+        assert!(
+            info.is_some(),
+            "Child's DefinitionInfo should exist in the store"
+        );
+        if let Some(info) = info {
             assert!(
-                info.is_some(),
-                "Child's DefinitionInfo should exist in the store"
+                info.extends.is_some(),
+                "Child should have extends set to Base's DefId after heritage resolution."
             );
-            if let Some(info) = info {
-                assert!(
-                    info.extends.is_some(),
-                    "Child should have extends set to Base's DefId after heritage resolution."
-                );
-            }
         }
     }
 }
@@ -1960,20 +1960,20 @@ const d: Dog = { name: "Rex", breed: "Lab" };
 
     // Look up Dog's DefId
     let dog_sym = binder.file_locals.get("Dog");
-    if let Some(dog_sym) = dog_sym {
-        if let Some(dog_def) = checker.ctx.get_existing_def_id(dog_sym) {
-            let info = checker.ctx.definition_store.get(dog_def);
+    if let Some(dog_sym) = dog_sym
+        && let Some(dog_def) = checker.ctx.get_existing_def_id(dog_sym)
+    {
+        let info = checker.ctx.definition_store.get(dog_def);
+        assert!(
+            info.is_some(),
+            "Dog's DefinitionInfo should exist in the store"
+        );
+        if let Some(info) = info {
+            // For interfaces, heritage goes into implements
             assert!(
-                info.is_some(),
-                "Dog's DefinitionInfo should exist in the store"
+                !info.implements.is_empty(),
+                "Dog should have implements set to Animal's DefId after heritage resolution."
             );
-            if let Some(info) = info {
-                // For interfaces, heritage goes into implements
-                assert!(
-                    !info.implements.is_empty(),
-                    "Dog should have implements set to Animal's DefId after heritage resolution."
-                );
-            }
         }
     }
 }
