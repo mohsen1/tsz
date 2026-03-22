@@ -427,30 +427,7 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
 
-// ── Visitor predicate wrappers ──
-
-/// Check if a type contains a specific named type parameter.
-pub(crate) fn contains_type_parameter_named(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    name: tsz_common::Atom,
-) -> bool {
-    tsz_solver::contains_type_parameter_named(db, type_id, name)
-}
-
-/// Check if a type references any of the given named type parameters.
-pub(crate) fn references_any_type_param_named(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    names: &rustc_hash::FxHashSet<tsz_common::Atom>,
-) -> bool {
-    tsz_solver::references_any_type_param_named(db, type_id, names)
-}
-
-/// Check if a type contains a specific type by identity.
-pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, root: TypeId, target: TypeId) -> bool {
-    tsz_solver::contains_type_by_id(db, root, target)
-}
+// ── Generic application queries ──
 
 /// Check if a type is a generic type application.
 pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -471,22 +448,7 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     tsz_solver::widen_literal_type(db, type_id)
 }
 
-/// Widen a type (literal types to base types, etc.).
-pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type(db, type_id)
-}
-
-/// Unwrap a `Readonly<T>` or `NoInfer<T>` wrapper, returning the inner type.
-pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    tsz_solver::unwrap_readonly_or_noinfer(db, type_id)
-}
-
-// ── Contextual/operation wrappers ──
-
-/// Extract the element type from a rest parameter type.
-pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::rest_argument_element_type(db, type_id)
-}
+// ── Freshness wrappers ──
 
 /// Widen "fresh" object literal types to remove freshness tracking.
 pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {

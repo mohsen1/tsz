@@ -177,6 +177,21 @@ pub struct DefinitionInfo {
     /// E.g., `class Foo extends Bar` stores `["Bar"]` so that
     /// `resolve_heritage` can look up the `Bar` DefId by name.
     pub heritage_names: Vec<String>,
+
+    /// Whether this is an abstract class (`abstract class Foo {}`).
+    /// Propagated from binder `SemanticDefEntry.is_abstract` at pre-population
+    /// time so the solver can query it without checker-level repair.
+    pub is_abstract: bool,
+
+    /// Whether this is a const enum (`const enum Direction {}`).
+    /// Propagated from binder `SemanticDefEntry.is_const` at pre-population
+    /// time so the solver can query it without checker-level repair.
+    pub is_const: bool,
+
+    /// Whether this declaration is exported.
+    /// Propagated from binder `SemanticDefEntry.is_exported` at pre-population
+    /// time for use in visibility-aware queries and incremental invalidation.
+    pub is_exported: bool,
 }
 
 /// Enum member value.
@@ -208,6 +223,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -244,6 +262,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -283,6 +304,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -303,6 +327,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -323,6 +350,9 @@ impl DefinitionInfo {
             span: None,
             symbol_id: None,
             heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -952,6 +982,44 @@ impl DefinitionStore {
         }
 
         resolved
+    }
+
+    /// Resolve a heritage name to a `DefId` by looking up the `name_to_defs` index.
+    ///
+    /// Returns the first `DefId` of kind `Class` or `Interface` matching the
+    /// interned name, excluding the `exclude_id` (to prevent self-references).
+    ///
+    /// Used by the checker's `resolve_cross_batch_heritage` to wire up
+    /// `extends`/`implements` on `DefinitionInfo` after all batches are registered.
+    pub fn resolve_heritage_name(&self, name_atom: Atom, exclude_id: DefId) -> Option<DefId> {
+        let candidates = self.name_to_defs.get(&name_atom)?;
+        for &candidate_id in candidates.value() {
+            if candidate_id == exclude_id {
+                continue;
+            }
+            if let Some(candidate_info) = self.definitions.get(&candidate_id) {
+                if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
+                    return Some(candidate_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Set the `extends` field of a definition.
+    pub fn set_extends(&self, id: DefId, parent: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(parent);
+        }
+    }
+
+    /// Add an `implements` entry to a definition (if not already present).
+    pub fn add_implements(&self, id: DefId, iface: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if !entry.implements.contains(&iface) {
+                entry.implements.push(iface);
+            }
+        }
     }
 
     /// Get all `DefId`s originating from the given file.
