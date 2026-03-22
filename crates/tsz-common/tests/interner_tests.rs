@@ -948,3 +948,29 @@ fn test_sharded_interner_mixed_intern_and_intern_owned() {
     let a4 = interner.intern("only_owned");
     assert_eq!(a3, a4);
 }
+
+#[test]
+fn estimated_size_bytes_is_nonzero() {
+    let interner = super::Interner::new();
+    let size = interner.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "estimated_size_bytes should be nonzero for a fresh interner"
+    );
+}
+
+#[test]
+fn estimated_size_bytes_grows_with_content() {
+    let mut interner = super::Interner::new();
+    let before = interner.estimated_size_bytes();
+
+    for i in 0..100 {
+        interner.intern(&format!("string_number_{i}_with_some_length"));
+    }
+    let after = interner.estimated_size_bytes();
+
+    assert!(
+        after > before,
+        "estimated_size_bytes should grow after interning strings: {before} -> {after}"
+    );
+}
