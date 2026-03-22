@@ -115,10 +115,12 @@ impl<'a> CheckerState<'a> {
                             // Cache type parameters for Application expansion.
                             // Use file binder's sym_id (after lib merge) so the def_id
                             // matches what type reference resolution produces.
+                            // Uses get_lib_def_id (stable lib path): prefers
+                            // pre-populated DefIds over on-demand creation.
                             let file_sym_id =
                                 self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            self.ctx
-                                .get_or_create_def_id_with_params(file_sym_id, params.clone());
+                            let def_id = self.ctx.get_lib_def_id(file_sym_id);
+                            self.ctx.insert_def_type_params(def_id, params.clone());
 
                             lib_types.push(ty);
                         } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
@@ -153,8 +155,14 @@ impl<'a> CheckerState<'a> {
                             let alias_lowering = lowering.with_arena(decl_arena);
                             let (ty, params) = alias_lowering.lower_type_alias_declaration(alias);
                             if ty != TypeId::ERROR {
-                                // Cache type parameters for Application expansion
-                                self.ctx.get_or_create_def_id_with_params(sym_id, params);
+                                // Cache type parameters for Application expansion.
+                                // Prefer the main binder's sym_id (after lib merge)
+                                // over the per-lib-context sym_id to avoid SymbolId
+                                // collisions. Uses get_lib_def_id (stable lib path).
+                                let file_sym_id =
+                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                                let def_id = self.ctx.get_lib_def_id(file_sym_id);
+                                self.ctx.insert_def_type_params(def_id, params);
                                 lib_types.push(ty);
                                 break;
                             }
