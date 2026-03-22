@@ -502,7 +502,7 @@ pub struct SemanticDefEntry {
     /// property-access heritage expressions (e.g., `ns.Base`) are stored as
     /// dot-separated strings (e.g., `"ns.Base"`).
     ///
-    /// Used by `FileSkeleton` fingerprinting so that heritage changes (which
+    /// Used by `BinderFileSummary` fingerprinting so that heritage changes (which
     /// affect cross-file type resolution) trigger re-merge.
     pub heritage_names: Vec<String>,
     /// The `SymbolId` of the containing namespace/module, if this declaration
@@ -519,152 +519,112 @@ pub struct SemanticDefEntry {
 }
 
 // =============================================================================
-// FileSkeleton - Lightweight file summary for dependency graphs
+// BinderFileSummary - Lightweight file summary for dependency graphs
+// (test-only: used to verify binder captures exports/heritage correctly;
+//  the production skeleton is `tsz_core::parallel::skeleton::FileSkeleton`)
 // =============================================================================
 
-/// A lightweight summary of a file's type surface, extracted from `BinderState`.
-///
-/// `FileSkeleton` captures just enough information to build a file dependency
-/// graph and detect when a file's public API has changed (for incremental
-/// invalidation). It is intentionally cheap to compute and compare.
-///
-/// ## Contents
-///
-/// | Field | Purpose |
-/// |-------|---------|
-/// | `file_idx` | Stable file identity |
-/// | `import_sources` | Module specifiers this file depends on |
-/// | `exported_defs` | Names + kinds of exported declarations |
-/// | `heritage_deps` | Names referenced in extends/implements clauses |
-/// | `is_external_module` | Whether this file uses ES module syntax |
-///
-/// ## Usage
-///
-/// ```ignore
-/// let skeleton = binder.file_skeleton();
-/// for spec in skeleton.dependency_specifiers() {
-///     // resolve `spec` to another file's skeleton
-/// }
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub struct FileSkeleton {
-    /// Stable file index (same as `BinderState.file_idx`).
-    pub file_idx: u32,
+#[cfg(test)]
+mod file_summary {
+    use super::*;
 
-    /// Module specifiers from static import/export declarations.
-    /// These are the file's direct module dependencies.
-    pub import_sources: Vec<String>,
-
-    /// Exported declarations: `(name, kind)` pairs for each exported
-    /// top-level semantic definition. Only includes definitions that
-    /// have `is_exported == true` in their `SemanticDefEntry`.
-    pub exported_defs: Vec<SkeletonExport>,
-
-    /// Names referenced in heritage clauses across all declarations.
-    /// E.g., `class Foo extends Bar implements Baz` contributes
-    /// `["Bar", "Baz"]`. These represent cross-declaration dependencies
-    /// that must be resolved before type checking.
-    pub heritage_deps: Vec<String>,
-
-    /// Whether this file is an external module (has import/export syntax).
-    pub is_external_module: bool,
-}
-
-/// An exported declaration in a `FileSkeleton`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SkeletonExport {
-    /// Name of the exported declaration.
-    pub name: String,
-    /// Kind of declaration (class, interface, type alias, etc.).
-    pub kind: SemanticDefKind,
-    /// Number of type parameters (for generic signature matching).
-    pub type_param_count: u16,
-}
-
-impl FileSkeleton {
-    /// Returns all module specifiers this file depends on.
+    /// A lightweight summary of a file's type surface, extracted from `BinderState`.
     ///
-    /// This is the union of:
-    /// - Import sources (from `import`/`export ... from` declarations)
-    /// - Heritage clause names that look like module-qualified references
-    ///   (contain `.`, e.g., `ns.Base`)
-    ///
-    /// Simple identifier heritage names (e.g., `Bar`) are not included because
-    /// they are resolved within the same file or through the scope chain, not
-    /// through module resolution.
-    pub fn dependency_specifiers(&self) -> Vec<&str> {
-        let mut specs: Vec<&str> = self.import_sources.iter().map(|s| s.as_str()).collect();
-        // Deduplicate while preserving order
-        let mut seen = FxHashSet::default();
-        specs.retain(|s| seen.insert(*s));
-        specs
+    /// This is a binder-internal type used for testing that semantic definitions,
+    /// exports, and heritage dependencies are captured correctly. For the
+    /// production skeleton used in the parallel pipeline (merge topology,
+    /// incremental invalidation), see `tsz_core::parallel::skeleton::FileSkeleton`.
+    #[derive(Clone, Debug, PartialEq)]
+    pub(crate) struct BinderFileSummary {
+        /// Stable file index (same as `BinderState.file_idx`).
+        pub file_idx: u32,
+        /// Module specifiers from static import/export declarations.
+        pub import_sources: Vec<String>,
+        /// Exported declarations: `(name, kind)` pairs.
+        pub exported_defs: Vec<BinderExportEntry>,
+        /// Names referenced in heritage clauses across all declarations.
+        pub heritage_deps: Vec<String>,
+        /// Whether this file is an external module (has import/export syntax).
+        pub is_external_module: bool,
     }
 
-    /// Returns `true` if the file exports any declarations.
-    pub const fn has_exports(&self) -> bool {
-        !self.exported_defs.is_empty()
+    /// An exported declaration in a `BinderFileSummary`.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub(crate) struct BinderExportEntry {
+        /// Name of the exported declaration.
+        pub name: String,
+        /// Kind of declaration (class, interface, type alias, etc.).
+        pub kind: SemanticDefKind,
+        /// Number of type parameters (for generic signature matching).
+        pub type_param_count: u16,
     }
 
-    /// Returns `true` if the file has any heritage dependencies
-    /// (extends/implements clauses).
-    pub const fn has_heritage_deps(&self) -> bool {
-        !self.heritage_deps.is_empty()
-    }
-
-    /// Compute a simple fingerprint of the file's public API surface.
-    ///
-    /// This can be used for coarse-grained invalidation: if the fingerprint
-    /// hasn't changed, downstream files don't need re-checking. The fingerprint
-    /// covers exported declaration names, kinds, and type parameter counts.
-    pub fn api_fingerprint(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for exp in &self.exported_defs {
-            exp.hash(&mut hasher);
+    impl BinderFileSummary {
+        /// Returns all module specifiers this file depends on (deduplicated).
+        pub fn dependency_specifiers(&self) -> Vec<&str> {
+            let mut specs: Vec<&str> = self.import_sources.iter().map(|s| s.as_str()).collect();
+            let mut seen = FxHashSet::default();
+            specs.retain(|s| seen.insert(*s));
+            specs
         }
-        for dep in &self.heritage_deps {
-            dep.hash(&mut hasher);
+
+        /// Returns `true` if the file exports any declarations.
+        pub const fn has_exports(&self) -> bool {
+            !self.exported_defs.is_empty()
         }
-        hasher.finish()
+
+        /// Returns `true` if the file has any heritage dependencies.
+        pub const fn has_heritage_deps(&self) -> bool {
+            !self.heritage_deps.is_empty()
+        }
+
+        /// Compute a simple fingerprint of the file's public API surface.
+        pub fn api_fingerprint(&self) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for exp in &self.exported_defs {
+                exp.hash(&mut hasher);
+            }
+            for dep in &self.heritage_deps {
+                dep.hash(&mut hasher);
+            }
+            hasher.finish()
+        }
     }
-}
 
-impl BinderState {
-    /// Extract a `FileSkeleton` summarizing this file's type surface.
-    ///
-    /// This is a lightweight operation that reads from already-populated
-    /// binder state fields. Call after `bind_source_file` completes.
-    pub fn file_skeleton(&self) -> FileSkeleton {
-        let mut exported_defs = Vec::new();
-        let mut heritage_deps_set = FxHashSet::default();
+    impl BinderState {
+        /// Extract a `BinderFileSummary` summarizing this file's type surface.
+        ///
+        /// This is a lightweight operation that reads from already-populated
+        /// binder state fields. Call after `bind_source_file` completes.
+        pub(crate) fn file_summary(&self) -> BinderFileSummary {
+            let mut exported_defs = Vec::new();
+            let mut heritage_deps_set = FxHashSet::default();
 
-        for entry in self.semantic_defs.values() {
-            // Collect heritage dependencies from all declarations
-            for h in &entry.heritage_names {
-                heritage_deps_set.insert(h.clone());
+            for entry in self.semantic_defs.values() {
+                for h in &entry.heritage_names {
+                    heritage_deps_set.insert(h.clone());
+                }
+                if entry.is_exported {
+                    exported_defs.push(BinderExportEntry {
+                        name: entry.name.clone(),
+                        kind: entry.kind,
+                        type_param_count: entry.type_param_count,
+                    });
+                }
             }
 
-            // Only include exported declarations in the skeleton
-            if entry.is_exported {
-                exported_defs.push(SkeletonExport {
-                    name: entry.name.clone(),
-                    kind: entry.kind,
-                    type_param_count: entry.type_param_count,
-                });
+            exported_defs.sort_by(|a, b| a.name.cmp(&b.name));
+            let mut heritage_deps: Vec<String> = heritage_deps_set.into_iter().collect();
+            heritage_deps.sort();
+
+            BinderFileSummary {
+                file_idx: self.file_idx,
+                import_sources: self.file_import_sources.clone(),
+                exported_defs,
+                heritage_deps,
+                is_external_module: self.is_external_module,
             }
-        }
-
-        // Sort for deterministic output
-        exported_defs.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut heritage_deps: Vec<String> = heritage_deps_set.into_iter().collect();
-        heritage_deps.sort();
-
-        FileSkeleton {
-            file_idx: self.file_idx,
-            import_sources: self.file_import_sources.clone(),
-            exported_defs,
-            heritage_deps,
-            is_external_module: self.is_external_module,
         }
     }
 }
