@@ -284,30 +284,33 @@ pub(super) fn collect_diagnostics(
                     },
                 );
 
+                // Classify the lookup result into a driver-facing outcome
+                let outcome = result.classify();
+
                 if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
                     tracing::debug!(
-                        "module lookup: file={} spec={} resolved={:?} treat_as_resolved={} error={:?}",
+                        "module lookup: file={} spec={} resolved={:?} is_resolved={} error={:?}",
                         file_path.display(),
                         specifier,
-                        result.resolved_path,
-                        result.treat_as_resolved,
-                        result.error,
+                        outcome.resolved_path,
+                        outcome.is_resolved,
+                        outcome.error,
                     );
                 }
 
                 // Map resolved path to file index
-                if let Some(ref resolved_path) = result.resolved_path {
+                if let Some(ref resolved_path) = outcome.resolved_path {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     let canonical = canonicalize_or_owned(resolved_path);
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                     }
-                } else if result.treat_as_resolved {
+                } else if outcome.is_resolved {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
                 }
 
                 // Record error for the checker
-                if let Some(ref error) = result.error {
+                if let Some(ref error) = outcome.error {
                     resolved_module_errors.insert(
                         (file_idx, specifier.clone()),
                         tsz::checker::context::ResolutionError {

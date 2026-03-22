@@ -183,6 +183,64 @@ impl ModuleLookupResult {
             },
         }
     }
+
+    /// Classify this lookup result into a driver-facing outcome.
+    ///
+    /// Centralizes the post-processing that every driver (CLI, LSP, WASM) must
+    /// perform after calling `ModuleResolver::lookup`:
+    /// - Map resolved paths to file indices (or leave as path for path-based drivers)
+    /// - Determine whether the specifier should be treated as "known" (suppress TS2307)
+    /// - Extract any error for the checker
+    ///
+    /// This replaces scattered driver-side `if let Some(path) = result.resolved_path`
+    /// / `if result.treat_as_resolved` / `if let Some(error) = result.error` logic.
+    pub fn classify(self) -> ModuleLookupOutcome {
+        let is_resolved = self.resolved_path.is_some() || self.treat_as_resolved;
+        ModuleLookupOutcome {
+            resolved_path: self.resolved_path,
+            is_resolved,
+            error: self.error,
+        }
+    }
+}
+
+/// Driver-facing outcome of a module lookup, produced by
+/// [`ModuleLookupResult::classify`].
+///
+/// This is the canonical post-processing of a [`ModuleLookupResult`] that
+/// every driver consumer needs. It answers three questions:
+///
+/// 1. **What file was resolved?** (`resolved_path`)
+/// 2. **Should the specifier be treated as "known"?** (`is_resolved`)
+///    True when the file resolved, or when the module is ambient/untyped-JS.
+/// 3. **Is there an error to report?** (`error`)
+///    Present for TS2307/TS2732/TS2792/TS2834/TS2835/TS5097/TS7016/TS6142.
+///
+/// # Example
+///
+/// ```ignore
+/// let result = resolver.lookup(&request, fallback, ambient_check);
+/// let outcome = result.classify();
+///
+/// if let Some(path) = &outcome.resolved_path {
+///     file_map.insert(specifier, path.clone());
+/// }
+/// if outcome.is_resolved {
+///     known_specifiers.insert(specifier);
+/// }
+/// if let Some(error) = &outcome.error {
+///     errors.insert(specifier, error.clone());
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct ModuleLookupOutcome {
+    /// Resolved file path, if resolution succeeded to a concrete file.
+    pub resolved_path: Option<PathBuf>,
+    /// Whether this specifier should be treated as "known" by the checker.
+    /// True when resolved to a file, or when the module is ambient/untyped-JS.
+    pub is_resolved: bool,
+    /// Error to report to the checker, if any.
+    pub error: Option<ModuleLookupError>,
 }
 
 /// Result of module resolution
@@ -4997,5 +5055,86 @@ mod tests {
         assert!(result.error.is_none());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // ModuleLookupOutcome / classify() tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_classify_resolved_path() {
+        let result = ModuleLookupResult::resolved(PathBuf::from("/tmp/foo.ts"));
+        let outcome = result.classify();
+
+        assert_eq!(outcome.resolved_path, Some(PathBuf::from("/tmp/foo.ts")));
+        assert!(outcome.is_resolved);
+        assert!(outcome.error.is_none());
+    }
+
+    #[test]
+    fn test_classify_failed() {
+        let result = ModuleLookupResult::failed(
+            CANNOT_FIND_MODULE,
+            "Cannot find module 'foo'".to_string(),
+        );
+        let outcome = result.classify();
+
+        assert!(outcome.resolved_path.is_none());
+        assert!(!outcome.is_resolved);
+        let error = outcome.error.expect("should have error");
+        assert_eq!(error.code, CANNOT_FIND_MODULE);
+    }
+
+    #[test]
+    fn test_classify_ambient() {
+        let result = ModuleLookupResult::ambient();
+        let outcome = result.classify();
+
+        assert!(outcome.resolved_path.is_none());
+        assert!(outcome.is_resolved, "ambient modules should be treated as resolved");
+        assert!(outcome.error.is_none());
+    }
+
+    #[test]
+    fn test_classify_resolved_with_error() {
+        let result = ModuleLookupResult::resolved_with_error(
+            MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET,
+            "jsx not set".to_string(),
+        );
+        let outcome = result.classify();
+
+        assert!(outcome.resolved_path.is_none());
+        assert!(outcome.is_resolved, "JsxNotEnabled should suppress TS2307");
+        let error = outcome.error.expect("should have error");
+        assert_eq!(error.code, MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET);
+    }
+
+    #[test]
+    fn test_classify_untyped_js_with_no_implicit_any() {
+        let result = ModuleLookupResult::untyped_js(
+            PathBuf::from("/tmp/foo.js"),
+            true,
+            "foo",
+        );
+        let outcome = result.classify();
+
+        assert!(outcome.resolved_path.is_none());
+        assert!(outcome.is_resolved, "untyped JS should suppress TS2307");
+        let error = outcome.error.expect("should have TS7016 error");
+        assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
+    }
+
+    #[test]
+    fn test_classify_untyped_js_without_no_implicit_any() {
+        let result = ModuleLookupResult::untyped_js(
+            PathBuf::from("/tmp/foo.js"),
+            false,
+            "foo",
+        );
+        let outcome = result.classify();
+
+        assert!(outcome.resolved_path.is_none());
+        assert!(outcome.is_resolved);
+        assert!(outcome.error.is_none(), "without noImplicitAny, no error");
     }
 }
