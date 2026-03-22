@@ -523,6 +523,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
+        #[allow(clippy::type_complexity)]
         let file_results: Vec<(
             Vec<Diagnostic>,
             Option<TypeCache>,
