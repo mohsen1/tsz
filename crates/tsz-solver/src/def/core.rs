@@ -899,49 +899,46 @@ impl DefinitionStore {
         self.name_to_defs.get(&name).map(|r| r.clone())
     }
 
-    /// Resolve heritage names to `DefId`s using an intern function for
-    /// name comparison.
+    /// Resolve a heritage name to a `DefId` by looking up the `name_to_defs` index.
     ///
-    /// For each name in the definition's `heritage_names`, interns the name
-    /// string via `intern_fn`, looks up the `name_to_defs` index, and returns
-    /// the first matching `DefId` of kind `Class` or `Interface`.
+    /// Returns the first `DefId` of kind `Class` or `Interface` matching the
+    /// interned name, excluding the `exclude_id` (to prevent self-references).
     ///
-    /// This enables cross-batch heritage resolution: when a user class says
-    /// `class Foo extends Array`, the lib definition for `Array` can be found
-    /// by name after all batches are registered.
-    ///
-    /// Returns a list of `(heritage_name, resolved_def_id)` pairs.
-    /// Unresolved names are silently skipped.
-    pub fn resolve_heritage(
+    /// Used by the checker's `resolve_cross_batch_heritage` to wire up
+    /// `extends`/`implements` on `DefinitionInfo` after all batches are registered.
+    pub fn resolve_heritage_name(
         &self,
-        id: DefId,
-        intern_fn: &dyn Fn(&str) -> Atom,
-    ) -> Vec<(String, DefId)> {
-        let heritage_names = match self.definitions.get(&id) {
-            Some(info) if !info.heritage_names.is_empty() => info.heritage_names.clone(),
-            _ => return Vec::new(),
-        };
-
-        let mut resolved = Vec::new();
-        for name_str in &heritage_names {
-            let name_atom = intern_fn(name_str);
-            if let Some(candidates) = self.name_to_defs.get(&name_atom) {
-                // Find the first Class or Interface that isn't self.
-                for &candidate_id in candidates.value() {
-                    if candidate_id == id {
-                        continue;
-                    }
-                    if let Some(candidate_info) = self.definitions.get(&candidate_id) {
-                        if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
-                            resolved.push((name_str.clone(), candidate_id));
-                            break;
-                        }
-                    }
+        name_atom: Atom,
+        exclude_id: DefId,
+    ) -> Option<DefId> {
+        let candidates = self.name_to_defs.get(&name_atom)?;
+        for &candidate_id in candidates.value() {
+            if candidate_id == exclude_id {
+                continue;
+            }
+            if let Some(candidate_info) = self.definitions.get(&candidate_id) {
+                if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
+                    return Some(candidate_id);
                 }
             }
         }
+        None
+    }
 
-        resolved
+    /// Set the `extends` field of a definition.
+    pub fn set_extends(&self, id: DefId, parent: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(parent);
+        }
+    }
+
+    /// Add an `implements` entry to a definition (if not already present).
+    pub fn add_implements(&self, id: DefId, iface: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            if !entry.implements.contains(&iface) {
+                entry.implements.push(iface);
+            }
+        }
     }
 
     /// Get all `DefId`s originating from the given file.

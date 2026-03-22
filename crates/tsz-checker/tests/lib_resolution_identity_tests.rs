@@ -1795,3 +1795,185 @@ const b: Promise<boolean> = getBool();
          Diagnostics: {ts2322:#?}"
     );
 }
+
+// ---- Heritage resolution wiring tests ----
+
+#[test]
+fn test_resolve_heritage_wired_during_check_source_file() {
+    // Verify that resolve_cross_batch_heritage runs during check_source_file,
+    // so a user class extending a lib class gets its DefId-level extends set.
+    if !lib_files_available() {
+        return;
+    }
+
+    let lib_files = load_lib_files_for_test();
+    let source = r#"
+class MyError extends Error {
+    constructor(message: string) {
+        super(message);
+    }
+}
+const e: MyError = new MyError("oops");
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let raw_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_binder::state::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    binder.merge_lib_contexts_into_binder(&raw_contexts);
+    let checker_lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+    // Run the full check pipeline (which includes heritage resolution wiring)
+    checker.check_source_file(root);
+
+    // After checking, look up the DefId for MyError and verify it has extends set
+    let my_error_sym = binder.file_locals.get("MyError");
+    if let Some(my_error_sym) = my_error_sym {
+        if let Some(my_error_def) = checker.ctx.get_existing_def_id(my_error_sym) {
+            let info = checker.ctx.definition_store.get(my_error_def);
+            assert!(
+                info.is_some(),
+                "MyError's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                // The heritage resolution should have set extends to Error's DefId
+                assert!(
+                    info.extends.is_some(),
+                    "MyError should have extends set to Error's DefId after heritage resolution."
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_resolve_heritage_user_class_extends_user_class() {
+    // Verify heritage resolution works for user-defined classes within the same file
+    // (same batch, so heritage should resolve during the primary binder pass).
+    let source = r#"
+class Base {
+    x: number = 1;
+}
+class Child extends Base {
+    y: string = "hello";
+}
+const c: Child = new Child();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Look up Child's DefId
+    let child_sym = binder.file_locals.get("Child");
+    let base_sym = binder.file_locals.get("Base");
+    if let (Some(child_sym), Some(base_sym)) = (child_sym, base_sym) {
+        if let (Some(child_def), Some(_base_def)) = (
+            checker.ctx.get_existing_def_id(child_sym),
+            checker.ctx.get_existing_def_id(base_sym),
+        ) {
+            let info = checker.ctx.definition_store.get(child_def);
+            assert!(
+                info.is_some(),
+                "Child's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                assert!(
+                    info.extends.is_some(),
+                    "Child should have extends set to Base's DefId after heritage resolution."
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_resolve_heritage_interface_implements() {
+    // Verify heritage resolution wires implements for interfaces.
+    let source = r#"
+interface Animal {
+    name: string;
+}
+interface Dog extends Animal {
+    breed: string;
+}
+const d: Dog = { name: "Rex", breed: "Lab" };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Look up Dog's DefId
+    let dog_sym = binder.file_locals.get("Dog");
+    if let Some(dog_sym) = dog_sym {
+        if let Some(dog_def) = checker.ctx.get_existing_def_id(dog_sym) {
+            let info = checker.ctx.definition_store.get(dog_def);
+            assert!(
+                info.is_some(),
+                "Dog's DefinitionInfo should exist in the store"
+            );
+            if let Some(info) = info {
+                // For interfaces, heritage goes into implements
+                assert!(
+                    !info.implements.is_empty(),
+                    "Dog should have implements set to Animal's DefId after heritage resolution."
+                );
+            }
+        }
+    }
+}

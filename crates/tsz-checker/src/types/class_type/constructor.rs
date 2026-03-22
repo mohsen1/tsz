@@ -216,7 +216,6 @@ impl<'a> CheckerState<'a> {
                     static_shape: None,
                     extends: None,
                     implements: Vec::new(),
-                    heritage_names: Vec::new(),
                     enum_members: Vec::new(),
                     exports: Vec::new(),
                     file_id: None,

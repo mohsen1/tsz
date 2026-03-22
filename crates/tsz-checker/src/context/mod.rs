@@ -1203,6 +1203,9 @@ impl ProjectEnv {
         // This moves identity creation to apply_to time (deterministic, early)
         // rather than on-demand in get_or_create_def_id's O(N) repair path.
         ctx.pre_populate_def_ids_from_all_binders();
+        // Resolve cross-batch heritage now that all DefIds from all binders
+        // are registered. This wires up extends/implements at the DefId level.
+        ctx.resolve_cross_batch_heritage();
         // Install the shared O(1) symbol→file index. When present, all base entries
         // are accessible via `resolve_symbol_file_index()`, so we skip the O(N) copy
         // into the local overlay. Only fall back to the O(N) copy when no global
