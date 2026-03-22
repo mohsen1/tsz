@@ -427,6 +427,8 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
 
+// ── Generic application queries ──
+
 /// Check if a type is a generic type application.
 pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::query::is_generic_application(db, type_id)
@@ -446,7 +448,7 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     tsz_solver::widen_literal_type(db, type_id)
 }
 
-// ── Contextual/operation wrappers ──
+// ── Freshness wrappers ──
 
 /// Widen "fresh" object literal types to remove freshness tracking.
 pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {

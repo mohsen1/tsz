@@ -222,6 +222,9 @@ impl<'a> CheckerState<'a> {
                     span: None,
                     symbol_id,
                     heritage_names: Vec::new(),
+                    is_abstract: false,
+                    is_const: false,
+                    is_exported: false,
                 });
             self.ctx
                 .definition_store
