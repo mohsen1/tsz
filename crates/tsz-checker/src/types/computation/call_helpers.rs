@@ -4,6 +4,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call::{
     expanded_this_type_from_application, is_type_parameter_type,
 };
+use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -729,8 +730,7 @@ impl<'a> CheckerState<'a> {
     /// This supports constructor-like interfaces that lower construct signatures as properties.
     pub(crate) fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
         let new_atom = self.ctx.types.intern_string("new");
-        tsz_solver::type_queries::find_property_in_object(self.ctx.types, type_id, new_atom)
-            .map(|prop| prop.type_id)
+        common::find_property_in_object(self.ctx.types, type_id, new_atom).map(|prop| prop.type_id)
     }
 
     /// Extract a partial object type from non-sensitive properties of an object literal.
@@ -876,7 +876,7 @@ impl<'a> CheckerState<'a> {
         // around so contextual property lookup can still pierce unresolved generic
         // intersections/applications like `{ as?: C } & Elements[C]`.
         let target_type = self.evaluate_type_with_env(target_param_type);
-        let target_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type);
+        let target_shape = common::object_shape_for_type(self.ctx.types, target_type);
         let target_props: rustc_hash::FxHashMap<tsz_common::Atom, TypeId> = target_shape
             .map(|shape| {
                 shape
@@ -936,8 +936,7 @@ impl<'a> CheckerState<'a> {
                 // inference-contributing properties from nested object literals.
                 // Example: nested({ prop: { produce: (a) => [a], consume: (arg) => arg.join(",") } })
                 // where prop has target type { produce: (arg1: number) => T, consume: (arg2: T) => void }
-                if tsz_solver::type_queries::get_object_shape(self.ctx.types, target_prop_type)
-                    .is_some()
+                if common::object_shape_for_type(self.ctx.types, target_prop_type).is_some()
                     && let Some(nested_partial) = self.extract_inference_contributing_object_type(
                         prop.initializer,
                         target_prop_type,
@@ -950,7 +949,7 @@ impl<'a> CheckerState<'a> {
 
                 // Get the function shape for the target property
                 let target_fn_shape =
-                    tsz_solver::type_queries::get_function_shape(self.ctx.types, target_prop_type);
+                    common::function_shape_for_type(self.ctx.types, target_prop_type);
                 let Some(target_fn) = target_fn_shape else {
                     continue;
                 };
@@ -1006,7 +1005,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let target_fn_shape =
-                    tsz_solver::type_queries::get_function_shape(self.ctx.types, target_prop_type);
+                    common::function_shape_for_type(self.ctx.types, target_prop_type);
                 let Some(target_fn) = target_fn_shape else {
                     continue;
                 };
@@ -1060,8 +1059,7 @@ impl<'a> CheckerState<'a> {
 
         // Get the target tuple type
         let target_type = self.evaluate_type_with_env(target_param_type);
-        let target_elements =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, target_type)?;
+        let target_elements = common::tuple_elements(self.ctx.types, target_type)?;
 
         let mut elements = Vec::new();
         let mut any_contributed = false;
@@ -1086,8 +1084,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Sensitive element: check if contextual function params are concrete
-            let target_fn =
-                tsz_solver::type_queries::get_function_shape(self.ctx.types, target_elem_type)?;
+            let target_fn = common::function_shape_for_type(self.ctx.types, target_elem_type)?;
 
             let params_are_concrete = target_fn
                 .params
@@ -1179,15 +1176,13 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn normalize_contextual_call_param_type(&mut self, param_type: TypeId) -> TypeId {
-        if tsz_solver::type_queries::is_callable_type(self.ctx.types, param_type)
+        if common::is_callable_type(self.ctx.types, param_type)
             || should_preserve_contextual_application_shape(self.ctx.types, param_type)
         {
             return param_type;
         }
 
-        if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, param_type)
-        {
+        if let Some(members) = common::union_members(self.ctx.types, param_type) {
             let evaluated_members: Vec<_> = members
                 .iter()
                 .map(|&member| {

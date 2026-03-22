@@ -11,6 +11,7 @@
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -20,7 +21,7 @@ impl<'a> CheckerState<'a> {
     fn generic_callable_refresh_context_is_useful(&mut self, type_id: TypeId) -> bool {
         if type_id == TypeId::UNKNOWN
             || type_id == TypeId::ERROR
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
+            || common::contains_infer_types(self.ctx.types, type_id)
         {
             return false;
         }
@@ -43,9 +44,7 @@ impl<'a> CheckerState<'a> {
             normalized.params = shape
                 .params
                 .iter()
-                .flat_map(|param| {
-                    tsz_solver::type_queries::unpack_tuple_rest_parameter(self.ctx.types, param)
-                })
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
             normalized
         };
@@ -71,8 +70,8 @@ impl<'a> CheckerState<'a> {
     fn generic_arg_refresh_context_is_concrete(&self, type_id: TypeId) -> bool {
         type_id != TypeId::UNKNOWN
             && type_id != TypeId::ERROR
-            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
-            && !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            && !common::contains_infer_types(self.ctx.types, type_id)
+            && !common::contains_type_parameters(self.ctx.types, type_id)
     }
 
     fn generic_object_literal_refresh_context_is_useful(&mut self, type_id: TypeId) -> bool {
@@ -92,7 +91,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(resolved);
         let resolved = self.evaluate_application_type(resolved);
 
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved).is_some_and(|shape| {
+        common::object_shape_for_type(self.ctx.types, resolved).is_some_and(|shape| {
             !shape.properties.is_empty()
                 || shape.string_index.is_some()
                 || shape.number_index.is_some()
@@ -161,9 +160,9 @@ impl<'a> CheckerState<'a> {
             return cached_arg_type;
         };
 
-        if expected_type.is_some_and(|expected| {
-            tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, expected)
-        }) {
+        if expected_type
+            .is_some_and(|expected| common::contains_infer_types(self.ctx.types, expected))
+        {
             return cached_arg_type;
         }
 
@@ -256,18 +255,17 @@ impl<'a> CheckerState<'a> {
             {
                 let expected_has_unresolved_callable_context =
                     expected_type.is_some_and(|expected| {
-                        (tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected,
-                        ) || tsz_solver::type_queries::contains_infer_types_db(
-                            self.ctx.types,
-                            expected,
-                        )) && call_checker::get_contextual_signature(self.ctx.types, expected)
-                            .or_else(|| {
-                                let evaluated = self.evaluate_type_with_env(expected);
-                                call_checker::get_contextual_signature(self.ctx.types, evaluated)
-                            })
-                            .is_some()
+                        (common::contains_type_parameters(self.ctx.types, expected)
+                            || common::contains_infer_types(self.ctx.types, expected))
+                            && call_checker::get_contextual_signature(self.ctx.types, expected)
+                                .or_else(|| {
+                                    let evaluated = self.evaluate_type_with_env(expected);
+                                    call_checker::get_contextual_signature(
+                                        self.ctx.types,
+                                        evaluated,
+                                    )
+                                })
+                                .is_some()
                     });
                 if (k == syntax_kind_ext::FUNCTION_EXPRESSION
                     || k == syntax_kind_ext::ARROW_FUNCTION)
@@ -380,7 +378,7 @@ impl<'a> CheckerState<'a> {
             return Some("*".to_string());
         }
 
-        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) = common::callable_shape_for_type(self.ctx.types, type_id) {
             let properties = shape
                 .properties
                 .iter()
@@ -415,7 +413,7 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id) {
+        if let Some(shape) = common::object_shape_for_type(self.ctx.types, type_id) {
             let properties = shape
                 .properties
                 .iter()
@@ -471,30 +469,29 @@ impl<'a> CheckerState<'a> {
         arg_count: usize,
         instantiated_params: &[tsz_solver::ParamInfo],
     ) {
-        let applicable: Vec<tsz_solver::CallSignature> = if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
-        {
-            let sig = tsz_solver::CallSignature {
-                type_params: shape.type_params.clone(),
-                params: shape.params.clone(),
-                this_type: shape.this_type,
-                return_type: shape.return_type,
-                type_predicate: shape.type_predicate.clone(),
-                is_method: shape.is_method,
+        let applicable: Vec<tsz_solver::CallSignature> =
+            if let Some(shape) = common::function_shape_for_type(self.ctx.types, callee_type) {
+                let sig = tsz_solver::CallSignature {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: shape.this_type,
+                    return_type: shape.return_type,
+                    type_predicate: shape.type_predicate.clone(),
+                    is_method: shape.is_method,
+                };
+                self.call_signature_accepts_arg_count(&sig, arg_count)
+                    .then_some(vec![sig])
+                    .unwrap_or_default()
+            } else if let Some(signatures) =
+                common::call_signatures_for_type(self.ctx.types, callee_type)
+            {
+                signatures
+                    .into_iter()
+                    .filter(|sig| self.call_signature_accepts_arg_count(sig, arg_count))
+                    .collect()
+            } else {
+                Vec::new()
             };
-            self.call_signature_accepts_arg_count(&sig, arg_count)
-                .then_some(vec![sig])
-                .unwrap_or_default()
-        } else if let Some(signatures) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
-        {
-            signatures
-                .into_iter()
-                .filter(|sig| self.call_signature_accepts_arg_count(sig, arg_count))
-                .collect()
-        } else {
-            Vec::new()
-        };
         if applicable.is_empty() {
             return;
         }
