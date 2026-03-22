@@ -4,7 +4,7 @@
 //! Type-only symbol detection has been extracted to
 //! `queries/type_only.rs`.
 
-use super::lib_resolution::{resolve_name_to_lib_symbol, resolve_scope_chain};
+use super::lib_resolution::resolve_name_to_lib_symbol;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -249,8 +249,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
                         return Some(sym_id.0);
                     }
-                    if let Some(sym_id) = resolve_scope_chain(decl_binder, arena_ref, node_idx) {
-                        return Some(sym_id);
+                    if let Some(sym_id) = decl_binder.resolve_identifier(arena_ref, node_idx) {
+                        return Some(sym_id.0);
                     }
                     let ident_name = arena_ref.get_identifier_text(node_idx)?;
                     if is_compiler_managed_type(ident_name) {
@@ -1602,4 +1602,3 @@ impl<'a> CheckerState<'a> {
         }
     }
 }
-
