@@ -9720,7 +9720,7 @@ fn compile_two_files_get_diagnostics_with_options(
     // Register cross-file symbol targets so the checker looks up SymbolIds
     // from a.ts in the correct binder (file index 0).
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
@@ -10121,7 +10121,7 @@ fn compile_ambient_module_and_consumer_get_diagnostics(
     checker.ctx.set_current_file_idx(1);
 
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     checker.check_source_file(root_b);
@@ -10198,7 +10198,7 @@ new x.F();
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(1);
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
@@ -10294,7 +10294,7 @@ inst[x.S];
     checker.ctx.set_all_binders(all_binders);
     checker.ctx.set_current_file_idx(1);
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
@@ -17072,7 +17072,7 @@ a();
     checker.ctx.set_current_file_idx(1);
 
     for (sym_id, file_idx) in &cross_file_targets {
-        checker.ctx.register_symbol_file_index(*sym_id, *file_idx);
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
     }
 
     checker.check_source_file(root_b);

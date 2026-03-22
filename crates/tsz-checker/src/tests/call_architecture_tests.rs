@@ -868,3 +868,261 @@ class Derived extends Base {
         errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+// === Overload regression tests ===
+// Focused tests exercising overload resolution paths through query boundary APIs.
+
+/// Overload resolution with generic overloads selects the correct signature.
+#[test]
+fn overload_generic_and_non_generic_signatures() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function choose(x: string): string;
+declare function choose<T>(x: T, y: T): T;
+
+const a: string = choose("hello");
+const b: number = choose(1, 2);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for mixed generic/non-generic overloads, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Overload with optional parameters resolves correctly based on arity.
+#[test]
+fn overload_optional_parameter_arity() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function fmt(x: number): string;
+declare function fmt(x: number, precision: number): string;
+
+const a: string = fmt(3);
+const b: string = fmt(3, 2);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for overload with optional parameter arity, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Overload resolution with callback parameters: the callback contextual type
+/// should come from the selected overload signature.
+#[test]
+fn overload_callback_contextual_typing() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function on(event: "click", handler: (x: number) => void): void;
+declare function on(event: "hover", handler: (x: string) => void): void;
+
+on("click", x => { const n: number = x; });
+on("hover", x => { const s: string = x; });
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 7006 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for overload callback contextual typing, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+// === callWithSpread regression tests ===
+// Focused tests exercising spread argument handling in call resolution.
+
+/// Spread of an array into a rest parameter.
+#[test]
+fn call_with_spread_array_into_rest() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function sum(...nums: number[]): number;
+const arr: number[] = [1, 2, 3];
+const result: number = sum(...arr);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2556)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for spread array into rest param, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Spread of a tuple type into fixed parameters.
+#[test]
+fn call_with_spread_tuple_into_fixed_params() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function pair(a: string, b: number): [string, number];
+const args: [string, number] = ["hello", 42];
+const result: [string, number] = pair(...args);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2556 || d.code == 2554)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for spread tuple into fixed params, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Mixed spread and non-spread arguments.
+#[test]
+fn call_with_spread_mixed_args() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function combine(prefix: string, ...nums: number[]): string;
+const nums: number[] = [1, 2, 3];
+const result: string = combine("total", ...nums);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2556 || d.code == 2345)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for mixed spread and non-spread args, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Spread with wrong element type should emit TS2345.
+#[test]
+fn call_with_spread_type_mismatch() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function nums(...args: number[]): void;
+const strs: string[] = ["a", "b"];
+nums(...strs);
+"#,
+    );
+
+    let ts2345: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2556)
+        .collect();
+    assert!(
+        !ts2345.is_empty(),
+        "Expected TS2345/TS2556 for spread with type mismatch, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// === Property call regression tests ===
+// Tests for method invocation through property access expressions.
+
+/// Property call on class instance method.
+#[test]
+fn property_call_class_method() {
+    let diags = check_source_diagnostics(
+        r#"
+class Counter {
+    count: number = 0;
+    increment(by: number): number {
+        this.count += by;
+        return this.count;
+    }
+}
+
+declare const c: Counter;
+const val: number = c.increment(5);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2339 || d.code == 2345)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for class method property call, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Element access call (bracket notation method call).
+#[test]
+fn element_access_call() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Obj {
+    method(x: number): string;
+}
+
+declare const obj: Obj;
+const result: string = obj["method"](42);
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2349)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for element access call, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Optional chain on method with non-null assertion unwrapped correctly.
+#[test]
+fn optional_chain_method_call_with_non_null_assertion() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Api {
+    fetch(url: string): string;
+}
+
+declare const api: Api | null;
+const result: string = api!.fetch("/data");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2349)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no errors for non-null assertion method call, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
