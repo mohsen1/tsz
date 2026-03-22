@@ -707,20 +707,6 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
-            // Pre-populate enum member names from binder-captured data.
-            // Values are Computed stubs; the checker walk fills in real values.
-            let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
-                entry
-                    .enum_member_names
-                    .iter()
-                    .map(|m| {
-                        (
-                            self.types.intern_string(m),
-                            tsz_solver::def::EnumMemberValue::Computed,
-                        )
-                    })
-                    .collect();
-
             let info = DefinitionInfo {
                 kind,
                 name,
@@ -730,7 +716,7 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
-                enum_members,
+                enum_members: Vec::new(),
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
