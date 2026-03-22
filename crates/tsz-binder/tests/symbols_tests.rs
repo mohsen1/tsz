@@ -452,6 +452,32 @@ mod symbol_arena_tests {
         let all_z = arena.find_all_by_name("z");
         assert!(all_z.is_empty());
     }
+
+    #[test]
+    fn deserialization_rebuilds_name_index() {
+        // Build an arena with several symbols.
+        let mut arena = SymbolArena::new();
+        arena.alloc(symbol_flags::FUNCTION, "alpha".to_string());
+        arena.alloc(symbol_flags::CLASS, "beta".to_string());
+        arena.alloc(symbol_flags::INTERFACE, "alpha".to_string()); // duplicate name
+
+        // Verify the original arena works.
+        assert_eq!(arena.find_by_name("alpha"), Some(SymbolId(0)));
+        assert_eq!(arena.find_all_by_name("alpha").len(), 2);
+        assert_eq!(arena.find_by_name("beta"), Some(SymbolId(1)));
+
+        // Serialize and deserialize via JSON (the name_index is #[serde(skip)]).
+        let json = serde_json::to_string(&arena).expect("serialize");
+        let deserialized: SymbolArena = serde_json::from_str(&json).expect("deserialize");
+
+        // The deserialized arena must have the same lookup behavior —
+        // the custom Deserialize impl should have rebuilt the name index.
+        assert_eq!(deserialized.find_by_name("alpha"), Some(SymbolId(0)));
+        assert_eq!(deserialized.find_all_by_name("alpha").len(), 2);
+        assert_eq!(deserialized.find_by_name("beta"), Some(SymbolId(1)));
+        assert_eq!(deserialized.find_by_name("nonexistent"), None);
+        assert!(deserialized.find_all_by_name("nonexistent").is_empty());
+    }
 }
 
 // =============================================================================

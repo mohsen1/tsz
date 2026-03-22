@@ -264,16 +264,45 @@ impl SymbolTable {
 // =============================================================================
 
 /// Arena allocator for symbols.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+///
+/// The `name_index` field is maintained incrementally on `alloc`/`alloc_from`
+/// and rebuilt automatically after deserialization. This ensures O(1) lookups
+/// via `find_by_name`/`find_all_by_name` are always available without falling
+/// back to a linear scan.
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct SymbolArena {
     symbols: Vec<Symbol>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
     base_offset: u32,
     /// Name-to-SymbolId index for O(1) lookups by escaped_name.
-    /// Maintained incrementally on `alloc`/`alloc_from`; skipped during
-    /// serialization and rebuilt lazily if needed.
+    /// Maintained incrementally on `alloc`/`alloc_from`; rebuilt automatically
+    /// after deserialization.
     #[serde(skip)]
     name_index: FxHashMap<String, Vec<SymbolId>>,
+}
+
+impl<'de> Deserialize<'de> for SymbolArena {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        /// Helper struct that mirrors `SymbolArena` without the name index,
+        /// used to leverage the derived `Deserialize` for `symbols` and `base_offset`.
+        #[derive(Deserialize)]
+        struct SymbolArenaRaw {
+            symbols: Vec<Symbol>,
+            base_offset: u32,
+        }
+
+        let raw = SymbolArenaRaw::deserialize(deserializer)?;
+        let mut arena = Self {
+            symbols: raw.symbols,
+            base_offset: raw.base_offset,
+            name_index: FxHashMap::default(),
+        };
+        arena.rebuild_name_index();
+        Ok(arena)
+    }
 }
 
 impl SymbolArena {
@@ -421,35 +450,27 @@ impl SymbolArena {
     /// This is a fallback for when scope chain lookup is not available.
     /// Note: This doesn't handle shadowing correctly - it returns the first match.
     /// For proper scoping, use the `SymbolTable` scope chain instead.
+    ///
+    /// The name index is always populated: incrementally via `alloc`/`alloc_from`,
+    /// and automatically rebuilt after deserialization.
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
-        if let Some(ids) = self.name_index.get(name) {
-            ids.first().copied()
-        } else {
-            // Fallback for arenas where index wasn't built (e.g., deserialized)
-            self.symbols
-                .iter()
-                .find(|s| s.escaped_name == name)
-                .map(|s| s.id)
-        }
+        self.name_index.get(name).and_then(|ids| ids.first().copied())
     }
 
     /// Find all symbols with a given name (O(1) lookup via name index).
     ///
     /// Returns all symbol IDs that have the specified name, which can happen
     /// when declarations shadow each other or when there are conflicts.
+    ///
+    /// The name index is always populated: incrementally via `alloc`/`alloc_from`,
+    /// and automatically rebuilt after deserialization.
     #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
-        if let Some(ids) = self.name_index.get(name) {
-            ids.clone()
-        } else {
-            // Fallback for arenas where index wasn't built (e.g., deserialized)
-            self.symbols
-                .iter()
-                .filter(|s| s.escaped_name == name)
-                .map(|s| s.id)
-                .collect()
-        }
+        self.name_index
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Iterate over all symbols in the arena.
