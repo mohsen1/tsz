@@ -24,6 +24,51 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+/// Map a `SyntaxKind` keyword to a built-in `TypeId`.
+///
+/// Returns `None` for non-keyword syntax kinds, letting callers fall through
+/// to more expensive resolution paths only when necessary.
+pub(crate) fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
+    match kind {
+        k if k == SyntaxKind::StringKeyword as u16 => Some(TypeId::STRING),
+        k if k == SyntaxKind::NumberKeyword as u16 => Some(TypeId::NUMBER),
+        k if k == SyntaxKind::BooleanKeyword as u16 => Some(TypeId::BOOLEAN),
+        k if k == SyntaxKind::VoidKeyword as u16 => Some(TypeId::VOID),
+        k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+        k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+        k if k == SyntaxKind::NeverKeyword as u16 => Some(TypeId::NEVER),
+        k if k == SyntaxKind::UnknownKeyword as u16 => Some(TypeId::UNKNOWN),
+        k if k == SyntaxKind::AnyKeyword as u16 => Some(TypeId::ANY),
+        k if k == SyntaxKind::ObjectKeyword as u16 => Some(TypeId::OBJECT),
+        k if k == SyntaxKind::SymbolKeyword as u16 => Some(TypeId::SYMBOL),
+        k if k == SyntaxKind::BigIntKeyword as u16 => Some(TypeId::BIGINT),
+        _ => None,
+    }
+}
+
+/// Map a keyword type *name* (e.g. `"string"`, `"number"`) to a built-in `TypeId`.
+///
+/// This covers the same set as [`keyword_syntax_to_type_id`] but works from
+/// identifier text, which is needed when resolving type references from lib
+/// arenas where the node kind might be `TypeReference` rather than a raw keyword.
+pub(crate) fn keyword_name_to_type_id(name: &str) -> Option<TypeId> {
+    match name {
+        "string" => Some(TypeId::STRING),
+        "number" => Some(TypeId::NUMBER),
+        "boolean" => Some(TypeId::BOOLEAN),
+        "void" => Some(TypeId::VOID),
+        "undefined" => Some(TypeId::UNDEFINED),
+        "null" => Some(TypeId::NULL),
+        "never" => Some(TypeId::NEVER),
+        "unknown" => Some(TypeId::UNKNOWN),
+        "any" => Some(TypeId::ANY),
+        "object" => Some(TypeId::OBJECT),
+        "symbol" => Some(TypeId::SYMBOL),
+        "bigint" => Some(TypeId::BIGINT),
+        _ => None,
+    }
+}
+
 /// Resolve the fallback arena for a lib symbol.
 ///
 /// This is the canonical lookup order:
@@ -528,20 +573,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Handle keyword types (string, number, boolean, etc.)
-        match node.kind {
-            k if k == SyntaxKind::StringKeyword as u16 => return TypeId::STRING,
-            k if k == SyntaxKind::NumberKeyword as u16 => return TypeId::NUMBER,
-            k if k == SyntaxKind::BooleanKeyword as u16 => return TypeId::BOOLEAN,
-            k if k == SyntaxKind::VoidKeyword as u16 => return TypeId::VOID,
-            k if k == SyntaxKind::UndefinedKeyword as u16 => return TypeId::UNDEFINED,
-            k if k == SyntaxKind::NullKeyword as u16 => return TypeId::NULL,
-            k if k == SyntaxKind::NeverKeyword as u16 => return TypeId::NEVER,
-            k if k == SyntaxKind::UnknownKeyword as u16 => return TypeId::UNKNOWN,
-            k if k == SyntaxKind::AnyKeyword as u16 => return TypeId::ANY,
-            k if k == SyntaxKind::ObjectKeyword as u16 => return TypeId::OBJECT,
-            k if k == SyntaxKind::SymbolKeyword as u16 => return TypeId::SYMBOL,
-            k if k == SyntaxKind::BigIntKeyword as u16 => return TypeId::BIGINT,
-            _ => {}
+        if let Some(ty) = keyword_syntax_to_type_id(node.kind) {
+            return ty;
         }
 
         // Handle type references (e.g., other interface names or type params)
@@ -549,60 +582,38 @@ impl<'a> CheckerState<'a> {
             && let Some(type_ref) = arena.get_type_ref(node)
             && let Some(name) = arena.get_identifier_text(type_ref.type_name)
         {
-            // Check primitive/keyword type names first
-            match name {
-                "string" => return TypeId::STRING,
-                "number" => return TypeId::NUMBER,
-                "boolean" => return TypeId::BOOLEAN,
-                "void" => return TypeId::VOID,
-                "undefined" => return TypeId::UNDEFINED,
-                "null" => return TypeId::NULL,
-                "never" => return TypeId::NEVER,
-                "unknown" => return TypeId::UNKNOWN,
-                "any" => return TypeId::ANY,
-                "object" => return TypeId::OBJECT,
-                "symbol" => return TypeId::SYMBOL,
-                "bigint" => return TypeId::BIGINT,
-                _ => {}
-            }
-            // Check type parameter scope
-            if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
-                return type_id;
-            }
-            // Try to resolve as a lib type
-            if let Some(ty) = self.resolve_lib_type_by_name(name) {
+            if let Some(ty) = keyword_name_to_type_id(name) {
                 return ty;
             }
-            // Preserve unresolved lib heritage args as symbolic type params
-            // (e.g. `T` in `extends IteratorObject<T, ...>`) instead of
-            // collapsing to unknown.
-            let atom = self.ctx.types.intern_string(name);
-            return self.ctx.types.type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: None,
-                default: None,
-                is_const: false,
-            });
+            return self.resolve_heritage_type_arg_by_name(name);
         }
 
         // For identifiers, try resolving the name
         if let Some(name) = arena.get_identifier_text(node_idx) {
-            if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
-                return type_id;
-            }
-            if let Some(ty) = self.resolve_lib_type_by_name(name) {
-                return ty;
-            }
-            let atom = self.ctx.types.intern_string(name);
-            return self.ctx.types.type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: None,
-                default: None,
-                is_const: false,
-            });
+            return self.resolve_heritage_type_arg_by_name(name);
         }
 
         TypeId::UNKNOWN
+    }
+
+    /// Resolve a heritage type argument by name: type-parameter scope → lib type → symbolic param.
+    fn resolve_heritage_type_arg_by_name(&mut self, name: &str) -> TypeId {
+        if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
+            return type_id;
+        }
+        if let Some(ty) = self.resolve_lib_type_by_name(name) {
+            return ty;
+        }
+        // Preserve unresolved lib heritage args as symbolic type params
+        // (e.g. `T` in `extends IteratorObject<T, ...>`) instead of
+        // collapsing to unknown.
+        let atom = self.ctx.types.intern_string(name);
+        self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+            name: atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+        })
     }
 
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
@@ -755,9 +766,9 @@ impl<'a> CheckerState<'a> {
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Record type parameters for generic interfaces.
-                            let file_sym_id =
-                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = self.ctx.get_lib_def_id(file_sym_id);
+                            // `sym_id` was already resolved via file_locals (preferred)
+                            // or get_global_type_with_libs; no re-lookup needed.
+                            let def_id = self.ctx.get_lib_def_id(sym_id);
                             if !params.is_empty() {
                                 // Cache type params for Application expansion
                                 self.ctx.insert_def_type_params(def_id, params.clone());
