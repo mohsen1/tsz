@@ -738,11 +738,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let delegate_file_idx = self.ctx.all_arenas.as_ref().and_then(|arenas| {
-            arenas
-                .iter()
-                .position(|arena| std::ptr::eq(arena.as_ref(), interface_arena))
-        });
+        // O(1) via global_arena_index (replaces O(N) position scan)
+        let delegate_file_idx = self.ctx.get_file_idx_for_arena(interface_arena);
         let delegate_binder = delegate_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .unwrap_or(self.ctx.binder);
