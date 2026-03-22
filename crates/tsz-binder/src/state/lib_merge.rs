@@ -355,6 +355,10 @@ impl BinderState {
                         let remapped_parent = entry.parent_namespace.and_then(|old_parent| {
                             lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
                         });
+                        // Remap parent_enum through the lib symbol remap.
+                        let remapped_parent_enum = entry.parent_enum.and_then(|old_parent| {
+                            lib_symbol_remap.get(&(lib_binder_ptr, old_parent)).copied()
+                        });
                         self.semantic_defs.insert(
                             new_id,
                             super::SemanticDefEntry {
@@ -369,6 +373,7 @@ impl BinderState {
                                 is_abstract: entry.is_abstract,
                                 heritage_names: entry.heritage_names.clone(),
                                 parent_namespace: remapped_parent,
+                                parent_enum: remapped_parent_enum,
                             },
                         );
                     }

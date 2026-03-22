@@ -2896,10 +2896,11 @@ fn semantic_defs_survive_single_file_bind() {
         "test.ts".to_string(),
         "class A {} interface B {} type C = number; enum D { X } namespace E {}".to_string(),
     );
+    // 5 top-level declarations (A, B, C, D, E) + 1 enum member (X)
     assert_eq!(
         result.semantic_defs.len(),
-        5,
-        "expected 5 semantic defs, got {}",
+        6,
+        "expected 6 semantic defs (5 top-level + 1 enum member), got {}",
         result.semantic_defs.len()
     );
 }
@@ -2982,6 +2983,162 @@ fn semantic_defs_stable_across_repeated_merge() {
     assert_eq!(
         defs1, defs2,
         "semantic defs should be identical across rebuilds"
+    );
+}
+
+// =============================================================================
+// Enum Member Stable Identity Through Merge Pipeline
+// =============================================================================
+
+#[test]
+fn enum_member_defs_survive_merge() {
+    let files = vec![(
+        "colors.ts".to_string(),
+        "export enum Color { Red, Green, Blue }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // The enum container should be in semantic_defs
+    let has_enum = program
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Color" && e.kind == tsz_binder::SemanticDefKind::Enum);
+    assert!(has_enum, "Color enum should be in merged semantic_defs");
+
+    // Individual enum members should also be in semantic_defs
+    let member_names: std::collections::HashSet<_> = program
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == tsz_binder::SemanticDefKind::EnumMember)
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(member_names.contains("Red"), "Red should be in merged defs");
+    assert!(
+        member_names.contains("Green"),
+        "Green should be in merged defs"
+    );
+    assert!(
+        member_names.contains("Blue"),
+        "Blue should be in merged defs"
+    );
+}
+
+#[test]
+fn enum_member_defs_have_correct_parent_after_merge() {
+    let files = vec![(
+        "dir.ts".to_string(),
+        "export enum Direction { Up, Down }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    // Find the enum's global SymbolId
+    let enum_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Direction" && e.kind == tsz_binder::SemanticDefKind::Enum)
+        .map(|(&sym_id, _)| sym_id)
+        .expect("expected Direction in merged defs");
+
+    // Each member's parent_enum should point to the remapped enum symbol
+    for entry in program.semantic_defs.values() {
+        if entry.kind == tsz_binder::SemanticDefKind::EnumMember {
+            assert_eq!(
+                entry.parent_enum,
+                Some(enum_sym),
+                "member '{}' should have Direction as parent_enum after merge",
+                entry.name
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_member_defs_survive_multi_file_merge() {
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "export enum Status { Active, Inactive }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export enum Priority { High, Low }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let member_names: std::collections::HashSet<_> = program
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == tsz_binder::SemanticDefKind::EnumMember)
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(
+        member_names.len(),
+        4,
+        "should have 4 enum members from 2 files"
+    );
+    assert!(member_names.contains("Active"));
+    assert!(member_names.contains("Inactive"));
+    assert!(member_names.contains("High"));
+    assert!(member_names.contains("Low"));
+}
+
+#[test]
+fn enum_member_defs_get_pre_populated_def_ids() {
+    let files = vec![(
+        "test.ts".to_string(),
+        "enum Color { Red, Green, Blue }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let store = &program.definition_store;
+
+    // Each enum member's SymbolId should have a DefId in the DefinitionStore
+    for (&sym_id, entry) in &program.semantic_defs {
+        if entry.kind == tsz_binder::SemanticDefKind::EnumMember {
+            let def_id = store.find_def_by_symbol(sym_id.0);
+            assert!(
+                def_id.is_some(),
+                "enum member '{}' (SymbolId {}) should have a pre-populated DefId",
+                entry.name,
+                sym_id.0
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_member_def_ids_stable_across_repeated_merge() {
+    let files = vec![(
+        "test.ts".to_string(),
+        "enum Flags { Read = 1, Write = 2, Execute = 4 }".to_string(),
+    )];
+
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    // Same number of enum members in both merges
+    let members1: std::collections::BTreeSet<_> = program1
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == tsz_binder::SemanticDefKind::EnumMember)
+        .map(|e| (&e.name, e.span_start))
+        .collect();
+    let members2: std::collections::BTreeSet<_> = program2
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == tsz_binder::SemanticDefKind::EnumMember)
+        .map(|e| (&e.name, e.span_start))
+        .collect();
+    assert_eq!(
+        members1, members2,
+        "enum member identity should be stable across repeated merges"
     );
 }
 
