@@ -1012,16 +1012,15 @@ impl<'a> CheckerState<'a> {
                 if !seen.insert(binder_idx) {
                     continue;
                 }
-                if let Some(binder) = all_binders.get(binder_idx) {
-                    if binder
+                if let Some(binder) = all_binders.get(binder_idx)
+                    && (binder
                         .resolve_import_if_needed_public(module_name, import_name)
                         .is_some()
                         || binder
                             .resolve_import_if_needed_public(normalized, import_name)
-                            .is_some()
-                    {
-                        return true;
-                    }
+                            .is_some())
+                {
+                    return true;
                 }
             }
             return false;
