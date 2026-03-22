@@ -1252,7 +1252,12 @@ fn compile_inner(
             });
         } else {
             // No reliable file-level errors — TS5107 takes priority (fatal).
-            diagnostics.clear();
+            // Preserve global-level TS2318 ("Cannot find global type") because
+            // tsc emits these alongside deprecation warnings. These are
+            // identified by empty file name and position 0 (global diagnostics),
+            // as opposed to file-level TS2318 from type checking which tsc
+            // suppresses along with other file-level errors.
+            diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
         }
     }
     diagnostics.extend(config_diagnostics);
