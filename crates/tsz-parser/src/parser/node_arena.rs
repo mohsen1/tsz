@@ -2282,7 +2282,7 @@ mod tests {
 
         // Intern many strings
         for i in 0..200 {
-            arena.interner.intern(&format!("identifier_{i}"));
+            let _ = arena.interner.intern(&format!("identifier_{i}"));
         }
         let after = arena.estimated_size_bytes();
 

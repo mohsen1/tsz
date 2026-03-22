@@ -111,13 +111,13 @@ impl BinderState {
             return Some(id.escaped_text.clone());
         }
         // Property access expression: expression.name (e.g., ns.Base)
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = arena.get_access_expr(node) {
-                let lhs = Self::extract_heritage_expression_name(arena, access.expression)?;
-                let rhs_node = arena.get(access.name_or_argument)?;
-                let rhs_id = arena.get_identifier(rhs_node)?;
-                return Some(format!("{}.{}", lhs, rhs_id.escaped_text));
-            }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = arena.get_access_expr(node)
+        {
+            let lhs = Self::extract_heritage_expression_name(arena, access.expression)?;
+            let rhs_node = arena.get(access.name_or_argument)?;
+            let rhs_id = arena.get_identifier(rhs_node)?;
+            return Some(format!("{}.{}", lhs, rhs_id.escaped_text));
         }
         None
     }

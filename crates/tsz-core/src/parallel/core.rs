@@ -1291,7 +1291,7 @@ pub struct BoundFile {
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     pub file_features: crate::binder::FileFeatures,
     /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
-    /// Contains only entries that originated in this file (post-remap SymbolIds).
+    /// Contains only entries that originated in this file (post-remap `SymbolIds`).
     /// This enables file-scoped identity without cloning the entire global map.
     pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
 }
@@ -1384,7 +1384,7 @@ impl BoundFile {
             * (std::mem::size_of::<SymbolId>()
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8);
-        for (_, entry) in &self.semantic_defs {
+        for entry in self.semantic_defs.values() {
             size += entry.name.capacity();
             size += entry.enum_member_names.capacity() * 24; // String overhead
             for m in &entry.enum_member_names {

@@ -965,7 +965,7 @@ fn estimated_size_bytes_grows_with_content() {
     let before = interner.estimated_size_bytes();
 
     for i in 0..100 {
-        interner.intern(&format!("string_number_{i}_with_some_length"));
+        let _ = interner.intern(&format!("string_number_{i}_with_some_length"));
     }
     let after = interner.estimated_size_bytes();
 
