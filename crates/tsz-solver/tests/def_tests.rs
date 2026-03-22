@@ -193,6 +193,7 @@ fn test_definition_store_concurrent() {
                         is_abstract: false,
                         is_const: false,
                         is_exported: false,
+                        heritage_names: Vec::new(),
                     };
                     let id = store.register(info);
                     assert!(store.contains(id));
@@ -398,6 +399,7 @@ fn test_find_type_alias_by_body_via_set_body() {
         is_abstract: false,
         is_const: false,
         is_exported: false,
+        heritage_names: Vec::new(),
     };
     let def_id = store.register(info);
 
@@ -565,6 +567,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
         is_abstract: false,
         is_const: false,
         is_exported: false,
+        heritage_names: Vec::new(),
     };
     let def_id = store.register(info);
 
