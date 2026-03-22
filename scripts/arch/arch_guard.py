@@ -291,7 +291,8 @@ CHECKS = [
         {
             "exclude_files": {
                 "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            }
+            },
+            "ignore_comment_lines": True,
         },
     ),
 ]

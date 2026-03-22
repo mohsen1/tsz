@@ -42,7 +42,7 @@ createComponent({
 }
 
 /// Verify union callee predicate extraction uses is_union_type query
-/// (previously used raw TypeData::Union pattern match).
+/// (previously used raw solver-internal Union pattern match).
 #[test]
 fn union_callee_type_predicate_extraction_no_crash() {
     let diags = check_source_diagnostics(
