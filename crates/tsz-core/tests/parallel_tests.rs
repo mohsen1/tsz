@@ -4859,8 +4859,7 @@ fn bound_file_semantic_defs_stable_across_rebuild() {
             .collect();
         assert_eq!(
             defs1, defs2,
-            "per-file semantic_defs should be identical across rebuilds for file {}",
-            idx
+            "per-file semantic_defs should be identical across rebuilds for file {idx}"
         );
     }
 }

@@ -959,11 +959,11 @@ impl DefinitionStore {
                     if candidate_id == id {
                         continue;
                     }
-                    if let Some(candidate_info) = self.definitions.get(&candidate_id) {
-                        if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
-                            resolved.push((name_str.clone(), candidate_id));
-                            break;
-                        }
+                    if let Some(candidate_info) = self.definitions.get(&candidate_id)
+                        && matches!(candidate_info.kind, DefKind::Class | DefKind::Interface)
+                    {
+                        resolved.push((name_str.clone(), candidate_id));
+                        break;
                     }
                 }
             }

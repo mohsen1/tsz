@@ -32,24 +32,18 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_missing_global_types(&mut self) {
         // Core global types that TypeScript requires.
         // These are fundamental types that should always exist unless explicitly disabled.
-        // The fundamental 8 types that tsc always checks for TS2318.
-        const CORE_8_TYPES: &[&str] = &[
+        const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
+            "CallableFunction",
             "Function",
             "IArguments",
+            "NewableFunction",
             "Number",
             "Object",
             "RegExp",
             "String",
         ];
-
-        // CallableFunction and NewableFunction are checked only when the core 8
-        // types are ALSO missing. When a user provides manual type definitions
-        // (e.g., `interface Function {}` in a noLib test), tsc does not require
-        // these extended function types. See: missingDecoratorType.ts vs
-        // noCrashOnNoLib.ts.
-        const EXTENDED_FUNCTION_TYPES: &[&str] = &["CallableFunction", "NewableFunction"];
 
         // Emit TS2318 errors when core global types are not available.
         // TypeScript always requires these core global types to exist.
@@ -61,7 +55,7 @@ impl<'a> CheckerState<'a> {
         // manually (indicating the user intentionally set up a minimal-lib
         // environment and expects the check to run).
         if !self.ctx.capabilities.no_lib && !self.ctx.capabilities.has_lib {
-            let has_any_core_type = CORE_8_TYPES
+            let has_any_core_type = CORE_GLOBAL_TYPES
                 .iter()
                 .any(|name| self.ctx.binder.file_locals.has(name));
             if !has_any_core_type {
@@ -69,16 +63,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Track whether any core type is missing (used to gate extended checks).
-        let mut any_core_missing = false;
-
         // We check if types exist globally (in libs or current file scope).
         // This matches tsc behavior where missing core types are reported
         // even when some libs are loaded (e.g., if --lib es6 is missing Array).
-        for &type_name in CORE_8_TYPES {
+        for &type_name in CORE_GLOBAL_TYPES {
             // Check if the type is available in any loaded lib or current scope
             if !self.ctx.has_name_in_lib(type_name) {
-                any_core_missing = true;
                 // Type not available globally - emit TS2318
                 // tsc emits these with no file position (file="", line=0, column=0)
                 self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
@@ -87,15 +77,6 @@ impl<'a> CheckerState<'a> {
 
         // CallableFunction/NewableFunction: only check when core types are also
         // missing. When a user provides the core 8 manually (e.g., noLib tests
-        // with interface declarations), tsc does not require these extended types.
-        if any_core_missing {
-            for &type_name in EXTENDED_FUNCTION_TYPES {
-                if !self.ctx.has_name_in_lib(type_name) {
-                    self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
-                }
-            }
-        }
-
         // Check for feature-specific global types that may be missing
         // These are checked regardless of --noLib, but only if the feature appears to be used
         self.check_feature_specific_global_types();
