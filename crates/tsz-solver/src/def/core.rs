@@ -84,11 +84,10 @@ impl DefId {
 /// | Namespace | Export lookup | No | `namespace NS { export type T = number }` |
 /// | Function | Value-space | No | `function foo(): void {}` |
 /// | Variable | Value-space | No | `const x: number = 1` |
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefKind {
     /// Type alias: always expand (transparent).
     /// `type Foo<T> = T | null`
-    #[default]
     TypeAlias,
 
     /// Interface: keep opaque until needed.
@@ -127,7 +126,7 @@ pub enum DefKind {
 /// Complete information about a type definition.
 ///
 /// This is stored in `DefinitionStore` and retrieved by `DefId`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DefinitionInfo {
     /// Kind of definition (affects evaluation strategy)
     pub kind: DefKind,
@@ -179,19 +178,16 @@ pub struct DefinitionInfo {
     /// `resolve_heritage` can look up the `Bar` DefId by name.
     pub heritage_names: Vec<String>,
 
-    /// Whether this is an abstract class (`abstract class Foo {}`).
-    /// Propagated from binder `SemanticDefEntry.is_abstract` at pre-population
-    /// time so the solver can query it without checker-level repair.
+    /// Whether this is an `abstract class` declaration.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
     pub is_abstract: bool,
 
-    /// Whether this is a const enum (`const enum Direction {}`).
-    /// Propagated from binder `SemanticDefEntry.is_const` at pre-population
-    /// time so the solver can query it without checker-level repair.
+    /// Whether this is a `const enum` declaration.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
     pub is_const: bool,
 
     /// Whether this declaration is exported.
-    /// Propagated from binder `SemanticDefEntry.is_exported` at pre-population
-    /// time for use in visibility-aware queries and incremental invalidation.
+    /// Propagated from binder `SemanticDefEntry` during pre-population.
     pub is_exported: bool,
 }
 
@@ -208,13 +204,25 @@ pub enum EnumMemberValue {
 
 impl DefinitionInfo {
     /// Create a new type alias definition.
-    pub fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
+    pub const fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
         Self {
             kind: DefKind::TypeAlias,
             name,
             type_params,
             body: Some(body),
-            ..Default::default()
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -240,8 +248,20 @@ impl DefinitionInfo {
             kind: DefKind::Interface,
             name,
             type_params,
+            body: None, // Body computed on demand
             instance_shape: Some(Arc::new(shape)),
-            ..Default::default()
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -270,29 +290,66 @@ impl DefinitionInfo {
             kind: DefKind::Class,
             name,
             type_params,
+            body: None,
             instance_shape: Some(Arc::new(instance_shape)),
             static_shape: Some(Arc::new(static_shape)),
-            ..Default::default()
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
     /// Create a new enum definition.
-    pub fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
+    pub const fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
         Self {
             kind: DefKind::Enum,
             name,
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
             enum_members: members,
-            ..Default::default()
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
     /// Create a new namespace definition.
-    pub fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
+    pub const fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
         Self {
             kind: DefKind::Namespace,
             name,
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
             exports,
-            ..Default::default()
+            file_id: None,
+            span: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         }
     }
 
@@ -922,44 +979,6 @@ impl DefinitionStore {
         }
 
         resolved
-    }
-
-    /// Resolve a heritage name to a `DefId` by looking up the `name_to_defs` index.
-    ///
-    /// Returns the first `DefId` of kind `Class` or `Interface` matching the
-    /// interned name, excluding the `exclude_id` (to prevent self-references).
-    ///
-    /// Used by the checker's `resolve_cross_batch_heritage` to wire up
-    /// `extends`/`implements` on `DefinitionInfo` after all batches are registered.
-    pub fn resolve_heritage_name(&self, name_atom: Atom, exclude_id: DefId) -> Option<DefId> {
-        let candidates = self.name_to_defs.get(&name_atom)?;
-        for &candidate_id in candidates.value() {
-            if candidate_id == exclude_id {
-                continue;
-            }
-            if let Some(candidate_info) = self.definitions.get(&candidate_id) {
-                if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
-                    return Some(candidate_id);
-                }
-            }
-        }
-        None
-    }
-
-    /// Set the `extends` field of a definition.
-    pub fn set_extends(&self, id: DefId, parent: DefId) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.extends = Some(parent);
-        }
-    }
-
-    /// Add an `implements` entry to a definition (if not already present).
-    pub fn add_implements(&self, id: DefId, iface: DefId) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            if !entry.implements.contains(&iface) {
-                entry.implements.push(iface);
-            }
-        }
     }
 
     /// Get all `DefId`s originating from the given file.

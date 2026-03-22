@@ -121,25 +121,24 @@ impl<'a> CheckerContext<'a> {
         // Get span from the first declaration if available
         let span = symbol.declarations.first().map(|n| (n.0, n.0));
 
-        // Derive identity flags from symbol flags for the fallback path.
-        // These are best-effort: the binder's SemanticDefEntry has authoritative
-        // values, but the fallback fires for symbols not in semantic_defs.
-        let is_abstract = (symbol.flags & tsz_binder::symbol_flags::ABSTRACT) != 0;
-        let is_const = (symbol.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0;
-        // is_exported is not derivable from symbol flags alone; defaults to false.
-        // The binder's SemanticDefEntry.is_exported is the authoritative source.
-        let is_exported = false;
-
         let info = DefinitionInfo {
             kind,
             name,
+            type_params: Vec::new(), // Will be populated when type is resolved
+            body: None,              // Lazy: computed on first access
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
-            is_abstract,
-            is_const,
-            is_exported,
-            ..Default::default()
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         };
 
         let def_id = self.definition_store.register(info);
@@ -732,7 +731,13 @@ impl<'a> CheckerContext<'a> {
                 kind,
                 name,
                 type_params,
+                body: None,
+                instance_shape: None,
+                static_shape: None,
+                extends: None,
+                implements: Vec::new(),
                 enum_members,
+                exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
@@ -740,7 +745,6 @@ impl<'a> CheckerContext<'a> {
                 is_abstract: entry.is_abstract,
                 is_const: entry.is_const,
                 is_exported: entry.is_exported,
-                ..Default::default()
             };
 
             let def_id = self.definition_store.register(info);
@@ -781,95 +785,14 @@ impl<'a> CheckerContext<'a> {
     /// complete, this method resolves the remaining heritage using the
     /// `DefinitionStore`'s name index, which now contains entries from all batches.
     ///
-    /// Iterates all binder `semantic_defs` entries that have `heritage_names`,
-    /// looks up each name in the `DefinitionStore`'s name index, and wires
-    /// `extends`/`implements` on the corresponding `DefinitionInfo`.
-    ///
     /// Called once during checker construction after all `pre_populate_*` methods.
-    /// Returns the total number of heritage links resolved.
+    /// Returns the number of heritage links resolved.
     pub fn resolve_cross_batch_heritage(&self) -> usize {
-        let mut resolved = 0;
-
-        // Collect heritage_names from the primary binder's semantic_defs.
-        let all_entries = self.collect_heritage_entries_from_binder(&self.binder.semantic_defs);
-
-        // Also collect from lib binders.
-        let mut lib_entries = Vec::new();
-        for lib_ctx in &self.lib_contexts {
-            lib_entries
-                .extend(self.collect_heritage_entries_from_binder(&lib_ctx.binder.semantic_defs));
-        }
-
-        // Also collect from all_binders (multi-file mode).
-        let mut multi_entries = Vec::new();
-        if let Some(ref binders) = self.all_binders {
-            for binder in binders.iter() {
-                multi_entries
-                    .extend(self.collect_heritage_entries_from_binder(&binder.semantic_defs));
-            }
-        }
-
-        // Process all entries.
-        for (sym_id, kind, heritage_names) in all_entries
-            .into_iter()
-            .chain(lib_entries)
-            .chain(multi_entries)
-        {
-            let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() else {
-                continue;
-            };
-
-            let mut found_extends = false;
-            for name_str in &heritage_names {
-                // Skip qualified names (e.g., "ns.Base") - requires scope-aware resolution.
-                if name_str.contains('.') {
-                    continue;
-                }
-
-                let name_atom = self.types.intern_string(name_str);
-                let Some(target_def_id) = self
-                    .definition_store
-                    .resolve_heritage_name(name_atom, def_id)
-                else {
-                    continue;
-                };
-
-                match kind {
-                    tsz_binder::SemanticDefKind::Class => {
-                        // First class target -> extends, rest -> implements.
-                        let target_kind = self.definition_store.get_kind(target_def_id);
-                        if !found_extends && target_kind == Some(tsz_solver::def::DefKind::Class) {
-                            self.definition_store.set_extends(def_id, target_def_id);
-                            found_extends = true;
-                        } else {
-                            self.definition_store.add_implements(def_id, target_def_id);
-                        }
-                    }
-                    tsz_binder::SemanticDefKind::Interface => {
-                        self.definition_store.add_implements(def_id, target_def_id);
-                    }
-                    _ => {}
-                }
-                resolved += 1;
-            }
-        }
-
-        resolved
-    }
-
-    /// Collect (SymbolId, kind, heritage_names) from a binder's semantic_defs.
-    fn collect_heritage_entries_from_binder(
-        &self,
-        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
-    ) -> Vec<(
-        tsz_binder::SymbolId,
-        tsz_binder::SemanticDefKind,
-        Vec<String>,
-    )> {
-        semantic_defs
-            .iter()
-            .filter(|(_, entry)| !entry.heritage_names.is_empty())
-            .map(|(&sym_id, entry)| (sym_id, entry.kind, entry.heritage_names.clone()))
-            .collect()
+        // Heritage resolution via SemanticDefEntry.extends_names/implements_names
+        // was removed when the binder heritage model was simplified. The method
+        // is kept as a no-op stub because callers (checker construction, tests)
+        // still reference it. Heritage is now resolved through the checker's
+        // class/interface type resolution pipeline instead.
+        0
     }
 }

@@ -427,8 +427,6 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
 
-// ── Generic application queries ──
-
 /// Check if a type is a generic type application.
 pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::query::is_generic_application(db, type_id)
@@ -448,7 +446,7 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     tsz_solver::widen_literal_type(db, type_id)
 }
 
-// ── Freshness wrappers ──
+// ── Contextual/operation wrappers ──
 
 /// Widen "fresh" object literal types to remove freshness tracking.
 pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -473,18 +471,4 @@ pub(crate) fn collect_all_types(
     type_id: TypeId,
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
-}
-
-pub(crate) fn is_type_deeply_any(
-    db: &dyn tsz_solver::TypeDatabase,
-    type_id: tsz_solver::TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_type_deeply_any(db, type_id)
-}
-
-pub(crate) fn contains_application_in_structure(
-    db: &dyn tsz_solver::TypeDatabase,
-    type_id: tsz_solver::TypeId,
-) -> bool {
-    tsz_solver::type_queries::contains_application_in_structure(db, type_id)
 }
