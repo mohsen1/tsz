@@ -268,12 +268,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Mirror enum member DefId entries into type_environment for consistency
-            if !member_def_entries.is_empty() {
-                if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                    for &(member_def_id, member_enum_type) in &member_def_entries {
-                        env.insert_def(member_def_id, member_enum_type);
-                        env.register_enum_parent(member_def_id, def_id);
-                    }
+            if !member_def_entries.is_empty()
+                && let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
+            {
+                for &(member_def_id, member_enum_type) in &member_def_entries {
+                    env.insert_def(member_def_id, member_enum_type);
+                    env.register_enum_parent(member_def_id, def_id);
                 }
             }
 

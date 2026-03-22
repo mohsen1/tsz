@@ -4817,15 +4817,15 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
                 // Skip elements whose inferred type is null/undefined
-                if let Some(type_id) = self.get_node_type_or_names(&[elem_idx]) {
-                    if matches!(
+                if let Some(type_id) = self.get_node_type_or_names(&[elem_idx])
+                    && matches!(
                         type_id,
                         tsz_solver::types::TypeId::NULL
                             | tsz_solver::types::TypeId::UNDEFINED
                             | tsz_solver::types::TypeId::VOID
-                    ) {
-                        continue;
-                    }
+                    )
+                {
+                    continue;
                 }
             }
             let elem_type = self.preferred_expression_type_text(elem_idx).or_else(|| {

@@ -127,14 +127,13 @@ impl<'a> CheckerState<'a> {
         // For namespace-qualified calls (e.g., `Debug.fail()`), resolve the
         // receiver identifier to its namespace symbol and look up the member
         // in its exports table.
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ns_sym_id) = self.resolve_identifier_symbol(access.expression)
-                && let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
-                && let Some(ref exports) = ns_symbol.exports
-                && let Some(member_sym_id) = exports.get(property_name)
-            {
-                return self.symbol_explicitly_returns_never(member_sym_id);
-            }
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ns_sym_id) = self.resolve_identifier_symbol(access.expression)
+            && let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
+            && let Some(ref exports) = ns_symbol.exports
+            && let Some(member_sym_id) = exports.get(property_name)
+        {
+            return self.symbol_explicitly_returns_never(member_sym_id);
         }
 
         // Fallback: resolve the receiver type and check the property.

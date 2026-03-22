@@ -202,7 +202,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// by erasing the target's type parameters to their constraints. This matches tsc's
     /// default `eraseGenerics` behavior for structural type comparison.
     /// When false, a non-generic function is NOT assignable to a generic function —
-    /// the target's TypeParameter types are left in place, causing the comparison to
+    /// the target's `TypeParameter` types are left in place, causing the comparison to
     /// fail for concrete types. Used for implements/extends member type checking
     /// where tsc's `compareSignaturesRelated` does NOT erase.
     pub erase_generics: bool,

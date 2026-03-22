@@ -133,3 +133,4 @@ crates/tsz-website/data/
 .local-target
 .ctx-target/
 .work-expand
+.local-target-main/
