@@ -185,7 +185,6 @@ fn test_definition_store_concurrent() {
                         static_shape: None,
                         extends: None,
                         implements: Vec::new(),
-                        heritage_names: Vec::new(),
                         enum_members: Vec::new(),
                         exports: Vec::new(),
                         file_id: None,
@@ -388,7 +387,6 @@ fn test_find_type_alias_by_body_via_set_body() {
         static_shape: None,
         extends: None,
         implements: Vec::new(),
-        heritage_names: Vec::new(),
         enum_members: Vec::new(),
         exports: Vec::new(),
         file_id: None,
@@ -553,7 +551,6 @@ fn test_find_def_by_shape_via_set_instance_shape() {
         static_shape: None,
         extends: None,
         implements: Vec::new(),
-        heritage_names: Vec::new(),
         enum_members: Vec::new(),
         exports: Vec::new(),
         file_id: None,
@@ -1222,131 +1219,26 @@ fn test_find_defs_by_name_partial_invalidation() {
 // Heritage resolution tests
 // =============================================================================
 
+// resolve_heritage tests removed: DefinitionInfo no longer has heritage_names.
+// Heritage resolution was moved to the checker's class/interface type resolution
+// pipeline. resolve_heritage() is now a no-op stub.
+
 #[test]
-fn test_resolve_heritage_basic() {
+fn test_resolve_heritage_returns_empty() {
+    // resolve_heritage is now a no-op stub (heritage is resolved in the checker).
     let interner = create_test_interner();
     let store = DefinitionStore::new();
 
-    // Register a base class "Animal".
-    let animal_name = interner.intern_string("Animal");
-    let animal_info = DefinitionInfo::class(animal_name, vec![], vec![], vec![]);
-    let animal_id = store.register(animal_info);
-
-    // Register a derived class "Dog" that extends "Animal".
-    let dog_name = interner.intern_string("Dog");
-    let mut dog_info = DefinitionInfo::class(dog_name, vec![], vec![], vec![]);
-    dog_info.heritage_names = vec!["Animal".to_string()];
-    let dog_id = store.register(dog_info);
-
-    let intern_fn = |s: &str| interner.intern_string(s);
-    let resolved = store.resolve_heritage(dog_id, &intern_fn);
-
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].0, "Animal");
-    assert_eq!(resolved[0].1, animal_id);
-}
-
-#[test]
-fn test_resolve_heritage_multiple() {
-    let interner = create_test_interner();
-    let store = DefinitionStore::new();
-
-    // Register base class and interface.
-    let base_name = interner.intern_string("Base");
-    let base_info = DefinitionInfo::class(base_name, vec![], vec![], vec![]);
-    let base_id = store.register(base_info);
-
-    let iface_name = interner.intern_string("Serializable");
-    let iface_info = DefinitionInfo::interface(iface_name, vec![], vec![]);
-    let iface_id = store.register(iface_info);
-
-    // Register derived class.
-    let derived_name = interner.intern_string("Derived");
-    let mut derived_info = DefinitionInfo::class(derived_name, vec![], vec![], vec![]);
-    derived_info.heritage_names = vec!["Base".to_string(), "Serializable".to_string()];
-    let derived_id = store.register(derived_info);
-
-    let intern_fn = |s: &str| interner.intern_string(s);
-    let resolved = store.resolve_heritage(derived_id, &intern_fn);
-
-    assert_eq!(resolved.len(), 2);
-    assert_eq!(resolved[0].0, "Base");
-    assert_eq!(resolved[0].1, base_id);
-    assert_eq!(resolved[1].0, "Serializable");
-    assert_eq!(resolved[1].1, iface_id);
-}
-
-#[test]
-fn test_resolve_heritage_unresolved_skipped() {
-    let interner = create_test_interner();
-    let store = DefinitionStore::new();
-
-    // Register a class with a heritage name that doesn't exist.
-    let name = interner.intern_string("Orphan");
-    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
-    info.heritage_names = vec!["NonExistent".to_string()];
-    let id = store.register(info);
-
-    let intern_fn = |s: &str| interner.intern_string(s);
-    let resolved = store.resolve_heritage(id, &intern_fn);
-
-    assert!(resolved.is_empty());
-}
-
-#[test]
-fn test_resolve_heritage_skips_self() {
-    let interner = create_test_interner();
-    let store = DefinitionStore::new();
-
-    // Class with heritage name matching its own name (self-reference).
-    let name = interner.intern_string("SelfRef");
-    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
-    info.heritage_names = vec!["SelfRef".to_string()];
-    let id = store.register(info);
-
-    let intern_fn = |s: &str| interner.intern_string(s);
-    let resolved = store.resolve_heritage(id, &intern_fn);
-
-    // Self-references should be skipped.
-    assert!(resolved.is_empty());
-}
-
-#[test]
-fn test_resolve_heritage_no_heritage_names() {
-    let interner = create_test_interner();
-    let store = DefinitionStore::new();
-
-    let name = interner.intern_string("Plain");
+    let name = interner.intern_string("Dog");
     let info = DefinitionInfo::class(name, vec![], vec![], vec![]);
     let id = store.register(info);
 
     let intern_fn = |s: &str| interner.intern_string(s);
     let resolved = store.resolve_heritage(id, &intern_fn);
-
-    assert!(resolved.is_empty());
-}
-
-#[test]
-fn test_resolve_heritage_skips_non_class_interface() {
-    let interner = create_test_interner();
-    let store = DefinitionStore::new();
-
-    // Register a type alias named "Target".
-    let target_name = interner.intern_string("Target");
-    let target_info = DefinitionInfo::type_alias(target_name, vec![], TypeId::NUMBER);
-    store.register(target_info);
-
-    // Class tries to extend "Target" (a type alias).
-    let name = interner.intern_string("Derived");
-    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
-    info.heritage_names = vec!["Target".to_string()];
-    let id = store.register(info);
-
-    let intern_fn = |s: &str| interner.intern_string(s);
-    let resolved = store.resolve_heritage(id, &intern_fn);
-
-    // Type aliases should not be matched for heritage resolution.
-    assert!(resolved.is_empty());
+    assert!(
+        resolved.is_empty(),
+        "resolve_heritage should always return empty (stub)"
+    );
 }
 
 #[test]

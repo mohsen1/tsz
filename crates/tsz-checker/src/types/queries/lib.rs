@@ -35,6 +35,14 @@ impl<'a> CheckerState<'a> {
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
+        // Resolve the main binder's SymbolId for this name once, outside the
+        // per-lib-context loop.  The main binder has merged symbols from all lib
+        // files and the user file, so its SymbolId is the canonical identity that
+        // DefIds are keyed to.  Previously this was re-looked up inside the loop
+        // (`self.ctx.binder.file_locals.get(name).unwrap_or(sym_id)`) on every
+        // iteration — a redundant local recovery step.
+        let main_sym_id = self.ctx.binder.file_locals.get(name);
+
         for lib_ctx in lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
@@ -71,8 +79,7 @@ impl<'a> CheckerState<'a> {
                 // Uses get_lib_def_id: prefers pre-populated DefIds, falls
                 // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|sym_id| self.ctx.get_lib_def_id(tsz_binder::SymbolId(sym_id)))
+                    resolver(node_idx).map(|raw| self.ctx.lib_def_id_for_raw(raw))
                 };
 
                 // Name-based resolver: resolves both simple identifiers and qualified
@@ -111,13 +118,11 @@ impl<'a> CheckerState<'a> {
                                 params.iter().map(|p| factory.type_param(*p)).collect();
 
                             // Cache type parameters for Application expansion.
-                            // Use file binder's sym_id (after lib merge) so the def_id
-                            // matches what type reference resolution produces.
-                            // Uses get_lib_def_id (stable lib path): prefers
-                            // pre-populated DefIds over on-demand creation.
-                            let file_sym_id =
-                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = self.ctx.get_lib_def_id(file_sym_id);
+                            // Use the main binder's sym_id (resolved once before the
+                            // loop) so the DefId matches what type reference resolution
+                            // produces. Falls back to the per-lib-context sym_id only
+                            // when the main binder doesn't have the symbol.
+                            let def_id = self.ctx.get_lib_def_id(main_sym_id.unwrap_or(sym_id));
                             self.ctx.insert_def_type_params(def_id, params.clone());
 
                             lib_types.push(ty);
@@ -154,12 +159,10 @@ impl<'a> CheckerState<'a> {
                             let (ty, params) = alias_lowering.lower_type_alias_declaration(alias);
                             if ty != TypeId::ERROR {
                                 // Cache type parameters for Application expansion.
-                                // Prefer the main binder's sym_id (after lib merge)
-                                // over the per-lib-context sym_id to avoid SymbolId
-                                // collisions. Uses get_lib_def_id (stable lib path).
-                                let file_sym_id =
-                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                                let def_id = self.ctx.get_lib_def_id(file_sym_id);
+                                // Use the main binder's sym_id (resolved once before
+                                // the loop) to avoid SymbolId collisions between
+                                // per-lib-context and main binder identities.
+                                let def_id = self.ctx.get_lib_def_id(main_sym_id.unwrap_or(sym_id));
                                 self.ctx.insert_def_type_params(def_id, params);
                                 lib_types.push(ty);
                                 break;
