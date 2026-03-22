@@ -21,6 +21,7 @@ fn empty_project_env() -> ProjectEnv {
         skeleton_declared_modules: None,
         skeleton_expando_index: None,
         symbol_file_targets: Arc::new(vec![]),
+        global_symbol_file_index: None,
         global_file_locals_index: None,
         global_module_exports_index: None,
         global_module_augmentations_index: None,
@@ -34,7 +35,6 @@ fn empty_project_env() -> ProjectEnv {
         typescript_dom_replacement_globals: (false, false, false),
         has_deprecation_diagnostics: false,
         last_skeleton_fingerprint: None,
-        global_arena_index: None,
     }
 }
 
@@ -94,7 +94,8 @@ fn apply_to_populates_skeleton_declared_modules() {
 }
 
 #[test]
-fn apply_to_populates_symbol_file_targets() {
+fn apply_to_populates_symbol_file_targets_fallback() {
+    // Without global_symbol_file_index, entries go into the local overlay.
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
     let arena = NodeArena::new();
@@ -103,11 +104,69 @@ fn apply_to_populates_symbol_file_targets() {
 
     let mut env = empty_project_env();
     env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0), (SymbolId(2), 1)]);
+    // Do NOT call build_global_symbol_file_index — exercises fallback path.
     env.apply_to(&mut checker.ctx);
 
-    let targets = checker.ctx.cross_file_symbol_targets.borrow();
-    assert_eq!(targets.get(&SymbolId(1)), Some(&0));
-    assert_eq!(targets.get(&SymbolId(2)), Some(&1));
+    // resolve_symbol_file_index should find them in the local overlay.
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(2)), Some(1));
+}
+
+#[test]
+fn apply_to_uses_global_index_skips_local_copy() {
+    // With global_symbol_file_index built, apply_to shares via Arc, NOT local overlay.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut env = empty_project_env();
+    env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0), (SymbolId(2), 1)]);
+    env.build_global_symbol_file_index();
+    env.apply_to(&mut checker.ctx);
+
+    // The local overlay should be empty (entries served from global index).
+    assert!(
+        checker.ctx.cross_file_symbol_targets.borrow().is_empty(),
+        "With global index, local overlay should be empty after apply_to"
+    );
+    // But resolve_symbol_file_index should still find them via global fallback.
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(2)), Some(1));
+    assert!(checker.ctx.has_symbol_file_index(SymbolId(1)));
+    assert!(!checker.ctx.has_symbol_file_index(SymbolId(999)));
+}
+
+#[test]
+fn copy_and_merge_symbol_file_targets() {
+    // Test the copy_symbol_file_targets_to / merge_symbol_file_targets_from helpers.
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let parent = make_checker(&arena, &binder, &query_cache);
+    let mut child = make_checker(&arena, &binder, &query_cache);
+
+    // Add entries to parent overlay.
+    parent.ctx.register_symbol_file_target(SymbolId(10), 0);
+    parent.ctx.register_symbol_file_target(SymbolId(20), 1);
+
+    // Copy to child.
+    parent.ctx.copy_symbol_file_targets_to(&mut child.ctx);
+    assert_eq!(child.ctx.resolve_symbol_file_index(SymbolId(10)), Some(0));
+    assert_eq!(child.ctx.resolve_symbol_file_index(SymbolId(20)), Some(1));
+
+    // Child discovers a new mapping.
+    child.ctx.register_symbol_file_target(SymbolId(30), 2);
+
+    // Merge back to parent.
+    parent.ctx.merge_symbol_file_targets_from(&child.ctx);
+    assert_eq!(
+        parent.ctx.resolve_symbol_file_index(SymbolId(30)),
+        Some(2),
+        "New entry from child should be merged into parent"
+    );
 }
 
 #[test]

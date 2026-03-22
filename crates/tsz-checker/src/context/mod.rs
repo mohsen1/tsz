@@ -1203,11 +1203,13 @@ impl ProjectEnv {
         // This moves identity creation to apply_to time (deterministic, early)
         // rather than on-demand in get_or_create_def_id's O(N) repair path.
         ctx.pre_populate_def_ids_from_all_binders();
-        // Install the shared O(1) symbol→file index. Build it lazily on first use.
+        // Install the shared O(1) symbol→file index. When present, all base entries
+        // are accessible via `resolve_symbol_file_index()`, so we skip the O(N) copy
+        // into the local overlay. Only fall back to the O(N) copy when no global
+        // index was built (e.g., in tests that don't call `build_global_symbol_file_index`).
         if let Some(ref idx) = self.global_symbol_file_index {
             ctx.global_symbol_file_index = Some(Arc::clone(idx));
-        }
-        {
+        } else if !self.symbol_file_targets.is_empty() {
             let mut targets = ctx.cross_file_symbol_targets.borrow_mut();
             for &(sym_id, owner_idx) in self.symbol_file_targets.iter() {
                 targets.insert(sym_id, owner_idx);

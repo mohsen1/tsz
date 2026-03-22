@@ -23,14 +23,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
-        //    file via cross_file_symbol_targets, go directly to that binder.
+        //    file via resolve_symbol_file_index, go directly to that binder.
         {
-            let file_idx = self
-                .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .copied();
+            let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
             if let Some(file_idx) = file_idx
                 && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
                 && let Some(sym) = binder.get_symbol(sym_id)
@@ -59,12 +54,7 @@ impl<'a> CheckerState<'a> {
     /// Falls back to `get_symbol_globally` for non-cross-file symbols.
     pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
         // Check if this is a known cross-file symbol
-        let file_idx = self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied();
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
         if let Some(file_idx) = file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
@@ -147,11 +137,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        let is_known_cross_file = self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .contains_key(&sym_id);
+        let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
             && let Some(symbol) = self.get_symbol_globally(sym_id)
@@ -230,26 +216,22 @@ impl<'a> CheckerState<'a> {
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .is_some_and(|&file_idx| {
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| {
                     let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = *self
+            let file_idx = self
                 .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .expect("needs_cross_file_delegation derived from cross_file_symbol_targets containing sym_id");
+                .resolve_symbol_file_index(sym_id)
+                .expect("needs_cross_file_delegation derived from has_symbol_file_index returning true");
             cross_file_idx = Some(file_idx);
         }
 
         // Check if we have a valid delegate arena (either from symbol_arenas/declaration_arenas
-        // or from cross_file_symbol_targets).
+        // or from resolve_symbol_file_index).
         let should_delegate = if needs_cross_file_delegation {
             true
         } else {
@@ -337,14 +319,12 @@ impl<'a> CheckerState<'a> {
             ));
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            // Copy cross-file symbol targets so nested resolutions work
-            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                    self.ctx.cross_file_symbol_targets.borrow().clone();
-            }
             // Copy all cross-file state: arenas, binders, all 6 global indices,
             // resolved_module_paths, and module_specifiers.
             checker.ctx.copy_cross_file_state_from(&self.ctx);
+            // Copy cross-file symbol targets (local overlay only; global index
+            // is already shared via copy_cross_file_state_from)
+            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will
@@ -632,21 +612,17 @@ impl<'a> CheckerState<'a> {
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .is_some_and(|&file_idx| {
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| {
                     let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = *self
+            let file_idx = self
                 .ctx
-                .cross_file_symbol_targets
-                .borrow()
-                .get(&sym_id)
-                .expect("needs_cross_file_delegation derived from cross_file_symbol_targets containing sym_id");
+                .resolve_symbol_file_index(sym_id)
+                .expect("needs_cross_file_delegation derived from has_symbol_file_index returning true");
             delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
             delegate_file_idx = Some(file_idx);
         }
@@ -685,11 +661,8 @@ impl<'a> CheckerState<'a> {
             self,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                self.ctx.cross_file_symbol_targets.borrow().clone();
-        }
         checker.ctx.copy_cross_file_state_from(&self.ctx);
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
@@ -767,11 +740,8 @@ impl<'a> CheckerState<'a> {
             self,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
-            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
-                self.ctx.cross_file_symbol_targets.borrow().clone();
-        }
         checker.ctx.copy_cross_file_state_from(&self.ctx);
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         {
             let parent_d2s = self.ctx.def_to_symbol.borrow();
@@ -840,12 +810,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
     ) {
         // Skip if already recorded
-        if self
-            .ctx
-            .cross_file_symbol_targets
-            .borrow()
-            .contains_key(&sym_id)
-        {
+        if self.ctx.has_symbol_file_index(sym_id) {
             return;
         }
 
@@ -855,10 +820,7 @@ impl<'a> CheckerState<'a> {
         // symbol from the current file that happens to share the same index offset.
         if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
             if target_file_idx != self.ctx.current_file_idx {
-                self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(sym_id, target_file_idx);
+                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
             }
             return;
         }
@@ -886,10 +848,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(symbol) = binder.get_symbol(sym_id)
                         && symbol.escaped_name.as_str() == expected_name
                     {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(sym_id, file_idx);
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
                         return;
                     }
                 }
@@ -901,10 +860,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = binder.get_symbol(sym_id)
                     && symbol.escaped_name.as_str() == expected_name
                 {
-                    self.ctx
-                        .cross_file_symbol_targets
-                        .borrow_mut()
-                        .insert(sym_id, idx);
+                    self.ctx.register_symbol_file_target(sym_id, idx);
                     return;
                 }
             }
