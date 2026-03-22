@@ -153,6 +153,15 @@ pub struct DefinitionInfo {
     /// For classes/interfaces: implemented interfaces
     pub implements: Vec<DefId>,
 
+    /// Heritage clause names from the binder (e.g., `["Bar", "Baz"]` for
+    /// `class Foo extends Bar implements Baz`).
+    ///
+    /// Used for cross-batch heritage resolution: when a user class extends a
+    /// lib type, the `DefId` of the target isn't known at pre-population time.
+    /// These names allow deferred resolution via the `DefinitionStore` name
+    /// index after all batches have been registered.
+    pub heritage_names: Vec<String>,
+
     /// For enums: member names and values
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
 
@@ -197,6 +206,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -232,6 +242,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -270,6 +281,7 @@ impl DefinitionInfo {
             static_shape: Some(Arc::new(static_shape)),
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(),
             file_id: None,
@@ -289,6 +301,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: members,
             exports: Vec::new(),
             file_id: None,
@@ -308,6 +321,7 @@ impl DefinitionInfo {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports,
             file_id: None,
@@ -699,18 +713,6 @@ impl DefinitionStore {
         self.definitions.get(&id).and_then(|r| r.extends)
     }
 
-    /// Set the heritage (extends + implements) for a definition after registration.
-    ///
-    /// Used for cross-batch heritage resolution: when a user class extends a lib
-    /// type, the heritage is resolved by name after all pre-population batches
-    /// have completed.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.extends = extends;
-            entry.implements = implements;
-        }
-    }
-
     /// Update the body `TypeId` for a definition (for lazy evaluation).
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
@@ -1023,6 +1025,12 @@ impl DefinitionStore {
             size += info.type_params.capacity() * std::mem::size_of::<TypeParamInfo>();
             size += info.enum_members.capacity() * std::mem::size_of::<(Atom, EnumMemberValue)>();
             size += info.implements.capacity() * std::mem::size_of::<DefId>();
+            // heritage_names: Vec<String> — count heap allocation for each String
+            size += info
+                .heritage_names
+                .iter()
+                .map(|s| std::mem::size_of::<String>() + s.capacity())
+                .sum::<usize>();
             size += info.exports.capacity() * std::mem::size_of::<(Atom, DefId)>();
             // Arc<ObjectShape> — count the shape itself (shared, but we include it here)
             if let Some(ref shape) = info.instance_shape {
