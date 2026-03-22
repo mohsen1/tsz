@@ -35132,7 +35132,6 @@ abstract class A {
 }
 
 #[test]
-#[ignore = "pre-existing failure"]
 fn test_generic_interface_implements_ts2416() {
     // Test: genericSpecializations1.ts
     // Interface method has its own type param <T> shadowing the interface's T.
