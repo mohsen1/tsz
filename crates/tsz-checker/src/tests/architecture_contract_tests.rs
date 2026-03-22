@@ -3372,10 +3372,10 @@ fn test_error_reporter_does_not_perform_type_construction() {
 /// Guard that the number of checker source files exceeding ~2000 LOC does not increase.
 ///
 /// Per CLAUDE.md section 12: "Checker files should stay under ~2000 LOC."
-/// This ratchet captures the current state (15 files over 2000 lines) and prevents
+/// This ratchet captures the current state (14 files over 2000 lines) and prevents
 /// regression. As files are split, this ceiling must be lowered.
 ///
-/// Current ceiling: 15 files over 2000 lines. This number must only decrease over time.
+/// Current ceiling: 14 files over 2000 lines. This number must only decrease over time.
 #[test]
 fn test_checker_file_size_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -3413,7 +3413,7 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
-    const FILE_COUNT_CEILING: usize = 15;
+    const FILE_COUNT_CEILING: usize = 14;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
         "Number of checker source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
