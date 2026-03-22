@@ -268,7 +268,10 @@ pub mod module_resolver;
 #[cfg(not(target_arch = "wasm32"))]
 mod module_resolver_helpers;
 #[cfg(not(target_arch = "wasm32"))]
-pub use module_resolver::{ModuleExtension, ModuleResolver, ResolutionFailure, ResolvedModule};
+pub use module_resolver::{
+    ModuleExtension, ModuleLookupError, ModuleLookupOutcome, ModuleLookupRequest,
+    ModuleLookupResult, ModuleResolver, ResolutionFailure, ResolvedModule,
+};
 
 // Import/Export Tracking
 pub mod imports;
