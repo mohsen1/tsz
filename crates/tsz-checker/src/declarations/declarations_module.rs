@@ -957,17 +957,49 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
                 let current_file_idx = self.ctx.current_file_idx;
 
-                for (binder_idx, other_binder) in all_binders.iter().enumerate() {
-                    // Skip the current file's binder
-                    if binder_idx == current_file_idx {
-                        continue;
-                    }
+                // Use global_file_locals_index for O(1) lookup of candidate binders
+                // instead of O(N) scan over all binders.
+                let lookup_name = if enclosing_names.is_empty() {
+                    namespace_name.as_str()
+                } else {
+                    enclosing_names[0].as_str()
+                };
+
+                // Collect candidate (binder_idx, sym_id) pairs from the index
+                let candidates: Vec<(usize, tsz_binder::SymbolId)> =
+                    if let Some(file_locals_idx) = self.ctx.global_file_locals_index.as_ref() {
+                        file_locals_idx
+                            .get(lookup_name)
+                            .map(|entries| {
+                                entries
+                                    .iter()
+                                    .filter(|&&(idx, _)| idx != current_file_idx)
+                                    .map(|&(idx, sym_id)| (idx, sym_id))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        // Fallback: O(N) scan when index not available
+                        all_binders
+                            .iter()
+                            .enumerate()
+                            .filter(|&(idx, _)| idx != current_file_idx)
+                            .filter_map(|(idx, binder)| {
+                                binder
+                                    .file_locals
+                                    .get(lookup_name)
+                                    .map(|sym_id| (idx, sym_id))
+                            })
+                            .collect()
+                    };
+
+                for (binder_idx, found_sym_id) in candidates {
+                    let _ = binder_idx; // used in nested path
 
                     // For top-level namespaces (no enclosing names), check file_locals
                     if enclosing_names.is_empty() {
-                        if let Some(other_sym_id) =
-                            other_binder.file_locals.get(namespace_name.as_str())
-                            && other_sym_id != sym_id
+                        let other_sym_id = found_sym_id;
+                        if other_sym_id != sym_id
                             && let Some(other_symbol) = self.ctx.binder.get_symbol(other_sym_id)
                         {
                             let is_class =
@@ -993,10 +1025,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     // For nested namespaces, walk down from root through exports.
                     // E.g., for Point inside A, find A in file_locals, then look for
                     // Point in A's exports.
-                    let root_name = &enclosing_names[0];
-                    let Some(root_sym_id) = other_binder.file_locals.get(root_name.as_str()) else {
-                        continue;
-                    };
+                    let root_sym_id = found_sym_id;
 
                     // Walk down through intermediate namespace exports
                     let mut current_sym_id = root_sym_id;
