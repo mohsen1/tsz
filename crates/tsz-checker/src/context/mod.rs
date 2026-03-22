@@ -848,6 +848,12 @@ pub struct CheckerContext<'a> {
     /// augmentation symbols for a given module specifier (`interface_type.rs`).
     pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
 
+    /// Pre-built global index: module name -> list of binder indices that have that module
+    /// in their `module_exports`. Eliminates O(N) binder scans when looking up which
+    /// file(s) declared a given ambient module. Both raw and normalized (quote-stripped)
+    /// forms of each module name are indexed.
+    pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
@@ -1063,6 +1069,9 @@ pub struct ProjectEnv {
     /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, `file_idx`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
+    /// Pre-computed global module binder index: module name -> Vec<binder_idx>.
+    /// Built once from all binders; shared across all checkers via `Arc`.
+    pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
@@ -1122,6 +1131,9 @@ impl ProjectEnv {
         if let Some(ref idx) = self.global_augmentation_targets_index {
             ctx.global_augmentation_targets_index = Some(Arc::clone(idx));
         }
+        if let Some(ref idx) = self.global_module_binder_index {
+            ctx.global_module_binder_index = Some(Arc::clone(idx));
+        }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // Pre-populate DefIds from all cross-file binders' semantic_defs.
         // This moves identity creation to apply_to time (deterministic, early)
@@ -1151,6 +1163,7 @@ impl ProjectEnv {
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
         let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
+        let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
         // Also build declared_modules if not already from skeleton.
         let mut declared_modules = if self.skeleton_declared_modules.is_some() {
@@ -1167,6 +1180,18 @@ impl ProjectEnv {
                     .push((file_idx, sym_id));
             }
             for (module_spec, exports) in binder.module_exports.iter() {
+                // Build module_binder_index: module_spec -> [binder_idx]
+                module_binder_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(file_idx);
+                let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                if normalized != module_spec {
+                    module_binder_index
+                        .entry(normalized.to_string())
+                        .or_default()
+                        .push(file_idx);
+                }
                 for (export_name, &sym_id) in exports.iter() {
                     module_exports_index
                         .entry((module_spec.clone(), export_name.to_string()))
@@ -1234,6 +1259,7 @@ impl ProjectEnv {
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
+        self.global_module_binder_index = Some(Arc::new(module_binder_index));
     }
 
     /// Build global indices only when the skeleton fingerprint has changed.

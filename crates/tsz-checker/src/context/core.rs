@@ -220,6 +220,7 @@ impl<'a> CheckerContext<'a> {
         self.global_expando_index = parent.global_expando_index.clone();
         self.global_module_augmentations_index = parent.global_module_augmentations_index.clone();
         self.global_augmentation_targets_index = parent.global_augmentation_targets_index.clone();
+        self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.module_specifiers = parent.module_specifiers.clone();
     }
@@ -233,13 +234,14 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
-        // If all 4 global indices are already pre-populated (e.g., from ProjectEnv),
+        // If all 5 global indices are already pre-populated (e.g., from ProjectEnv),
         // skip the O(N) binder scans entirely. This is the fast path for multi-file
         // checking where ProjectEnv::build_global_indices was called once at the driver level.
         let has_prebuilt_indices = self.global_file_locals_index.is_some()
             && self.global_module_exports_index.is_some()
             && self.global_module_augmentations_index.is_some()
-            && self.global_augmentation_targets_index.is_some();
+            && self.global_augmentation_targets_index.is_some()
+            && self.global_module_binder_index.is_some();
 
         if has_prebuilt_indices {
             // Indices already set — just store the binders and handle remaining
@@ -293,6 +295,7 @@ impl<'a> CheckerContext<'a> {
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         let mut module_exports_index: FxHashMap<(String, String), Vec<(usize, SymbolId)>> =
             FxHashMap::default();
+        let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
         let has_skeleton_declared_modules = self.global_declared_modules.is_some();
         let mut declared_modules = if has_skeleton_declared_modules {
@@ -309,6 +312,18 @@ impl<'a> CheckerContext<'a> {
                     .push((file_idx, sym_id));
             }
             for (module_spec, exports) in binder.module_exports.iter() {
+                // Build module_binder_index: module_spec -> [binder_idx]
+                module_binder_index
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(file_idx);
+                let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                if normalized != module_spec {
+                    module_binder_index
+                        .entry(normalized.to_string())
+                        .or_default()
+                        .push(file_idx);
+                }
                 for (export_name, &sym_id) in exports.iter() {
                     module_exports_index
                         .entry((module_spec.clone(), export_name.to_string()))
@@ -384,6 +399,7 @@ impl<'a> CheckerContext<'a> {
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
+        self.global_module_binder_index = Some(Arc::new(module_binder_index));
         self.all_binders = Some(binders);
     }
 

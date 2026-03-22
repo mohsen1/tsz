@@ -987,24 +987,55 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Try to resolve an import by searching all binders' re-export chains.
+    /// Try to resolve an import by searching binders' re-export chains.
+    ///
+    /// Uses `global_module_binder_index` for O(1) candidate lookup when available,
+    /// falling back to an O(N) scan of all binders otherwise.
     pub(crate) fn resolve_import_via_all_binders(
         &self,
         module_name: &str,
         normalized: &str,
         import_name: &str,
     ) -> bool {
-        if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if binder
-                    .resolve_import_if_needed_public(module_name, import_name)
-                    .is_some()
-                    || binder
-                        .resolve_import_if_needed_public(normalized, import_name)
-                        .is_some()
-                {
-                    return true;
+        let Some(all_binders) = &self.ctx.all_binders else {
+            return false;
+        };
+        // Use global module binder index for O(1) candidate lookup.
+        if let Some(ref idx) = self.ctx.global_module_binder_index {
+            let candidate_indices = idx
+                .get(module_name)
+                .into_iter()
+                .flatten()
+                .chain(idx.get(normalized).into_iter().flatten());
+            let mut seen = FxHashSet::default();
+            for &binder_idx in candidate_indices {
+                if !seen.insert(binder_idx) {
+                    continue;
                 }
+                if let Some(binder) = all_binders.get(binder_idx) {
+                    if binder
+                        .resolve_import_if_needed_public(module_name, import_name)
+                        .is_some()
+                        || binder
+                            .resolve_import_if_needed_public(normalized, import_name)
+                            .is_some()
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        // Fallback: O(N) scan when index not built.
+        for binder in all_binders.iter() {
+            if binder
+                .resolve_import_if_needed_public(module_name, import_name)
+                .is_some()
+                || binder
+                    .resolve_import_if_needed_public(normalized, import_name)
+                    .is_some()
+            {
+                return true;
             }
         }
         false
