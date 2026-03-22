@@ -280,6 +280,10 @@ impl RelationCacheKey {
     pub const FLAG_ALLOW_VOID_RETURN: u16 = 1 << 5;
     pub const FLAG_ALLOW_BIVARIANT_REST: u16 = 1 << 6;
     pub const FLAG_ALLOW_BIVARIANT_PARAM_COUNT: u16 = 1 << 7;
+    /// Disable generic type parameter erasure in function subtype checks.
+    /// When set, non-generic functions are NOT assignable to generic functions,
+    /// matching tsc's `eraseGenerics=false` behavior for implements/extends checks.
+    pub const FLAG_NO_ERASE_GENERICS: u16 = 1 << 8;
 
     /// Create a new cache key for subtype checking.
     pub const fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {

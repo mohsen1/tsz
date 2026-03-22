@@ -1052,6 +1052,25 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Like `is_assignable_to`, but disables generic type parameter erasure.
+    ///
+    /// Used for implements/extends member type checking (TS2416) where tsc's
+    /// `compareSignaturesRelated` does NOT erase target type parameters.
+    /// A non-generic `(x: string) => string` is NOT assignable to a generic
+    /// `<T>(x: T) => T` under this mode.
+    pub fn is_assignable_to_no_erase_generics(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        self.check_assignability_cached(
+            source,
+            target,
+            crate::query_boundaries::assignability::RelationFlags::NO_ERASE_GENERICS,
+            "is_assignable_to_no_erase_generics",
+        )
+    }
+
     /// Like `is_assignable_to`, but forces the strict-function-types relation flag.
     pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         if source == target {

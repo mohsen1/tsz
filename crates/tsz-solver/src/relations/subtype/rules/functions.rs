@@ -1178,10 +1178,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // will match correctly.
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
+            } else if !self.erase_generics {
+                // When erase_generics is false (strict mode, used for implements/extends
+                // member type checking), a non-generic function is NOT assignable to a
+                // generic function. This matches tsc's compareSignaturesRelated with
+                // eraseGenerics=false: the comparison proceeds with raw TypeParameter
+                // types in the target, and the SubtypeChecker rejects concrete types
+                // against opaque type parameters (e.g., string ≤ T returns False).
+                // This ensures TS2416 is correctly emitted for incompatible overrides.
+                target_instantiated.type_params.clear();
             } else {
-                // tsc signaturesRelatedTo erases target type params when source
-                // is non-generic and target is generic. Erase target type params
-                // to constraints so (x: any) => any can satisfy <T>(x: T) => T.
+                // Default: erase target type params to their constraints so non-generic
+                // functions can match generic targets structurally (e.g., for comparable
+                // relation, overload resolution, and general type compatibility).
                 let target_canonical =
                     erase_type_params_to_constraints(&target_instantiated.type_params);
                 target_instantiated =

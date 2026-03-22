@@ -50,6 +50,12 @@ pub struct RelationPolicy {
     /// Flow narrowing guards need pure assignability without weak type
     /// rejection, matching tsc's `isTypeAssignableTo` behavior.
     pub skip_weak_type_checks: bool,
+    /// Erase generic type parameters in function subtype checks.
+    ///
+    /// When true, non-generic functions can match generic targets by erasing
+    /// target type parameters to their constraints. Matches tsc's
+    /// `eraseGenerics` flag used in the comparable relation.
+    pub erase_generics: bool,
 }
 
 impl Default for RelationPolicy {
@@ -61,6 +67,7 @@ impl Default for RelationPolicy {
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
             skip_weak_type_checks: false,
+            erase_generics: true,
         }
     }
 }
@@ -69,6 +76,10 @@ impl RelationPolicy {
     pub const fn from_flags(flags: u16) -> Self {
         use crate::RelationCacheKey;
         let strict_any = (flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES) != 0;
+        // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
+        // This preserves backward compatibility while allowing specific paths
+        // (implements/extends checking) to disable erasure.
+        let erase_generics = (flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
         Self {
             flags,
             strict_subtype_checking: false,
@@ -80,7 +91,13 @@ impl RelationPolicy {
             },
             assume_related_on_cycle: true,
             skip_weak_type_checks: false,
+            erase_generics,
         }
+    }
+
+    pub const fn with_erase_generics(mut self, erase: bool) -> Self {
+        self.erase_generics = erase;
+        self
     }
 
     pub const fn with_strict_subtype_checking(mut self, strict: bool) -> Self {
@@ -277,6 +294,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker.set_strict_any_propagation(policy.strict_any_propagation);
     checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
     checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
+    checker.set_erase_generics(policy.erase_generics);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
     }
