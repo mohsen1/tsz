@@ -317,3 +317,65 @@ pub(crate) fn type_param_info(
 ) -> Option<tsz_solver::TypeParamInfo> {
     tsz_solver::type_param_info(db, type_id)
 }
+
+// ── Call-related query wrappers ──
+
+/// Get the full function shape for a type, if it is a Function type.
+///
+/// Unlike `has_function_shape` (which returns bool), this returns the actual
+/// `FunctionShape` so callers can inspect parameters, return type, etc.
+pub(crate) fn function_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<FunctionShape>> {
+    tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
+/// Check if a type is callable (has call signatures or is a function).
+pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_callable_type(db, type_id)
+}
+
+/// Unpack a tuple rest parameter into individual positional parameters.
+///
+/// Converts `...args: [string, number]` into `(arg0: string, arg1: number)`.
+pub(crate) fn unpack_tuple_rest_parameter(
+    db: &dyn TypeDatabase,
+    param: &ParamInfo,
+) -> Vec<ParamInfo> {
+    tsz_solver::type_queries::unpack_tuple_rest_parameter(db, param)
+}
+
+/// Find a named property in an object type by `Atom`.
+pub(crate) fn find_property_in_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: tsz_common::interner::Atom,
+) -> Option<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::find_property_in_object(db, type_id, name)
+}
+
+/// Get the enum `DefId` for an enum type.
+pub(crate) fn enum_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    tsz_solver::type_queries::get_enum_def_id(db, type_id)
+}
+
+/// Get application info (base type + type arguments) for a type application.
+pub(crate) fn application_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, Vec<TypeId>)> {
+    tsz_solver::type_queries::extended::get_application_info(db, type_id)
+}
+
+// ── Literal type classification ──
+
+pub(crate) use tsz_solver::type_queries::extended::LiteralTypeKind;
+
+/// Classify a type as a literal type kind (string, number, bigint, boolean, or not literal).
+pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
+    tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
+}
