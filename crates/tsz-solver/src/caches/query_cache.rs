@@ -89,6 +89,55 @@ impl QueryCacheStatistics {
     }
 }
 
+impl QueryCacheStatistics {
+    /// Estimate total in-memory size of all caches in bytes.
+    ///
+    /// Uses per-entry cost estimates based on `FxHashMap` bucket overhead (~64 bytes)
+    /// plus the key and value sizes. This is intentionally conservative — it does not
+    /// account for heap allocations inside values like `Vec<PropertyInfo>` or
+    /// `Arc<[Variance]>`, but captures the dominant cost (hash table metadata).
+    ///
+    /// For the `object_spread_cache`, we assume an average of 4 properties per entry
+    /// since the actual `Vec` contents are not tracked in the statistics snapshot.
+    #[must_use]
+    pub const fn estimated_size_bytes(&self) -> usize {
+        // FxHashMap overhead per bucket: hash (8) + key + value + padding.
+        // We use 64 bytes as a conservative per-bucket overhead constant.
+        const BUCKET_OVERHEAD: usize = 64;
+
+        // eval_cache: (TypeId, bool) -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
+        let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
+
+        // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
+        // SmallVec<[TypeId;4]> inline = 4*4 + len + cap = ~24 bytes; DefId=8, bool=1, TypeId=4
+        let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
+
+        // element_access_cache: (TypeId, TypeId, Option<u32>, bool) -> TypeId  ≈ 4+4+8+1+4 = 21
+        let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
+
+        // object_spread_cache: TypeId -> Vec<PropertyInfo>
+        // Vec header = 24 bytes; average ~4 PropertyInfo entries at ~64 bytes each = 256
+        let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);
+
+        // property_cache: (TypeId, Atom, bool) -> PropertyAccessResult  ≈ 4+4+1 + 16 = 25
+        let prop = self.property_cache_entries * (BUCKET_OVERHEAD + 25);
+
+        // variance_cache: DefId -> Arc<[Variance]>  ≈ 8 + 8(Arc ptr) = 16
+        let variance = self.variance_cache_entries * (BUCKET_OVERHEAD + 16);
+
+        // canonical_cache: TypeId -> TypeId  ≈ 4+4 = 8
+        let canonical = self.canonical_cache_entries * (BUCKET_OVERHEAD + 8);
+
+        // subtype_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
+        let subtype = self.relation.subtype_entries * (BUCKET_OVERHEAD + 13);
+
+        // assignability_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
+        let assignability = self.relation.assignability_entries * (BUCKET_OVERHEAD + 13);
+
+        eval + app_eval + elem + spread + prop + variance + canonical + subtype + assignability
+    }
+}
+
 impl std::fmt::Display for QueryCacheStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "QueryCache statistics:")?;
@@ -128,12 +177,18 @@ impl std::fmt::Display for QueryCacheStatistics {
             "  subtype_cache:          {} entries ({} hits, {} misses)",
             self.relation.subtype_entries, self.relation.subtype_hits, self.relation.subtype_misses,
         )?;
-        write!(
+        writeln!(
             f,
             "  assignability_cache:    {} entries ({} hits, {} misses)",
             self.relation.assignability_entries,
             self.relation.assignability_hits,
             self.relation.assignability_misses,
+        )?;
+        write!(
+            f,
+            "  estimated_size:         {} bytes ({:.1} KB)",
+            self.estimated_size_bytes(),
+            self.estimated_size_bytes() as f64 / 1024.0,
         )
     }
 }
@@ -230,6 +285,92 @@ impl<'a> QueryCache<'a> {
             canonical_cache_entries: self.canonical_cache.borrow().len(),
             relation: self.relation_cache_stats(),
         }
+    }
+
+    /// Estimate the in-memory size of all caches in bytes.
+    ///
+    /// Accounts for `FxHashMap` bucket overhead, key/value sizes, and heap
+    /// allocations inside cached values (e.g., `Vec<PropertyInfo>` in the
+    /// object-spread cache, `Arc<[Variance]>` in the variance cache).
+    ///
+    /// This is more accurate than `QueryCacheStatistics::estimated_size_bytes()`
+    /// because it reads actual map capacities and heap contents.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        // FxHashMap per-bucket overhead: hash + key + value + alignment padding.
+        const BUCKET_OVERHEAD: usize = 64;
+
+        let mut size = std::mem::size_of::<Self>();
+
+        // eval_cache: (TypeId, bool) -> TypeId
+        {
+            let map = self.eval_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<EvalCacheKey>() + std::mem::size_of::<TypeId>());
+        }
+
+        // application_eval_cache: (DefId, SmallVec<[TypeId; 4]>, bool) -> TypeId
+        {
+            let map = self.application_eval_cache.borrow();
+            let base_entry = BUCKET_OVERHEAD + std::mem::size_of::<ApplicationEvalCacheKey>() + std::mem::size_of::<TypeId>();
+            size += map.capacity() * base_entry;
+            // SmallVec spills to heap when > 4 elements; account for spilled entries.
+            for (key, _) in map.iter() {
+                if key.1.spilled() {
+                    size += key.1.capacity() * std::mem::size_of::<TypeId>();
+                }
+            }
+        }
+
+        // element_access_cache
+        {
+            let map = self.element_access_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<ElementAccessTypeCacheKey>() + std::mem::size_of::<TypeId>());
+        }
+
+        // object_spread_properties_cache: TypeId -> Vec<PropertyInfo>
+        {
+            let map = self.object_spread_properties_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<TypeId>() + std::mem::size_of::<Vec<PropertyInfo>>());
+            for (_, props) in map.iter() {
+                size += props.capacity() * std::mem::size_of::<PropertyInfo>();
+            }
+        }
+
+        // subtype_cache
+        {
+            let map = self.subtype_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<RelationCacheKey>() + std::mem::size_of::<bool>());
+        }
+
+        // assignability_cache
+        {
+            let map = self.assignability_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<RelationCacheKey>() + std::mem::size_of::<bool>());
+        }
+
+        // property_cache
+        {
+            let map = self.property_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<PropertyAccessCacheKey>() + std::mem::size_of::<PropertyAccessResult>());
+        }
+
+        // variance_cache: DefId -> Arc<[Variance]>
+        {
+            let map = self.variance_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>() + std::mem::size_of::<Arc<[Variance]>>());
+            // Account for the Arc-allocated slice contents
+            for (_, arc) in map.iter() {
+                size += arc.len() * std::mem::size_of::<Variance>();
+            }
+        }
+
+        // canonical_cache
+        {
+            let map = self.canonical_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
+        }
+
+        size
     }
 
     pub fn reset_relation_cache_stats(&self) {

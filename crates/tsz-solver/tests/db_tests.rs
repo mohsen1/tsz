@@ -296,4 +296,124 @@ fn query_cache_statistics_reflects_cache_population() {
     assert!(display_output.contains("eval_cache:"));
     assert!(display_output.contains("subtype_cache:"));
     assert!(display_output.contains("assignability_cache:"));
+    assert!(display_output.contains("estimated_size:"));
+}
+
+#[test]
+fn query_cache_estimated_size_bytes_empty() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    // Empty cache should still have nonzero size (Self struct)
+    let size = cache.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "empty QueryCache should have nonzero estimated size"
+    );
+    assert!(
+        size < 4096,
+        "empty QueryCache should be small, got {size} bytes"
+    );
+
+    // Statistics-based estimate should be zero for empty caches
+    let stats = cache.statistics();
+    assert_eq!(stats.estimated_size_bytes(), 0);
+}
+
+#[test]
+fn query_cache_estimated_size_grows_with_entries() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    let empty_size = cache.estimated_size_bytes();
+
+    // Add some eval cache entries
+    let str_type = interner.literal_string("hello");
+    let num_type = interner.literal_number(42.0);
+    cache.evaluate_type(str_type);
+    cache.evaluate_type(num_type);
+
+    // Add subtype cache entries
+    cache.insert_subtype_cache(
+        RelationCacheKey::subtype(str_type, num_type, 0, 0),
+        false,
+    );
+
+    // Add assignability cache entries
+    cache.insert_assignability_cache(
+        RelationCacheKey::assignability(str_type, num_type, 0, 0),
+        false,
+    );
+
+    let populated_size = cache.estimated_size_bytes();
+    assert!(
+        populated_size > empty_size,
+        "populated cache ({populated_size}) should be larger than empty ({empty_size})"
+    );
+
+    // Statistics snapshot should also show nonzero estimated size
+    let stats = cache.statistics();
+    assert!(
+        stats.estimated_size_bytes() > 0,
+        "statistics estimated_size_bytes should be nonzero after populating caches"
+    );
+}
+
+#[test]
+fn query_cache_estimated_size_resets_on_clear() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    // Populate
+    let str_type = interner.literal_string("test");
+    cache.evaluate_type(str_type);
+    cache.insert_subtype_cache(
+        RelationCacheKey::subtype(str_type, TypeId::NUMBER, 0, 0),
+        true,
+    );
+
+    let before_clear = cache.estimated_size_bytes();
+
+    cache.clear();
+
+    let after_clear = cache.estimated_size_bytes();
+    // After clear, size should not exceed before_clear (maps may retain capacity).
+    // The key invariant: statistics-based estimate resets to zero.
+    let stats = cache.statistics();
+    assert_eq!(
+        stats.estimated_size_bytes(),
+        0,
+        "statistics estimated_size_bytes should be 0 after clear"
+    );
+    // Live estimate may retain capacity but should be reasonable
+    assert!(
+        after_clear <= before_clear,
+        "live estimate should not grow after clear ({after_clear} vs {before_clear})"
+    );
+}
+
+#[test]
+fn query_cache_statistics_merge_preserves_estimated_size() {
+    let mut stats_a = QueryCacheStatistics {
+        eval_cache_entries: 10,
+        property_cache_entries: 5,
+        ..Default::default()
+    };
+    let stats_b = QueryCacheStatistics {
+        eval_cache_entries: 20,
+        property_cache_entries: 15,
+        ..Default::default()
+    };
+
+    let size_a = stats_a.estimated_size_bytes();
+    let size_b = stats_b.estimated_size_bytes();
+
+    stats_a.merge(&stats_b);
+
+    let merged_size = stats_a.estimated_size_bytes();
+    assert_eq!(
+        merged_size,
+        size_a + size_b,
+        "merged estimated_size_bytes should equal sum of parts"
+    );
 }
