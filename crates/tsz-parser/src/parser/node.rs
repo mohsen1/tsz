@@ -1057,6 +1057,191 @@ pub struct NodeArena {
     pub extended_info: Vec<ExtendedNodeInfo>,
 }
 
+impl NodeArena {
+    /// Estimate the total heap memory footprint of this arena in bytes.
+    ///
+    /// Accounts for the struct itself, all typed data pool capacities,
+    /// heap-allocated strings inside pool elements (identifiers, literals,
+    /// JSX text, source file data), the interner's string table, and
+    /// the source text `Arc<str>`. This gives an accurate picture for
+    /// memory-pressure tracking and LSP eviction budgeting.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        use std::mem::size_of;
+
+        let mut size = size_of::<Self>();
+
+        // ---- Interner ----
+        // FxHashMap<Arc<str>, Atom>: each entry is (Arc overhead + string data + Atom)
+        // Vec<Arc<str>>: capacity * pointer-size
+        // We approximate string data by iterating the interner's resolve table.
+        size += self.interner.len() * (size_of::<Arc<str>>() + size_of::<u32>());
+        // HashMap overhead (~56 bytes per bucket on average with FxHashMap)
+        size += self.interner.len() * 56;
+
+        // ---- Node headers ----
+        size += self.nodes.capacity() * size_of::<Node>();
+
+        // ---- Typed data pools (fixed-size elements) ----
+        // Helper: for each Vec<T>, add capacity * size_of::<T>().
+
+        // Names and identifiers (IdentifierData has heap strings — handled below)
+        size += self.identifiers.capacity() * size_of::<IdentifierData>();
+        size += self.qualified_names.capacity() * size_of::<QualifiedNameData>();
+        size += self.computed_properties.capacity() * size_of::<ComputedPropertyData>();
+
+        // Literals (LiteralData has heap strings — handled below)
+        size += self.literals.capacity() * size_of::<LiteralData>();
+
+        // Expressions
+        size += self.binary_exprs.capacity() * size_of::<BinaryExprData>();
+        size += self.unary_exprs.capacity() * size_of::<UnaryExprData>();
+        size += self.call_exprs.capacity() * size_of::<CallExprData>();
+        size += self.access_exprs.capacity() * size_of::<AccessExprData>();
+        size += self.conditional_exprs.capacity() * size_of::<ConditionalExprData>();
+        size += self.literal_exprs.capacity() * size_of::<LiteralExprData>();
+        size += self.parenthesized.capacity() * size_of::<ParenthesizedData>();
+        size += self.unary_exprs_ex.capacity() * size_of::<UnaryExprDataEx>();
+        size += self.type_assertions.capacity() * size_of::<TypeAssertionData>();
+        size += self.template_exprs.capacity() * size_of::<TemplateExprData>();
+        size += self.template_spans.capacity() * size_of::<TemplateSpanData>();
+        size += self.tagged_templates.capacity() * size_of::<TaggedTemplateData>();
+
+        // Functions and classes
+        size += self.functions.capacity() * size_of::<FunctionData>();
+        size += self.classes.capacity() * size_of::<ClassData>();
+        size += self.interfaces.capacity() * size_of::<InterfaceData>();
+        size += self.type_aliases.capacity() * size_of::<TypeAliasData>();
+        size += self.enums.capacity() * size_of::<EnumData>();
+        size += self.enum_members.capacity() * size_of::<EnumMemberData>();
+        size += self.modules.capacity() * size_of::<ModuleData>();
+        size += self.module_blocks.capacity() * size_of::<ModuleBlockData>();
+
+        // Signatures and members
+        size += self.signatures.capacity() * size_of::<SignatureData>();
+        size += self.index_signatures.capacity() * size_of::<IndexSignatureData>();
+        size += self.property_decls.capacity() * size_of::<PropertyDeclData>();
+        size += self.method_decls.capacity() * size_of::<MethodDeclData>();
+        size += self.constructors.capacity() * size_of::<ConstructorData>();
+        size += self.accessors.capacity() * size_of::<AccessorData>();
+        size += self.parameters.capacity() * size_of::<ParameterData>();
+        size += self.type_parameters.capacity() * size_of::<TypeParameterData>();
+        size += self.decorators.capacity() * size_of::<DecoratorData>();
+        size += self.heritage_clauses.capacity() * size_of::<HeritageData>();
+        size += self.expr_with_type_args.capacity() * size_of::<ExprWithTypeArgsData>();
+
+        // Statements
+        size += self.if_statements.capacity() * size_of::<IfStatementData>();
+        size += self.loops.capacity() * size_of::<LoopData>();
+        size += self.blocks.capacity() * size_of::<BlockData>();
+        size += self.variables.capacity() * size_of::<VariableData>();
+        size += self.return_data.capacity() * size_of::<ReturnData>();
+        size += self.expr_statements.capacity() * size_of::<ExprStatementData>();
+        size += self.switch_data.capacity() * size_of::<SwitchData>();
+        size += self.case_clauses.capacity() * size_of::<CaseClauseData>();
+        size += self.try_data.capacity() * size_of::<TryData>();
+        size += self.catch_clauses.capacity() * size_of::<CatchClauseData>();
+        size += self.labeled_data.capacity() * size_of::<LabeledData>();
+        size += self.jump_data.capacity() * size_of::<JumpData>();
+        size += self.with_data.capacity() * size_of::<WithData>();
+
+        // Types
+        size += self.type_refs.capacity() * size_of::<TypeRefData>();
+        size += self.composite_types.capacity() * size_of::<CompositeTypeData>();
+        size += self.function_types.capacity() * size_of::<FunctionTypeData>();
+        size += self.type_queries.capacity() * size_of::<TypeQueryData>();
+        size += self.type_literals.capacity() * size_of::<TypeLiteralData>();
+        size += self.array_types.capacity() * size_of::<ArrayTypeData>();
+        size += self.tuple_types.capacity() * size_of::<TupleTypeData>();
+        size += self.wrapped_types.capacity() * size_of::<WrappedTypeData>();
+        size += self.conditional_types.capacity() * size_of::<ConditionalTypeData>();
+        size += self.infer_types.capacity() * size_of::<InferTypeData>();
+        size += self.type_operators.capacity() * size_of::<TypeOperatorData>();
+        size += self.indexed_access_types.capacity() * size_of::<IndexedAccessTypeData>();
+        size += self.mapped_types.capacity() * size_of::<MappedTypeData>();
+        size += self.literal_types.capacity() * size_of::<LiteralTypeData>();
+        size += self.template_literal_types.capacity() * size_of::<TemplateLiteralTypeData>();
+        size += self.named_tuple_members.capacity() * size_of::<NamedTupleMemberData>();
+        size += self.type_predicates.capacity() * size_of::<TypePredicateData>();
+
+        // Import/export
+        size += self.import_decls.capacity() * size_of::<ImportDeclData>();
+        size += self.import_clauses.capacity() * size_of::<ImportClauseData>();
+        size += self.named_imports.capacity() * size_of::<NamedImportsData>();
+        size += self.specifiers.capacity() * size_of::<SpecifierData>();
+        size += self.export_decls.capacity() * size_of::<ExportDeclData>();
+        size += self.export_assignments.capacity() * size_of::<ExportAssignmentData>();
+        size += self.import_attributes.capacity() * size_of::<ImportAttributesData>();
+        size += self.import_attribute.capacity() * size_of::<ImportAttributeData>();
+
+        // Binding patterns
+        size += self.binding_patterns.capacity() * size_of::<BindingPatternData>();
+        size += self.binding_elements.capacity() * size_of::<BindingElementData>();
+
+        // Object literal members
+        size += self.property_assignments.capacity() * size_of::<PropertyAssignmentData>();
+        size += self.shorthand_properties.capacity() * size_of::<ShorthandPropertyData>();
+        size += self.spread_data.capacity() * size_of::<SpreadData>();
+
+        // Variable declarations
+        size += self.variable_declarations.capacity() * size_of::<VariableDeclarationData>();
+
+        // For-in/for-of
+        size += self.for_in_of.capacity() * size_of::<ForInOfData>();
+
+        // JSX
+        size += self.jsx_elements.capacity() * size_of::<JsxElementData>();
+        size += self.jsx_opening.capacity() * size_of::<JsxOpeningData>();
+        size += self.jsx_closing.capacity() * size_of::<JsxClosingData>();
+        size += self.jsx_fragments.capacity() * size_of::<JsxFragmentData>();
+        size += self.jsx_attributes.capacity() * size_of::<JsxAttributesData>();
+        size += self.jsx_attribute.capacity() * size_of::<JsxAttributeData>();
+        size += self.jsx_spread_attributes.capacity() * size_of::<JsxSpreadAttributeData>();
+        size += self.jsx_expressions.capacity() * size_of::<JsxExpressionData>();
+        size += self.jsx_text.capacity() * size_of::<JsxTextData>();
+        size += self.jsx_namespaced_names.capacity() * size_of::<JsxNamespacedNameData>();
+
+        // Source file
+        size += self.source_files.capacity() * size_of::<SourceFileData>();
+
+        // Extended info
+        size += self.extended_info.capacity() * size_of::<ExtendedNodeInfo>();
+
+        // ---- Heap strings inside pool elements ----
+
+        // IdentifierData: escaped_text + original_text
+        for id in &self.identifiers {
+            size += id.escaped_text.capacity();
+            if let Some(ref s) = id.original_text {
+                size += s.capacity();
+            }
+        }
+
+        // LiteralData: text + raw_text
+        for lit in &self.literals {
+            size += lit.text.capacity();
+            if let Some(ref s) = lit.raw_text {
+                size += s.capacity();
+            }
+        }
+
+        // JsxTextData: text
+        for jt in &self.jsx_text {
+            size += jt.text.capacity();
+        }
+
+        // SourceFileData: file_name + text (Arc<str>) + comments
+        for sf in &self.source_files {
+            size += sf.file_name.capacity();
+            size += sf.text.len(); // Arc<str> heap data
+            size += sf.comments.capacity()
+                * size_of::<tsz_common::comments::CommentRange>();
+        }
+
+        size
+    }
+}
+
 /// Extended node info for nodes that need more than what fits in Node
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExtendedNodeInfo {
