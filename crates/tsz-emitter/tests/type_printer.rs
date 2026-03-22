@@ -224,6 +224,22 @@ fn quoted_property_name_escapes_special_chars() {
 }
 
 #[test]
+fn index_access_parenthesizes_union_container() {
+    let interner = tsz_solver::TypeInterner::new();
+    // Create (string | number)[K] -- the union container needs parens
+    let union_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let key_str = interner.literal_string("length");
+    let idx_access = interner.index_access(union_type, key_str);
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(idx_access);
+    assert!(
+        result.starts_with("(string | number)["),
+        "Union in indexed access object position needs parens: {result}"
+    );
+}
+
+#[test]
 fn external_module_symbol_is_not_treated_as_global() {
     let interner = tsz_solver::TypeInterner::new();
     let mut symbols = SymbolArena::new();
