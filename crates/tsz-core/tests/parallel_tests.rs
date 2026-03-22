@@ -1,4 +1,6 @@
 use super::*;
+use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
+use crate::parallel::skeleton::diff_skeletons;
 use std::fs;
 use std::path::Path;
 
@@ -4226,4 +4228,118 @@ fn bind_result_estimated_size_bytes_is_positive() {
         size > 0,
         "BindResult estimated_size_bytes should be positive for non-empty file"
     );
+}
+
+// =============================================================================
+// End-to-end skeleton pipeline: parse → bind → extract → reduce → diff
+// =============================================================================
+
+#[test]
+fn skeleton_pipeline_end_to_end_no_change() {
+    let files = vec![
+        ("api.ts".to_string(), "export function hello() {}".to_string()),
+        ("utils.ts".to_string(), "export const PI = 3.14;".to_string()),
+    ];
+
+    // First build
+    let results1 = parse_and_bind_parallel(files.clone());
+    let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
+    let idx1 = reduce_skeletons(&skels1);
+
+    // Second build (identical source)
+    let results2 = parse_and_bind_parallel(files);
+    let skels2: Vec<_> = results2.iter().map(|r| extract_skeleton(r)).collect();
+    let idx2 = reduce_skeletons(&skels2);
+
+    // Fingerprints must match
+    assert_eq!(idx1.fingerprint, idx2.fingerprint, "identical source → identical index fingerprint");
+
+    // Diff should be empty
+    let diff = diff_skeletons(&skels1, &skels2);
+    assert!(diff.is_empty(), "no changes expected, got {:?}", diff);
+    assert!(!diff.topology_changed);
+}
+
+#[test]
+fn skeleton_pipeline_detects_added_export() {
+    let files_v1 = vec![
+        ("mod.ts".to_string(), "export const x = 1;".to_string()),
+    ];
+    let files_v2 = vec![
+        ("mod.ts".to_string(), "export const x = 1; export const y = 2;".to_string()),
+    ];
+
+    let results1 = parse_and_bind_parallel(files_v1);
+    let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
+
+    let results2 = parse_and_bind_parallel(files_v2);
+    let skels2: Vec<_> = results2.iter().map(|r| extract_skeleton(r)).collect();
+
+    // Adding an export should change the fingerprint
+    assert_ne!(
+        skels1[0].fingerprint, skels2[0].fingerprint,
+        "adding export should change file fingerprint"
+    );
+
+    let diff = diff_skeletons(&skels1, &skels2);
+    assert_eq!(diff.changed, vec!["mod.ts"]);
+    assert!(diff.topology_changed);
+}
+
+#[test]
+fn skeleton_pipeline_body_change_no_topology_change() {
+    let files_v1 = vec![
+        ("fn.ts".to_string(), "export function f() { return 1; }".to_string()),
+    ];
+    let files_v2 = vec![
+        ("fn.ts".to_string(), "export function f() { return 999; }".to_string()),
+    ];
+
+    let results1 = parse_and_bind_parallel(files_v1);
+    let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
+
+    let results2 = parse_and_bind_parallel(files_v2);
+    let skels2: Vec<_> = results2.iter().map(|r| extract_skeleton(r)).collect();
+
+    // Body-only change should NOT change skeleton fingerprint
+    // (skeleton captures merge-relevant topology, not function bodies)
+    assert_eq!(
+        skels1[0].fingerprint, skels2[0].fingerprint,
+        "body-only change should not affect skeleton fingerprint"
+    );
+
+    let diff = diff_skeletons(&skels1, &skels2);
+    assert!(diff.is_empty(), "body change should not show in diff");
+}
+
+#[test]
+fn residency_budget_integration_with_merged_program() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+    ];
+
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+    let stats = program.residency_stats();
+
+    // Budget with generous thresholds → low pressure for 2 tiny files
+    let budget = ResidencyBudget {
+        low_watermark_bytes: 1024 * 1024, // 1MB
+        high_watermark_bytes: 2 * 1024 * 1024, // 2MB
+    };
+    assert_eq!(
+        budget.assess(&stats),
+        MemoryPressure::Low,
+        "2 tiny files should be low pressure"
+    );
+
+    // Skeleton should be present and offer eviction savings
+    assert!(stats.has_skeleton_index);
+    if stats.pre_merge_bind_total_bytes > 0 {
+        assert!(
+            ResidencyBudget::eviction_savings(&stats) > 0,
+            "should offer eviction savings when skeleton present"
+        );
+    }
 }
