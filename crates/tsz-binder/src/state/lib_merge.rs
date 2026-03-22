@@ -359,9 +359,7 @@ impl BinderState {
                                 file_id,
                                 span_start: entry.span_start,
                                 type_param_count: entry.type_param_count,
-                                enum_member_names: entry.enum_member_names.clone(),
-                                is_const: entry.is_const,
-                                is_abstract: entry.is_abstract,
+                                is_exported: entry.is_exported,
                             },
                         );
                     }

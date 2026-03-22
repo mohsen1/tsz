@@ -4155,3 +4155,264 @@ fn semantic_defs_type_param_count_zero_for_non_generic() {
         );
     }
 }
+
+// ===== is_exported field tests =====
+
+#[test]
+fn semantic_defs_captures_export_visibility() {
+    let binder = bind_source(
+        "
+export class ExportedClass {}
+class LocalClass {}
+export interface ExportedIface {}
+interface LocalIface {}
+export type ExportedAlias = string;
+type LocalAlias = number;
+export enum ExportedEnum { A }
+enum LocalEnum { B }
+export function exportedFn() {}
+function localFn() {}
+export const exportedVar = 1;
+const localVar = 2;
+",
+    );
+
+    let exported_names = [
+        "ExportedClass",
+        "ExportedIface",
+        "ExportedAlias",
+        "ExportedEnum",
+        "exportedFn",
+        "exportedVar",
+    ];
+    let local_names = [
+        "LocalClass",
+        "LocalIface",
+        "LocalAlias",
+        "LocalEnum",
+        "localFn",
+        "localVar",
+    ];
+
+    for name in &exported_names {
+        let sym_id = binder
+            .file_locals
+            .get(*name)
+            .unwrap_or_else(|| panic!("expected {name} in file_locals"));
+        let entry = binder
+            .semantic_defs
+            .get(&sym_id)
+            .unwrap_or_else(|| panic!("expected semantic_def for {name}"));
+        assert!(entry.is_exported, "{name} should be marked as exported");
+    }
+
+    for name in &local_names {
+        let sym_id = binder
+            .file_locals
+            .get(*name)
+            .unwrap_or_else(|| panic!("expected {name} in file_locals"));
+        let entry = binder
+            .semantic_defs
+            .get(&sym_id)
+            .unwrap_or_else(|| panic!("expected semantic_def for {name}"));
+        assert!(
+            !entry.is_exported,
+            "{name} should NOT be marked as exported"
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_exported_namespace_nested_members() {
+    // Declarations inside a namespace body (Module scope) should also
+    // have their is_exported field set correctly.
+    let binder = bind_source(
+        "
+namespace Outer {
+    export class Inner {}
+    class Private {}
+    export type PubAlias = string;
+}
+",
+    );
+
+    // Outer namespace should be captured
+    let outer_id = binder.file_locals.get("Outer").expect("expected Outer");
+    let outer_entry = binder
+        .semantic_defs
+        .get(&outer_id)
+        .expect("expected semantic_def for Outer");
+    assert_eq!(outer_entry.kind, super::SemanticDefKind::Namespace);
+    assert!(!outer_entry.is_exported, "Outer has no export modifier");
+
+    // Inner and PubAlias are in the namespace's Module scope, so they should
+    // be captured in semantic_defs if they are top-level within that Module.
+    let has_inner = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Inner" && e.is_exported);
+    assert!(
+        has_inner,
+        "exported Inner class inside namespace should be captured with is_exported=true"
+    );
+
+    let has_private = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Private" && !e.is_exported);
+    assert!(
+        has_private,
+        "non-exported Private class inside namespace should be captured with is_exported=false"
+    );
+
+    let has_pub_alias = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "PubAlias" && e.is_exported);
+    assert!(
+        has_pub_alias,
+        "exported PubAlias inside namespace should be captured with is_exported=true"
+    );
+}
+
+// ===== Merge/rebind identity stability tests =====
+
+#[test]
+fn semantic_defs_stable_identity_across_rebind() {
+    // Binding the same source twice must produce entries with identical
+    // kind, name, span_start, type_param_count, and is_exported.
+    // This ensures stable identity survives rebind (e.g., after file edit).
+    let source = "
+export class Foo<T> {}
+interface Bar { x: number }
+export type Baz<A, B> = A | B;
+enum Color { Red }
+export namespace NS { export type Inner = string; }
+export function greet(name: string): void {}
+const LOCAL = 42;
+";
+    let binder1 = bind_source(source);
+    let binder2 = bind_source(source);
+
+    assert_eq!(binder1.semantic_defs.len(), binder2.semantic_defs.len());
+
+    for (sym_id, entry1) in &binder1.semantic_defs {
+        let entry2 = binder2
+            .semantic_defs
+            .get(sym_id)
+            .expect("same SymbolId should exist in second binding");
+        assert_eq!(
+            entry1.kind, entry2.kind,
+            "kind mismatch for {}",
+            entry1.name
+        );
+        assert_eq!(entry1.name, entry2.name, "name mismatch");
+        assert_eq!(
+            entry1.span_start, entry2.span_start,
+            "span mismatch for {}",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.type_param_count, entry2.type_param_count,
+            "tp_count mismatch for {}",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.is_exported, entry2.is_exported,
+            "is_exported mismatch for {}",
+            entry1.name
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_lib_merge_preserves_is_exported() {
+    // Lib symbols merged into the main binder should retain their is_exported flag.
+    let lib_source = "export interface LibIface {} interface InternalIface {}";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    let user_source = "let x = 1;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // Find the merged lib entries and check is_exported
+    let lib_iface = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "LibIface")
+        .expect("LibIface should be in semantic_defs after merge");
+    assert!(
+        lib_iface.is_exported,
+        "LibIface should preserve is_exported=true through merge"
+    );
+
+    let internal_iface = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "InternalIface")
+        .expect("InternalIface should be in semantic_defs after merge");
+    assert!(
+        !internal_iface.is_exported,
+        "InternalIface should preserve is_exported=false through merge"
+    );
+}
+
+#[test]
+fn semantic_defs_declaration_merging_across_files_keeps_first_identity() {
+    // When the same interface is declared in two lib files, the first
+    // declaration's identity (kind, span, is_exported) should be preserved.
+    let lib1_source = "export interface Shared { a: string }";
+    let mut lib1_parser = ParserState::new("lib1.d.ts".to_string(), lib1_source.to_string());
+    let lib1_root = lib1_parser.parse_source_file();
+    let mut lib1_binder = BinderState::new();
+    lib1_binder.bind_source_file(lib1_parser.get_arena(), lib1_root);
+
+    let lib2_source = "interface Shared { b: number }";
+    let mut lib2_parser = ParserState::new("lib2.d.ts".to_string(), lib2_source.to_string());
+    let lib2_root = lib2_parser.parse_source_file();
+    let mut lib2_binder = BinderState::new();
+    lib2_binder.bind_source_file(lib2_parser.get_arena(), lib2_root);
+
+    let lib_ctx1 = super::LibContext {
+        arena: std::sync::Arc::new(lib1_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib1_binder),
+    };
+    let lib_ctx2 = super::LibContext {
+        arena: std::sync::Arc::new(lib2_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib2_binder),
+    };
+
+    let user_source = "let x = 1;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx1, lib_ctx2]);
+
+    let shared_entry = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Shared")
+        .expect("Shared should be in semantic_defs after merge");
+
+    // First declaration wins: lib1 declares `export interface Shared`,
+    // so is_exported should be true.
+    assert_eq!(shared_entry.kind, super::SemanticDefKind::Interface);
+    assert!(
+        shared_entry.is_exported,
+        "declaration merging should keep first identity (exported from lib1)"
+    );
+}
