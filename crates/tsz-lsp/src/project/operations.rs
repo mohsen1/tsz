@@ -813,6 +813,7 @@ impl Project {
         file_name: &str,
         position: Position,
     ) -> Option<Vec<Location>> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
         let result = (|| {
@@ -1210,6 +1211,7 @@ impl Project {
         position: Position,
         new_name: String,
     ) -> Result<WorkspaceEdit, String> {
+        self.touch_file(file_name);
         let start = Instant::now();
 
         // Step 1: Normalize the new name

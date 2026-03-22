@@ -45,6 +45,7 @@ impl Project {
 
     /// Go to definition within a single file.
     pub fn get_definition(&mut self, file_name: &str, position: Position) -> Option<Vec<Location>> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
         let result = (|| {
@@ -79,6 +80,7 @@ impl Project {
 
     /// Hover within a single file.
     pub fn get_hover(&mut self, file_name: &str, position: Position) -> Option<HoverInfo> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
         let result = self
@@ -98,6 +100,7 @@ impl Project {
         file_name: &str,
         position: Position,
     ) -> Option<SignatureHelp> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
         let result = self
@@ -120,6 +123,7 @@ impl Project {
         file_name: &str,
         position: Position,
     ) -> Option<Vec<CompletionItem>> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
         let mut completions = {
@@ -347,6 +351,7 @@ impl Project {
 
     /// Diagnostics within a single file.
     pub fn get_diagnostics(&mut self, file_name: &str) -> Option<Vec<LspDiagnostic>> {
+        self.touch_file(file_name);
         let start = Instant::now();
         let scope_stats = ScopeCacheStats::default();
         let result = {
