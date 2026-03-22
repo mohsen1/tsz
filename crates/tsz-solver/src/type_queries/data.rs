@@ -2509,6 +2509,86 @@ pub fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         || crate::visitors::visitor_predicates::is_tuple_type(db, type_id)
 }
 
+/// Evaluate the passthrough result for an identity-homomorphic mapped type
+/// applied to a primitive argument.
+///
+/// When a mapped type has the form `{ [K in keyof T]: T[K] }` (identity mapping)
+/// and the type argument for `T` is a primitive type, tsc evaluates the result
+/// directly without expanding the mapping:
+///
+/// - For concrete primitives (string, number, boolean, etc.): return the arg itself.
+///   E.g., `Partial<number>` → `number`.
+///
+/// - For `any`/`unknown`/`never`/`error` with an array/tuple-constrained param:
+///   return the arg. E.g., `Boxified<any>` where `T extends any[]` → `any`.
+///
+/// - For `any` with a non-array constraint: return an object with string+number
+///   index signatures. E.g., `Objectish<any>` → `{ [x: string]: any; [x: number]: any }`.
+///
+/// Returns `Some(result)` if the passthrough applies, `None` otherwise.
+/// The caller must supply the already-evaluated argument type.
+pub fn evaluate_identity_mapped_passthrough(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    arg: TypeId,
+) -> Option<TypeId> {
+    use crate::types::{IndexSignature, ObjectFlags, ObjectShape};
+
+    // Check if this is an identity mapped type
+    let identity_info = classify_identity_mapped(db, mapped_id)?;
+
+    // Only applies to primitives (including any/unknown/never/error)
+    if !crate::is_primitive_type(db, arg)
+        && arg != TypeId::ANY
+        && arg != TypeId::UNKNOWN
+        && arg != TypeId::NEVER
+        && arg != TypeId::ERROR
+    {
+        return None;
+    }
+
+    // For concrete primitives (not any/unknown/never/error), always passthrough
+    if arg != TypeId::ANY && arg != TypeId::UNKNOWN && arg != TypeId::NEVER && arg != TypeId::ERROR
+    {
+        return Some(arg);
+    }
+
+    // For any/unknown/never/error: passthrough only when the type parameter is
+    // constrained to array/tuple types.
+    if let Some(constraint) = identity_info.source_constraint {
+        let evaluated_constraint = crate::evaluation::evaluate::evaluate_type(db, constraint);
+        if is_array_or_tuple_type(db, evaluated_constraint) {
+            return Some(arg);
+        }
+    }
+
+    // For `any` with no array/tuple constraint: produce { [x: string]: any; [x: number]: any }.
+    // This matches tsc where `Objectish<any>` produces an object with index signatures,
+    // NOT `any`. This ensures `Objectish<any>` is NOT assignable to `any[]`.
+    if arg == TypeId::ANY {
+        return Some(db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: vec![],
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::ANY,
+                readonly: false,
+                param_name: None,
+            }),
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::ANY,
+                readonly: false,
+                param_name: None,
+            }),
+            symbol: None,
+        }));
+    }
+
+    // For unknown/never/error without array constraint, no passthrough
+    None
+}
+
 /// Reconstruct a mapped type with a new constraint, preserving all other fields.
 ///
 /// Used when the checker evaluates a mapped type's constraint to concrete keys
@@ -2818,6 +2898,7 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 mod tests {
     use super::*;
     use crate::TypeInterner;
+    use crate::caches::db::QueryDatabase;
     use crate::types::{CallSignature, CallableShape, ParamInfo, TypeParamInfo};
 
     fn make_callable_with_construct_sig(
@@ -3438,6 +3519,198 @@ mod tests {
         assert_eq!(
             super::intersect_constructor_returns(&interner, TypeId::STRING, TypeId::NUMBER),
             TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_concrete_primitive() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build: { [K in keyof T]: T[K] } where T is a type parameter
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let constraint = interner.keyof(t_param);
+        let template = interner.index_access(t_param, k_param);
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint,
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("should be a mapped type");
+
+        // Concrete primitives pass through
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::STRING),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::NUMBER),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::BOOLEAN),
+            Some(TypeId::BOOLEAN)
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_any_no_constraint() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build identity mapped type with unconstrained T
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: interner.index_access(t_param, k_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // `any` with no array constraint → produces object with index signatures (not `any`)
+        let result = super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::ANY);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_ne!(
+            result,
+            TypeId::ANY,
+            "Objectish<any> should not passthrough to any"
+        );
+
+        // unknown with no array constraint → no passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::UNKNOWN),
+            None
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_any_with_array_constraint() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build identity mapped type with T extends any[]
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let array_constraint = interner.factory().array(TypeId::ANY);
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: Some(array_constraint),
+            default: None,
+            is_const: false,
+        });
+        let k_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: interner.index_access(t_param, k_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // `any` with array constraint → passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::ANY),
+            Some(TypeId::ANY)
+        );
+    }
+
+    #[test]
+    fn test_identity_mapped_passthrough_non_identity() {
+        use crate::types::{MappedType, TypeParamInfo};
+
+        let interner = TypeInterner::new();
+
+        // Build non-identity mapped type: { [K in keyof T]: string }
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(t_param),
+            name_type: None,
+            template: TypeId::STRING, // Non-identity: template is string, not T[K]
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+
+        // Non-identity mapped type → no passthrough
+        assert_eq!(
+            super::evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::NUMBER),
+            None
         );
     }
 }
