@@ -1223,18 +1223,38 @@ impl<'a> CheckerState<'a> {
                         if !import_has_value && let Some(ref module_name) = sym.import_module {
                             let export_name = sym.import_name.as_deref().unwrap_or(&name);
                             // Try declared modules (module_exports)
+                            // Use global_module_binder_index for O(1) lookup instead of O(N) binder scan
                             if let Some(binders) = &self.ctx.all_binders {
-                                for binder in binders.iter() {
-                                    if let Some(exports) =
-                                        binder.module_exports.get(module_name.as_str())
-                                        && let Some(target_sym_id) = exports.get(export_name)
-                                        && let Some(target_sym) = binder.symbols.get(target_sym_id)
-                                        && (target_sym.flags
-                                            & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
-                                            != 0
-                                    {
-                                        import_has_value = true;
-                                        break;
+                                let candidate_indices = self.ctx.global_module_binder_index.as_ref()
+                                    .and_then(|idx| idx.get(module_name.as_str()));
+                                if let Some(indices) = candidate_indices {
+                                    for &binder_idx in indices {
+                                        if let Some(binder) = binders.get(binder_idx)
+                                            && let Some(exports) =
+                                                binder.module_exports.get(module_name.as_str())
+                                            && let Some(target_sym_id) = exports.get(export_name)
+                                            && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                                            && (target_sym.flags
+                                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                                != 0
+                                        {
+                                            import_has_value = true;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    for binder in binders.iter() {
+                                        if let Some(exports) =
+                                            binder.module_exports.get(module_name.as_str())
+                                            && let Some(target_sym_id) = exports.get(export_name)
+                                            && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                                            && (target_sym.flags
+                                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                                != 0
+                                        {
+                                            import_has_value = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
