@@ -1364,18 +1364,9 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     // Phase timing breakdown (shown for both --diagnostics and --extendedDiagnostics)
     let pt = &result.phase_timings;
     if pt.total_ms > 0.0 {
-        println!(
-            "I/O Read:                      {:.2}s",
-            pt.io_read_ms / 1000.0
-        );
-        println!(
-            "Parse & Bind:                  {:.2}s",
-            (pt.load_libs_ms + pt.parse_bind_ms) / 1000.0
-        );
-        println!(
-            "Check:                         {:.2}s",
-            pt.check_ms / 1000.0
-        );
+        println!("I/O Read:                      {:.2}s", pt.io_read_ms / 1000.0);
+        println!("Parse & Bind:                  {:.2}s", (pt.load_libs_ms + pt.parse_bind_ms) / 1000.0);
+        println!("Check:                         {:.2}s", pt.check_ms / 1000.0);
         println!("Emit:                          {:.2}s", pt.emit_ms / 1000.0);
     }
     println!(

@@ -5238,3 +5238,100 @@ fn test_project_residency_stats_definition_store_nonzero_even_empty_project() {
         "definition_store_estimated_bytes should be nonzero even for empty project"
     );
 }
+
+#[test]
+fn test_eviction_candidates_empty_project() {
+    let project = Project::new();
+    let candidates = project.eviction_candidates(None);
+    assert!(
+        candidates.is_empty(),
+        "empty project should have no eviction candidates"
+    );
+}
+
+#[test]
+fn test_eviction_candidates_returns_all_files_without_min_idle() {
+    let mut project = Project::new();
+    project.set_file("/a.ts".to_string(), "const a = 1;".to_string());
+    project.set_file("/b.ts".to_string(), "const b = 2;".to_string());
+    let candidates = project.eviction_candidates(None);
+    assert_eq!(candidates.len(), 2, "should return all files");
+}
+
+#[test]
+fn test_eviction_candidates_filters_by_min_idle() {
+    use web_time::Duration;
+
+    let mut project = Project::new();
+    project.set_file("/a.ts".to_string(), "const a = 1;".to_string());
+    project.set_file("/b.ts".to_string(), "const b = 2;".to_string());
+
+    // Touch file a so it's recently accessed
+    project.touch_file("/a.ts");
+
+    // With a very high min_idle threshold, recently touched files should be filtered out.
+    // Both files were just created/touched, so a 1-hour threshold filters all of them.
+    let candidates = project.eviction_candidates(Some(Duration::from_secs(3600)));
+    assert!(
+        candidates.is_empty(),
+        "recently accessed files should not be eviction candidates with high min_idle"
+    );
+
+    // With zero threshold, all files should be candidates
+    let candidates = project.eviction_candidates(Some(Duration::ZERO));
+    assert_eq!(
+        candidates.len(),
+        2,
+        "all files should be candidates with zero min_idle"
+    );
+}
+
+#[test]
+fn test_eviction_candidates_include_residency_info() {
+    let mut project = Project::new();
+    project.set_file("/a.ts".to_string(), "const a = 1;".to_string());
+    let candidates = project.eviction_candidates(None);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].file_name, "/a.ts");
+    assert!(
+        candidates[0].estimated_bytes > 0,
+        "estimated_bytes should be positive"
+    );
+}
+
+#[test]
+fn test_touch_file_updates_last_accessed() {
+    let mut project = Project::new();
+    project.set_file("/a.ts".to_string(), "const a = 1;".to_string());
+
+    let before = project.files.get("/a.ts").unwrap().last_accessed();
+    // Small sleep to ensure timestamp difference
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    project.touch_file("/a.ts");
+    let after = project.files.get("/a.ts").unwrap().last_accessed();
+
+    assert!(
+        after > before,
+        "touch should update last_accessed timestamp"
+    );
+}
+
+#[test]
+fn test_eviction_candidates_deprioritizes_dts_files() {
+    let mut project = Project::new();
+    // Create a .d.ts file and a .ts file of similar size
+    project.set_file("/types.d.ts".to_string(), "declare const x: number;".to_string());
+    project.set_file("/app.ts".to_string(), "declare const y: string;".to_string());
+
+    let candidates = project.eviction_candidates(None);
+    assert_eq!(candidates.len(), 2);
+
+    // The .ts file should rank higher (better eviction candidate) than .d.ts
+    // because .d.ts files are deprioritized with a 4x penalty
+    let ts_idx = candidates.iter().position(|c| c.file_name == "/app.ts").unwrap();
+    let dts_idx = candidates.iter().position(|c| c.file_name == "/types.d.ts").unwrap();
+    assert!(
+        ts_idx < dts_idx,
+        "regular .ts file should rank as better eviction candidate than .d.ts"
+    );
+}

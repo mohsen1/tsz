@@ -92,8 +92,8 @@ pub use navigation::{
 };
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
-    FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
-    ProjectResidencyStats, TsConfigSettings,
+    FileRename, FileResidencyInfo, Project, ProjectFile, ProjectPerformance, ProjectRequestKind,
+    ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
 pub use signature_help::{

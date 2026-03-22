@@ -2,11 +2,11 @@ use std::hash::{Hash, Hasher};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::sync::Arc;
-use web_time::Duration;
+use web_time::{Duration, Instant};
 
 use globset::Glob;
 use regex::{Regex, RegexBuilder};
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use crate::code_actions::ImportCandidateKind;
 use crate::completions::{CompletionItem, Completions};
@@ -119,6 +119,12 @@ pub struct ProjectFile {
     ///
     /// `u32::MAX` means no stable ID was assigned (standalone mode).
     pub(crate) file_idx: u32,
+    /// Timestamp of the last LSP operation that accessed this file.
+    ///
+    /// Updated by `touch()` when the file is used for diagnostics, hover,
+    /// completions, definitions, or references. Used by eviction heuristics
+    /// to identify cold files that can be dropped under memory pressure.
+    pub(crate) last_accessed: Instant,
 }
 
 /// Compute a fast content hash for source text.
@@ -214,6 +220,7 @@ impl ProjectFile {
             export_signature,
             content_hash,
             file_idx,
+            last_accessed: Instant::now(),
         }
     }
 
@@ -295,6 +302,22 @@ impl ProjectFile {
     /// has actually changed, enabling skip of redundant re-parse and re-bind.
     pub const fn content_hash(&self) -> u64 {
         self.content_hash
+    }
+
+    /// Record that this file was accessed by an LSP operation.
+    ///
+    /// Updates the `last_accessed` timestamp to `Instant::now()`. Called by
+    /// the `Project` when the file is used for diagnostics, hover,
+    /// completions, go-to-definition, references, or similar operations.
+    pub fn touch(&mut self) {
+        self.last_accessed = Instant::now();
+    }
+
+    /// Timestamp of the last LSP access to this file.
+    ///
+    /// Used by eviction heuristics to identify cold files.
+    pub fn last_accessed(&self) -> Instant {
+        self.last_accessed
     }
 
     /// Estimate the heap memory footprint of this file in bytes.
@@ -1300,6 +1323,20 @@ impl ProjectResidencyStats {
     }
 }
 
+/// Per-file memory residency snapshot for eviction decisions.
+///
+/// Combines estimated heap size with access recency so callers can
+/// rank files for eviction (e.g., least-recently-used + largest first).
+#[derive(Debug, Clone)]
+pub struct FileResidencyInfo {
+    /// File name (URI / path).
+    pub file_name: String,
+    /// Estimated heap footprint in bytes.
+    pub estimated_bytes: usize,
+    /// How long ago the file was last accessed by an LSP operation.
+    pub idle_duration: Duration,
+}
+
 fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Option<String> {
     let mut edits_with_offsets = Vec::with_capacity(edits.len());
     for edit in edits {
@@ -1473,6 +1510,11 @@ pub struct Project {
     /// and after a batch of edits, diff the snapshots, and apply invalidation
     /// in one pass.
     pub(crate) fingerprint_cache: SkeletonFingerprintCache,
+    /// Files currently open in the editor (tracked via `didOpen`/`didClose`).
+    ///
+    /// Open files are never evicted under memory pressure. The eviction module
+    /// uses this set to skip actively-edited files.
+    pub(crate) open_files: FxHashSet<String>,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -1659,6 +1701,7 @@ impl Project {
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
+            open_files: FxHashSet::default(),
         }
     }
 
@@ -1682,6 +1725,7 @@ impl Project {
             definition_store: Arc::new(DefinitionStore::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
+            open_files: FxHashSet::default(),
         }
     }
 
@@ -1986,6 +2030,67 @@ impl Project {
     #[must_use]
     pub fn file_estimated_size(&self, file_name: &str) -> Option<usize> {
         self.files.get(file_name).map(|f| f.estimated_size_bytes())
+    }
+
+    /// Return per-file residency info sorted for eviction (best candidates first).
+    ///
+    /// Files are ranked by a composite score: idle duration (seconds) multiplied
+    /// by estimated size (bytes). This prefers evicting files that are both large
+    /// and cold. Declaration files (`*.d.ts`) are deprioritized since they are
+    /// typically shared dependencies.
+    ///
+    /// The optional `min_idle` parameter filters out files that have been accessed
+    /// more recently than the threshold — active files are never eviction candidates.
+    #[must_use]
+    pub fn eviction_candidates(&self, min_idle: Option<Duration>) -> Vec<FileResidencyInfo> {
+        let now = Instant::now();
+        let mut candidates: Vec<FileResidencyInfo> = self
+            .files
+            .iter()
+            .filter_map(|(name, file)| {
+                let idle = now.duration_since(file.last_accessed);
+                if let Some(threshold) = min_idle {
+                    if idle < threshold {
+                        return None;
+                    }
+                }
+                Some(FileResidencyInfo {
+                    file_name: name.clone(),
+                    estimated_bytes: file.estimated_size_bytes(),
+                    idle_duration: idle,
+                })
+            })
+            .collect();
+
+        // Sort by composite eviction score: idle_seconds * size_bytes (descending).
+        // Declaration files get a 4x penalty (lower effective score) to keep them
+        // resident longer since they're shared across many importers.
+        candidates.sort_by(|a, b| {
+            let score = |info: &FileResidencyInfo| -> u64 {
+                let idle_secs = info.idle_duration.as_secs().max(1);
+                let size = info.estimated_bytes as u64;
+                let raw = idle_secs.saturating_mul(size);
+                if info.file_name.ends_with(".d.ts") {
+                    raw / 4
+                } else {
+                    raw
+                }
+            };
+            score(b).cmp(&score(a))
+        });
+
+        candidates
+    }
+
+    /// Mark a file as recently accessed.
+    ///
+    /// Call this when the file is used for any LSP operation (diagnostics,
+    /// hover, completions, go-to-definition, references, etc.) so that
+    /// eviction heuristics can distinguish hot files from cold ones.
+    pub fn touch_file(&mut self, file_name: &str) {
+        if let Some(file) = self.files.get_mut(file_name) {
+            file.touch();
+        }
     }
 
     /// Add or replace a file, re-parsing and re-binding its contents.
