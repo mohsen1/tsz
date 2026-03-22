@@ -908,6 +908,20 @@ impl DefinitionStore {
         self.symbol_only_index.get(&symbol_id).map(|r| *r)
     }
 
+    /// Return all `(raw_symbol_id, DefId)` pairs from the symbol-only index.
+    ///
+    /// This enables the checker to warm its local `symbol_to_def` / `def_to_symbol`
+    /// caches in a single pass from the shared `DefinitionStore`, avoiding the need
+    /// to iterate each binder's `semantic_defs` separately. The returned pairs are
+    /// collected into a `Vec` to avoid holding `DashMap` read locks across the
+    /// caller's mutation of its own maps.
+    pub fn all_symbol_mappings(&self) -> Vec<(u32, DefId)> {
+        self.symbol_only_index
+            .iter()
+            .map(|entry| (*entry.key(), *entry.value()))
+            .collect()
+    }
+
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
     ///
     /// This preserves type alias names in diagnostic messages: when the formatter

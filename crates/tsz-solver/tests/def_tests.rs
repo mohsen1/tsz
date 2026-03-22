@@ -1351,3 +1351,46 @@ fn test_statistics_includes_name_index() {
     // Two unique names: "A" and "B".
     assert_eq!(stats.name_to_defs_entries, 2);
 }
+
+#[test]
+fn all_symbol_mappings_returns_registered_pairs() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register a few definitions with symbol_id set
+    let name_a = interner.intern_string("ClassA");
+    let name_b = interner.intern_string("InterfaceB");
+
+    let mut info_a = DefinitionInfo::type_alias(name_a, vec![], TypeId::NUMBER);
+    info_a.kind = DefKind::Class;
+    info_a.symbol_id = Some(10);
+    info_a.file_id = Some(0);
+    let def_a = store.register(info_a);
+    store.register_symbol_mapping(10, 0, def_a);
+
+    let mut info_b = DefinitionInfo::interface(name_b, vec![], vec![]);
+    info_b.symbol_id = Some(20);
+    info_b.file_id = Some(0);
+    let def_b = store.register(info_b);
+    store.register_symbol_mapping(20, 0, def_b);
+
+    let mappings = store.all_symbol_mappings();
+    assert_eq!(mappings.len(), 2, "should have 2 symbol mappings");
+
+    let mapping_set: std::collections::HashSet<(u32, DefId)> = mappings.into_iter().collect();
+    assert!(
+        mapping_set.contains(&(10, def_a)),
+        "should contain symbol 10 → def_a"
+    );
+    assert!(
+        mapping_set.contains(&(20, def_b)),
+        "should contain symbol 20 → def_b"
+    );
+}
+
+#[test]
+fn all_symbol_mappings_empty_store() {
+    let store = DefinitionStore::new();
+    let mappings = store.all_symbol_mappings();
+    assert!(mappings.is_empty(), "empty store should return no mappings");
+}
