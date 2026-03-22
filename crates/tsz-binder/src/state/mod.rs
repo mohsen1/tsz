@@ -473,6 +473,17 @@ pub struct SemanticDefEntry {
     /// placeholder parameters (e.g., `Map<unknown, unknown>`) before the full
     /// checker walk fills in the real `TypeParamInfo`.
     pub type_param_count: u16,
+    /// Enum member names captured at bind time (empty for non-enum declarations).
+    ///
+    /// Populated during `bind_enum_declaration` after all members are bound.
+    /// The checker uses these to pre-populate `DefinitionInfo.enum_members`
+    /// with `(Atom, EnumMemberValue::Computed)` stubs, reducing the need to
+    /// re-walk the AST to discover member names.
+    pub enum_member_names: Vec<String>,
+    /// Whether this declaration has the `const` modifier (relevant for const enums).
+    pub is_const: bool,
+    /// Whether this declaration has the `abstract` modifier (relevant for abstract classes).
+    pub is_abstract: bool,
 }
 
 impl BinderState {

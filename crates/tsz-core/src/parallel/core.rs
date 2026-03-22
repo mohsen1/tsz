@@ -639,6 +639,9 @@ impl BindResult {
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8;
             size += def.name.capacity();
+            for m in &def.enum_member_names {
+                size += m.capacity();
+            }
         }
 
         // file_import_sources
