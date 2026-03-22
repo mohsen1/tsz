@@ -3203,7 +3203,19 @@ mod tests {
                 is_const: false,
             }],
             body: Some(instance_type),
-            ..Default::default()
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         };
         let def_id = def_store.register(info);
 
@@ -3247,7 +3259,20 @@ mod tests {
                     is_const: false,
                 },
             ],
-            ..Default::default()
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            span: None,
+            file_id: None,
+            symbol_id: None,
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         };
         let def_id = def_store.register(info);
 
