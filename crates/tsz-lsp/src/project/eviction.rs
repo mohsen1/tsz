@@ -3,37 +3,23 @@
 //! When the project grows large (many files loaded), memory pressure can
 //! degrade responsiveness. This module provides:
 //!
-//! - [`EvictionCandidate`]: a ranked entry describing a file eligible for eviction.
-//! - [`Project::eviction_candidates`]: returns files ranked by eviction priority.
-//! - [`Project::evict_under_pressure`]: removes files until total estimated bytes
-//!   drops below a target budget.
 //! - [`Project::mark_file_open`] / [`Project::mark_file_closed`]: tracks which
 //!   files are actively open in the editor (never evicted).
+//! - [`Project::evict_under_pressure`]: removes files until total estimated bytes
+//!   drops below a target budget, respecting open-file protection.
 //!
 //! # Eviction Strategy
 //!
 //! Files are ranked for eviction using this priority (highest priority = evicted first):
 //!
-//! 1. Files with **zero dependents** (no other file imports them) are evicted
+//! 1. Files that are **open in the editor** are never evicted.
+//! 2. Files with **zero dependents** (no other file imports them) are evicted
 //!    before files that are imported.
-//! 2. Among files with equal dependent status, **larger files** are evicted first
+//! 3. Declaration files (`*.d.ts`) are deprioritized (divided score by 4).
+//! 4. Among files with equal priority, **larger files** are evicted first
 //!    to reclaim the most memory per eviction.
-//! 3. Files that are **open in the editor** are never evicted.
 
 use super::Project;
-
-/// A file eligible for eviction, with metadata for ranking.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvictionCandidate {
-    /// File name (key in `Project::files`).
-    pub file_name: String,
-    /// Estimated heap footprint in bytes.
-    pub estimated_bytes: usize,
-    /// Number of files that directly import this file.
-    pub dependent_count: usize,
-    /// Whether this file is open in the editor.
-    pub is_open: bool,
-}
 
 /// Result of an eviction pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +39,29 @@ pub struct EvictedFile {
     pub file_name: String,
     /// Estimated bytes freed by removing this file.
     pub estimated_bytes: usize,
+}
+
+/// Internal ranking entry for eviction decisions.
+struct EvictionEntry {
+    file_name: String,
+    estimated_bytes: usize,
+    has_dependents: bool,
+    is_declaration: bool,
+}
+
+impl EvictionEntry {
+    /// Composite eviction score (higher = evict first).
+    fn score(&self) -> u64 {
+        let size = self.estimated_bytes as u64;
+        // Files with dependents get a 8x penalty (lower score).
+        let dep_factor = if self.has_dependents { size / 8 } else { size };
+        // Declaration files get an additional 4x penalty.
+        if self.is_declaration {
+            dep_factor / 4
+        } else {
+            dep_factor
+        }
+    }
 }
 
 impl Project {
@@ -83,48 +92,6 @@ impl Project {
         self.open_files.len()
     }
 
-    /// Return files ranked for eviction.
-    ///
-    /// Files open in the editor are included in the list (with `is_open = true`)
-    /// but are sorted to the end and will be skipped by [`evict_under_pressure`].
-    ///
-    /// The returned list is sorted by eviction priority (highest priority first):
-    /// 1. Closed files before open files.
-    /// 2. Files with zero dependents before files with dependents.
-    /// 3. Larger files before smaller files.
-    pub fn eviction_candidates(&self) -> Vec<EvictionCandidate> {
-        let mut candidates: Vec<EvictionCandidate> = self
-            .files
-            .iter()
-            .map(|(name, file)| {
-                let dependent_count = self
-                    .dependency_graph
-                    .get_dependents(name)
-                    .map_or(0, |deps| deps.len());
-                EvictionCandidate {
-                    file_name: name.clone(),
-                    estimated_bytes: file.estimated_size_bytes(),
-                    dependent_count,
-                    is_open: self.open_files.contains(name),
-                }
-            })
-            .collect();
-
-        // Sort: open files last, then zero-dependents first, then largest first.
-        candidates.sort_by(|a, b| {
-            a.is_open
-                .cmp(&b.is_open)
-                .then_with(|| {
-                    let a_has_deps = a.dependent_count > 0;
-                    let b_has_deps = b.dependent_count > 0;
-                    a_has_deps.cmp(&b_has_deps)
-                })
-                .then_with(|| b.estimated_bytes.cmp(&a.estimated_bytes))
-        });
-
-        candidates
-    }
-
     /// Evict files until the total estimated memory drops below `target_bytes`.
     ///
     /// Returns an [`EvictionResult`] describing what was evicted. Files that
@@ -132,6 +99,14 @@ impl Project {
     ///
     /// If the total is already below the target, no files are evicted and the
     /// result will have an empty `evicted` list.
+    ///
+    /// # Ranking
+    ///
+    /// Files are ranked by a composite score that considers:
+    /// - **Estimated size** (larger = evicted first)
+    /// - **Dependents** (files that no one imports are evicted first)
+    /// - **Declaration files** (`.d.ts` are deprioritized, kept longer)
+    /// - **Open status** (open files are never evicted)
     pub fn evict_under_pressure(&mut self, target_bytes: usize) -> EvictionResult {
         let mut total = self.total_estimated_bytes();
 
@@ -143,23 +118,38 @@ impl Project {
             };
         }
 
-        // Collect candidates (sorted by eviction priority).
-        let candidates = self.eviction_candidates();
+        // Build ranked eviction list, excluding open files.
+        let mut entries: Vec<EvictionEntry> = self
+            .files
+            .iter()
+            .filter(|(name, _)| !self.open_files.contains(name.as_str()))
+            .map(|(name, file)| {
+                let has_dependents = self
+                    .dependency_graph
+                    .get_dependents(name)
+                    .is_some_and(|deps| !deps.is_empty());
+                EvictionEntry {
+                    file_name: name.clone(),
+                    estimated_bytes: file.estimated_size_bytes(),
+                    has_dependents,
+                    is_declaration: name.ends_with(".d.ts"),
+                }
+            })
+            .collect();
+
+        // Sort by score descending (highest score = evict first).
+        entries.sort_by(|a, b| b.score().cmp(&a.score()));
 
         let mut evicted = Vec::new();
         let mut bytes_freed: usize = 0;
 
-        for candidate in candidates {
+        for entry in entries {
             if total <= target_bytes {
                 break;
             }
-            if candidate.is_open {
-                // Never evict open files; since they're sorted last, we can break.
-                break;
-            }
 
-            let file_bytes = candidate.estimated_bytes;
-            let file_name = candidate.file_name;
+            let file_bytes = entry.estimated_bytes;
+            let file_name = entry.file_name;
 
             if self.remove_file(&file_name).is_some() {
                 total = total.saturating_sub(file_bytes);
@@ -190,7 +180,7 @@ impl Project {
     ///
     /// This is a convenience wrapper that avoids computing the full
     /// [`ProjectResidencyStats`] when only the total is needed.
-    fn total_estimated_bytes(&self) -> usize {
+    pub(crate) fn total_estimated_bytes(&self) -> usize {
         self.files
             .values()
             .map(|f| f.estimated_size_bytes())
@@ -205,8 +195,6 @@ mod tests {
     fn make_project_with_files(names: &[&str]) -> Project {
         let mut project = Project::new();
         for name in names {
-            // Small source text; estimated_size_bytes will still be > 0
-            // because of struct overhead and binder state.
             project.set_file(name.to_string(), format!("const x_{name} = 1;"));
         }
         project
@@ -228,28 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn eviction_candidates_returns_all_files() {
-        let project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
-        let candidates = project.eviction_candidates();
-        assert_eq!(candidates.len(), 3);
-        // All should be closed (is_open = false)
-        assert!(candidates.iter().all(|c| !c.is_open));
-    }
-
-    #[test]
-    fn open_files_sorted_last() {
-        let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
-        project.mark_file_open("b.ts");
-        let candidates = project.eviction_candidates();
-
-        // b.ts should be last (it's open)
-        assert_eq!(candidates.last().unwrap().file_name, "b.ts");
-        assert!(candidates.last().unwrap().is_open);
-        // Others should not be open
-        assert!(candidates.iter().take(2).all(|c| !c.is_open));
-    }
-
-    #[test]
     fn evict_under_pressure_no_eviction_when_under_target() {
         let mut project = make_project_with_files(&["a.ts"]);
         let result = project.evict_under_pressure(usize::MAX);
@@ -262,7 +228,6 @@ mod tests {
         let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
         assert_eq!(project.file_count(), 3);
 
-        // Set target to 0 to force evicting everything.
         let result = project.evict_under_pressure(0);
         assert_eq!(result.evicted.len(), 3);
         assert_eq!(project.file_count(), 0);
@@ -275,7 +240,6 @@ mod tests {
         let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
         project.mark_file_open("b.ts");
 
-        // Force evict everything possible.
         let result = project.evict_under_pressure(0);
 
         // b.ts should survive (it's open).
@@ -291,13 +255,11 @@ mod tests {
     fn evict_partial_when_target_reached() {
         let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts", "d.ts"]);
 
-        // Find total and set target to roughly half.
         let total = project.total_estimated_bytes();
         let target = total / 2;
 
         let result = project.evict_under_pressure(target);
 
-        // Should have evicted some but not all files.
         assert!(!result.evicted.is_empty());
         assert!(project.file_count() > 0);
         assert!(result.bytes_remaining <= target);
@@ -312,5 +274,38 @@ mod tests {
 
         assert_eq!(result.bytes_freed, total_before);
         assert_eq!(result.bytes_remaining, 0);
+    }
+
+    #[test]
+    fn declaration_files_evicted_after_source_files() {
+        let mut project = Project::new();
+        // Add source and declaration files with similar content.
+        project.set_file("lib.d.ts".to_string(), "declare const x: number;".to_string());
+        project.set_file("app.ts".to_string(), "const x: number = 42;".to_string());
+
+        let total = project.total_estimated_bytes();
+        // Set target so only one file is evicted.
+        let target = total / 2;
+
+        let result = project.evict_under_pressure(target);
+
+        // app.ts (source) should be evicted before lib.d.ts (declaration).
+        assert_eq!(result.evicted.len(), 1);
+        assert_eq!(result.evicted[0].file_name, "app.ts");
+        assert!(project.files.contains_key("lib.d.ts"));
+    }
+
+    #[test]
+    fn multiple_open_files_all_protected() {
+        let mut project = make_project_with_files(&["a.ts", "b.ts", "c.ts"]);
+        project.mark_file_open("a.ts");
+        project.mark_file_open("b.ts");
+        project.mark_file_open("c.ts");
+
+        let result = project.evict_under_pressure(0);
+
+        // All files are open, so none should be evicted.
+        assert!(result.evicted.is_empty());
+        assert_eq!(project.file_count(), 3);
     }
 }
