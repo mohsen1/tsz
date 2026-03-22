@@ -181,10 +181,7 @@ impl Project {
     /// This is a convenience wrapper that avoids computing the full
     /// [`ProjectResidencyStats`] when only the total is needed.
     pub(crate) fn total_estimated_bytes(&self) -> usize {
-        self.files
-            .values()
-            .map(|f| f.estimated_size_bytes())
-            .sum()
+        self.files.values().map(|f| f.estimated_size_bytes()).sum()
     }
 }
 
@@ -280,7 +277,10 @@ mod tests {
     fn declaration_files_evicted_after_source_files() {
         let mut project = Project::new();
         // Add source and declaration files with similar content.
-        project.set_file("lib.d.ts".to_string(), "declare const x: number;".to_string());
+        project.set_file(
+            "lib.d.ts".to_string(),
+            "declare const x: number;".to_string(),
+        );
         project.set_file("app.ts".to_string(), "const x: number = 42;".to_string());
 
         let total = project.total_estimated_bytes();
