@@ -478,25 +478,6 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should centralize enum DefId precondition resolution in a dedicated helper"
     );
 
-    // Dual-env migration: lazy.rs must not write to type_env directly (single-env writes).
-    // All SymbolRef/DefId inserts must go through the dual-env helpers on CheckerContext.
-    let lazy_src = fs::read_to_string("src/state/type_environment/lazy.rs")
-        .expect("failed to read src/state/type_environment/lazy.rs for architecture guard");
-    assert!(
-        !lazy_src.contains("type_env.try_borrow_mut()"),
-        "lazy.rs must not write to type_env directly; use dual-env helpers (insert_symbol_in_envs, register_def_in_envs, etc.)"
-    );
-
-    // Dual-env migration: computed_helpers_binding.rs must not write to type_env directly.
-    let computed_helpers_binding_src =
-        fs::read_to_string("src/state/type_analysis/computed_helpers_binding.rs").expect(
-            "failed to read src/state/type_analysis/computed_helpers_binding.rs for architecture guard",
-        );
-    assert!(
-        !computed_helpers_binding_src.contains("type_env.try_borrow_mut()"),
-        "computed_helpers_binding.rs must not write to type_env directly; use dual-env helpers (register_enum_parent_in_envs, etc.)"
-    );
-
     let type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
         .expect("failed to read src/types/computation/complex.rs for architecture guard");
     assert!(

@@ -291,46 +291,6 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Insert a `SymbolRef -> TypeId` mapping in **both** type environments.
-    pub fn insert_symbol_in_envs(&self, symbol_ref: tsz_solver::SymbolRef, type_id: TypeId) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            env.insert(symbol_ref, type_id);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert(symbol_ref, type_id);
-        }
-    }
-
-    /// Insert a `SymbolRef -> TypeId` mapping with type parameters in **both**
-    /// type environments.
-    pub fn insert_symbol_with_params_in_envs(
-        &self,
-        symbol_ref: tsz_solver::SymbolRef,
-        type_id: TypeId,
-        params: Vec<tsz_solver::TypeParamInfo>,
-    ) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            env.insert_with_params(symbol_ref, type_id, params.clone());
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert_with_params(symbol_ref, type_id, params);
-        }
-    }
-
-    /// Register an enum member's parent DefId in **both** type environments.
-    pub fn register_enum_parent_in_envs(
-        &self,
-        member_def_id: tsz_solver::DefId,
-        parent_def_id: tsz_solver::DefId,
-    ) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            env.register_enum_parent(member_def_id, parent_def_id);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.register_enum_parent(member_def_id, parent_def_id);
-        }
-    }
-
     /// Create a Lazy type reference from a symbol.
     ///
     /// This returns `TypeData::Lazy(DefId)` for use in the new `DefId` system.

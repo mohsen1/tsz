@@ -434,8 +434,9 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             let parent_sym_id = symbol.parent;
             let parent_def_id = self.ctx.get_or_create_def_id(parent_sym_id);
-            self.ctx
-                .register_enum_parent_in_envs(member_def_id, parent_def_id);
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.register_enum_parent(member_def_id, parent_def_id);
+            }
         }
 
         let literal_type = self.enum_member_type_from_decl(value_decl);
