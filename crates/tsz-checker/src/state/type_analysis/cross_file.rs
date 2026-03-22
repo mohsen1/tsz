@@ -874,7 +874,31 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Fallback: search all binders for one where this SymbolId has the expected name.
+        // Fast-path: use global_file_locals_index for O(1) name→binder lookup.
+        // Only covers top-level file_locals symbols; nested symbols (class members,
+        // namespace exports) fall through to the O(N) scan below.
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(expected_name))
+        {
+            if let Some(binders) = &self.ctx.all_binders {
+                for &(file_idx, _) in entries {
+                    if let Some(binder) = binders.get(file_idx)
+                        && let Some(symbol) = binder.get_symbol(sym_id)
+                        && symbol.escaped_name.as_str() == expected_name
+                    {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(sym_id, file_idx);
+                        return;
+                    }
+                }
+            }
+        }
+        // Full fallback: the symbol may be nested (not in file_locals).
         if let Some(binders) = &self.ctx.all_binders {
             for (idx, binder) in binders.iter().enumerate() {
                 if let Some(symbol) = binder.get_symbol(sym_id)
