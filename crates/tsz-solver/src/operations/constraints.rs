@@ -1894,10 +1894,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Also handles when target_placeholder is `T & {}` (from LowInfer<T> = T & {})
         // but the IndexAccess references the raw T — we check if T is a member of
         // the intersection.
-        if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template)
-            && self.is_placeholder_match(obj, target_placeholder)
-        {
-            return Some(source_value);
+        //
+        // Additionally, when the checker's evaluate_type resolves the placeholder through
+        // its constraint (e.g., `T extends object` → IndexAccess(object, P) instead of
+        // IndexAccess(T_placeholder, P)), we recognize that the IndexAccess object type
+        // is the constraint of the target placeholder and still accept the match.
+        if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template) {
+            if self.is_placeholder_match(obj, target_placeholder) {
+                return Some(source_value);
+            }
+            // Check if obj is the constraint of the target placeholder.
+            // This happens when evaluate_type resolves T_placeholder[P] through T's
+            // constraint, producing constraint[P]. We should still treat this as a
+            // placeholder match for reverse mapped inference.
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(target_placeholder)
+                && let Some(constraint) = info.constraint
+                && obj == constraint
+            {
+                return Some(source_value);
+            }
         }
 
         // Case 2: template is Application(F, args) and source is Application(F, args')
