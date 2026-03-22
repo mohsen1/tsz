@@ -738,7 +738,8 @@ impl TypeInterner {
 
         // Circuit breaker 1: type count limit.
         if self.approximate_count() > MAX_INTERNED_TYPES {
-            self.poisoned.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.poisoned
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             return TypeId::ERROR;
         }
         // Circuit breaker 2: total operation count (catches infinite loops
@@ -746,8 +747,14 @@ impl TypeInterner {
         thread_local! {
             static OP_COUNT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         }
-        if OP_COUNT.with(|c| { let v = c.get() + 1; c.set(v); v }) > 10_000_000 {
-            self.poisoned.store(true, std::sync::atomic::Ordering::Relaxed);
+        if OP_COUNT.with(|c| {
+            let v = c.get() + 1;
+            c.set(v);
+            v
+        }) > 10_000_000
+        {
+            self.poisoned
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             return TypeId::ERROR;
         }
 

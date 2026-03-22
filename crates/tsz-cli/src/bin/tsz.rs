@@ -1484,10 +1484,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
                 "Bound file metadata:           {}KB",
                 rs.total_bound_file_bytes / 1024,
             );
-            println!(
-                "Symbol arena entries:           {}",
-                rs.symbol_arena_count,
-            );
+            println!("Symbol arena entries:           {}", rs.symbol_arena_count,);
             println!(
                 "Declaration arena buckets:      {} ({} mappings)",
                 rs.declaration_arena_bucket_count, rs.declaration_arena_mapping_count,
