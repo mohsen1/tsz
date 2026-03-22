@@ -93,6 +93,14 @@ pub(crate) fn contains_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::contains_never_type_db(db, type_id)
 }
 
+pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_deeply_any(db, type_id)
+}
+
+pub(crate) fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_application_in_structure(db, type_id)
+}
+
 pub(crate) fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_string_type(db, type_id)
 }

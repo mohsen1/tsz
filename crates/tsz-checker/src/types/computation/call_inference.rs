@@ -89,29 +89,7 @@ pub(crate) fn should_preserve_contextual_application_shape(
     db: &dyn tsz_solver::TypeDatabase,
     ty: TypeId,
 ) -> bool {
-    if common::application_info(db, ty).is_some() {
-        return true;
-    }
-
-    if let Some(members) = common::union_members(db, ty) {
-        return members
-            .iter()
-            .copied()
-            .any(|member| should_preserve_contextual_application_shape(db, member));
-    }
-
-    if let Some(members) = common::intersection_members(db, ty) {
-        return members
-            .iter()
-            .copied()
-            .any(|member| should_preserve_contextual_application_shape(db, member));
-    }
-
-    if let Some(inner) = common::unwrap_readonly_or_noinfer(db, ty) {
-        return should_preserve_contextual_application_shape(db, inner);
-    }
-
-    false
+    common::contains_application_in_structure(db, ty)
 }
 
 fn instantiate_function_shape_with_substitution(
@@ -943,44 +921,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn inference_type_is_anyish(
-        &self,
-        ty: TypeId,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if !visited.insert(ty) {
-            return false;
-        }
-
-        if ty == TypeId::ANY {
-            return true;
-        }
-
-        if let Some(elem) = common::array_element_type(self.ctx.types, ty) {
-            return self.inference_type_is_anyish(elem, visited);
-        }
-
-        if let Some(elems) = common::tuple_elements(self.ctx.types, ty) {
-            return elems
-                .iter()
-                .all(|elem| self.inference_type_is_anyish(elem.type_id, visited));
-        }
-
-        if let Some(members) = common::union_members(self.ctx.types, ty) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|member| self.inference_type_is_anyish(*member, visited));
-        }
-
-        if let Some(members) = common::intersection_members(self.ctx.types, ty) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|member| self.inference_type_is_anyish(*member, visited));
-        }
-
-        false
+    pub(crate) fn inference_type_is_anyish(&self, ty: TypeId) -> bool {
+        common::is_type_deeply_any(self.ctx.types, ty)
     }
 
     pub(crate) fn sanitize_generic_inference_arg_types(
@@ -995,10 +937,10 @@ impl<'a> CheckerState<'a> {
             .map(|(&arg_idx, arg_type)| {
                 // Resolve enum types to their namespace object representation.
                 // When an enum identifier (like `E1`) is used as a call argument,
-                // get_type_of_node returns TypeData::Enum(def_id, structural_type).
-                // For inference against index-signature targets like `{ [x: string]: T }`,
-                // the inference engine needs to see the namespace Object type with
-                // named member properties. This mirrors tsc's behavior where `typeof E1`
+                // it resolves to an Enum type with a DefId. For inference against
+                // index-signature targets like `{ [x: string]: T }`, the inference
+                // engine needs to see the namespace Object type with named member
+                // properties. This mirrors tsc's behavior where `typeof E1`
                 // (the enum namespace) has an implicit string index signature.
                 let enum_def = common::enum_def_id(self.ctx.types, arg_type);
                 let arg_type = if let Some(def_id) = enum_def {

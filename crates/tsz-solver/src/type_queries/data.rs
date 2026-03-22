@@ -217,6 +217,69 @@ pub fn contains_never_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     })
 }
 
+/// Check whether a type is "deeply any" — i.e. `any` itself, or a composite
+/// (array, tuple, union, intersection) whose leaf elements are all `any`.
+///
+/// This is used during generic inference to detect when a round-1 inference
+/// result is effectively `any` so the checker can fall back to better
+/// contextual information.
+pub fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
+        if !visited.insert(type_id) {
+            return false;
+        }
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        match db.lookup(type_id) {
+            Some(TypeData::Array(elem)) => walk(db, elem, visited),
+            Some(TypeData::Tuple(list_id)) => {
+                let elems = db.tuple_list(list_id);
+                elems.iter().all(|e| walk(db, e.type_id, visited))
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = db.type_list(list_id);
+                !members.is_empty() && members.iter().all(|&m| walk(db, m, visited))
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = db.type_list(list_id);
+                !members.is_empty() && members.iter().all(|&m| walk(db, m, visited))
+            }
+            _ => false,
+        }
+    }
+    let mut visited = FxHashSet::default();
+    walk(db, type_id, &mut visited)
+}
+
+/// Check whether a type (or any union/intersection/readonly/noinfer wrapper)
+/// contains an `Application` type.
+///
+/// Used to decide whether contextual instantiation results should be preserved
+/// in their unevaluated form so that generic type argument structure is retained
+/// for downstream inference.
+pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Application(_)) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_application_in_structure(db, m))
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_application_in_structure(db, m))
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            contains_application_in_structure(db, inner)
+        }
+        _ => false,
+    }
+}
+
 // =============================================================================
 // Type Extraction Helpers
 // =============================================================================
@@ -3853,5 +3916,165 @@ mod tests {
             super::classify_body_for_arg_preservation(&interner, cond_app_infer),
             BodyArgPreservation::ConditionalApplicationInfer,
         );
+    }
+
+    // =========================================================================
+    // is_type_deeply_any
+    // =========================================================================
+
+    #[test]
+    fn deeply_any_for_any() {
+        let interner = TypeInterner::new();
+        assert!(super::is_type_deeply_any(&interner, TypeId::ANY));
+    }
+
+    #[test]
+    fn deeply_any_for_non_any_primitives() {
+        let interner = TypeInterner::new();
+        assert!(!super::is_type_deeply_any(&interner, TypeId::STRING));
+        assert!(!super::is_type_deeply_any(&interner, TypeId::NUMBER));
+        assert!(!super::is_type_deeply_any(&interner, TypeId::NEVER));
+        assert!(!super::is_type_deeply_any(&interner, TypeId::UNKNOWN));
+    }
+
+    #[test]
+    fn deeply_any_for_array_of_any() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::ANY);
+        assert!(super::is_type_deeply_any(&interner, arr));
+    }
+
+    #[test]
+    fn deeply_any_for_array_of_string() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::STRING);
+        assert!(!super::is_type_deeply_any(&interner, arr));
+    }
+
+    #[test]
+    fn deeply_any_for_tuple_of_any() {
+        let interner = TypeInterner::new();
+        let tuple = interner.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+        ]);
+        assert!(super::is_type_deeply_any(&interner, tuple));
+    }
+
+    #[test]
+    fn deeply_any_for_tuple_with_non_any_member() {
+        let interner = TypeInterner::new();
+        let tuple = interner.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+                name: None,
+            },
+        ]);
+        assert!(!super::is_type_deeply_any(&interner, tuple));
+    }
+
+    #[test]
+    fn deeply_any_for_union_of_any() {
+        let interner = TypeInterner::new();
+        // Manually create a union with all-any members
+        let union = interner.union(vec![TypeId::ANY, TypeId::ANY]);
+        assert!(super::is_type_deeply_any(&interner, union));
+    }
+
+    #[test]
+    fn deeply_any_for_union_with_non_any() {
+        let interner = TypeInterner::new();
+        let union = interner.union(vec![TypeId::ANY, TypeId::STRING]);
+        assert!(!super::is_type_deeply_any(&interner, union));
+    }
+
+    #[test]
+    fn deeply_any_for_nested_array_of_any() {
+        let interner = TypeInterner::new();
+        let inner = interner.array(TypeId::ANY);
+        let outer = interner.array(inner);
+        assert!(super::is_type_deeply_any(&interner, outer));
+    }
+
+    // =========================================================================
+    // contains_application_in_structure
+    // =========================================================================
+
+    #[test]
+    fn contains_application_direct() {
+        let interner = TypeInterner::new();
+        let base = interner.lazy(crate::def::DefId(1));
+        let app = interner.application(base, vec![TypeId::STRING]);
+        assert!(super::contains_application_in_structure(&interner, app));
+    }
+
+    #[test]
+    fn contains_application_not_present() {
+        let interner = TypeInterner::new();
+        assert!(!super::contains_application_in_structure(
+            &interner,
+            TypeId::STRING
+        ));
+        assert!(!super::contains_application_in_structure(
+            &interner,
+            TypeId::ANY
+        ));
+    }
+
+    #[test]
+    fn contains_application_in_union() {
+        let interner = TypeInterner::new();
+        let base = interner.lazy(crate::def::DefId(1));
+        let app = interner.application(base, vec![TypeId::STRING]);
+        let union = interner.union(vec![TypeId::NUMBER, app]);
+        assert!(super::contains_application_in_structure(&interner, union));
+    }
+
+    #[test]
+    fn contains_application_in_intersection() {
+        let interner = TypeInterner::new();
+        let base = interner.lazy(crate::def::DefId(1));
+        let app = interner.application(base, vec![TypeId::STRING]);
+        let intersection = interner.intersection(vec![TypeId::NUMBER, app]);
+        assert!(super::contains_application_in_structure(
+            &interner,
+            intersection
+        ));
+    }
+
+    #[test]
+    fn contains_application_in_readonly() {
+        let interner = TypeInterner::new();
+        let base = interner.lazy(crate::def::DefId(1));
+        let app = interner.application(base, vec![TypeId::STRING]);
+        let readonly = interner.readonly_type(app);
+        assert!(super::contains_application_in_structure(
+            &interner, readonly
+        ));
+    }
+
+    #[test]
+    fn contains_application_union_without_app() {
+        let interner = TypeInterner::new();
+        let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        assert!(!super::contains_application_in_structure(&interner, union));
     }
 }
