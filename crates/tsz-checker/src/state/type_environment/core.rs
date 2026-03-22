@@ -366,34 +366,10 @@ impl<'a> CheckerState<'a> {
                 if should_passthrough {
                     return arg;
                 }
-
-                // tsc rule: for `Objectish<any>` (identity mapped type where
-                // T=any with non-array constraint), produce an object with
-                // string+number index signatures, NOT `any`. The evaluator's
-                // shortcut returns `any` for mapped types over `any`, but tsc
-                // distinguishes: array-constrained → passthrough, non-array →
-                // object with index signatures. This ensures `Objectish<any>`
-                // is NOT assignable to `any[]`.
-                if arg == TypeId::ANY {
-                    let factory = self.ctx.types.factory();
-                    return factory.object_with_index(tsz_solver::ObjectShape {
-                        flags: tsz_solver::ObjectFlags::empty(),
-                        properties: vec![],
-                        string_index: Some(tsz_solver::IndexSignature {
-                            key_type: TypeId::STRING,
-                            value_type: TypeId::ANY,
-                            readonly: false,
-                            param_name: None,
-                        }),
-                        number_index: Some(tsz_solver::IndexSignature {
-                            key_type: TypeId::NUMBER,
-                            value_type: TypeId::ANY,
-                            readonly: false,
-                            param_name: None,
-                        }),
-                        symbol: None,
-                    });
-                }
+                // Objectish<any> case (identity mapped type, T=any, non-array
+                // constraint) is now handled by the solver's Application
+                // evaluation, which produces { [x: string]: any; [x: number]: any }.
+                // No checker-local object construction needed.
             }
         }
 

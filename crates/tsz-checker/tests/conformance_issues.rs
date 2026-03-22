@@ -17331,3 +17331,27 @@ declare function function1<T extends {[K in keyof T]: Cond<T[K]>}>(): T[keyof T]
         "Should emit TS2536 when string literal indexes unresolvable T[keyof T] result.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_objectish_any_produces_index_signature_object_not_any() {
+    // tsc rule: identity homomorphic mapped type `{ [K in keyof T]: T[K] }` with T=any
+    // and non-array constraint produces `{ [x: string]: any; [x: number]: any }`, NOT `any`.
+    // This ensures `Objectish<any>` is not assignable to `any[]`.
+    // The object construction is handled in the solver's Application evaluation,
+    // not checker-local code.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
+type Result = Objectish<any>;
+// Result should be { [x: string]: any; [x: number]: any }, not `any`.
+// Assigning to an array should fail:
+declare const r: Result;
+const arr: any[] = r;
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Objectish<any> should produce an object with index signatures, not `any`. \
+         Assigning to any[] should emit TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

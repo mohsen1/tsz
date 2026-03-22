@@ -571,6 +571,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 }
                                 return resolved_arg;
                             }
+                            // Objectish<any>: identity homomorphic mapped type with `any` arg
+                            // and non-array constraint. tsc produces `{ [x: string]: any; [x: number]: any }`
+                            // (NOT `any`). This ensures `Objectish<any>` is not assignable to `any[]`.
+                            // Previously this was handled by checker-local object construction;
+                            // now centralized in solver for architectural correctness.
+                            if resolved_arg == TypeId::ANY
+                                && let Some((obj, key)) =
+                                    crate::index_access_parts(self.interner, mapped.template)
+                                && obj == source
+                                && matches!(
+                                    self.interner.lookup(key),
+                                    Some(TypeData::TypeParameter(kp)) if kp.name == mapped.type_param.name
+                                )
+                            {
+                                use crate::types::{IndexSignature, ObjectShape};
+                                let result = self.interner.object_with_index(ObjectShape {
+                                    flags: crate::types::ObjectFlags::empty(),
+                                    properties: vec![],
+                                    string_index: Some(IndexSignature {
+                                        key_type: TypeId::STRING,
+                                        value_type: TypeId::ANY,
+                                        readonly: false,
+                                        param_name: None,
+                                    }),
+                                    number_index: Some(IndexSignature {
+                                        key_type: TypeId::NUMBER,
+                                        value_type: TypeId::ANY,
+                                        readonly: false,
+                                        param_name: None,
+                                    }),
+                                    symbol: None,
+                                });
+                                if let Some(db) = self.query_db {
+                                    db.insert_application_eval_cache(
+                                        def_id,
+                                        &expanded_args,
+                                        no_unchecked_indexed_access,
+                                        result,
+                                    );
+                                }
+                                if let Some(d) = self.def_depth.get_mut(&def_id) {
+                                    *d = d.saturating_sub(1);
+                                }
+                                return result;
+                            }
                         }
                     }
 
