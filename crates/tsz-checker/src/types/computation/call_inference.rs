@@ -260,13 +260,12 @@ impl<'a> CheckerState<'a> {
             return source_ty;
         };
         let normalize = |shape: tsz_solver::FunctionShape| {
-            let mut normalized = shape.clone();
-            normalized.params = shape
+            let unpacked: Vec<_> = shape
                 .params
                 .iter()
                 .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
-            normalized
+            shape.with_replaced_params(unpacked)
         };
         let source_fn = normalize(source_fn);
         let target_fn = normalize(target_fn);
@@ -319,13 +318,12 @@ impl<'a> CheckerState<'a> {
             return source_ty;
         };
         let normalize = |shape: tsz_solver::FunctionShape| {
-            let mut normalized = shape.clone();
-            normalized.params = shape
+            let unpacked: Vec<_> = shape
                 .params
                 .iter()
                 .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
                 .collect();
-            normalized
+            shape.with_replaced_params(unpacked)
         };
         let source_fn = normalize(source_fn);
         let target_fn = normalize(target_fn);
