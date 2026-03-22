@@ -1389,3 +1389,96 @@ fn test_union_order_independent_of_input_order() {
     assert_eq!(union1, union2, "Union should be order-independent");
     assert_eq!(union2, union3, "Union should be order-independent");
 }
+
+#[test]
+fn test_estimated_size_bytes_is_nonzero_for_fresh_interner() {
+    let interner = TypeInterner::new();
+    let size = interner.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "estimated_size_bytes should be nonzero even for a fresh interner (struct overhead + intrinsics)"
+    );
+    // Must be at least the struct size itself
+    assert!(
+        size >= std::mem::size_of::<TypeInterner>(),
+        "estimate ({size}) should be >= struct size ({})",
+        std::mem::size_of::<TypeInterner>()
+    );
+}
+
+#[test]
+fn test_estimated_size_bytes_grows_with_interned_types() {
+    let interner = TypeInterner::new();
+    let baseline = interner.estimated_size_bytes();
+
+    // Intern a bunch of types
+    for i in 0..100 {
+        interner.literal_string(&format!("prop_{i}"));
+    }
+
+    let after_types = interner.estimated_size_bytes();
+    assert!(
+        after_types > baseline,
+        "Size should grow after interning types: baseline={baseline}, after={after_types}"
+    );
+}
+
+#[test]
+fn test_estimated_size_bytes_grows_with_object_shapes() {
+    let interner = TypeInterner::new();
+    let baseline = interner.estimated_size_bytes();
+
+    // Intern object shapes (heavier than primitives)
+    for i in 0..20 {
+        let prop_name = interner.string_interner.intern(&format!("field_{i}"));
+        let prop = PropertyInfo {
+            name: prop_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            visibility: Visibility::Public,
+            is_method: false,
+            is_class_prototype: false,
+            parent_id: None,
+            declaration_order: i as u32,
+        };
+        interner.object(vec![prop]);
+    }
+
+    let after_objects = interner.estimated_size_bytes();
+    assert!(
+        after_objects > baseline,
+        "Size should grow after interning objects: baseline={baseline}, after={after_objects}"
+    );
+}
+
+#[test]
+fn test_estimated_size_bytes_grows_with_functions() {
+    let interner = TypeInterner::new();
+    let baseline = interner.estimated_size_bytes();
+
+    // Intern function shapes
+    for i in 0..20 {
+        interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.string_interner.intern(&format!("p_{i}"))),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+    }
+
+    let after_fns = interner.estimated_size_bytes();
+    assert!(
+        after_fns > baseline,
+        "Size should grow after interning functions: baseline={baseline}, after={after_fns}"
+    );
+}
