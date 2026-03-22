@@ -58,12 +58,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .definition_store
                         .register_type_to_def(instance_type, def_id);
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.insert_class_instance_type(def_id, instance_type);
-                    }
-                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                        env.insert_class_instance_type(def_id, instance_type);
-                    }
+                    self.ctx.register_class_instance_in_envs(def_id, instance_type);
 
                     self.ctx.leave_recursion();
                     return instance_type;

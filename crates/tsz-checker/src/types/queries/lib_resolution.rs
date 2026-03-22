@@ -601,29 +601,11 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.insert_def_type_params(def_id, params.clone());
                             }
 
-                            // Register the interface body in TypeEnvironment so that
-                            // resolve_lazy(def_id) can find it. Without this, Lazy(DefId)
-                            // references to lib interfaces (e.g., ConcatArray in Array.concat)
-                            // fall through to a SymbolId-based fallback that produces wrong types.
-                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                if params.is_empty() {
-                                    env.insert_def(def_id, ty);
-                                } else {
-                                    env.insert_def_with_params(def_id, ty, params.clone());
-                                }
-                            }
-                            // Also register in type_environment (Rc-wrapped) for FlowAnalyzer.
-                            // type_env and type_environment are separate TypeEnvironment instances
-                            // that are only synchronized once at startup. Without this, narrowing
-                            // contexts can't resolve Application types for cross-file lib interfaces
-                            // (e.g., ArrayLike<any> in type predicate narrowing).
-                            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                                if params.is_empty() {
-                                    env.insert_def(def_id, ty);
-                                } else {
-                                    env.insert_def_with_params(def_id, ty, params);
-                                }
-                            }
+                            // Register the interface body in both type environments so
+                            // that resolve_lazy(def_id) and flow-analyzer narrowing
+                            // contexts can find it.
+                            self.ctx
+                                .register_def_auto_params_in_envs(def_id, ty, params);
 
                             lib_types.push(ty);
                         }
@@ -647,17 +629,12 @@ impl<'a> CheckerState<'a> {
                                     let def_id = self.ctx.get_lib_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
-                                    // CRITICAL: Register the type body in TypeEnvironment so that
-                                    // evaluate_application can resolve it via resolve_lazy(def_id).
-                                    // Without this, Partial<T>, Pick<T,K>, etc. resolve to unknown.
-                                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                        env.insert_def_with_params(def_id, ty, params.clone());
-                                    }
-                                    // Also register in type_environment for FlowAnalyzer.
-                                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
-                                    {
-                                        env.insert_def_with_params(def_id, ty, params);
-                                    }
+                                    // Register the type body in both envs so that
+                                    // evaluate_application can resolve via resolve_lazy(def_id)
+                                    // and flow-analyzer narrowing contexts see it too.
+                                    self.ctx.register_def_with_params_in_envs(
+                                        def_id, ty, params,
+                                    );
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when

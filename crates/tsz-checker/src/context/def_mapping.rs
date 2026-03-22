@@ -197,6 +197,110 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
+    // ---- Dual-environment registration helpers ----
+    //
+    // `type_env` (primary evaluator env) and `type_environment` (flow-analyzer
+    // snapshot) are separate `TypeEnvironment` instances.  When a definition or
+    // class-instance type is registered, both must be updated so that narrowing
+    // contexts and the evaluator see the same data.
+    //
+    // These helpers eliminate the duplicated `try_borrow_mut` blocks that were
+    // scattered across lib resolution, symbol-type resolution, and augmentation
+    // merge paths.
+
+    /// Register a non-generic definition body in **both** type environments.
+    pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_def(def_id, body);
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            env.insert_def(def_id, body);
+        }
+    }
+
+    /// Register a generic definition body (with type parameters) in **both**
+    /// type environments.
+    pub fn register_def_with_params_in_envs(
+        &self,
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_def_with_params(def_id, body, params.clone());
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            env.insert_def_with_params(def_id, body, params);
+        }
+    }
+
+    /// Register a definition body in **both** type environments, choosing
+    /// `insert_def` or `insert_def_with_params` based on whether `params` is
+    /// empty.
+    pub fn register_def_auto_params_in_envs(
+        &self,
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if params.is_empty() {
+            self.register_def_in_envs(def_id, body);
+        } else {
+            self.register_def_with_params_in_envs(def_id, body, params);
+        }
+    }
+
+    /// Register a class instance type in **both** type environments.
+    pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_class_instance_type(def_id, instance_type);
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            env.insert_class_instance_type(def_id, instance_type);
+        }
+    }
+
+    /// Register an augmented definition body in **both** type environments.
+    ///
+    /// If the definition is a class (or already has a class-instance entry),
+    /// updates the class-instance type. Otherwise, preserves existing type
+    /// parameters (if any) when re-inserting the definition body.
+    pub fn register_augmented_def_in_envs(
+        &self,
+        def_id: DefId,
+        augmented: TypeId,
+        is_class: bool,
+    ) {
+        use tsz_solver::TypeEnvironment;
+
+        // Helper that applies the augmentation logic to a single env.
+        fn apply(
+            env: &mut TypeEnvironment,
+            def_id: DefId,
+            augmented: TypeId,
+            is_class: bool,
+        ) {
+            if is_class || env.get_class_instance_type(def_id).is_some() {
+                env.insert_class_instance_type(def_id, augmented);
+            } else {
+                let params: Option<Vec<tsz_solver::TypeParamInfo>> =
+                    env.get_def_params(def_id).map(|s| s.to_vec());
+                if let Some(params) = params {
+                    env.insert_def_with_params(def_id, augmented, params);
+                } else {
+                    env.insert_def(def_id, augmented);
+                }
+            }
+        }
+
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            apply(&mut env, def_id, augmented, is_class);
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            apply(&mut env, def_id, augmented, is_class);
+        }
+    }
+
     /// Create a Lazy type reference from a symbol.
     ///
     /// This returns `TypeData::Lazy(DefId)` for use in the new `DefId` system.

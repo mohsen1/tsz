@@ -502,13 +502,13 @@ impl<'a> CheckerState<'a> {
                     .insert(active_class_sym, instance_type);
             }
 
-            // Register the class instance type in the TypeEnvironment immediately
-            // so that Lazy(DefId) fallbacks (created by the recursion guard above)
-            // can resolve via resolve_lazy during property access checks.
+            // Register the class instance type in both type environments
+            // immediately so that Lazy(DefId) fallbacks (created by the recursion
+            // guard above) can resolve via resolve_lazy during property access
+            // checks and flow-analyzer narrowing.
             let def_id = self.ctx.get_or_create_def_id(active_class_sym);
-            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                env.insert_class_instance_type(def_id, instance_type);
-            }
+            self.ctx
+                .register_class_instance_in_envs(def_id, instance_type);
 
             self.pop_type_parameters(updates);
             return Some((instance_type, params));
