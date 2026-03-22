@@ -4605,3 +4605,245 @@ fn test_heritage_names_property_access_expression() {
         .expect("expected semantic_def for Foo");
     assert_eq!(entry.heritage_names, vec!["ns.Base"]);
 }
+
+// =========================================================================
+// Stable identity flag tests
+// =========================================================================
+
+#[test]
+fn semantic_defs_captures_is_abstract_for_abstract_classes() {
+    let binder = bind_source(
+        "
+abstract class Base {}
+class Concrete {}
+",
+    );
+    let base_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Base")
+        .expect("expected semantic_def for Base");
+    assert!(
+        base_entry.is_abstract,
+        "abstract class Base should have is_abstract=true"
+    );
+    assert_eq!(base_entry.kind, super::SemanticDefKind::Class);
+
+    let concrete_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Concrete")
+        .expect("expected semantic_def for Concrete");
+    assert!(
+        !concrete_entry.is_abstract,
+        "non-abstract class Concrete should have is_abstract=false"
+    );
+}
+
+#[test]
+fn semantic_defs_captures_is_const_for_const_enums() {
+    let binder = bind_source(
+        "
+const enum ConstDir { Up, Down }
+enum RegularDir { Left, Right }
+",
+    );
+    let const_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "ConstDir")
+        .expect("expected semantic_def for ConstDir");
+    assert!(
+        const_entry.is_const,
+        "const enum ConstDir should have is_const=true"
+    );
+    assert_eq!(const_entry.kind, super::SemanticDefKind::Enum);
+
+    let regular_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "RegularDir")
+        .expect("expected semantic_def for RegularDir");
+    assert!(
+        !regular_entry.is_const,
+        "regular enum RegularDir should have is_const=false"
+    );
+}
+
+#[test]
+fn semantic_defs_captures_is_exported() {
+    let binder = bind_source(
+        "
+export class ExportedClass {}
+class PrivateClass {}
+export interface ExportedIface {}
+interface PrivateIface {}
+export type ExportedAlias = number;
+type PrivateAlias = string;
+export enum ExportedEnum { A }
+enum PrivateEnum { B }
+",
+    );
+    for (name, expected_exported) in [
+        ("ExportedClass", true),
+        ("PrivateClass", false),
+        ("ExportedIface", true),
+        ("PrivateIface", false),
+        ("ExportedAlias", true),
+        ("PrivateAlias", false),
+        ("ExportedEnum", true),
+        ("PrivateEnum", false),
+    ] {
+        let entry = binder
+            .semantic_defs
+            .values()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("expected semantic_def for {name}"));
+        assert_eq!(
+            entry.is_exported, expected_exported,
+            "{name}: is_exported should be {expected_exported}"
+        );
+    }
+}
+
+#[test]
+fn semantic_defs_identity_flags_survive_lib_merge() {
+    // Identity flags (is_abstract, is_const, is_exported) must be
+    // preserved when lib semantic_defs are propagated through merge.
+    let lib_source = r"
+abstract class AbstractError {}
+const enum LibDirection { Up, Down }
+export interface ExportedArray<T> {}
+";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    let user_source = "let x = 1;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // After merge, identity flags should be preserved on remapped entries
+    let abstract_entry = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "AbstractError")
+        .expect("expected AbstractError in merged semantic_defs");
+    assert!(
+        abstract_entry.is_abstract,
+        "is_abstract should survive lib merge"
+    );
+
+    let const_entry = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "LibDirection")
+        .expect("expected LibDirection in merged semantic_defs");
+    assert!(const_entry.is_const, "is_const should survive lib merge");
+
+    let exported_entry = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "ExportedArray")
+        .expect("expected ExportedArray in merged semantic_defs");
+    assert!(
+        exported_entry.is_exported,
+        "is_exported should survive lib merge"
+    );
+}
+
+#[test]
+fn semantic_defs_all_top_level_families_have_stable_identity() {
+    // Verify that all top-level declaration families produce semantic
+    // defs with complete identity data, and that nested declarations
+    // are not incorrectly captured.
+    let binder = bind_source(
+        "
+export abstract class MyClass<T> extends Base {}
+export interface MyInterface<T, U> {}
+export type MyAlias<T> = T | null;
+export const enum MyConstEnum { A, B, C }
+export enum MyEnum { X, Y }
+export namespace MyNamespace {}
+export function myFunction<T>(x: T): T { return x; }
+export const myVariable = 42;
+function nested() {
+    class InnerClass {}
+    interface InnerIface {}
+}
+",
+    );
+    // All top-level declarations should be captured
+    let names_and_kinds: Vec<(&str, super::SemanticDefKind)> = vec![
+        ("MyClass", super::SemanticDefKind::Class),
+        ("MyInterface", super::SemanticDefKind::Interface),
+        ("MyAlias", super::SemanticDefKind::TypeAlias),
+        ("MyConstEnum", super::SemanticDefKind::Enum),
+        ("MyEnum", super::SemanticDefKind::Enum),
+        ("MyNamespace", super::SemanticDefKind::Namespace),
+        ("myFunction", super::SemanticDefKind::Function),
+        ("myVariable", super::SemanticDefKind::Variable),
+    ];
+
+    for (name, expected_kind) in &names_and_kinds {
+        let entry = binder
+            .semantic_defs
+            .values()
+            .find(|e| e.name == *name)
+            .unwrap_or_else(|| panic!("expected semantic_def for top-level '{name}'"));
+        assert_eq!(entry.kind, *expected_kind, "{name}: wrong kind");
+        assert!(entry.is_exported, "{name}: should be exported");
+    }
+
+    // Specific flag checks
+    let class_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyClass")
+        .unwrap();
+    assert!(class_entry.is_abstract, "MyClass should be abstract");
+    assert_eq!(
+        class_entry.type_param_count, 1,
+        "MyClass should have 1 type param"
+    );
+
+    let const_enum_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyConstEnum")
+        .unwrap();
+    assert!(const_enum_entry.is_const, "MyConstEnum should be const");
+    assert_eq!(const_enum_entry.enum_member_names.len(), 3);
+
+    let regular_enum_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyEnum")
+        .unwrap();
+    assert!(!regular_enum_entry.is_const, "MyEnum should not be const");
+
+    // Nested declarations should NOT be in semantic_defs (they're in function scope)
+    assert!(
+        !binder
+            .semantic_defs
+            .values()
+            .any(|e| e.name == "InnerClass"),
+        "nested InnerClass should not be in semantic_defs"
+    );
+    assert!(
+        !binder
+            .semantic_defs
+            .values()
+            .any(|e| e.name == "InnerIface"),
+        "nested InnerIface should not be in semantic_defs"
+    );
+}
