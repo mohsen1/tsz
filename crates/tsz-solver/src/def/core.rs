@@ -699,18 +699,6 @@ impl DefinitionStore {
         self.definitions.get(&id).and_then(|r| r.extends)
     }
 
-    /// Set the heritage (extends + implements) for a definition after registration.
-    ///
-    /// Used for cross-batch heritage resolution: when a user class extends a lib
-    /// type, the heritage is resolved by name after all pre-population batches
-    /// have completed.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.extends = extends;
-            entry.implements = implements;
-        }
-    }
-
     /// Update the body `TypeId` for a definition (for lazy evaluation).
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
