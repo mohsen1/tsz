@@ -694,3 +694,50 @@ export const clientSlice = createSlice({
         "Expected ValidateSliceCaseReducers example to avoid overload failure, got diagnostics={diagnostics:?}"
     );
 }
+
+/// ThisType<T> marker extraction through a type alias application.
+///
+/// When the contextual type is `Descriptor<D, M>` (a type alias that expands to
+/// `{ methods?: M & ThisType<D & M> }`), the checker must expand the alias body
+/// to discover the ThisType marker.  This exercises the solver's
+/// `get_this_type_from_marker_expanding` API rather than manual TypeData matching.
+#[test]
+fn test_this_type_marker_through_alias_application_no_ts7006() {
+    let source = r#"
+interface ThisType<T> {}
+
+type ObjectDescriptor<D, M> = {
+    data?: () => D;
+    methods?: M & ThisType<D & M>;
+};
+
+declare function defineComponent<D, M>(desc: ObjectDescriptor<D, M>): void;
+
+defineComponent({
+    data() {
+        return { x: 1 };
+    },
+    methods: {
+        greet() {
+            console.log(this.x);
+        }
+    }
+});
+"#;
+
+    let diagnostics = check_default(source);
+
+    // The key assertion: `this` inside `greet()` should have its type provided
+    // by `ThisType<D & M>`, so there should be no TS7006 (implicit any) errors
+    // on the method parameters.
+    let ts7006_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7006)
+        .collect();
+
+    assert!(
+        ts7006_errors.is_empty(),
+        "Expected no TS7006 errors when ThisType<T> is provided via alias application, \
+         got {ts7006_errors:?}"
+    );
+}
