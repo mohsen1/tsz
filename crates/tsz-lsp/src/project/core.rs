@@ -1529,6 +1529,10 @@ pub struct Project {
 pub(crate) struct FileIdAllocator {
     /// Maps file name to its assigned `u32` file index.
     name_to_id: FxHashMap<String, u32>,
+    /// Reverse mapping: file index -> file name.
+    /// Indexed by the `u32` file index. Entries are set to empty string on removal
+    /// (IDs are never recycled, so the slot stays allocated).
+    id_to_name: Vec<String>,
     /// Next ID to allocate.
     next_id: u32,
 }
@@ -1538,6 +1542,7 @@ impl FileIdAllocator {
     pub fn new() -> Self {
         Self {
             name_to_id: FxHashMap::default(),
+            id_to_name: Vec::new(),
             // Start at 0; u32::MAX is reserved as "unassigned".
             next_id: 0,
         }
@@ -1554,6 +1559,8 @@ impl FileIdAllocator {
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).expect("file ID overflow");
         self.name_to_id.insert(file_name.to_string(), id);
+        self.id_to_name.push(file_name.to_string());
+        debug_assert_eq!(self.id_to_name.len(), id as usize + 1);
         id
     }
 
@@ -1569,7 +1576,24 @@ impl FileIdAllocator {
     /// The ID is NOT recycled — future allocations continue from `next_id`.
     /// This prevents stale definition collisions.
     pub fn remove(&mut self, file_name: &str) -> Option<u32> {
-        self.name_to_id.remove(file_name)
+        let id = self.name_to_id.remove(file_name)?;
+        // Clear the reverse entry. The slot stays allocated (IDs are never recycled).
+        if let Some(entry) = self.id_to_name.get_mut(id as usize) {
+            entry.clear();
+        }
+        Some(id)
+    }
+
+    /// Look up the file name for a given file index.
+    ///
+    /// Returns `None` if the index was never allocated or the file was removed.
+    pub fn name_for_id(&self, file_idx: u32) -> Option<&str> {
+        let name = self.id_to_name.get(file_idx as usize)?;
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.as_str())
+        }
     }
 
     /// Number of currently tracked files.
@@ -1980,6 +2004,14 @@ impl Project {
     /// Iterate over all file names in the project.
     pub fn file_names(&self) -> impl Iterator<Item = &str> {
         self.files.keys().map(|s| s.as_str())
+    }
+
+    /// Look up the file name for a given `file_idx` (as stamped on binder symbols).
+    ///
+    /// Returns `None` if the index was never allocated or the file was removed.
+    /// This enables resolving a symbol's owning file from its `decl_file_idx`.
+    pub fn file_name_for_idx(&self, file_idx: u32) -> Option<&str> {
+        self.file_id_allocator.name_for_id(file_idx)
     }
 
     /// Get the set of files that directly import the given file.
