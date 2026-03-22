@@ -366,6 +366,9 @@ mod narrowing_discriminant_tests;
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
 #[cfg(test)]
+#[path = "tests/solver_file_size_ceiling_tests.rs"]
+mod solver_file_size_ceiling_tests;
+#[cfg(test)]
 #[path = "../tests/string_intrinsic_subtype_tests.rs"]
 mod string_intrinsic_subtype_tests;
 #[cfg(test)]
@@ -407,6 +410,3 @@ mod variance_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
-#[cfg(test)]
-#[path = "tests/solver_file_size_ceiling_tests.rs"]
-mod solver_file_size_ceiling_tests;
