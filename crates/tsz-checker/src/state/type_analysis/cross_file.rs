@@ -223,10 +223,9 @@ impl<'a> CheckerState<'a> {
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .expect("needs_cross_file_delegation derived from has_symbol_file_index returning true");
+            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
+                "needs_cross_file_delegation derived from has_symbol_file_index returning true",
+            );
             cross_file_idx = Some(file_idx);
         }
 
@@ -619,10 +618,9 @@ impl<'a> CheckerState<'a> {
                 });
 
         if needs_cross_file_delegation {
-            let file_idx = self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .expect("needs_cross_file_delegation derived from has_symbol_file_index returning true");
+            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
+                "needs_cross_file_delegation derived from has_symbol_file_index returning true",
+            );
             delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
             delegate_file_idx = Some(file_idx);
         }
@@ -820,7 +818,8 @@ impl<'a> CheckerState<'a> {
         // symbol from the current file that happens to share the same index offset.
         if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
             if target_file_idx != self.ctx.current_file_idx {
-                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+                self.ctx
+                    .register_symbol_file_target(sym_id, target_file_idx);
             }
             return;
         }

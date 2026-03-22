@@ -426,14 +426,16 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(exports) = target_binder.module_exports.get(file_name) {
                         if let Some(target_sym_id) = exports.get(export_name) {
-                            self.ctx.register_symbol_file_target(target_sym_id, target_idx);
+                            self.ctx
+                                .register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                         // For require imports, also try "export="
                         if symbol.import_name.is_none()
                             && let Some(target_sym_id) = exports.get("export=")
                         {
-                            self.ctx.register_symbol_file_target(target_sym_id, target_idx);
+                            self.ctx
+                                .register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
                     }
@@ -458,7 +460,10 @@ impl<'a> CheckerState<'a> {
                                     reexport_binder.module_exports.get(reexport_file)
                                 && let Some(target_sym_id) = re_exports.get(name_to_lookup)
                             {
-                                self.ctx.register_symbol_file_target(target_sym_id, reexport_target_idx);
+                                self.ctx.register_symbol_file_target(
+                                    target_sym_id,
+                                    reexport_target_idx,
+                                );
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
@@ -482,7 +487,8 @@ impl<'a> CheckerState<'a> {
                                     && let Some(wc_exports) = wc_binder.module_exports.get(wc_file)
                                     && let Some(target_sym_id) = wc_exports.get(export_name)
                                 {
-                                    self.ctx.register_symbol_file_target(target_sym_id, wc_target_idx);
+                                    self.ctx
+                                        .register_symbol_file_target(target_sym_id, wc_target_idx);
                                     return self
                                         .resolve_alias_symbol(target_sym_id, visited_aliases);
                                 }
