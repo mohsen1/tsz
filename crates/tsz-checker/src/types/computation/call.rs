@@ -1079,10 +1079,9 @@ impl<'a> CheckerState<'a> {
                                 None => true,
                                 Some(existing) if existing == ty => false,
                                 Some(existing) => {
-                                    let mut visited = FxHashSet::default();
                                     existing == TypeId::UNKNOWN
                                         || existing == TypeId::ERROR
-                                        || self.inference_type_is_anyish(existing, &mut visited)
+                                        || self.inference_type_is_anyish(existing)
                                         || common::contains_type_parameters(
                                             self.ctx.types,
                                             existing,
@@ -1441,10 +1440,7 @@ impl<'a> CheckerState<'a> {
                                         Some(existing) => {
                                             existing == TypeId::UNKNOWN
                                                 || existing == TypeId::ERROR
-                                                || self.inference_type_is_anyish(
-                                                    existing,
-                                                    &mut FxHashSet::default(),
-                                                )
+                                                || self.inference_type_is_anyish(existing)
                                                 || common::contains_infer_types(
                                                     self.ctx.types,
                                                     existing,
