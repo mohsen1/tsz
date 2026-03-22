@@ -840,8 +840,7 @@ impl<'a> CheckerState<'a> {
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(expected_name))
-        {
-            if let Some(binders) = &self.ctx.all_binders {
+            && let Some(binders) = &self.ctx.all_binders {
                 for &(file_idx, _) in entries {
                     if let Some(binder) = binders.get(file_idx)
                         && let Some(symbol) = binder.get_symbol(sym_id)
@@ -852,7 +851,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-        }
         // Full fallback: the symbol may be nested (not in file_locals).
         if let Some(binders) = &self.ctx.all_binders {
             for (idx, binder) in binders.iter().enumerate() {
