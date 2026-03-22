@@ -16,7 +16,7 @@ pub(super) struct CollectDiagnosticsResult {
 
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+    tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
