@@ -11,13 +11,27 @@ use tsz_solver::TypeId;
 // Relation boundary helpers (thin wrappers over assignability)
 // =============================================================================
 
+/// Check if a member type mismatch should be reported (TS2416).
+///
+/// Uses `no_erase_generics` mode to match tsc's `compareSignaturesRelated`
+/// behavior for implements/extends member checking: a non-generic function
+/// like `(x: string) => string` is NOT assignable to a generic function
+/// like `<T>(x: T) => T`, ensuring TS2416 is correctly emitted.
 pub(crate) fn should_report_member_type_mismatch(
     checker: &mut CheckerState<'_>,
     source: TypeId,
     target: TypeId,
     node_idx: NodeIndex,
 ) -> bool {
-    checker.should_report_assignability_mismatch(source, target, node_idx)
+    let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if checker.should_suppress_assignability_diagnostic(source, target) {
+        return false;
+    }
+    if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
+        return false;
+    }
+    !checker.is_assignable_to_no_erase_generics(source, target)
+        && !checker.should_skip_weak_union_error(source, target, node_idx)
 }
 
 pub(crate) fn should_report_member_type_mismatch_bivariant(

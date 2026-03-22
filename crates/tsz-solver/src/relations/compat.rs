@@ -545,6 +545,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    /// Enable generic erasure for function subtype checks.
+    ///
+    /// When true, non-generic functions can match generic targets by erasing
+    /// target type parameters to their constraints. This matches tsc's
+    /// `eraseGenerics` behavior used in the comparable relation and base type
+    /// structural checks (TS2415/TS2417).
+    pub fn set_erase_generics(&mut self, erase: bool) {
+        if self.subtype.erase_generics != erase {
+            self.subtype.erase_generics = erase;
+            self.cache.clear();
+        }
+    }
+
     /// Skip weak type checks (TS2559) during assignability.
     ///
     /// In tsc, `isTypeAssignableTo` does not include the weak type check.

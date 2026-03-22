@@ -136,6 +136,7 @@ impl RelationFlags {
         tsz_solver::RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
     pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
         tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+    pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationCacheKey::FLAG_NO_ERASE_GENERICS;
 }
 pub(crate) use tsz_solver::type_queries::{
     AssignabilityEvalKind, ExcessPropertiesKind, get_allowed_keys, get_keyof_type,

@@ -198,11 +198,13 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
     pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
-    /// When true, non-generic functions may be compared to generic functions by
-    /// erasing the target's type parameters to their constraints. This matches tsc's
-    /// `eraseGenerics` behavior used in base type structural checks (TS2415/TS2417).
-    /// When false (default), a non-generic function is NOT a subtype of a generic
-    /// function, matching tsc's `signatureRelatedTo` for regular assignability.
+    /// When true (default), non-generic functions may be compared to generic functions
+    /// by erasing the target's type parameters to their constraints. This matches tsc's
+    /// default `eraseGenerics` behavior for structural type comparison.
+    /// When false, a non-generic function is NOT assignable to a generic function —
+    /// the target's TypeParameter types are left in place, causing the comparison to
+    /// fail for concrete types. Used for implements/extends member type checking
+    /// where tsc's `compareSignaturesRelated` does NOT erase.
     pub erase_generics: bool,
     /// Type parameter equivalences established during generic function subtype checking.
     ///
@@ -248,7 +250,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
-            erase_generics: false,
+            erase_generics: true,
             eval_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
@@ -287,7 +289,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
-            erase_generics: false,
+            erase_generics: true,
             eval_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
