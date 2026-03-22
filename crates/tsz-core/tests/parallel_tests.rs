@@ -4353,3 +4353,323 @@ fn residency_budget_integration_with_merged_program() {
         );
     }
 }
+
+// =============================================================================
+// Stable semantic identity through merge/rebind pipeline
+// =============================================================================
+
+#[test]
+fn semantic_defs_all_five_families_survive_multifile_merge() {
+    // All five top-level declaration families (class, interface, type alias,
+    // enum, namespace) must appear in MergedProgram.semantic_defs after merge.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "class MyClass {} interface MyIface { x: number }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "type MyAlias = string; enum MyEnum { A, B }".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "namespace MyNS { export type T = number; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let names: std::collections::HashSet<_> = program
+        .semantic_defs
+        .values()
+        .map(|e| e.name.as_str())
+        .collect();
+
+    assert!(
+        names.contains("MyClass"),
+        "class should be in semantic_defs"
+    );
+    assert!(
+        names.contains("MyIface"),
+        "interface should be in semantic_defs"
+    );
+    assert!(
+        names.contains("MyAlias"),
+        "type alias should be in semantic_defs"
+    );
+    assert!(names.contains("MyEnum"), "enum should be in semantic_defs");
+    assert!(
+        names.contains("MyNS"),
+        "namespace should be in semantic_defs"
+    );
+}
+
+#[test]
+fn semantic_defs_declaration_merging_across_files_preserves_first_identity() {
+    // When two script files declare the same interface (non-module, so they
+    // get merged cross-file), the merged semantic_defs should have exactly one
+    // entry and it should come from the first file.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "interface Shared { x: number; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Shared { y: string; }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let shared_entries: Vec<_> = program
+        .semantic_defs
+        .values()
+        .filter(|e| e.name == "Shared")
+        .collect();
+    assert_eq!(
+        shared_entries.len(),
+        1,
+        "declaration merging should produce exactly one semantic_def entry"
+    );
+    assert_eq!(
+        shared_entries[0].file_id, 0,
+        "first file's identity should be kept"
+    );
+}
+
+#[test]
+fn semantic_defs_survive_per_file_binder_reconstruction() {
+    // After merge, each per-file binder reconstructed from MergedProgram
+    // should have ALL semantic_defs from the global merged map.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "class Alpha {} type AType = number;".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "interface Beta {} enum BEnum { X }".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let global_names: std::collections::HashSet<String> = program
+        .semantic_defs
+        .values()
+        .map(|e| e.name.clone())
+        .collect();
+
+    // Reconstruct per-file binders and verify they get all semantic_defs
+    for file_idx in 0..program.files.len() {
+        let binder = create_binder_from_bound_file(&program.files[file_idx], &program, file_idx);
+        let binder_names: std::collections::HashSet<String> = binder
+            .semantic_defs
+            .values()
+            .map(|e| e.name.clone())
+            .collect();
+
+        // The per-file binder should have at least all global semantic_defs
+        for name in &global_names {
+            assert!(
+                binder_names.contains(name),
+                "per-file binder for file {file_idx} missing semantic_def for '{name}'"
+            );
+        }
+    }
+}
+
+#[test]
+fn semantic_defs_enriched_fields_survive_merge() {
+    // Enriched fields (is_abstract, is_const, enum_member_names) must survive
+    // the merge pipeline.
+    let files = vec![(
+        "a.ts".to_string(),
+        "abstract class Abs {} const enum CE { X, Y } enum RE { A, B, C }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let abs = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Abs")
+        .expect("Abs should be in semantic_defs");
+    assert!(
+        abs.is_abstract,
+        "abstract class should preserve is_abstract"
+    );
+
+    let ce = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "CE")
+        .expect("CE should be in semantic_defs");
+    assert!(ce.is_const, "const enum should preserve is_const");
+    assert_eq!(ce.enum_member_names, vec!["X", "Y"]);
+
+    let re = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "RE")
+        .expect("RE should be in semantic_defs");
+    assert!(!re.is_const, "regular enum should not be const");
+    assert_eq!(re.enum_member_names, vec!["A", "B", "C"]);
+}
+
+#[test]
+fn semantic_defs_type_param_count_survives_merge() {
+    // Generic declarations should preserve their type_param_count through merge.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "class Box<T> {} interface Pair<A, B> { first: A; second: B; }".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "type Triple<X, Y, Z> = [X, Y, Z];".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let box_def = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Box")
+        .expect("Box should be in semantic_defs");
+    assert_eq!(box_def.type_param_count, 1);
+
+    let pair_def = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Pair")
+        .expect("Pair should be in semantic_defs");
+    assert_eq!(pair_def.type_param_count, 2);
+
+    let triple_def = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Triple")
+        .expect("Triple should be in semantic_defs");
+    assert_eq!(triple_def.type_param_count, 3);
+}
+
+#[test]
+fn semantic_defs_export_visibility_survives_merge() {
+    // Exported declarations should preserve is_exported through the merge pipeline.
+    let files = vec![(
+        "a.ts".to_string(),
+        "export class Exported {} class Internal {}".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let exported = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Exported")
+        .expect("Exported should be in semantic_defs");
+    assert!(
+        exported.is_exported,
+        "exported class should preserve is_exported"
+    );
+
+    let internal = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Internal")
+        .expect("Internal should be in semantic_defs");
+    assert!(
+        !internal.is_exported,
+        "non-exported class should not be marked exported"
+    );
+}
+
+#[test]
+fn semantic_defs_stable_symbol_ids_across_merge_rebuilds() {
+    // semantic_defs should produce identical name/kind sets when the same
+    // source is compiled and merged multiple times.
+    let files = vec![
+        (
+            "a.ts".to_string(),
+            "class A {} interface I {} type T = number;".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "enum E { X } namespace NS { export type Inner = string; }".to_string(),
+        ),
+    ];
+
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    let mut defs1: Vec<(String, String)> = program1
+        .semantic_defs
+        .values()
+        .map(|e| (e.name.clone(), format!("{:?}", e.kind)))
+        .collect();
+    let mut defs2: Vec<(String, String)> = program2
+        .semantic_defs
+        .values()
+        .map(|e| (e.name.clone(), format!("{:?}", e.kind)))
+        .collect();
+    defs1.sort();
+    defs2.sort();
+
+    assert_eq!(
+        defs1, defs2,
+        "semantic_defs name/kind sets should be identical across rebuilds"
+    );
+}
+
+#[test]
+fn semantic_defs_namespace_scoped_declarations_survive_merge() {
+    // Declarations inside exported namespaces should be captured in semantic_defs
+    // because the namespace body creates a ContainerKind::Module scope.
+    let files = vec![(
+        "a.ts".to_string(),
+        r#"
+namespace Outer {
+    export interface Inner {}
+    export type Alias = string;
+    export class Klass {}
+    export enum E { A }
+}
+"#
+        .to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let names: std::collections::HashSet<_> = program
+        .semantic_defs
+        .values()
+        .map(|e| e.name.as_str())
+        .collect();
+
+    assert!(
+        names.contains("Outer"),
+        "namespace itself should be captured"
+    );
+    // Namespace-scoped declarations should also be captured
+    assert!(
+        names.contains("Inner"),
+        "namespace-scoped interface should be captured"
+    );
+    assert!(
+        names.contains("Alias"),
+        "namespace-scoped type alias should be captured"
+    );
+    assert!(
+        names.contains("Klass"),
+        "namespace-scoped class should be captured"
+    );
+    assert!(
+        names.contains("E"),
+        "namespace-scoped enum should be captured"
+    );
+}
