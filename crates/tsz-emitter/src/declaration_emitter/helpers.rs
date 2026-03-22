@@ -269,6 +269,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&lit.text);
                 }
             }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    self.write(&lit.text);
+                }
+            }
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                 if let Some(computed) = self.arena.get_computed_property(node) {
                     self.write("[");
