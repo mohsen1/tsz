@@ -474,7 +474,7 @@ impl SymbolArena {
     #[inline]
     #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> &[SymbolId] {
-        self.name_index.get(name).map(Vec::as_slice).unwrap_or(&[])
+        self.name_index.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// Iterate over all symbols in the arena.
