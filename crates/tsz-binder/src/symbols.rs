@@ -269,6 +269,11 @@ pub struct SymbolArena {
     symbols: Vec<Symbol>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
     base_offset: u32,
+    /// Name-to-SymbolId index for O(1) lookups by escaped_name.
+    /// Maintained incrementally on `alloc`/`alloc_from`; skipped during
+    /// serialization and rebuilt lazily if needed.
+    #[serde(skip)]
+    name_index: FxHashMap<String, Vec<SymbolId>>,
 }
 
 impl SymbolArena {
@@ -278,20 +283,22 @@ impl SymbolArena {
     const MAX_SYMBOL_PREALLOC: usize = 1_000_000;
 
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             symbols: Vec::new(),
             base_offset: 0,
+            name_index: FxHashMap::default(),
         }
     }
 
     /// Create a new symbol arena with a base offset for symbol IDs.
     /// Used for checker-local symbols to avoid collisions with binder symbols.
     #[must_use]
-    pub const fn new_with_base(base: u32) -> Self {
+    pub fn new_with_base(base: u32) -> Self {
         Self {
             symbols: Vec::new(),
             base_offset: base,
+            name_index: FxHashMap::default(),
         }
     }
 
@@ -302,6 +309,7 @@ impl SymbolArena {
         Self {
             symbols: Vec::with_capacity(safe_capacity),
             base_offset: 0,
+            name_index: FxHashMap::default(),
         }
     }
 
@@ -316,6 +324,12 @@ impl SymbolArena {
             self.base_offset
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
+        if !name.is_empty() {
+            self.name_index
+                .entry(name.clone())
+                .or_default()
+                .push(id);
+        }
         self.symbols.push(Symbol::new(id, flags, name));
         id
     }
@@ -332,6 +346,12 @@ impl SymbolArena {
             self.base_offset
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
+        if !source.escaped_name.is_empty() {
+            self.name_index
+                .entry(source.escaped_name.clone())
+                .or_default()
+                .push(id);
+        }
         let mut cloned = source.clone();
         cloned.id = id;
         self.symbols.push(cloned);
@@ -378,34 +398,58 @@ impl SymbolArena {
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
         self.symbols.clear();
+        self.name_index.clear();
     }
 
-    /// Find a symbol by name (linear search through all symbols).
+    /// Rebuild the name index from the current symbol list.
+    /// Call this after deserialization or after `reserve_symbol_ids` if
+    /// indexed lookups are needed on those placeholder entries.
+    pub fn rebuild_name_index(&mut self) {
+        self.name_index.clear();
+        for sym in &self.symbols {
+            if !sym.escaped_name.is_empty() {
+                self.name_index
+                    .entry(sym.escaped_name.clone())
+                    .or_default()
+                    .push(sym.id);
+            }
+        }
+    }
+
+    /// Find a symbol by name using the internal name index (O(1) lookup).
     ///
     /// This is a fallback for when scope chain lookup is not available.
     /// Note: This doesn't handle shadowing correctly - it returns the first match.
     /// For proper scoping, use the `SymbolTable` scope chain instead.
     #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
-        for symbol in &self.symbols {
-            if symbol.escaped_name == name {
-                return Some(symbol.id);
-            }
+        if let Some(ids) = self.name_index.get(name) {
+            ids.first().copied()
+        } else {
+            // Fallback for arenas where index wasn't built (e.g., deserialized)
+            self.symbols
+                .iter()
+                .find(|s| s.escaped_name == name)
+                .map(|s| s.id)
         }
-        None
     }
 
-    /// Find all symbols with a given name (for conflict detection).
+    /// Find all symbols with a given name (O(1) lookup via name index).
     ///
     /// Returns all symbol IDs that have the specified name, which can happen
     /// when declarations shadow each other or when there are conflicts.
     #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
-        self.symbols
-            .iter()
-            .filter(|s| s.escaped_name == name)
-            .map(|s| s.id)
-            .collect()
+        if let Some(ids) = self.name_index.get(name) {
+            ids.clone()
+        } else {
+            // Fallback for arenas where index wasn't built (e.g., deserialized)
+            self.symbols
+                .iter()
+                .filter(|s| s.escaped_name == name)
+                .map(|s| s.id)
+                .collect()
+        }
     }
 
     /// Iterate over all symbols in the arena.
