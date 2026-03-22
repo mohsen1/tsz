@@ -7568,9 +7568,7 @@ fn explore_template_literal_multi_spans() {
 
 #[test]
 fn explore_conditional_type_with_infer() {
-    let output = emit_dts(
-        "export type UnpackPromise<T> = T extends Promise<infer U> ? U : T;",
-    );
+    let output = emit_dts("export type UnpackPromise<T> = T extends Promise<infer U> ? U : T;");
     println!("EXPLORE conditional infer:\n{output}");
     assert!(
         output.contains("infer U"),
@@ -7675,9 +7673,7 @@ fn explore_class_with_index_signature_readonly() {
 fn explore_this_parameter_stripped() {
     // tsc strips the `this` parameter in .d.ts - but KEEPS it actually
     // tsc preserves `this` parameter in .d.ts files for functions
-    let output = emit_dts(
-        "export function handler(this: HTMLElement, event: Event): void {}",
-    );
+    let output = emit_dts("export function handler(this: HTMLElement, event: Event): void {}");
     println!("EXPLORE this param:\n{output}");
     assert!(
         output.contains("this: HTMLElement"),
@@ -7688,9 +7684,7 @@ fn explore_this_parameter_stripped() {
 #[test]
 fn explore_function_type_in_union_paren() {
     // Function types in unions need parens
-    let output = emit_dts(
-        "export type T = ((x: number) => void) | string;",
-    );
+    let output = emit_dts("export type T = ((x: number) => void) | string;");
     println!("EXPLORE fn in union:\n{output}");
     assert!(
         output.contains("((x: number) => void)"),
@@ -7701,9 +7695,7 @@ fn explore_function_type_in_union_paren() {
 #[test]
 fn explore_constructor_type_in_union_paren() {
     // Constructor types in unions need parens
-    let output = emit_dts(
-        "export type T = (new (x: number) => Foo) | string;",
-    );
+    let output = emit_dts("export type T = (new (x: number) => Foo) | string;");
     println!("EXPLORE ctor in union:\n{output}");
     assert!(
         output.contains("(new (x: number) => Foo)"),
@@ -7733,9 +7725,7 @@ fn explore_negative_number_literal_type() {
 
 #[test]
 fn explore_unique_symbol_type() {
-    let output = emit_dts(
-        "export declare const sym: unique symbol;",
-    );
+    let output = emit_dts("export declare const sym: unique symbol;");
     println!("EXPLORE unique symbol:\n{output}");
     assert!(
         output.contains("unique symbol"),
@@ -7788,10 +7778,7 @@ fn explore_keyof_intersection_parens() {
     println!("EXPLORE keyof intersection:\n{output}");
     // Note: our parser may not create a ParenthesizedType here,
     // but the emitter should handle this via TYPE_OPERATOR logic
-    assert!(
-        output.contains("keyof"),
-        "Should emit keyof: {output}"
-    );
+    assert!(output.contains("keyof"), "Should emit keyof: {output}");
 }
 
 #[test]
@@ -7802,10 +7789,7 @@ fn explore_mapped_type_with_as_clause() {
 };",
     );
     println!("EXPLORE mapped type as clause:\n{output}");
-    assert!(
-        output.contains(" as "),
-        "Should emit as clause: {output}"
-    );
+    assert!(output.contains(" as "), "Should emit as clause: {output}");
 }
 
 #[test]
@@ -7861,9 +7845,7 @@ fn explore_enum_in_namespace() {
 
 #[test]
 fn explore_constructor_type_abstract() {
-    let output = emit_dts(
-        "export type T = abstract new (x: number) => object;",
-    );
+    let output = emit_dts("export type T = abstract new (x: number) => object;");
     println!("EXPLORE abstract ctor type:\n{output}");
     assert!(
         output.contains("abstract new"),
@@ -7873,9 +7855,8 @@ fn explore_constructor_type_abstract() {
 
 #[test]
 fn explore_generic_default_with_conditional() {
-    let output = emit_dts(
-        "export type Maybe<T, Fallback = T extends null ? never : T> = Fallback;",
-    );
+    let output =
+        emit_dts("export type Maybe<T, Fallback = T extends null ? never : T> = Fallback;");
     println!("EXPLORE generic default conditional:\n{output}");
     assert!(
         output.contains("Fallback = T extends null ? never : T"),
@@ -7995,16 +7976,17 @@ export function foo(x: number | string): number | string {
     );
     // Should NOT contain the implementation signature
     let count = output.matches("function foo").count();
-    assert_eq!(count, 2, "Should only emit 2 overloads, not implementation: {output}");
+    assert_eq!(
+        count, 2,
+        "Should only emit 2 overloads, not implementation: {output}"
+    );
 }
 
 #[test]
 fn explore_intersection_conditional_parens() {
     // Conditional types inside intersections don't need extra parens
     // but function types do
-    let output = emit_dts(
-        "export type T = ((x: number) => void) & ((y: string) => void);",
-    );
+    let output = emit_dts("export type T = ((x: number) => void) & ((y: string) => void);");
     println!("EXPLORE intersection of fns:\n{output}");
     assert!(
         output.contains("((x: number) => void) & ((y: string) => void)"),
@@ -8014,9 +7996,7 @@ fn explore_intersection_conditional_parens() {
 
 #[test]
 fn explore_export_default_function_with_type_params() {
-    let output = emit_dts(
-        "export default function identity<T>(x: T): T { return x; }",
-    );
+    let output = emit_dts("export default function identity<T>(x: T): T { return x; }");
     println!("EXPLORE default fn with type params:\n{output}");
     assert!(
         output.contains("export default function identity<T>(x: T): T;"),
@@ -8080,9 +8060,7 @@ fn explore_deep_partial_mapped_type() {
 
 #[test]
 fn explore_intersection_fn_and_object() {
-    let output = emit_dts(
-        "export type Fn = ((x: number) => void) & { displayName: string };",
-    );
+    let output = emit_dts("export type Fn = ((x: number) => void) & { displayName: string };");
     println!("EXPLORE intersection fn+obj:\n{output}");
     assert!(
         output.contains("((x: number) => void) & "),
@@ -8096,9 +8074,7 @@ fn explore_intersection_fn_and_object() {
 
 #[test]
 fn explore_template_literal_capitalize() {
-    let output = emit_dts(
-        "export type EventName<T extends string> = `on${Capitalize<T>}`;",
-    );
+    let output = emit_dts("export type EventName<T extends string> = `on${Capitalize<T>}`;");
     println!("EXPLORE template capitalize:\n{output}");
     assert!(
         output.contains("`on${Capitalize<T>}`"),
@@ -8142,9 +8118,7 @@ declare global {
 
 #[test]
 fn explore_namespace_export_as() {
-    let output = emit_dts(
-        "export * as utils from './utils';",
-    );
+    let output = emit_dts("export * as utils from './utils';");
     println!("EXPLORE namespace export:\n{output}");
     assert!(
         output.contains("export * as utils from"),
@@ -8174,9 +8148,7 @@ fn explore_class_with_generic_method() {
 #[test]
 fn explore_declare_function_with_this() {
     // When source is already a .d.ts, preserve as-is
-    let output = emit_dts(
-        "declare function handler(this: Window, e: Event): void;",
-    );
+    let output = emit_dts("declare function handler(this: Window, e: Event): void;");
     println!("EXPLORE declare fn this:\n{output}");
     assert!(
         output.contains("this: Window"),
@@ -8235,9 +8207,7 @@ fn explore_enum_negative_values() {
 #[test]
 fn explore_conditional_type_parens_on_check() {
     // Check type with union should get parens in conditional
-    let output = emit_dts(
-        "export type T<U> = U extends string | number ? 'yes' : 'no';",
-    );
+    let output = emit_dts("export type T<U> = U extends string | number ? 'yes' : 'no';");
     println!("EXPLORE conditional union check:\n{output}");
     // The union in extends position is fine without parens - it's parsed right-to-left
     assert!(
@@ -8307,7 +8277,10 @@ fn explore_namespace_members_no_declare() {
         "Should emit function: {output}"
     );
     // Inside a declare namespace, tsc does NOT add `declare` to members
-    let fn_line = output.lines().find(|l| l.contains("function create")).unwrap();
+    let fn_line = output
+        .lines()
+        .find(|l| l.contains("function create"))
+        .unwrap();
     assert!(
         !fn_line.contains("declare"),
         "Should not have declare inside namespace: {output}"
@@ -8361,9 +8334,7 @@ export { A as ARenamed };",
 
 #[test]
 fn explore_recursive_conditional_type() {
-    let output = emit_dts(
-        "export type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;",
-    );
+    let output = emit_dts("export type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;");
     println!("EXPLORE recursive conditional:\n{output}");
     assert!(
         output.contains("T extends Array<infer U> ? Flatten<U> : T"),
@@ -8428,9 +8399,7 @@ export interface C extends A, B { c: boolean; }",
 
 #[test]
 fn explore_generic_class_with_default_type() {
-    let output = emit_dts(
-        "export declare class Container<T = unknown> { value: T; }",
-    );
+    let output = emit_dts("export declare class Container<T = unknown> { value: T; }");
     println!("EXPLORE generic default:\n{output}");
     assert!(
         output.contains("<T = unknown>"),

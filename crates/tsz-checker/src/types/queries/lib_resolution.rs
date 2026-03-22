@@ -632,9 +632,8 @@ impl<'a> CheckerState<'a> {
                                     // Register the type body in both envs so that
                                     // evaluate_application can resolve via resolve_lazy(def_id)
                                     // and flow-analyzer narrowing contexts see it too.
-                                    self.ctx.register_def_with_params_in_envs(
-                                        def_id, ty, params,
-                                    );
+                                    self.ctx
+                                        .register_def_with_params_in_envs(def_id, ty, params);
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when
