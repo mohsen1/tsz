@@ -1418,23 +1418,55 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     }
 }
 
-/// Get current process memory usage in KB (Linux only, returns 0 on other platforms).
+/// Get peak memory usage (max RSS) in KB.
+///
+/// Supported platforms:
+/// - **Unix (Linux + macOS)**: calls `getrusage(RUSAGE_SELF)` to read `ru_maxrss`.
+///   On macOS `ru_maxrss` is in bytes, on Linux it is in KB.
+/// - **Other**: returns 0.
+///
+/// This reports *peak* RSS (matching tsc's `--extendedDiagnostics` behavior).
+#[cfg(unix)]
+#[allow(unsafe_code)]
 fn get_memory_usage_kb() -> u64 {
-    // Read from /proc/self/status for RSS on Linux
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|status| {
-            for line in status.lines() {
-                if line.starts_with("VmRSS:") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        return parts[1].parse::<u64>().ok();
-                    }
-                }
+    // Minimal repr(C) struct matching the POSIX rusage layout.
+    // We only need fields through ru_maxrss; remaining fields are padding.
+    #[repr(C)]
+    struct Rusage {
+        ru_utime: [i64; 2],  // struct timeval (tv_sec + tv_usec), 16 bytes on 64-bit
+        ru_stime: [i64; 2],  // struct timeval
+        ru_maxrss: i64,      // max resident set size
+        _pad: [i64; 13],     // remaining fields (ixrss through nivcsw)
+    }
+
+    const RUSAGE_SELF: i32 = 0;
+
+    unsafe extern "C" {
+        fn getrusage(who: i32, usage: *mut Rusage) -> i32;
+    }
+
+    unsafe {
+        let mut usage: Rusage = std::mem::zeroed();
+        if getrusage(RUSAGE_SELF, &mut usage) == 0 {
+            let maxrss = usage.ru_maxrss as u64;
+            // macOS reports bytes; Linux reports KB.
+            #[cfg(target_os = "macos")]
+            {
+                maxrss / 1024
             }
-            None
-        })
-        .unwrap_or(0)
+            #[cfg(not(target_os = "macos"))]
+            {
+                maxrss
+            }
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn get_memory_usage_kb() -> u64 {
+    0
 }
 
 fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
