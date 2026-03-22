@@ -5913,7 +5913,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .with_node_arena(self.arena)
                 .with_module_path_resolver(&module_path_resolver)
                 .with_namespace_alias_resolver(&namespace_alias_resolver)
-                .with_local_import_alias_name_resolver(&local_import_alias_name_resolver);
+                .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
+                .with_strict_null_checks(self.strict_null_checks);
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
