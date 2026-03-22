@@ -15,6 +15,6 @@ pub(crate) use self::core::{
     ExportMatch, ImportKind, ImportSpecifierTarget, ImportTarget, NamespaceReexportTarget,
 };
 pub use self::core::{
-    FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
-    ProjectResidencyStats, TsConfigSettings,
+    FileRename, FileResidencyInfo, Project, ProjectFile, ProjectPerformance, ProjectRequestKind,
+    ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
