@@ -322,4 +322,213 @@ impl<'a> Printer<'a> {
             self.emit(sig.type_annotation);
         }
     }
+
+    // =========================================================================
+    // Additional type nodes for complete DTS passthrough support
+    // =========================================================================
+
+    pub(in crate::emitter) fn emit_conditional_type(&mut self, node: &Node) {
+        let Some(cond) = self.arena.get_conditional_type(node) else {
+            return;
+        };
+        self.emit(cond.check_type);
+        self.write(" extends ");
+        self.emit(cond.extends_type);
+        self.write(" ? ");
+        self.emit(cond.true_type);
+        self.write(" : ");
+        self.emit(cond.false_type);
+    }
+
+    pub(in crate::emitter) fn emit_indexed_access_type(&mut self, node: &Node) {
+        let Some(idx) = self.arena.get_indexed_access_type(node) else {
+            return;
+        };
+        self.emit(idx.object_type);
+        self.write("[");
+        self.emit(idx.index_type);
+        self.write("]");
+    }
+
+    pub(in crate::emitter) fn emit_infer_type(&mut self, node: &Node) {
+        let Some(infer) = self.arena.get_infer_type(node) else {
+            return;
+        };
+        self.write("infer ");
+        self.emit(infer.type_parameter);
+    }
+
+    pub(in crate::emitter) fn emit_literal_type(&mut self, node: &Node) {
+        let Some(lit_type) = self.arena.get_literal_type(node) else {
+            return;
+        };
+        self.emit(lit_type.literal);
+    }
+
+    pub(in crate::emitter) fn emit_mapped_type(&mut self, node: &Node) {
+        let Some(mapped) = self.arena.get_mapped_type(node) else {
+            return;
+        };
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // Readonly modifier
+        if let Some(rt_node) = self.arena.get(mapped.readonly_token) {
+            match rt_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => self.write("+readonly "),
+                k if k == SyntaxKind::MinusToken as u16 => self.write("-readonly "),
+                _ => self.write("readonly "),
+            }
+        }
+
+        self.write("[");
+        if let Some(tp_node) = self.arena.get(mapped.type_parameter)
+            && let Some(tp) = self.arena.get_type_parameter(tp_node)
+        {
+            self.emit(tp.name);
+            self.write(" in ");
+            if tp.constraint.is_some() {
+                self.emit(tp.constraint);
+            }
+        }
+        if mapped.name_type.is_some() {
+            self.write(" as ");
+            self.emit(mapped.name_type);
+        }
+        self.write("]");
+
+        // Question modifier
+        if let Some(qt_node) = self.arena.get(mapped.question_token) {
+            match qt_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => self.write("+?"),
+                k if k == SyntaxKind::MinusToken as u16 => self.write("-?"),
+                _ => self.write("?"),
+            }
+        }
+
+        self.write(": ");
+        self.emit(mapped.type_node);
+        self.write(";");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    pub(in crate::emitter) fn emit_named_tuple_member(&mut self, node: &Node) {
+        let Some(member) = self.arena.get_named_tuple_member(node) else {
+            return;
+        };
+        if member.dot_dot_dot_token {
+            self.write("...");
+        }
+        self.emit(member.name);
+        if member.question_token {
+            self.write("?");
+        }
+        self.write(": ");
+        self.emit(member.type_node);
+    }
+
+    pub(in crate::emitter) fn emit_optional_type(&mut self, node: &Node) {
+        let Some(wrapped) = self.arena.get_wrapped_type(node) else {
+            return;
+        };
+        self.emit(wrapped.type_node);
+        self.write("?");
+    }
+
+    pub(in crate::emitter) fn emit_rest_type(&mut self, node: &Node) {
+        let Some(wrapped) = self.arena.get_wrapped_type(node) else {
+            return;
+        };
+        self.write("...");
+        self.emit(wrapped.type_node);
+    }
+
+    pub(in crate::emitter) fn emit_template_literal_type(&mut self, node: &Node) {
+        let Some(tlt) = self.arena.get_template_literal_type(node) else {
+            return;
+        };
+        if let Some(head_node) = self.arena.get(tlt.head)
+            && let Some(lit) = self.arena.get_literal(head_node)
+        {
+            if head_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                self.write("`");
+                self.write(&lit.text);
+                self.write("`");
+            } else {
+                self.write("`");
+                self.write(&lit.text);
+                self.write("${");
+            }
+        }
+        for (i, &span_idx) in tlt.template_spans.nodes.iter().enumerate() {
+            if let Some(span_node) = self.arena.get(span_idx)
+                && let Some(span) = self.arena.get_template_span(span_node)
+            {
+                self.emit(span.expression);
+                if let Some(lit_node) = self.arena.get(span.literal)
+                    && let Some(lit) = self.arena.get_literal(lit_node)
+                {
+                    let is_last = i == tlt.template_spans.nodes.len() - 1;
+                    self.write("}");
+                    self.write(&lit.text);
+                    if is_last {
+                        self.write("`");
+                    } else {
+                        self.write("${");
+                    }
+                }
+            }
+        }
+    }
+
+    pub(in crate::emitter) fn emit_type_operator(&mut self, node: &Node) {
+        let Some(type_op) = self.arena.get_type_operator(node) else {
+            return;
+        };
+        if type_op.operator == SyntaxKind::KeyOfKeyword as u16 {
+            self.write("keyof ");
+        } else if type_op.operator == SyntaxKind::ReadonlyKeyword as u16 {
+            self.write("readonly ");
+        } else if type_op.operator == SyntaxKind::UniqueKeyword as u16 {
+            self.write("unique ");
+        }
+        self.emit(type_op.type_node);
+    }
+
+    pub(in crate::emitter) fn emit_type_predicate(&mut self, node: &Node) {
+        let Some(pred) = self.arena.get_type_predicate(node) else {
+            return;
+        };
+        if pred.asserts_modifier {
+            self.write("asserts ");
+        }
+        self.emit(pred.parameter_name);
+        if pred.type_node.is_some()
+            && self
+                .arena
+                .get(pred.type_node)
+                .is_some_and(|n| n.kind != 1)
+        {
+            self.write(" is ");
+            self.emit(pred.type_node);
+        }
+    }
+
+    pub(in crate::emitter) fn emit_type_query(&mut self, node: &Node) {
+        self.write("typeof ");
+        if let Some(tq) = self.arena.get_type_query(node) {
+            self.emit(tq.expr_name);
+            if let Some(ref type_args) = tq.type_arguments
+                && !type_args.nodes.is_empty()
+            {
+                self.write("<");
+                self.emit_comma_separated(&type_args.nodes);
+                self.write(">");
+            }
+        }
+    }
+
 }
