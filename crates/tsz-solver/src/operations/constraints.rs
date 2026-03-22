@@ -1362,6 +1362,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (_, Some(TypeData::Application(t_app_id))) => {
                 let t_app = self.interner.type_application(t_app_id);
                 let t_app_args = t_app.args.clone();
+
+                // When the Application has placeholder args (inference variables),
+                // try expanding it to its body type (e.g., a mapped type) WITHOUT
+                // evaluating. This preserves the inference variables in the result,
+                // enabling reverse-mapped inference through mapped type aliases like
+                // `TupleMapper<T>` where T is an inference variable.
+                //
+                // evaluate_type resolves inference variables to their constraints
+                // (e.g., T extends any[] → any[]), which makes TupleMapper<T>
+                // evaluate to Array(Wrap<any>) — losing the T connection.
+                {
+                    let mut visited = FxHashSet::default();
+                    let has_placeholder_arg = t_app_args
+                        .iter()
+                        .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited));
+                    if has_placeholder_arg {
+                        if let Some(expanded) = self.checker.expand_type_alias_application(target) {
+                            if expanded != target {
+                                self.constrain_types(ctx, var_map, source, expanded, priority);
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 let evaluated = self.checker.evaluate_type(target);
                 trace!(
                     source = ?source,
@@ -1926,10 +1951,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // Template is an Application but source doesn't match.
-            // Evaluate the Application using the checker's resolver context
-            // (e.g., Identity<T[K]> → T[K], KeepLiteralStrings<T[K]> → mapped type).
-            // Type aliases often reduce to simpler forms that CAN be reversed.
-            let evaluated_template = self.checker.evaluate_type(template);
+            // First try expanding the type alias without evaluation — this preserves
+            // inference variables in the body (e.g., Wrap<T[K]> → {primitive: T[K]}).
+            // Falls back to evaluate_type which may resolve inference variables.
+            let evaluated_template = self
+                .checker
+                .expand_type_alias_application(template)
+                .unwrap_or_else(|| self.checker.evaluate_type(template));
             if evaluated_template != template {
                 let reversed = self.reverse_infer_through_template(
                     source_value,
