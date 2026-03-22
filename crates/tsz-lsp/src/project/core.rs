@@ -1853,8 +1853,9 @@ impl Project {
         // Update symbol index with the new file's binder data and AST identifiers
         // We need to get the arena before moving the file into self.files
         let arena = file.parser.get_arena();
+        let source = file.source_text();
         self.symbol_index
-            .index_file(&file_name, &file.binder, arena);
+            .index_file(&file_name, &file.binder, arena, source);
 
         // Record the new export signature in the fingerprint cache.
         let new_fp = file.export_signature.0;
@@ -1910,8 +1911,9 @@ impl Project {
 
         // Re-index the file in the symbol index with updated binder and arena
         let arena = file.parser.get_arena();
+        let source = file.source_text();
         self.symbol_index
-            .update_file(file_name, &file.binder, arena);
+            .update_file(file_name, &file.binder, arena, source);
 
         // Update the fingerprint cache with the new export signature.
         let new_signature = file.export_signature;
