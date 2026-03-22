@@ -2594,3 +2594,382 @@ fn test_lookup_ts2307_plain_no_upgrade() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_lookup_ts2732_nonexistent_json_without_resolve_json_module() {
+    // When a .json import specifier does NOT resolve to any file on disk and
+    // resolveJsonModule is false, lookup() should upgrade NotFound -> TS2732.
+    // This exercises the upgrade branch in lookup() that catches NotFound for
+    // .json specifiers after fallback fails.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_ts2732_nonexistent");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import './missing.json';").unwrap();
+    // Intentionally do NOT create missing.json
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_json_module: false,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./missing.json",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 22),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(
+        !outcome.is_resolved,
+        "Nonexistent .json should not be resolved"
+    );
+    let error = outcome
+        .error
+        .expect("Expected error for nonexistent .json import");
+    assert_eq!(
+        error.code, JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
+        "Expected TS2732 for nonexistent .json without resolveJsonModule, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_ts2732_not_emitted_when_resolve_json_module_enabled() {
+    // When resolveJsonModule is true but the .json file doesn't exist,
+    // the error should be plain TS2307, not TS2732.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_ts2732_enabled");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import './missing.json';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_json_module: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./missing.json",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 22),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    let error = outcome.error.expect("Expected error for missing .json");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 (not TS2732) when resolveJsonModule is enabled, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_path_mapping_failure_produces_ts2307_via_lookup() {
+    // When path mappings are configured but fail to resolve, lookup() should
+    // produce TS2307 (not panic or silently succeed).
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_path_mapping_fail");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/index.ts"), "import '@app/missing';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        base_url: Some(dir.clone()),
+        paths: Some(vec![PathMapping {
+            pattern: "@app/*".to_string(),
+            prefix: "@app/".to_string(),
+            suffix: String::new(),
+            targets: vec!["src/*".to_string()],
+        }]),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "@app/missing",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(8, 22),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(
+        !outcome.is_resolved,
+        "Failed path mapping should not be resolved"
+    );
+    let error = outcome
+        .error
+        .expect("Expected error for failed path mapping");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 for failed path mapping, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_fallback_rescues_not_found() {
+    // When primary resolution fails but fallback succeeds, lookup() should
+    // return resolved with no error.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_fallback_rescue");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("main.ts"), "import './virtual';").unwrap();
+    let virtual_path = dir.join("virtual.ts");
+    fs::write(&virtual_path, "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let fallback_path = virtual_path.clone();
+    let request = ModuleLookupRequest {
+        specifier: "./nonexistent-specifier",
+        containing_file: &dir.join("main.ts"),
+        specifier_span: Span::new(8, 18),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| Some(fallback_path), |_| false);
+    let outcome = result.classify();
+
+    assert!(outcome.is_resolved, "Fallback should mark as resolved");
+    assert!(
+        outcome.resolved_path.is_some(),
+        "Fallback should provide a resolved path"
+    );
+    assert!(
+        outcome.error.is_none(),
+        "Fallback success should have no error"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_should_try_fallback_not_for_hard_failures() {
+    // Hard failures like ImportPathNeedsExtension should NOT trigger fallback.
+    // Verify the should_try_fallback contract on failure variants.
+    let hard_failures = vec![
+        ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./utils".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "/app/index.mts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::ImportingTsExtensionNotAllowed {
+            extension: ".ts".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::JsxNotEnabled {
+            specifier: "./comp".to_string(),
+            resolved_path: PathBuf::from("/app/comp.tsx"),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::CircularResolution {
+            message: "circular".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::InvalidSpecifier {
+            message: "bad".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+    ];
+
+    for failure in &hard_failures {
+        assert!(
+            !failure.should_try_fallback(),
+            "Expected should_try_fallback=false for {:?}",
+            std::mem::discriminant(failure)
+        );
+    }
+
+    // Soft failures SHOULD trigger fallback
+    let soft_failures = vec![
+        ResolutionFailure::NotFound {
+            specifier: "foo".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::PackageJsonError {
+            message: "bad pkg".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::PathMappingFailed {
+            message: "no match".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+        ResolutionFailure::ModuleResolutionModeMismatch {
+            specifier: "pkg".to_string(),
+            containing_file: "/app/index.ts".to_string(),
+            span: Span::new(0, 10),
+        },
+    ];
+
+    for failure in &soft_failures {
+        assert!(
+            failure.should_try_fallback(),
+            "Expected should_try_fallback=true for {:?}",
+            std::mem::discriminant(failure)
+        );
+    }
+}
+
+#[test]
+fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
+    // When implied_classic_resolution is true and the module is not found,
+    // lookup() should upgrade TS2307 -> TS2792.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2792");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import 'some-pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "some-pkg",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 18),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: true,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    assert!(!outcome.is_resolved);
+    let error = outcome.error.expect("Expected error for missing module");
+    assert_eq!(
+        error.code, MODULE_RESOLUTION_MODE_MISMATCH,
+        "Expected TS2792 for implied classic resolution, got TS{}",
+        error.code
+    );
+    assert!(
+        error.message.contains("moduleResolution"),
+        "TS2792 message should suggest moduleResolution option"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_bare_json_specifier_nonexistent_upgrades_to_ts2732() {
+    // Even for bare (non-relative) .json specifiers that don't exist,
+    // lookup() should upgrade NotFound -> TS2732 when resolveJsonModule is false.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_bare_json_ts2732");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import 'config.json';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_json_module: false,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "config.json",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 21),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let outcome = result.classify();
+
+    let error = outcome.error.expect("Expected error for bare .json import");
+    assert_eq!(
+        error.code, JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
+        "Expected TS2732 for bare .json without resolveJsonModule, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_classify_ambient_no_path_no_error() {
+    // Ambient module: classify should show is_resolved=true, no path, no error
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_classify_ambient");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import 'my-ambient-mod';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "my-ambient-mod",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 24),
+        import_kind: ImportKind::EsmImport,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient-mod");
+    let outcome = result.classify();
+
+    assert!(outcome.is_resolved, "Ambient module should be resolved");
+    assert!(
+        outcome.resolved_path.is_none(),
+        "Ambient module should have no file path"
+    );
+    assert!(
+        outcome.error.is_none(),
+        "Ambient module should have no error"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
