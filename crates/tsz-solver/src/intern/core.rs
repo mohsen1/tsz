@@ -2110,8 +2110,8 @@ impl TypeInterner {
         // --- Auxiliary caches ---
         size += self.identity_comparable_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
-        size += self.alloc_order.len()
-            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 4);
+        size +=
+            self.alloc_order.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 4);
         size += self.display_properties.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<TypeId>()
