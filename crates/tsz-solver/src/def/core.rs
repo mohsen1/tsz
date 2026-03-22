@@ -449,6 +449,18 @@ pub struct DefinitionStore {
     /// theoretically possible but astronomically unlikely with `FxHash`, and the
     /// formatter use case is best-effort diagnostic naming.
     shape_to_def: DashMap<u64, DefId>,
+
+    /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
+    ///
+    /// Populated during `register()` for every definition. Enables O(1) lookup
+    /// of all definitions sharing a given name, which is the foundation for
+    /// cross-batch heritage resolution: when a user class says
+    /// `class Foo extends Array`, the name "Array" can be looked up to find the
+    /// lib definition's `DefId` without knowing its file or symbol ID.
+    ///
+    /// Multiple definitions may share the same name (e.g., interface merging,
+    /// or same-named types in different files), so the value is a `Vec<DefId>`.
+    name_to_defs: DashMap<Atom, Vec<DefId>>,
 }
 
 // =============================================================================
@@ -493,6 +505,8 @@ pub struct StoreStatistics {
     pub body_to_alias_entries: usize,
     /// Number of entries in the shape hash -> `DefId` index.
     pub shape_to_def_entries: usize,
+    /// Number of unique names in the name -> `DefId` index.
+    pub name_to_defs_entries: usize,
     /// Number of files with registered definitions.
     pub file_count: usize,
 
@@ -526,6 +540,7 @@ impl StoreStatistics {
         self.symbol_only_index_entries += other.symbol_only_index_entries;
         self.body_to_alias_entries += other.body_to_alias_entries;
         self.shape_to_def_entries += other.shape_to_def_entries;
+        self.name_to_defs_entries += other.name_to_defs_entries;
         self.file_count += other.file_count;
         // next_def_id: take the maximum (high-water mark)
         if other.next_def_id > self.next_def_id {
@@ -559,6 +574,7 @@ impl std::fmt::Display for StoreStatistics {
         )?;
         writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
         writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
+        writeln!(f, "    name_to_defs={}", self.name_to_defs_entries)?;
         writeln!(f, "  files: {}", self.file_count)?;
         writeln!(f, "  next_def_id: {}", self.next_def_id)?;
         write!(
@@ -591,6 +607,7 @@ impl DefinitionStore {
             body_to_alias: DashMap::new(),
             shape_to_def: DashMap::new(),
             file_to_defs: DashMap::new(),
+            name_to_defs: DashMap::new(),
         }
     }
 
@@ -647,6 +664,9 @@ impl DefinitionStore {
         if let Some(file_id) = info.file_id {
             self.file_to_defs.entry(file_id).or_default().push(id);
         }
+
+        // Populate name_to_defs index for name-based lookups.
+        self.name_to_defs.entry(info.name).or_default().push(id);
 
         self.definitions.insert(id, info);
         id
@@ -763,6 +783,7 @@ impl DefinitionStore {
         self.body_to_alias.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
+        self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
@@ -841,6 +862,62 @@ impl DefinitionStore {
     /// covering all registration paths.
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
         self.body_to_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Find all `DefId`s registered under the given name.
+    ///
+    /// Returns `None` if no definitions exist with that name. Multiple
+    /// definitions may share a name (e.g., interface merging across files,
+    /// or same-named types in different modules).
+    ///
+    /// O(1) via `name_to_defs` index.
+    pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
+        self.name_to_defs.get(&name).map(|r| r.clone())
+    }
+
+    /// Resolve heritage names to `DefId`s using an intern function for
+    /// name comparison.
+    ///
+    /// For each name in the definition's `heritage_names`, interns the name
+    /// string via `intern_fn`, looks up the `name_to_defs` index, and returns
+    /// the first matching `DefId` of kind `Class` or `Interface`.
+    ///
+    /// This enables cross-batch heritage resolution: when a user class says
+    /// `class Foo extends Array`, the lib definition for `Array` can be found
+    /// by name after all batches are registered.
+    ///
+    /// Returns a list of `(heritage_name, resolved_def_id)` pairs.
+    /// Unresolved names are silently skipped.
+    pub fn resolve_heritage(
+        &self,
+        id: DefId,
+        intern_fn: &dyn Fn(&str) -> Atom,
+    ) -> Vec<(String, DefId)> {
+        let heritage_names = match self.definitions.get(&id) {
+            Some(info) if !info.heritage_names.is_empty() => info.heritage_names.clone(),
+            _ => return Vec::new(),
+        };
+
+        let mut resolved = Vec::new();
+        for name_str in &heritage_names {
+            let name_atom = intern_fn(name_str);
+            if let Some(candidates) = self.name_to_defs.get(&name_atom) {
+                // Find the first Class or Interface that isn't self.
+                for &candidate_id in candidates.value() {
+                    if candidate_id == id {
+                        continue;
+                    }
+                    if let Some(candidate_info) = self.definitions.get(&candidate_id) {
+                        if matches!(candidate_info.kind, DefKind::Class | DefKind::Interface) {
+                            resolved.push((name_str.clone(), candidate_id));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        resolved
     }
 
     /// Get all `DefId`s originating from the given file.
@@ -927,6 +1004,15 @@ impl DefinitionStore {
                         self.shape_to_def.remove(&hash);
                     }
                 }
+
+                // Clean up name_to_defs.
+                if let Some(mut name_entry) = self.name_to_defs.get_mut(&info.name) {
+                    name_entry.retain(|d| d != def_id);
+                    if name_entry.is_empty() {
+                        drop(name_entry);
+                        self.name_to_defs.remove(&info.name);
+                    }
+                }
             }
         }
 
@@ -960,6 +1046,7 @@ impl DefinitionStore {
             symbol_only_index_entries: self.symbol_only_index.len(),
             body_to_alias_entries: self.body_to_alias.len(),
             shape_to_def_entries: self.shape_to_def.len(),
+            name_to_defs_entries: self.name_to_defs.len(),
             file_count: self.file_to_defs.len(),
             next_def_id: self.next_id.load(Ordering::Relaxed),
             ..Default::default()
@@ -1051,6 +1138,12 @@ impl DefinitionStore {
         // file_to_defs: u32 -> Vec<DefId>
         for entry in &self.file_to_defs {
             size += std::mem::size_of::<u32>() + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().capacity() * std::mem::size_of::<DefId>();
+        }
+
+        // name_to_defs: Atom -> Vec<DefId>
+        for entry in &self.name_to_defs {
+            size += std::mem::size_of::<Atom>() + DASHMAP_ENTRY_OVERHEAD;
             size += entry.value().capacity() * std::mem::size_of::<DefId>();
         }
 

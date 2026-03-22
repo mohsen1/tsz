@@ -1114,3 +1114,254 @@ fn test_store_statistics_merge_includes_estimated_size() {
     assert_eq!(stats_a.total_definitions, 15);
     assert_eq!(stats_a.estimated_size_bytes, 8000);
 }
+
+// =============================================================================
+// Name-based index tests (find_defs_by_name O(1))
+// =============================================================================
+
+#[test]
+fn test_find_defs_by_name_basic() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Foo");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    let def_id = store.register(info);
+
+    // Should find the registered definition by name.
+    let found = store.find_defs_by_name(name).expect("should find by name");
+    assert_eq!(found, vec![def_id]);
+
+    // Non-existent name should return None.
+    let other = interner.intern_string("Bar");
+    assert!(store.find_defs_by_name(other).is_none());
+}
+
+#[test]
+fn test_find_defs_by_name_multiple_same_name() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Point");
+    let info1 = DefinitionInfo::interface(name, vec![], vec![]);
+    let id1 = store.register(info1);
+
+    // Second definition with the same name (interface merging scenario).
+    let info2 = DefinitionInfo::interface(name, vec![], vec![]);
+    let id2 = store.register(info2);
+
+    let found = store.find_defs_by_name(name).expect("should find by name");
+    assert_eq!(found.len(), 2);
+    assert!(found.contains(&id1));
+    assert!(found.contains(&id2));
+}
+
+#[test]
+fn test_find_defs_by_name_cleared() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("X");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    store.register(info);
+
+    assert!(store.find_defs_by_name(name).is_some());
+
+    store.clear();
+
+    assert!(store.find_defs_by_name(name).is_none());
+}
+
+#[test]
+fn test_find_defs_by_name_after_invalidation() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Widget");
+    let mut info = DefinitionInfo::type_alias(name, vec![], TypeId::NUMBER);
+    info.file_id = Some(10);
+    store.register(info);
+
+    assert!(store.find_defs_by_name(name).is_some());
+
+    store.invalidate_file(10);
+
+    // After invalidation, the name index entry should be cleaned up.
+    assert!(store.find_defs_by_name(name).is_none());
+}
+
+#[test]
+fn test_find_defs_by_name_partial_invalidation() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Shared");
+
+    // Register two defs with the same name in different files.
+    let mut info1 = DefinitionInfo::interface(name, vec![], vec![]);
+    info1.file_id = Some(1);
+    let id1 = store.register(info1);
+
+    let mut info2 = DefinitionInfo::interface(name, vec![], vec![]);
+    info2.file_id = Some(2);
+    let id2 = store.register(info2);
+
+    assert_eq!(store.find_defs_by_name(name).unwrap().len(), 2);
+
+    // Invalidate only file 1.
+    store.invalidate_file(1);
+
+    let remaining = store
+        .find_defs_by_name(name)
+        .expect("should still have entries");
+    assert_eq!(remaining, vec![id2]);
+    assert!(!remaining.contains(&id1));
+}
+
+// =============================================================================
+// Heritage resolution tests
+// =============================================================================
+
+#[test]
+fn test_resolve_heritage_basic() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register a base class "Animal".
+    let animal_name = interner.intern_string("Animal");
+    let animal_info = DefinitionInfo::class(animal_name, vec![], vec![], vec![]);
+    let animal_id = store.register(animal_info);
+
+    // Register a derived class "Dog" that extends "Animal".
+    let dog_name = interner.intern_string("Dog");
+    let mut dog_info = DefinitionInfo::class(dog_name, vec![], vec![], vec![]);
+    dog_info.heritage_names = vec!["Animal".to_string()];
+    let dog_id = store.register(dog_info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(dog_id, &intern_fn);
+
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].0, "Animal");
+    assert_eq!(resolved[0].1, animal_id);
+}
+
+#[test]
+fn test_resolve_heritage_multiple() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register base class and interface.
+    let base_name = interner.intern_string("Base");
+    let base_info = DefinitionInfo::class(base_name, vec![], vec![], vec![]);
+    let base_id = store.register(base_info);
+
+    let iface_name = interner.intern_string("Serializable");
+    let iface_info = DefinitionInfo::interface(iface_name, vec![], vec![]);
+    let iface_id = store.register(iface_info);
+
+    // Register derived class.
+    let derived_name = interner.intern_string("Derived");
+    let mut derived_info = DefinitionInfo::class(derived_name, vec![], vec![], vec![]);
+    derived_info.heritage_names = vec!["Base".to_string(), "Serializable".to_string()];
+    let derived_id = store.register(derived_info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(derived_id, &intern_fn);
+
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved[0].0, "Base");
+    assert_eq!(resolved[0].1, base_id);
+    assert_eq!(resolved[1].0, "Serializable");
+    assert_eq!(resolved[1].1, iface_id);
+}
+
+#[test]
+fn test_resolve_heritage_unresolved_skipped() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register a class with a heritage name that doesn't exist.
+    let name = interner.intern_string("Orphan");
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["NonExistent".to_string()];
+    let id = store.register(info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(id, &intern_fn);
+
+    assert!(resolved.is_empty());
+}
+
+#[test]
+fn test_resolve_heritage_skips_self() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Class with heritage name matching its own name (self-reference).
+    let name = interner.intern_string("SelfRef");
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["SelfRef".to_string()];
+    let id = store.register(info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(id, &intern_fn);
+
+    // Self-references should be skipped.
+    assert!(resolved.is_empty());
+}
+
+#[test]
+fn test_resolve_heritage_no_heritage_names() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name = interner.intern_string("Plain");
+    let info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    let id = store.register(info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(id, &intern_fn);
+
+    assert!(resolved.is_empty());
+}
+
+#[test]
+fn test_resolve_heritage_skips_non_class_interface() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    // Register a type alias named "Target".
+    let target_name = interner.intern_string("Target");
+    let target_info = DefinitionInfo::type_alias(target_name, vec![], TypeId::NUMBER);
+    store.register(target_info);
+
+    // Class tries to extend "Target" (a type alias).
+    let name = interner.intern_string("Derived");
+    let mut info = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    info.heritage_names = vec!["Target".to_string()];
+    let id = store.register(info);
+
+    let intern_fn = |s: &str| interner.intern_string(s);
+    let resolved = store.resolve_heritage(id, &intern_fn);
+
+    // Type aliases should not be matched for heritage resolution.
+    assert!(resolved.is_empty());
+}
+
+#[test]
+fn test_statistics_includes_name_index() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let name_a = interner.intern_string("A");
+    let name_b = interner.intern_string("B");
+    store.register(DefinitionInfo::type_alias(name_a, vec![], TypeId::NUMBER));
+    store.register(DefinitionInfo::type_alias(name_b, vec![], TypeId::STRING));
+    // Second def with name "A" (same name, different def).
+    store.register(DefinitionInfo::interface(name_a, vec![], vec![]));
+
+    let stats = store.statistics();
+    // Two unique names: "A" and "B".
+    assert_eq!(stats.name_to_defs_entries, 2);
+}
