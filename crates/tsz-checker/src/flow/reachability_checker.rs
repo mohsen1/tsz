@@ -55,7 +55,10 @@ impl<'a> CheckerState<'a> {
                 self.property_access_callee_explicitly_returns_never(callee_idx)
             }
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
-                self.declaration_explicitly_returns_never(callee_idx)
+                // Direct IIFE callee: safe to check body for throws since the
+                // function expression is the literal callee, not resolved through
+                // a symbol that could be self-referential.
+                self.declaration_explicitly_returns_never(callee_idx, true)
             }
             _ => false,
         }
@@ -119,7 +122,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if method_name == *property_name {
-                    return self.declaration_explicitly_returns_never(member_idx);
+                    return self.declaration_explicitly_returns_never(member_idx, false);
                 }
             }
         }
@@ -171,10 +174,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.declaration_explicitly_returns_never(decl_idx)
+        self.declaration_explicitly_returns_never(decl_idx, false)
     }
 
-    fn declaration_explicitly_returns_never(&mut self, decl_idx: NodeIndex) -> bool {
+    fn declaration_explicitly_returns_never(
+        &mut self,
+        decl_idx: NodeIndex,
+        check_body_for_throws: bool,
+    ) -> bool {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return false;
         };
@@ -192,8 +199,15 @@ impl<'a> CheckerState<'a> {
             // A function that always returns (e.g., `(() => { return 1; })()`) completes
             // normally from the caller's perspective - only throw/never-call terminates
             // the caller's control flow.
-            if decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            //
+            // CRITICAL: Only perform body analysis when `check_body_for_throws` is
+            // true (i.e., the function is a direct IIFE callee).  When resolving
+            // through a symbol (e.g., named function expression `self` calling
+            // itself), body analysis would recurse infinitely because the body
+            // contains calls to the same function.
+            if check_body_for_throws
+                && (decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION)
             {
                 let body_idx = func.body;
                 if let Some(body_node) = self.ctx.arena.get(body_idx) {
