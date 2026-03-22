@@ -651,30 +651,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Returns true when an assignability mismatch should produce a diagnostic.
-    ///
-    /// This centralizes the standard "not assignable + not weak-union/excess-property
-    /// suppression" decision so call sites emitting different diagnostics can share it.
-    pub(crate) fn should_report_assignability_mismatch(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        source_idx: NodeIndex,
-    ) -> bool {
-        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
-            return false;
-        }
-        if self.should_suppress_assignability_for_parse_recovery(source_idx, source_idx) {
-            return false;
-        }
-        !self.is_assignable_to(source, target)
-            && !self.should_skip_weak_union_error(source, target, source_idx)
-    }
-
     /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
     ///
-    /// Mirrors `should_report_assignability_mismatch` but uses the bivariant relation
+    /// Uses the bivariant relation
     /// entrypoint for method-compatibility scenarios.
     pub(crate) fn should_report_assignability_mismatch_bivariant(
         &mut self,

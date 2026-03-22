@@ -1396,6 +1396,7 @@ impl FileIdAllocator {
 
     /// Number of currently tracked files.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.name_to_id.len()
     }
@@ -1459,12 +1460,14 @@ impl SkeletonFingerprintCache {
 
     /// Number of files tracked.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Whether the cache is empty.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
