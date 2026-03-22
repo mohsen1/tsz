@@ -256,3 +256,62 @@ fn external_module_symbol_is_not_treated_as_global() {
         Some("import(\"inner/other\").Thing".to_string())
     );
 }
+
+#[test]
+fn reserved_keyword_property_names_are_not_quoted() {
+    let interner = tsz_solver::TypeInterner::new();
+    // In ES5+ and TypeScript, reserved words are valid property names
+    // and tsc emits them unquoted in .d.ts output.
+    let name_delete = interner.intern_string("delete");
+    let name_class = interner.intern_string("class");
+    let name_for = interner.intern_string("for");
+
+    let obj = interner.object(vec![
+        tsz_solver::types::PropertyInfo::new(name_class, TypeId::STRING),
+        tsz_solver::types::PropertyInfo::new(name_delete, TypeId::BOOLEAN),
+        tsz_solver::types::PropertyInfo::new(name_for, TypeId::NUMBER),
+    ]);
+
+    let printer = TypePrinter::new(&interner);
+    let result = printer.print_type(obj);
+    assert!(
+        result.contains("delete: boolean"),
+        "Reserved keyword 'delete' should not be quoted: {result}"
+    );
+    assert!(
+        result.contains("class: string"),
+        "Reserved keyword 'class' should not be quoted: {result}"
+    );
+    assert!(
+        result.contains("for: number"),
+        "Reserved keyword 'for' should not be quoted: {result}"
+    );
+}
+
+#[test]
+fn mapped_type_multiline_format_with_indent() {
+    let interner = tsz_solver::TypeInterner::new();
+
+    let param_name = interner.intern_string("K");
+    let mapped = interner.mapped(tsz_solver::types::MappedType {
+        type_param: tsz_solver::types::TypeParamInfo {
+            name: param_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: TypeId::STRING,
+        template: TypeId::NUMBER,
+        name_type: None,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // With indent context, mapped types use multi-line format (matching tsc)
+    let printer = TypePrinter::new(&interner).with_indent_level(0);
+    let result = printer.print_type(mapped);
+    assert_eq!(
+        result, "{\n    [K in string]: number;\n}",
+        "Mapped type with indent should be multi-line"
+    );
+}
