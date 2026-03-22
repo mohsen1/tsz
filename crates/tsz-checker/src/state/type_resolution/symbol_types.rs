@@ -392,7 +392,8 @@ impl<'a> CheckerState<'a> {
 
         // Record cross-file symbol tracking if necessary.
         if let Some(file_idx) = file_idx {
-            self.ctx.register_symbol_file_target(member_sym_id, file_idx);
+            self.ctx
+                .register_symbol_file_target(member_sym_id, file_idx);
         }
 
         // For cross-file symbols, use delegation to compute the type in the
@@ -452,7 +453,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|exports| exports.get(import_name))
             .or_else(|| target_binder.file_locals.get(import_name))?;
 
-        self.ctx.register_symbol_file_target(target_sym_id, target_idx);
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_idx);
         Some(target_sym_id)
     }
 

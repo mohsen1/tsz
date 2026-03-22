@@ -1197,8 +1197,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if local_symbol.escaped_name != name
-                        && !self.ctx.has_symbol_file_index(sym_id)
+                    if local_symbol.escaped_name != name && !self.ctx.has_symbol_file_index(sym_id)
                     {
                         self.ctx.register_symbol_file_target(sym_id, file_idx);
                     }

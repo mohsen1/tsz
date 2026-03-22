@@ -306,7 +306,8 @@ impl<'a> CheckerState<'a> {
         // Helper: record the cross-file origin so delegate_cross_arena_symbol_resolution
         // can find the correct arena for this SymbolId.
         let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
-            self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+            self.ctx
+                .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
 
@@ -342,7 +343,8 @@ impl<'a> CheckerState<'a> {
         if let Some((sym_id, actual_file_idx)) =
             self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
         {
-            self.ctx.register_symbol_file_target(sym_id, actual_file_idx);
+            self.ctx
+                .register_symbol_file_target(sym_id, actual_file_idx);
             return Some(sym_id);
         }
 
@@ -535,7 +537,8 @@ impl<'a> CheckerState<'a> {
         // Helper: record cross-file origin for all symbols in a table.
         let record_symbols = |table: &tsz_binder::SymbolTable| {
             for (_, &sym_id) in table.iter() {
-                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+                self.ctx
+                    .register_symbol_file_target(sym_id, target_file_idx);
             }
         };
 
@@ -592,7 +595,8 @@ impl<'a> CheckerState<'a> {
 
         let record_symbols = |table: &tsz_binder::SymbolTable| {
             for (_, &sym_id) in table.iter() {
-                self.ctx.register_symbol_file_target(sym_id, target_file_idx);
+                self.ctx
+                    .register_symbol_file_target(sym_id, target_file_idx);
             }
         };
 

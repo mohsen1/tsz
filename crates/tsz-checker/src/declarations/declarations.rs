@@ -1282,7 +1282,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             symbol.decl_file_idx as usize
         };
         if !self.ctx.has_symbol_file_index(sym_id) {
-            self.ctx.register_symbol_file_target(sym_id, source_file_idx);
+            self.ctx
+                .register_symbol_file_target(sym_id, source_file_idx);
         }
         self.ctx
             .resolve_alias_import_member(sym_id, module_specifier, target_name)
