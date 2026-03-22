@@ -203,6 +203,29 @@ impl<'a> CheckerContext<'a> {
         self.global_expando_index = Some(expando_index);
     }
 
+    /// Copy all pre-built global indices from another `CheckerContext`.
+    ///
+    /// This should be called when creating nested cross-file checkers to ensure
+    /// they inherit the O(1) lookup indices built by `set_all_binders`. Without
+    /// this, nested checkers fall back to O(N) `all_binders` scans.
+    ///
+    /// Copies all 6 global indices plus `all_arenas`, `all_binders`,
+    /// `resolved_module_paths`, and `module_specifiers`.
+    pub fn copy_cross_file_state_from(&mut self, parent: &CheckerContext<'_>) {
+        self.all_arenas = parent.all_arenas.clone();
+        self.all_binders = parent.all_binders.clone();
+        self.global_file_locals_index = parent.global_file_locals_index.clone();
+        self.global_module_exports_index = parent.global_module_exports_index.clone();
+        self.global_declared_modules = parent.global_declared_modules.clone();
+        self.global_expando_index = parent.global_expando_index.clone();
+        self.global_module_augmentations_index =
+            parent.global_module_augmentations_index.clone();
+        self.global_augmentation_targets_index =
+            parent.global_augmentation_targets_index.clone();
+        self.resolved_module_paths = parent.resolved_module_paths.clone();
+        self.module_specifiers = parent.module_specifiers.clone();
+    }
+
     /// Set all binders for cross-file resolution.
     ///
     /// Also builds the `global_file_locals_index` and `global_module_exports_index`

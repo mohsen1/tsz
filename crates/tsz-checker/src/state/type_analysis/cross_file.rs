@@ -326,13 +326,9 @@ impl<'a> CheckerState<'a> {
                 *checker.ctx.cross_file_symbol_targets.borrow_mut() =
                     self.ctx.cross_file_symbol_targets.borrow().clone();
             }
-            // Copy all_arenas and all_binders for nested cross-file resolution
-            checker.ctx.all_arenas = self.ctx.all_arenas.clone();
-            checker.ctx.all_binders = self.ctx.all_binders.clone();
-            checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
-            checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
-            checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
-            checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+            // Copy all cross-file state: arenas, binders, all 6 global indices,
+            // resolved_module_paths, and module_specifiers.
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will
@@ -677,12 +673,7 @@ impl<'a> CheckerState<'a> {
             *checker.ctx.cross_file_symbol_targets.borrow_mut() =
                 self.ctx.cross_file_symbol_targets.borrow().clone();
         }
-        checker.ctx.all_arenas = self.ctx.all_arenas.clone();
-        checker.ctx.all_binders = self.ctx.all_binders.clone();
-        checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
-        checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
-        checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
-        checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
@@ -767,12 +758,7 @@ impl<'a> CheckerState<'a> {
             *checker.ctx.cross_file_symbol_targets.borrow_mut() =
                 self.ctx.cross_file_symbol_targets.borrow().clone();
         }
-        checker.ctx.all_arenas = self.ctx.all_arenas.clone();
-        checker.ctx.all_binders = self.ctx.all_binders.clone();
-        checker.ctx.global_file_locals_index = self.ctx.global_file_locals_index.clone();
-        checker.ctx.global_module_exports_index = self.ctx.global_module_exports_index.clone();
-        checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
-        checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         {
             let parent_d2s = self.ctx.def_to_symbol.borrow();
