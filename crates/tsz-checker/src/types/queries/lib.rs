@@ -4,7 +4,9 @@
 //! Type-only symbol detection has been extracted to
 //! `queries/type_only.rs`.
 
-use super::lib_resolution::resolve_lib_node_in_lib_contexts;
+use super::lib_resolution::{
+    lib_def_id_from_node_in_lib_contexts, resolve_lib_node_in_lib_contexts,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
@@ -56,9 +58,7 @@ impl<'a> CheckerState<'a> {
                     None,
                 );
 
-                // Delegates to `resolve_lib_node_in_lib_contexts` (the stable identity
-                // path for per-lib-context lowering) instead of maintaining an inline
-                // resolver closure with duplicated logic.
+                // Resolver triplet: delegates to stable helpers.
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_lib_contexts(
                         node_idx,
@@ -67,16 +67,15 @@ impl<'a> CheckerState<'a> {
                         lib_contexts,
                     )
                 };
-
-                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
-                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+                    lib_def_id_from_node_in_lib_contexts(
+                        &self.ctx,
+                        node_idx,
+                        &decls_with_arenas,
+                        fallback_arena,
+                        lib_contexts,
+                    )
                 };
-
-                // Name-based resolver: resolves both simple identifiers and qualified
-                // names through the main merged binder, avoiding cross-arena NodeIndex
-                // collisions for references like `Intl.NumberFormatOptions`.
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
@@ -920,8 +919,7 @@ impl<'a> CheckerState<'a> {
             // TSZ-4: Handle Enum types for enum member property access (E.A)
             NamespaceMemberKind::Enum(def_id) => {
                 // Resolve the DefId to a SymbolId and reuse the enum member lookup logic
-                let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
-                let sym_id = sym_id?;
+                let sym_id = self.ctx.def_to_symbol_id(def_id)?;
 
                 // Use cross-file-aware lookup: SymbolIds from cross-file enums
                 // map to wrong symbols in the local binder (SymbolId collision).

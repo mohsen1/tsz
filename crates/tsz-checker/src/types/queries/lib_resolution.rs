@@ -10,6 +10,10 @@
 //!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
 //! 2. [`CheckerContext::get_lib_def_id`] — SymbolId → DefId, preferring
 //!    pre-populated identities from `semantic_defs` with on-demand fallback.
+//! 3. [`lib_def_id_from_node`] — one-step NodeIndex → DefId via (1)+(2), for
+//!    the merged-binder path.
+//! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step NodeIndex → DefId via
+//!    [`resolve_lib_node_in_lib_contexts`]+(2), for per-lib-context lowering.
 //!
 //! All lib-lowering resolver closures should delegate to these helpers instead
 //! of maintaining per-call caches.
@@ -147,6 +151,41 @@ pub(crate) fn dedup_decl_arenas<'a>(
         }
     }
     out
+}
+
+/// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
+///
+/// This is the stable one-step helper for lib lowering: it combines
+/// [`resolve_lib_node_in_arenas`] (NodeIndex → raw SymbolId) with
+/// [`CheckerContext::get_lib_def_id`] (SymbolId → DefId).  Using this
+/// instead of the two-step closure pattern avoids duplicating the
+/// `resolver(node_idx).map(|raw| ctx.get_lib_def_id(SymbolId(raw)))` logic
+/// at every callsite.
+pub(crate) fn lib_def_id_from_node(
+    ctx: &crate::context::CheckerContext<'_>,
+    binder: &tsz_binder::BinderState,
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+) -> Option<tsz_solver::DefId> {
+    resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)
+        .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+}
+
+/// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
+///
+/// Same as [`lib_def_id_from_node`] but delegates to
+/// [`resolve_lib_node_in_lib_contexts`] for per-lib-context lowering
+/// (e.g., `resolve_lib_type_with_params`).
+pub(crate) fn lib_def_id_from_node_in_lib_contexts(
+    ctx: &crate::context::CheckerContext<'_>,
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+    lib_contexts: &[crate::context::LibContext],
+) -> Option<tsz_solver::DefId> {
+    resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)
+        .map(|raw| ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
 }
 
 /// Resolve a `NodeIndex` to a raw `SymbolId` value by searching across
@@ -714,27 +753,21 @@ impl<'a> CheckerState<'a> {
                     Some(self.ctx.arena),
                 );
 
-                // Create resolver that looks up names in the MAIN file's binder.
-                // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions.
-                //
-                // Delegates to `resolve_lib_node_in_arenas` (the stable identity path)
-                // instead of maintaining per-call SymbolId→DefId or NodeIndex caches.
-                // `get_or_create_def_id` already caches SymbolId→DefId mappings centrally.
+                // Resolver triplet: delegates to stable helpers instead of
+                // maintaining per-call caches.
                 let binder = &self.ctx.binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
                 };
-
-                // DefId resolver: NodeIndex → SymbolId (via stable helper) → DefId
-                // Uses get_lib_def_id: prefers pre-populated DefIds, falls
-                // back to on-demand creation for non-top-level symbols.
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+                    lib_def_id_from_node(
+                        &self.ctx,
+                        binder,
+                        node_idx,
+                        &decls_with_arenas,
+                        fallback_arena,
+                    )
                 };
-
-                // Name-based resolver: resolves identifier text directly without NodeIndex.
-                // This is the reliable fallback for cross-arena lowering where NodeIndex
-                // values from the current arena don't match nodes in the declaration arenas.
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                 };
