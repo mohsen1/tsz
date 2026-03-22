@@ -300,8 +300,9 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol(sym_id)
                 .or_else(|| {
-                    // O(1) fast-path via cross_file_symbol_targets
-                    if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                    // O(1) fast-path via resolve_symbol_file_index
+                    let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+                    if let Some(file_idx) = file_idx
                         && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
                         && let Some(sym) = binder.get_symbol(sym_id)
                     {
