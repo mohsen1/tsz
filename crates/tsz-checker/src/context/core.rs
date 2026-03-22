@@ -419,6 +419,14 @@ impl<'a> CheckerContext<'a> {
             for (file_idx, arena) in arenas.iter().enumerate() {
                 arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
             }
+            debug_assert_eq!(
+                arena_idx.len(),
+                arenas.len(),
+                "global_arena_index has {} entries but all_arenas has {} — \
+                 duplicate Arc<NodeArena> pointers detected",
+                arena_idx.len(),
+                arenas.len(),
+            );
             self.global_arena_index = Some(Arc::new(arena_idx));
         }
     }
