@@ -707,6 +707,47 @@ impl<'a> ContextualTypeContext<'a> {
         extractor.extract(expected)
     }
 
+    /// Like [`get_this_type_from_marker`](Self::get_this_type_from_marker), but when
+    /// the direct extraction fails and the contextual type is a type-alias application
+    /// (e.g. `ConstructorOptions<Data>` = `Props<Data> & ThisType<Instance<Data>>`),
+    /// this method expands the alias body and retries.
+    ///
+    /// This avoids callers having to manually pattern-match `TypeData::Application`
+    /// and `TypeData::Lazy` to perform the expansion themselves.
+    pub fn get_this_type_from_marker_expanding(
+        &self,
+        resolver: &dyn crate::TypeResolver,
+    ) -> Option<TypeId> {
+        let expected = self.expected?;
+
+        // First, try direct extraction (covers non-alias cases)
+        let mut extractor = ThisTypeMarkerExtractor::new(self.interner);
+        if let Some(result) = extractor.extract(expected) {
+            return Some(result);
+        }
+
+        // If direct extraction failed, check if the type is an alias Application
+        // whose body may contain ThisType markers.
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) {
+                if let Some(body) = resolver.resolve_lazy(def_id, self.interner) {
+                    let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
+                    let expanded =
+                        crate::instantiate_generic(self.interner, body, &type_params, &app.args);
+                    let expanded_ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        expanded,
+                        self.no_implicit_any,
+                    );
+                    return expanded_ctx.get_this_type_from_marker();
+                }
+            }
+        }
+
+        None
+    }
+
     /// Get the contextual return type for a function.
     pub fn get_return_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
