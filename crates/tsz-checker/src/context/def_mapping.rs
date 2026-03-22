@@ -647,10 +647,15 @@ impl<'a> CheckerContext<'a> {
 
     /// Core helper: populate DefId mappings from a `semantic_defs` map.
     ///
-    /// Used by both `pre_populate_def_ids_from_binder` (primary binder) and
-    /// `pre_populate_def_ids_from_lib_binders` (lib binders). The logic is
-    /// identical: convert `SemanticDefEntry` to `DefinitionInfo`, register in
-    /// the `DefinitionStore`, and populate local caches.
+    /// Used by `pre_populate_def_ids_from_binder` (primary binder),
+    /// `pre_populate_def_ids_from_lib_binders` (lib binders), and
+    /// `pre_populate_def_ids_from_all_binders` (cross-file binders).
+    ///
+    /// When the shared `DefinitionStore` was pre-populated during the merge
+    /// phase (via `pre_populate_definition_store`), this method finds the
+    /// existing `DefId` and only warms local caches + type environments.
+    /// It only creates new `DefIds` for entries not already in the store
+    /// (e.g., lib symbols that weren't part of the merge).
     fn populate_def_ids_from_semantic_defs(
         &self,
         semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
@@ -669,14 +674,6 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            // Also skip if the DefinitionStore already has a mapping for this
-            // symbol (e.g., from another lib binder that declared the same
-            // global interface via declaration merging).
-            if self.definition_store.find_def_by_symbol(sym_id.0).is_some() {
-                continue;
-            }
-
-            // Convert binder's SemanticDefKind to solver's DefKind
             let kind = match entry.kind {
                 tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
                 tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
@@ -687,17 +684,20 @@ impl<'a> CheckerContext<'a> {
                 tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
             };
 
-            // Use the SemanticDefEntry's self-contained data (name, file_id,
-            // span_start) instead of looking up the symbol table. This makes
-            // pre-population independent of full symbol residency, which is a
-            // prerequisite for file-skeleton decomposition (Phase 2).
+            // Fast path: the shared DefinitionStore was pre-populated during
+            // the merge phase. Just warm local caches and type environments.
+            if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
+                self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                self.register_def_kind_in_envs(def_id, kind);
+                count += 1;
+                continue;
+            }
+
+            // Slow path: create a new DefId for entries not in the shared store
+            // (e.g., lib symbols pre-populated separately from the merge).
             let name = self.types.intern_string(&entry.name);
 
-            // Create stub type parameter entries if the declaration is generic.
-            // These are placeholders with default Atom(0) names and no constraints;
-            // the real TypeParamInfo will be filled in by the checker walk via
-            // DefinitionStore::set_type_params(). The arity itself enables the
-            // TypeFormatter to display `Foo<unknown, unknown>` instead of just `Foo`.
             let type_params = if entry.type_param_count > 0 {
                 (0..entry.type_param_count)
                     .map(|_| tsz_solver::TypeParamInfo {
@@ -711,10 +711,6 @@ impl<'a> CheckerContext<'a> {
                 Vec::new()
             };
 
-            // Propagate enum member names from binder's SemanticDefEntry.
-            // Values are set to Computed; real values are resolved later by
-            // the checker walk. This enables enum identity to be established
-            // at pre-population time without waiting for full type resolution.
             let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
                 entry
                     .enum_member_names
@@ -753,13 +749,9 @@ impl<'a> CheckerContext<'a> {
                 symbol_id = %sym_id.0,
                 def_id = %def_id.0,
                 kind = ?kind,
-                "Pre-populated DefId from semantic_defs"
+                "Pre-populated DefId from semantic_defs (created new)"
             );
 
-            // Register in the authoritative index so other checker contexts
-            // can find this DefId via lookup_by_symbol() without creating
-            // duplicates. This closes the gap where pre-populated DefIds
-            // were only in the local cache but invisible to the shared store.
             self.definition_store
                 .register_symbol_mapping(sym_id.0, entry.file_id, def_id);
 
