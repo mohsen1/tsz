@@ -562,57 +562,6 @@ impl BinderState {
         }
     }
 
-    /// Extract heritage clause names from a list of heritage clauses.
-    ///
-    /// Walks each heritage clause, extracting the simple identifier name from
-    /// each `ExpressionWithTypeArguments` entry. Only simple identifiers are
-    /// captured (not property access expressions like `Foo.Bar`), since those
-    /// are sufficient for the cross-batch heritage resolution in the checker.
-    ///
-    /// Returns `(extends_names, implements_names)`.
-    pub(crate) fn collect_heritage_names(
-        arena: &NodeArena,
-        heritage_clauses: Option<&NodeList>,
-    ) -> (Vec<String>, Vec<String>) {
-        let Some(clauses) = heritage_clauses else {
-            return (Vec::new(), Vec::new());
-        };
-        let mut extends_names = Vec::new();
-        let mut implements_names = Vec::new();
-
-        for &clause_idx in &clauses.nodes {
-            let Some(clause_node) = arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
-                continue;
-            };
-            let is_extends = heritage.token == SyntaxKind::ExtendsKeyword as u16;
-            let target = if is_extends {
-                &mut extends_names
-            } else {
-                &mut implements_names
-            };
-
-            for &type_idx in &heritage.types.nodes {
-                let Some(type_node) = arena.get(type_idx) else {
-                    continue;
-                };
-                // ExpressionWithTypeArguments: extract the expression (the name)
-                if let Some(expr_data) = arena.get_expr_type_args(type_node) {
-                    if let Some(name) = Self::get_identifier_name(arena, expr_data.expression) {
-                        target.push(name.to_string());
-                    }
-                } else if let Some(name) = Self::get_identifier_name(arena, type_idx) {
-                    // Bare identifier (shouldn't happen in practice, but defensive)
-                    target.push(name.to_string());
-                }
-            }
-        }
-
-        (extends_names, implements_names)
-    }
-
     /// Check if modifiers list contains the 'abstract' keyword.
     pub(crate) fn has_abstract_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         arena.has_modifier_ref(modifiers, SyntaxKind::AbstractKeyword)
