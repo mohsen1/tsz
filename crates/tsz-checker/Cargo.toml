@@ -171,5 +171,9 @@ path = "tests/project_env_tests.rs"
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 
+[[test]]
+name = "call_resolution_regression_tests"
+path = "tests/call_resolution_regression_tests.rs"
+
 [lints]
 workspace = true
