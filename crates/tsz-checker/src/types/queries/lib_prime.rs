@@ -1,5 +1,6 @@
 use super::lib_resolution::{
-    collect_lib_decls_with_arenas, resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
+    collect_lib_decls_with_arenas, lib_def_id_from_node, resolve_lib_fallback_arena,
+    resolve_lib_node_in_arenas,
 };
 use crate::state::CheckerState;
 use tsz_lowering::TypeLowering;
@@ -39,13 +40,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Use the stable identity helper instead of a local resolver closure.
         let binder = &self.ctx.binder;
         let resolver = |node_idx: NodeIndex| -> Option<u32> {
             resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
         };
         let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-            resolver(node_idx).map(|raw| self.ctx.get_lib_def_id(tsz_binder::SymbolId(raw)))
+            lib_def_id_from_node(
+                &self.ctx,
+                binder,
+                node_idx,
+                &decls_with_arenas,
+                fallback_arena,
+            )
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
             self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
