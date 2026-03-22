@@ -143,8 +143,13 @@ impl<'a> CheckerContext<'a> {
             symbol_id = %sym_id.0,
             def_id = %def_id.0,
             kind = ?kind,
-            "Mapping symbol to DefId"
+            "DefId fallback: created new DefId on demand (not pre-populated)"
         );
+
+        // Track fallback firings for observability. If this counter grows
+        // unexpectedly, it indicates binder semantic_defs coverage gaps.
+        self.def_fallback_count
+            .set(self.def_fallback_count.get() + 1);
 
         // Register in the authoritative index (shared across contexts).
         self.definition_store
@@ -154,11 +159,9 @@ impl<'a> CheckerContext<'a> {
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
-        // Propagate DefKind to TypeEnvironment so the solver can query it
-        // (e.g., to distinguish class Callables from interface Callables).
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            env.insert_def_kind(def_id, kind);
-        }
+        // Propagate DefKind to both TypeEnvironments so both the evaluator
+        // and flow-analyzer can query it.
+        self.register_def_kind_in_envs(def_id, kind);
 
         def_id
     }
@@ -288,6 +291,24 @@ impl<'a> CheckerContext<'a> {
         }
         if let Ok(mut env) = self.type_environment.try_borrow_mut() {
             apply(&mut env, def_id, augmented, is_class);
+        }
+    }
+
+    /// Register a `DefKind` for a `DefId` in **both** type environments.
+    ///
+    /// This ensures the evaluator (`type_env`) and flow-analyzer (`type_environment`)
+    /// both see the DefKind, which is needed for Lazy(DefId) resolution and
+    /// semantic queries (e.g., distinguishing class vs interface callables).
+    ///
+    /// Prior to this helper, pre-population and fallback paths only propagated
+    /// DefKind to `type_env`, leaving `type_environment` without the mapping
+    /// until the full checker walk populated it incidentally.
+    fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_def_kind(def_id, kind);
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            env.insert_def_kind(def_id, kind);
         }
     }
 
@@ -735,10 +756,8 @@ impl<'a> CheckerContext<'a> {
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
-            // Propagate DefKind to TypeEnvironment
-            if let Ok(mut env) = self.type_env.try_borrow_mut() {
-                env.insert_def_kind(def_id, kind);
-            }
+            // Propagate DefKind to both TypeEnvironments (evaluator + flow-analyzer)
+            self.register_def_kind_in_envs(def_id, kind);
 
             count += 1;
         }

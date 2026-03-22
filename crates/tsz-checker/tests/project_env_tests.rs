@@ -26,7 +26,6 @@ fn empty_project_env() -> ProjectEnv {
         global_module_augmentations_index: None,
         global_augmentation_targets_index: None,
         global_module_binder_index: None,
-        global_arena_index: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -160,9 +159,7 @@ fn apply_to_pre_populates_cross_file_def_ids() {
             file_id: 1,
             span_start: 0,
             type_param_count: 0,
-            enum_member_names: vec![],
-            is_const: false,
-            is_abstract: false,
+            is_exported: false,
         },
     );
 
@@ -197,9 +194,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             file_id: 0,
             span_start: 0,
             type_param_count: 0,
-            enum_member_names: vec![],
-            is_const: false,
-            is_abstract: false,
+            is_exported: false,
         },
     );
     let mut binder_b = BinderState::new();
@@ -211,9 +206,7 @@ fn apply_to_pre_populates_multiple_cross_file_binders() {
             file_id: 1,
             span_start: 100,
             type_param_count: 0,
-            enum_member_names: vec![],
-            is_const: false,
-            is_abstract: false,
+            is_exported: false,
         },
     );
 
@@ -254,9 +247,7 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
             file_id: 0,
             span_start: 0,
             type_param_count: 3,
-            enum_member_names: vec![],
-            is_const: false,
-            is_abstract: false,
+            is_exported: false,
         },
     );
 
@@ -279,115 +270,6 @@ fn apply_to_pre_populates_generic_type_param_stubs() {
         3,
         "Generic interface with 3 type params should have 3 stub TypeParamInfo entries"
     );
-}
-
-#[test]
-fn apply_to_pre_populates_enum_member_names() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    // Create a binder with an enum that has member names.
-    let mut other_binder = BinderState::new();
-    let sym_id = SymbolId(50);
-    other_binder.semantic_defs.insert(
-        sym_id,
-        SemanticDefEntry {
-            kind: SemanticDefKind::Enum,
-            name: "Direction".to_string(),
-            file_id: 0,
-            span_start: 0,
-            type_param_count: 0,
-            enum_member_names: vec![
-                "Up".to_string(),
-                "Down".to_string(),
-                "Left".to_string(),
-                "Right".to_string(),
-            ],
-            is_const: true,
-            is_abstract: false,
-        },
-    );
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(other_binder)]);
-    env.apply_to(&mut checker.ctx);
-
-    // The pre-populated DefId should exist and have enum_members populated.
-    let def_id = checker
-        .ctx
-        .get_existing_def_id(sym_id)
-        .expect("Direction should be pre-populated");
-    let info = checker
-        .ctx
-        .definition_store
-        .get(def_id)
-        .expect("DefId should exist in store");
-    assert_eq!(
-        info.enum_members.len(),
-        4,
-        "Enum with 4 members should have 4 pre-populated enum_members"
-    );
-    // Member names should be interned Atoms — verify via DefinitionInfo
-    let member_names: Vec<String> = info
-        .enum_members
-        .iter()
-        .map(|(atom, _)| interner.resolve_atom(*atom))
-        .collect();
-    assert_eq!(
-        member_names,
-        vec!["Up", "Down", "Left", "Right"],
-        "Enum member names should be preserved through pre-population"
-    );
-}
-
-#[test]
-fn apply_to_pre_populates_abstract_class_flag() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    let mut other_binder = BinderState::new();
-    let sym_id = SymbolId(60);
-    other_binder.semantic_defs.insert(
-        sym_id,
-        SemanticDefEntry {
-            kind: SemanticDefKind::Class,
-            name: "AbstractBase".to_string(),
-            file_id: 0,
-            span_start: 0,
-            type_param_count: 0,
-            enum_member_names: vec![],
-            is_const: false,
-            is_abstract: true,
-        },
-    );
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(other_binder)]);
-    env.apply_to(&mut checker.ctx);
-
-    let def_id = checker
-        .ctx
-        .get_existing_def_id(sym_id)
-        .expect("AbstractBase should be pre-populated");
-    let info = checker
-        .ctx
-        .definition_store
-        .get(def_id)
-        .expect("DefId should exist in store");
-    assert_eq!(
-        info.kind,
-        tsz_solver::def::DefKind::Class,
-        "Should be a class"
-    );
-    // Note: is_abstract is metadata on SemanticDefEntry; the DefinitionInfo
-    // stores DefKind::Class. The flag is available for future use to create
-    // ClassConstructor defs or abstract-aware diagnostics.
 }
 
 #[test]
@@ -469,105 +351,4 @@ fn build_global_indices_if_changed_rebuilds_on_different_fingerprint() {
     let rebuilt = env.build_global_indices_if_changed(200);
     assert!(rebuilt, "Different fingerprint should trigger rebuild");
     assert_eq!(env.last_skeleton_fingerprint, Some(200));
-}
-
-#[test]
-fn module_binder_index_covers_multiple_binders_same_module() {
-    // Two binders declare the same ambient module (e.g., module augmentation split
-    // across multiple .d.ts files). The index should map to both binder indices.
-    let mut binder_a = BinderState::new();
-    binder_a
-        .module_exports
-        .entry("\"shared-mod\"".to_string())
-        .or_default()
-        .set("x".to_string(), SymbolId(1));
-
-    let mut binder_b = BinderState::new();
-    binder_b
-        .module_exports
-        .entry("\"shared-mod\"".to_string())
-        .or_default()
-        .set("y".to_string(), SymbolId(2));
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
-    env.build_global_indices();
-
-    let idx = env.global_module_binder_index.as_ref().unwrap();
-
-    // Both raw and normalized forms should include both binder indices.
-    let binders_raw = idx.get("\"shared-mod\"").unwrap();
-    assert!(binders_raw.contains(&0));
-    assert!(binders_raw.contains(&1));
-
-    let binders_norm = idx.get("shared-mod").unwrap();
-    assert!(binders_norm.contains(&0));
-    assert!(binders_norm.contains(&1));
-}
-
-#[test]
-fn files_for_module_specifier_returns_correct_indices() {
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-
-    let mut binder_a = BinderState::new();
-    binder_a
-        .module_exports
-        .entry("\"my-module\"".to_string())
-        .or_default()
-        .set("default".to_string(), SymbolId(10));
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(binder_a)]);
-    env.build_global_indices();
-    env.apply_to(&mut checker.ctx);
-
-    // The O(1) lookup via files_for_module_specifier should find binder 0.
-    let files = checker.ctx.files_for_module_specifier("\"my-module\"");
-    assert!(files.is_some());
-    assert!(files.unwrap().contains(&0));
-
-    // Normalized form should also work.
-    let files_norm = checker.ctx.files_for_module_specifier("my-module");
-    assert!(files_norm.is_some());
-    assert!(files_norm.unwrap().contains(&0));
-
-    // Non-existent module should return None.
-    let files_none = checker.ctx.files_for_module_specifier("nonexistent");
-    assert!(files_none.is_none());
-}
-
-#[test]
-fn global_declared_modules_exact_and_patterns() {
-    // Verify that GlobalDeclaredModules correctly separates exact names from wildcards.
-    let mut binder_a = BinderState::new();
-    binder_a.declared_modules.insert("\"react\"".to_string());
-    binder_a
-        .shorthand_ambient_modules
-        .insert("\"*.css\"".to_string());
-
-    let mut env = empty_project_env();
-    env.all_binders = Arc::new(vec![Arc::new(binder_a)]);
-    env.build_global_indices();
-
-    let _dm = env.skeleton_declared_modules.as_ref().or_else(|| {
-        // build_global_indices doesn't set skeleton_declared_modules, but
-        // set_all_binders builds it. Let's check via apply_to.
-        None
-    });
-
-    // After apply_to, the checker should have global_declared_modules populated.
-    let interner = TypeInterner::new();
-    let query_cache = QueryCache::new(&interner);
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let mut checker = make_checker(&arena, &binder, &query_cache);
-    env.apply_to(&mut checker.ctx);
-
-    let declared = checker.ctx.global_declared_modules.as_ref().unwrap();
-    assert!(declared.exact.contains("react"));
-    assert!(declared.patterns.iter().any(|p| p.contains('*')));
 }

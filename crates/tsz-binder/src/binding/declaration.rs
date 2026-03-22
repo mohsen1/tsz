@@ -73,6 +73,7 @@ impl BinderState {
                     name,
                     idx,
                     0,
+                    is_exported,
                 );
 
                 // Hoist global augmentation variables to file_locals for cross-file
@@ -106,6 +107,7 @@ impl BinderState {
                             name,
                             ident_idx,
                             0,
+                            is_exported,
                         );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
@@ -166,6 +168,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             }
 
@@ -592,7 +595,6 @@ impl BinderState {
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
 
-                let is_abstract = Self::has_abstract_modifier(arena, class.modifiers.as_ref());
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 let tp_count = class
                     .type_parameters
@@ -604,13 +606,8 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
-                // Enrich the semantic def entry with abstract flag.
-                if is_abstract {
-                    if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
-                        entry.is_abstract = true;
-                    }
-                }
             }
 
             // Enter class scope for members
@@ -866,6 +863,7 @@ impl BinderState {
                 name,
                 idx,
                 tp_count,
+                is_exported,
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -975,6 +973,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             } else {
                 let sym_id = self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
@@ -988,6 +987,7 @@ impl BinderState {
                     name,
                     idx,
                     tp_count,
+                    is_exported,
                 );
             }
 
@@ -1028,6 +1028,7 @@ impl BinderState {
                 name,
                 idx,
                 0,
+                is_exported,
             );
 
             // Get existing exports (for namespace merging)
@@ -1056,13 +1057,11 @@ impl BinderState {
                 }
             }
 
-            let mut member_names = Vec::new();
             for &member_idx in &enum_decl.members.nodes {
                 if let Some(member_node) = arena.get(member_idx)
                     && let Some(member) = arena.get_enum_member(member_node)
                     && let Some(member_name) = Self::get_property_name(arena, member.name)
                 {
-                    member_names.push(member_name.to_string());
                     let sym_id = self
                         .symbols
                         .alloc(symbol_flags::ENUM_MEMBER, member_name.to_string());
@@ -1086,13 +1085,6 @@ impl BinderState {
                 }
             }
             self.exit_scope(arena);
-
-            // Enrich the semantic def entry with member names and const flag.
-            // This runs after the member loop so all names are collected.
-            if let Some(entry) = self.semantic_defs.get_mut(&enum_sym_id) {
-                entry.enum_member_names = member_names;
-                entry.is_const = is_const;
-            }
 
             // Update the enum's exports with members
             if let Some(enum_symbol) = self.symbols.get_mut(enum_sym_id) {
@@ -2366,6 +2358,7 @@ impl BinderState {
         name: &str,
         declaration: NodeIndex,
         type_param_count: u16,
+        is_exported: bool,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2399,9 +2392,7 @@ impl BinderState {
                     .map_or(u32::MAX, |s| s.decl_file_idx),
                 span_start: declaration.0,
                 type_param_count,
-                enum_member_names: Vec::new(),
-                is_const: false,
-                is_abstract: false,
+                is_exported,
             },
         );
     }

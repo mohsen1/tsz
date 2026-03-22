@@ -791,6 +791,14 @@ pub struct CheckerContext<'a> {
     /// This avoids repeated cross-arena lookups for non-generic symbols.
     pub def_no_type_params: RefCell<FxHashSet<DefId>>,
 
+    /// Counter for DefId fallback firings (Step 4 of `get_or_create_def_id`).
+    ///
+    /// Tracks how many times the checker had to create a DefId on demand
+    /// because the symbol was not pre-populated from binder `semantic_defs`.
+    /// A growing count indicates gaps in binder semantic def coverage.
+    /// Use `def_fallback_count()` to read the value.
+    pub def_fallback_count: Cell<u32>,
+
     /// Abstract constructor types (`TypeIds`) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
