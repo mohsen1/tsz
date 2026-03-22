@@ -1,5 +1,6 @@
 use crate::emitter::Printer;
 use tsz_parser::parser::node::Node;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -95,6 +96,36 @@ impl<'a> Printer<'a> {
         self.emit(func_type.type_annotation);
     }
 
+    pub(in crate::emitter) fn emit_constructor_type(&mut self, node: &Node) {
+        let Some(func_type) = self.arena.get_function_type(node) else {
+            return;
+        };
+
+        // Abstract modifier
+        if func_type.is_abstract {
+            self.write("abstract ");
+        }
+
+        self.write("new ");
+
+        // Type parameters
+        if let Some(ref type_params) = func_type.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
+
+        // Parameters
+        self.write("(");
+        self.emit_comma_separated(&func_type.parameters.nodes);
+        self.write(") => ");
+
+        // Return type
+        self.emit(func_type.type_annotation);
+    }
+
     pub(in crate::emitter) fn emit_type_literal(&mut self, node: &Node) {
         let Some(type_lit) = self.arena.get_type_literal(node) else {
             self.write("{}");
@@ -134,6 +165,20 @@ impl<'a> Printer<'a> {
         let Some(param) = self.arena.get_type_parameter(node) else {
             return;
         };
+
+        // Emit variance/const modifiers (in, out, const)
+        if let Some(ref mods) = param.modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    match mod_node.kind {
+                        k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
+                        k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
+                        k if k == SyntaxKind::ConstKeyword as u16 => self.write("const "),
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         self.emit(param.name);
 
@@ -185,6 +230,15 @@ impl<'a> Printer<'a> {
 
         if sig.question_token {
             self.write("?");
+        }
+
+        // Type parameters (e.g., method<T>(x: T): T)
+        if let Some(ref type_params) = sig.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
         }
 
         self.write("(");
