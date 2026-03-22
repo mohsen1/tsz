@@ -68,15 +68,13 @@ fn sanitize_function_shape_binding_pattern_params(
     shape: &tsz_solver::FunctionShape,
     binding_pattern_param_positions: &[usize],
 ) -> tsz_solver::FunctionShape {
-    let mut params = shape.params.clone();
-    for &index in binding_pattern_param_positions {
-        if let Some(param) = params.get_mut(index) {
-            param.type_id = TypeId::UNKNOWN;
-        }
-    }
     tsz_solver::FunctionShape {
         type_params: shape.type_params.clone(),
-        params,
+        params: common::sanitize_params_at_positions(
+            &shape.params,
+            binding_pattern_param_positions,
+            TypeId::UNKNOWN,
+        ),
         this_type: shape.this_type,
         return_type: shape.return_type,
         type_predicate: shape.type_predicate.clone(),
@@ -97,67 +95,14 @@ fn instantiate_function_shape_with_substitution(
     func: &tsz_solver::FunctionShape,
     substitution: &crate::query_boundaries::common::TypeSubstitution,
 ) -> tsz_solver::FunctionShape {
-    tsz_solver::FunctionShape {
-        params: func
-            .params
-            .iter()
-            .map(|param| tsz_solver::ParamInfo {
-                name: param.name,
-                type_id: crate::query_boundaries::common::instantiate_type(
-                    types,
-                    param.type_id,
-                    substitution,
-                ),
-                optional: param.optional,
-                rest: param.rest,
-            })
-            .collect(),
-        return_type: crate::query_boundaries::common::instantiate_type(
-            types,
-            func.return_type,
-            substitution,
-        ),
-        this_type: func.this_type.map(|this_type| {
-            crate::query_boundaries::common::instantiate_type(types, this_type, substitution)
-        }),
-        type_params: vec![],
-        type_predicate: func
-            .type_predicate
-            .as_ref()
-            .map(|predicate| tsz_solver::TypePredicate {
-                asserts: predicate.asserts,
-                target: predicate.target.clone(),
-                type_id: predicate.type_id.map(|tid| {
-                    crate::query_boundaries::common::instantiate_type(types, tid, substitution)
-                }),
-                parameter_index: predicate.parameter_index,
-            }),
-        is_constructor: func.is_constructor,
-        is_method: func.is_method,
-    }
+    common::instantiate_function_shape(types, func, substitution)
 }
 
 fn instantiate_contextual_target_shape_for_return_context(
     types: &dyn tsz_solver::QueryDatabase,
     func: &tsz_solver::FunctionShape,
 ) -> tsz_solver::FunctionShape {
-    if func.type_params.is_empty() {
-        return func.clone();
-    }
-
-    let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
-    for tp in &func.type_params {
-        let Some(replacement) = tp.default.or(tp.constraint) else {
-            continue;
-        };
-        substitution.insert(tp.name, replacement);
-    }
-
-    if substitution.is_empty() {
-        return func.clone();
-    }
-
-    instantiate_function_shape_with_substitution(types, func, &substitution)
+    common::instantiate_shape_to_defaults(types, func)
 }
 
 impl<'a> CheckerState<'a> {
@@ -894,25 +839,14 @@ impl<'a> CheckerState<'a> {
             sanitized.call_signatures = sanitized
                 .call_signatures
                 .iter()
-                .map(|sig| tsz_solver::CallSignature {
-                    type_params: sig.type_params.clone(),
-                    params: sanitize_function_shape_binding_pattern_params(
-                        &tsz_solver::FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
-                            is_constructor: false,
-                            is_method: sig.is_method,
-                        },
+                .map(|sig| {
+                    let mut new_sig = sig.clone();
+                    new_sig.params = common::sanitize_params_at_positions(
+                        &sig.params,
                         &binding_pattern_param_positions,
-                    )
-                    .params,
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate.clone(),
-                    is_method: sig.is_method,
+                        TypeId::UNKNOWN,
+                    );
+                    new_sig
                 })
                 .collect();
             self.ctx.types.factory().callable(sanitized)

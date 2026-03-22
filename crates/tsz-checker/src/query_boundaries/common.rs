@@ -7,6 +7,7 @@
 
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
+    TypePredicate,
 };
 
 // Re-export solver value types used by checker call computation.
@@ -479,4 +480,92 @@ pub(crate) fn collect_all_types(
     type_id: TypeId,
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
+}
+
+// ── FunctionShape transformation helpers ──
+
+/// Apply a `TypeSubstitution` to every type component in a `FunctionShape`.
+///
+/// Replaces type parameter references in parameter types, return type, this-type,
+/// and type predicate type. Clears `type_params` since they are now resolved.
+pub(crate) fn instantiate_function_shape(
+    db: &dyn TypeDatabase,
+    func: &FunctionShape,
+    substitution: &tsz_solver::TypeSubstitution,
+) -> FunctionShape {
+    FunctionShape {
+        params: func
+            .params
+            .iter()
+            .map(|param| ParamInfo {
+                name: param.name,
+                type_id: instantiate_type(db, param.type_id, substitution),
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect(),
+        return_type: instantiate_type(db, func.return_type, substitution),
+        this_type: func
+            .this_type
+            .map(|this_type| instantiate_type(db, this_type, substitution)),
+        type_params: vec![],
+        type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
+            asserts: predicate.asserts,
+            target: predicate.target.clone(),
+            type_id: predicate
+                .type_id
+                .map(|tid| instantiate_type(db, tid, substitution)),
+            parameter_index: predicate.parameter_index,
+        }),
+        is_constructor: func.is_constructor,
+        is_method: func.is_method,
+    }
+}
+
+/// Instantiate a generic function shape by substituting type parameters with
+/// their defaults or constraints. Used for return-context matching where we
+/// need a concrete shape but have no argument-driven substitution.
+///
+/// Returns the shape unchanged if it has no type parameters or no
+/// defaults/constraints to apply.
+pub(crate) fn instantiate_shape_to_defaults(
+    db: &dyn TypeDatabase,
+    func: &FunctionShape,
+) -> FunctionShape {
+    if func.type_params.is_empty() {
+        return func.clone();
+    }
+
+    let mut substitution = tsz_solver::TypeSubstitution::new();
+    for tp in &func.type_params {
+        let Some(replacement) = tp.default.or(tp.constraint) else {
+            continue;
+        };
+        substitution.insert(tp.name, replacement);
+    }
+
+    if substitution.is_empty() {
+        return func.clone();
+    }
+
+    instantiate_function_shape(db, func, &substitution)
+}
+
+/// Replace parameter types at the given positions with a replacement type.
+///
+/// Used to sanitize binding-pattern parameters during generic inference:
+/// destructured parameters contribute no inference candidates, so their
+/// types are replaced with `unknown` to avoid polluting the constraint.
+pub(crate) fn sanitize_params_at_positions(
+    params: &[ParamInfo],
+    positions: &[usize],
+    replacement: TypeId,
+) -> Vec<ParamInfo> {
+    let mut result = params.to_vec();
+    for &index in positions {
+        if let Some(param) = result.get_mut(index) {
+            param.type_id = replacement;
+        }
+    }
+    result
 }
