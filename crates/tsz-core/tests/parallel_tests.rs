@@ -4114,3 +4114,116 @@ fn test_residency_stats_total_bound_file_bytes_nonzero() {
         "total_bound_file_bytes should equal sum of per-file estimates"
     );
 }
+
+// =============================================================================
+// Skeleton extraction determinism and content validation
+// =============================================================================
+
+#[test]
+fn skeleton_extraction_captures_exported_symbols() {
+    let files = vec![(
+        "module.ts".to_string(),
+        r#"
+export const API_KEY = "secret";
+export function greet(name: string): string { return name; }
+export class UserService {
+    getUser() { return null; }
+}
+export enum Status { Active, Inactive }
+"#
+        .to_string(),
+    )];
+
+    let results = parse_and_bind_parallel(files);
+    assert_eq!(results.len(), 1);
+
+    let skeleton = extract_skeleton(&results[0]);
+    assert_eq!(skeleton.file_name, "module.ts");
+
+    // Should capture all exported symbols
+    let names: Vec<&str> = skeleton.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"API_KEY"), "missing API_KEY in {:?}", names);
+    assert!(names.contains(&"greet"), "missing greet in {:?}", names);
+    assert!(
+        names.contains(&"UserService"),
+        "missing UserService in {:?}",
+        names
+    );
+    assert!(names.contains(&"Status"), "missing Status in {:?}", names);
+}
+
+#[test]
+fn skeleton_extraction_is_deterministic() {
+    let source = r#"
+export const a = 1;
+export function b() {}
+export class C {}
+"#;
+
+    let files = vec![("det.ts".to_string(), source.to_string())];
+    let results = parse_and_bind_parallel(files);
+
+    let skel1 = extract_skeleton(&results[0]);
+    let skel2 = extract_skeleton(&results[0]);
+
+    // Same input must produce identical skeletons
+    assert_eq!(skel1.symbols.len(), skel2.symbols.len());
+    assert_eq!(skel1.file_name, skel2.file_name);
+    assert_eq!(
+        skel1.fingerprint, skel2.fingerprint,
+        "fingerprint must be deterministic"
+    );
+}
+
+#[test]
+fn skeleton_estimated_size_is_nonzero_for_nonempty_file() {
+    let files = vec![(
+        "sized.ts".to_string(),
+        "export const x = 1; export const y = 2;".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let skeleton = extract_skeleton(&results[0]);
+
+    assert!(
+        skeleton.estimated_size_bytes() > 0,
+        "skeleton size should be nonzero for a file with exports"
+    );
+}
+
+#[test]
+fn reduce_skeletons_produces_nonzero_index_for_multiple_files() {
+    let files = vec![
+        ("a.ts".to_string(), "export const x = 1;".to_string()),
+        ("b.ts".to_string(), "export const y = 2;".to_string()),
+    ];
+
+    let results = parse_and_bind_parallel(files);
+    let skeletons: Vec<_> = results.iter().map(|r| extract_skeleton(r)).collect();
+    let index = reduce_skeletons(&skeletons);
+
+    assert_eq!(index.file_count, 2, "should track both files");
+    assert!(
+        index.total_symbol_count >= 2,
+        "should track symbols from both files, got {}",
+        index.total_symbol_count
+    );
+    assert!(
+        index.estimated_size_bytes() > 0,
+        "index size should be nonzero"
+    );
+}
+
+#[test]
+fn bind_result_estimated_size_bytes_is_positive() {
+    let files = vec![(
+        "accounting.ts".to_string(),
+        "let x = 1; function f() { return x + 1; }".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+
+    let size = results[0].estimated_size_bytes();
+    assert!(
+        size > 0,
+        "BindResult estimated_size_bytes should be positive for non-empty file"
+    );
+}
