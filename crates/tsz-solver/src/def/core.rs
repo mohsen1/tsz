@@ -484,6 +484,12 @@ pub struct StoreStatistics {
 
     /// Next `DefId` value (high-water mark of allocation).
     pub next_def_id: u32,
+
+    /// Estimated heap memory footprint of the store in bytes.
+    ///
+    /// Populated by `DefinitionStore::statistics()` using the live
+    /// `estimated_size_bytes()` method. Zero when constructed via `Default`.
+    pub estimated_size_bytes: usize,
 }
 
 impl StoreStatistics {
@@ -511,6 +517,7 @@ impl StoreStatistics {
         if other.next_def_id > self.next_def_id {
             self.next_def_id = other.next_def_id;
         }
+        self.estimated_size_bytes += other.estimated_size_bytes;
     }
 }
 
@@ -539,7 +546,13 @@ impl std::fmt::Display for StoreStatistics {
         writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
         writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
         writeln!(f, "  files: {}", self.file_count)?;
-        write!(f, "  next_def_id: {}", self.next_def_id)
+        writeln!(f, "  next_def_id: {}", self.next_def_id)?;
+        write!(
+            f,
+            "  estimated_size: {} bytes ({:.1} KB)",
+            self.estimated_size_bytes,
+            self.estimated_size_bytes as f64 / 1024.0,
+        )
     }
 }
 
@@ -956,6 +969,7 @@ impl DefinitionStore {
             }
         }
 
+        stats.estimated_size_bytes = self.estimated_size_bytes();
         stats
     }
 
