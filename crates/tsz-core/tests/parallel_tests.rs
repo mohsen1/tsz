@@ -4123,7 +4123,10 @@ fn test_residency_stats_total_bound_file_bytes_nonzero() {
 fn test_residency_stats_unique_arena_estimated_bytes_nonzero() {
     let files = vec![
         ("a.ts".to_string(), "export const a = 1;".to_string()),
-        ("b.ts".to_string(), "export function b(x: number): string { return String(x); }".to_string()),
+        (
+            "b.ts".to_string(),
+            "export function b(x: number): string { return String(x); }".to_string(),
+        ),
     ];
 
     let bind_results = parse_and_bind_parallel(files);
