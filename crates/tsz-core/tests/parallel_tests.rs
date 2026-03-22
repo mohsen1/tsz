@@ -4237,8 +4237,14 @@ fn bind_result_estimated_size_bytes_is_positive() {
 #[test]
 fn skeleton_pipeline_end_to_end_no_change() {
     let files = vec![
-        ("api.ts".to_string(), "export function hello() {}".to_string()),
-        ("utils.ts".to_string(), "export const PI = 3.14;".to_string()),
+        (
+            "api.ts".to_string(),
+            "export function hello() {}".to_string(),
+        ),
+        (
+            "utils.ts".to_string(),
+            "export const PI = 3.14;".to_string(),
+        ),
     ];
 
     // First build
@@ -4252,7 +4258,10 @@ fn skeleton_pipeline_end_to_end_no_change() {
     let idx2 = reduce_skeletons(&skels2);
 
     // Fingerprints must match
-    assert_eq!(idx1.fingerprint, idx2.fingerprint, "identical source → identical index fingerprint");
+    assert_eq!(
+        idx1.fingerprint, idx2.fingerprint,
+        "identical source → identical index fingerprint"
+    );
 
     // Diff should be empty
     let diff = diff_skeletons(&skels1, &skels2);
@@ -4262,12 +4271,11 @@ fn skeleton_pipeline_end_to_end_no_change() {
 
 #[test]
 fn skeleton_pipeline_detects_added_export() {
-    let files_v1 = vec![
-        ("mod.ts".to_string(), "export const x = 1;".to_string()),
-    ];
-    let files_v2 = vec![
-        ("mod.ts".to_string(), "export const x = 1; export const y = 2;".to_string()),
-    ];
+    let files_v1 = vec![("mod.ts".to_string(), "export const x = 1;".to_string())];
+    let files_v2 = vec![(
+        "mod.ts".to_string(),
+        "export const x = 1; export const y = 2;".to_string(),
+    )];
 
     let results1 = parse_and_bind_parallel(files_v1);
     let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
@@ -4288,12 +4296,14 @@ fn skeleton_pipeline_detects_added_export() {
 
 #[test]
 fn skeleton_pipeline_body_change_no_topology_change() {
-    let files_v1 = vec![
-        ("fn.ts".to_string(), "export function f() { return 1; }".to_string()),
-    ];
-    let files_v2 = vec![
-        ("fn.ts".to_string(), "export function f() { return 999; }".to_string()),
-    ];
+    let files_v1 = vec![(
+        "fn.ts".to_string(),
+        "export function f() { return 1; }".to_string(),
+    )];
+    let files_v2 = vec![(
+        "fn.ts".to_string(),
+        "export function f() { return 999; }".to_string(),
+    )];
 
     let results1 = parse_and_bind_parallel(files_v1);
     let skels1: Vec<_> = results1.iter().map(|r| extract_skeleton(r)).collect();
@@ -4325,7 +4335,7 @@ fn residency_budget_integration_with_merged_program() {
 
     // Budget with generous thresholds → low pressure for 2 tiny files
     let budget = ResidencyBudget {
-        low_watermark_bytes: 1024 * 1024, // 1MB
+        low_watermark_bytes: 1024 * 1024,      // 1MB
         high_watermark_bytes: 2 * 1024 * 1024, // 2MB
     };
     assert_eq!(

@@ -1036,4 +1036,3 @@ impl<'a> CheckerState<'a> {
         lib_type_id
     }
 }
-
