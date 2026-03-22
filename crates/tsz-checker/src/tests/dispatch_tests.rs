@@ -1231,3 +1231,32 @@ if (typeof c === 'string') {
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn reverse_mapped_tuple_inference_through_conditional_template() {
+    // When a mapped type's template is a conditional type like
+    // `Tuple[Key] extends Tuple[number] ? MyMappedType<Tuple[Key]> : never`,
+    // reverse-mapped inference should be able to reverse through the
+    // conditional's true branch to infer Tuple from the argument types.
+    // Regression test: previously, reverse_infer_through_template returned
+    // None for conditional templates, causing Tuple to default to any[].
+    let diags = check_source_diagnostics(
+        r#"
+type MyMappedType<Primitive extends any> = {
+    primitive: Primitive;
+};
+type TupleMapper<Tuple extends any[]> = {
+    [Key in keyof Tuple]: Tuple[Key] extends Tuple[number] ? MyMappedType<Tuple[Key]> : never;
+};
+declare function extractPrimitives<Tuple extends any[]>(...mappedTypes: TupleMapper<Tuple>): Tuple;
+const result: [string, number] = extractPrimitives({ primitive: "" }, { primitive: 0 });
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for reverse-mapped tuple inference through conditional template, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

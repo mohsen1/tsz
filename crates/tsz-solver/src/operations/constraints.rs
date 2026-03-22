@@ -2219,8 +2219,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
-        // For any other template shape (conditional types, etc.),
-        // we can't safely reverse.
+        // Case 7: template is a Conditional type.
+        // For mapped type templates like `T[K] extends U ? Wrap<T[K]> : never`,
+        // try to reverse through the true branch (and optionally the false branch).
+        // In the context of reverse-mapped inference, the source value corresponds to
+        // a property that was produced by either the true or false branch. We try
+        // the true branch first (more common pattern: `T[K] extends X ? F<T[K]> : never`),
+        // then fall back to the false branch.
+        if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(template) {
+            let cond = self.interner.get_conditional(cond_id);
+            // Try the true branch first — this is the common case where the false branch
+            // is `never` and all real values flow through the true branch.
+            if let Some(reversed) = self.reverse_infer_through_template(
+                source_value,
+                cond.true_type,
+                target_placeholder,
+            ) {
+                return Some(reversed);
+            }
+            // Try the false branch if it's not `never` (the source might come from the
+            // false branch in a conditional like `T[K] extends string ? string : T[K]`).
+            if cond.false_type != TypeId::NEVER {
+                if let Some(reversed) = self.reverse_infer_through_template(
+                    source_value,
+                    cond.false_type,
+                    target_placeholder,
+                ) {
+                    return Some(reversed);
+                }
+            }
+            return None;
+        }
+
+        // For any other template shape, we can't safely reverse.
         None
     }
 
