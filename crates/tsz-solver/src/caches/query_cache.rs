@@ -89,7 +89,11 @@ impl std::fmt::Display for QueryCacheStatistics {
             "  object_spread_cache:    {}",
             self.object_spread_cache_entries
         )?;
-        writeln!(f, "  property_cache:         {}", self.property_cache_entries)?;
+        writeln!(
+            f,
+            "  property_cache:         {}",
+            self.property_cache_entries
+        )?;
         writeln!(
             f,
             "  variance_cache:         {}",
@@ -103,9 +107,7 @@ impl std::fmt::Display for QueryCacheStatistics {
         writeln!(
             f,
             "  subtype_cache:          {} entries ({} hits, {} misses)",
-            self.relation.subtype_entries,
-            self.relation.subtype_hits,
-            self.relation.subtype_misses,
+            self.relation.subtype_entries, self.relation.subtype_hits, self.relation.subtype_misses,
         )?;
         write!(
             f,
