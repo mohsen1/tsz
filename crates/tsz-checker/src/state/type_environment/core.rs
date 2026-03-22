@@ -328,16 +328,10 @@ impl<'a> CheckerState<'a> {
             return body_type;
         }
 
-        // Homomorphic identity mapped type passthrough: if the body is
-        // `{ [K in keyof T]: T[K] }` (identity mapping) and the argument for T
-        // is a genuine primitive type, return the arg directly.
-        // This matches tsc behavior where e.g. `Partial<number>` evaluates to `number`.
-        // Only applies when the template is `T[K]` — NOT for non-identity templates
-        // like `{ [K in keyof T]: Data }` which should produce an index signature.
-        //
-        // For `any` arguments: passthrough only when the type parameter is constrained
-        // to array/tuple types. In tsc, `Arrayish<any>` (T extends unknown[]) produces
-        // an array, but `Objectish<any>` (T extends unknown) produces `{ [x: string]: any }`.
+        // Homomorphic identity mapped type passthrough: delegate to the solver
+        // query that handles `{ [K in keyof T]: T[K] }` with primitive arguments.
+        // The solver decides whether to passthrough, produce index signatures, or
+        // fall through to full expansion. See `evaluate_identity_mapped_passthrough`.
         if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type)
             && let Some(identity_info) = query::classify_identity_mapped(self.ctx.types, mapped_id)
             && let Some(idx) = type_params
@@ -346,54 +340,10 @@ impl<'a> CheckerState<'a> {
             && idx < args.len()
         {
             let arg = self.evaluate_type_with_env(args[idx]);
-            if query::is_primitive_type(self.ctx.types, arg) {
-                // For `any`: only passthrough when the type parameter has an
-                // array/tuple constraint. Otherwise, `any` must flow through
-                // mapped type expansion to produce { [x: string]: any }.
-                let should_passthrough = if arg == TypeId::ANY
-                    || arg == TypeId::UNKNOWN
-                    || arg == TypeId::NEVER
-                    || arg == TypeId::ERROR
-                {
-                    // Check if the type parameter is constrained to array/tuple
-                    identity_info.source_constraint.is_some_and(|c| {
-                        let evaluated_constraint = self.evaluate_type_for_assignability(c);
-                        query::is_array_or_tuple_type(self.ctx.types, evaluated_constraint)
-                    })
-                } else {
-                    true
-                };
-                if should_passthrough {
-                    return arg;
-                }
-
-                // tsc rule: for `Objectish<any>` (identity mapped type where
-                // T=any with non-array constraint), produce an object with
-                // string+number index signatures, NOT `any`. The evaluator's
-                // shortcut returns `any` for mapped types over `any`, but tsc
-                // distinguishes: array-constrained → passthrough, non-array →
-                // object with index signatures. This ensures `Objectish<any>`
-                // is NOT assignable to `any[]`.
-                if arg == TypeId::ANY {
-                    let factory = self.ctx.types.factory();
-                    return factory.object_with_index(tsz_solver::ObjectShape {
-                        flags: tsz_solver::ObjectFlags::empty(),
-                        properties: vec![],
-                        string_index: Some(tsz_solver::IndexSignature {
-                            key_type: TypeId::STRING,
-                            value_type: TypeId::ANY,
-                            readonly: false,
-                            param_name: None,
-                        }),
-                        number_index: Some(tsz_solver::IndexSignature {
-                            key_type: TypeId::NUMBER,
-                            value_type: TypeId::ANY,
-                            readonly: false,
-                            param_name: None,
-                        }),
-                        symbol: None,
-                    });
-                }
+            if let Some(result) =
+                query::evaluate_identity_mapped_passthrough(self.ctx.types, mapped_id, arg)
+            {
+                return result;
             }
         }
 
