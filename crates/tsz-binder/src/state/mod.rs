@@ -590,13 +590,13 @@ impl FileSkeleton {
     }
 
     /// Returns `true` if the file exports any declarations.
-    pub fn has_exports(&self) -> bool {
+    pub const fn has_exports(&self) -> bool {
         !self.exported_defs.is_empty()
     }
 
     /// Returns `true` if the file has any heritage dependencies
     /// (extends/implements clauses).
-    pub fn has_heritage_deps(&self) -> bool {
+    pub const fn has_heritage_deps(&self) -> bool {
         !self.heritage_deps.is_empty()
     }
 
