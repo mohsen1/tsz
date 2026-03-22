@@ -2325,7 +2325,12 @@ impl<'a> TypePrinter<'a> {
 
         let param_name = self.resolve_atom(mapped.type_param.name);
         let constraint = self.print_type(mapped.constraint);
-        let template = self.print_type(mapped.template);
+
+        let mut nested = self.clone();
+        if let Some(indent) = nested.indent_level {
+            nested.indent_level = Some(indent + 1);
+        }
+        let template = nested.print_type(mapped.template);
 
         let as_clause = if let Some(name_type) = mapped.name_type {
             format!(" as {}", self.print_type(name_type))
@@ -2333,9 +2338,18 @@ impl<'a> TypePrinter<'a> {
             String::new()
         };
 
-        format!(
-            "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
-        )
+        // Multi-line format when indent context is set (matching tsc's .d.ts output)
+        if let Some(indent) = self.indent_level {
+            let member_indent = "    ".repeat((indent + 1) as usize);
+            let closing_indent = "    ".repeat(indent as usize);
+            format!(
+                "{{\n{member_indent}{readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template};\n{closing_indent}}}"
+            )
+        } else {
+            format!(
+                "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
+            )
+        }
     }
 
     fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
@@ -2411,10 +2425,9 @@ fn needs_property_name_quoting(name: &str) -> bool {
     if name.chars().all(|ch| ch.is_ascii_digit()) {
         return false;
     }
-    // Reserved keywords need quoting when used as property/method names
-    if is_reserved_keyword(name) {
-        return true;
-    }
+    // In ES5+ and TypeScript, reserved keywords are valid property names
+    // and do NOT need quoting. tsc emits them unquoted in .d.ts output.
+    // e.g., `{ delete: boolean; class: string; }` — not `{ "delete": boolean; }`.
     let mut chars = name.chars();
     let first = chars
         .next()
@@ -2425,48 +2438,6 @@ fn needs_property_name_quoting(name: &str) -> bool {
     !chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
-/// Returns true if the name is a JS/TS reserved keyword that needs quoting in property position.
-fn is_reserved_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "null"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-    )
-}
 
 #[cfg(test)]
 #[path = "../../../tests/type_printer.rs"]
