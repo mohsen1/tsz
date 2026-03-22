@@ -506,12 +506,7 @@ impl<'a> Printer<'a> {
             self.write("asserts ");
         }
         self.emit(pred.parameter_name);
-        if pred.type_node.is_some()
-            && self
-                .arena
-                .get(pred.type_node)
-                .is_some_and(|n| n.kind != 1)
-        {
+        if pred.type_node.is_some() && self.arena.get(pred.type_node).is_some_and(|n| n.kind != 1) {
             self.write(" is ");
             self.emit(pred.type_node);
         }
@@ -530,5 +525,4 @@ impl<'a> Printer<'a> {
             }
         }
     }
-
 }
