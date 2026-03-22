@@ -719,11 +719,7 @@ fn heritage_names_resolved_to_extends_implements() {
         .get_existing_def_id(ifoo_sym_id)
         .expect("IFoo should have a DefId");
 
-    assert_eq!(
-        info.extends,
-        Some(base_def),
-        "MyClass should extend Base"
-    );
+    assert_eq!(info.extends, Some(base_def), "MyClass should extend Base");
     assert!(
         info.implements.contains(&ifoo_def),
         "MyClass should implement IFoo, got: {:?}",
