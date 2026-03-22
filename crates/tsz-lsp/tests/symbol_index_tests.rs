@@ -1,5 +1,7 @@
 use super::*;
+use tsz_binder::BinderState;
 use tsz_common::position::{Position, Range};
+use tsz_parser::ParserState;
 
 fn make_location(file: &str, line: u32, start_col: u32, end_col: u32) -> Location {
     Location::new(
@@ -1510,4 +1512,163 @@ fn test_symbol_index_interleaved_add_remove() {
     let defs = index.find_definitions("x");
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file_path, "b.ts");
+}
+
+// ── index_file: automatic import extraction from binder ──────────────
+
+fn parse_and_bind(file_name: &str, source: &str) -> (BinderState, ParserState) {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    (binder, parser)
+}
+
+#[test]
+fn test_index_file_extracts_named_imports() {
+    let source = r#"import { foo, bar } from './utils';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    let imports = index.get_imports("app.ts");
+    assert!(
+        imports.len() >= 2,
+        "expected at least 2 imports from index_file, got {}",
+        imports.len()
+    );
+
+    let foo_import = imports.iter().find(|i| i.local_name == "foo");
+    assert!(foo_import.is_some(), "expected 'foo' import");
+    let foo_import = foo_import.unwrap();
+    assert_eq!(foo_import.source_module, "./utils");
+    assert_eq!(foo_import.kind, ImportKind::Named);
+
+    let bar_import = imports.iter().find(|i| i.local_name == "bar");
+    assert!(bar_import.is_some(), "expected 'bar' import");
+
+    // Reverse import graph should track the dependency
+    let importers = index.get_importing_files("./utils");
+    assert!(
+        importers.contains(&"app.ts".to_string()),
+        "expected app.ts in importers of ./utils"
+    );
+}
+
+#[test]
+fn test_index_file_extracts_default_import() {
+    let source = r#"import React from 'react';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    let imports = index.get_imports("app.ts");
+    let react_import = imports
+        .iter()
+        .find(|i| i.local_name == "React");
+    assert!(react_import.is_some(), "expected 'React' default import");
+    let react_import = react_import.unwrap();
+    assert_eq!(react_import.source_module, "react");
+    assert_eq!(react_import.exported_name, "default");
+    assert_eq!(react_import.kind, ImportKind::Default);
+}
+
+#[test]
+fn test_index_file_extracts_namespace_import() {
+    let source = r#"import * as utils from './utils';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    let imports = index.get_imports("app.ts");
+    let ns_import = imports
+        .iter()
+        .find(|i| i.local_name == "utils");
+    assert!(ns_import.is_some(), "expected 'utils' namespace import");
+    let ns_import = ns_import.unwrap();
+    assert_eq!(ns_import.source_module, "./utils");
+    assert_eq!(ns_import.exported_name, "*");
+    assert_eq!(ns_import.kind, ImportKind::Namespace);
+}
+
+#[test]
+fn test_index_file_extracts_side_effect_import() {
+    let source = r#"import './polyfill';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    let imports = index.get_imports("app.ts");
+    let side_effect = imports
+        .iter()
+        .find(|i| i.source_module == "./polyfill");
+    assert!(
+        side_effect.is_some(),
+        "expected side-effect import for './polyfill'"
+    );
+    assert_eq!(side_effect.unwrap().kind, ImportKind::SideEffect);
+
+    let importers = index.get_importing_files("./polyfill");
+    assert!(
+        importers.contains(&"app.ts".to_string()),
+        "expected app.ts in importers of ./polyfill"
+    );
+}
+
+#[test]
+fn test_index_file_has_file_after_import_indexing() {
+    let source = r#"import { x } from './lib';"#;
+    let (binder, parser) = parse_and_bind("consumer.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("consumer.ts", &binder, parser.get_arena(), source);
+
+    assert!(
+        index.has_file("consumer.ts"),
+        "has_file should return true after index_file"
+    );
+}
+
+#[test]
+fn test_index_file_renamed_import() {
+    let source = r#"import { foo as bar } from './mod';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    let imports = index.get_imports("app.ts");
+    let renamed = imports.iter().find(|i| i.local_name == "bar");
+    assert!(renamed.is_some(), "expected renamed import 'bar'");
+    let renamed = renamed.unwrap();
+    assert_eq!(renamed.exported_name, "foo");
+    assert_eq!(renamed.source_module, "./mod");
+    assert_eq!(renamed.kind, ImportKind::Named);
+}
+
+#[test]
+fn test_index_file_remove_clears_auto_imports() {
+    let source = r#"import { x } from './lib';"#;
+    let (binder, parser) = parse_and_bind("app.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("app.ts", &binder, parser.get_arena(), source);
+
+    assert!(!index.get_imports("app.ts").is_empty());
+    assert!(!index.get_importing_files("./lib").is_empty());
+
+    index.remove_file("app.ts");
+
+    assert!(
+        index.get_imports("app.ts").is_empty(),
+        "imports should be cleared after remove_file"
+    );
+    assert!(
+        index.get_importing_files("./lib").is_empty(),
+        "importers should be cleared after remove_file"
+    );
 }
