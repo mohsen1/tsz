@@ -274,12 +274,11 @@ impl BinderState {
             // - or NONE for: export * from 'mod'
 
             // Record export-from module specifier for dependency tracking
-            if export.module_specifier.is_some() {
-                if let Some(spec_node) = arena.get(export.module_specifier) {
-                    if let Some(lit) = arena.get_literal(spec_node) {
-                        self.file_import_sources.push(lit.text.clone());
-                    }
-                }
+            if export.module_specifier.is_some()
+                && let Some(spec_node) = arena.get(export.module_specifier)
+                && let Some(lit) = arena.get_literal(spec_node)
+            {
+                self.file_import_sources.push(lit.text.clone());
             }
 
             // Check if the entire export declaration is type-only: export type { ... }
