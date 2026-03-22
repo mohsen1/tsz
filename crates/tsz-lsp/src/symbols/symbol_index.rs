@@ -437,6 +437,80 @@ impl SymbolIndex {
             }
         }
 
+        // Index imports from binder symbols (ALIAS symbols with import_module).
+        // This populates `imports` and `importers` automatically during
+        // `index_file`, so callers no longer need manual `add_import` calls.
+        for (local_name, symbol_id) in binder.file_locals.iter() {
+            if let Some(symbol) = binder.symbols.get(*symbol_id)
+                && symbol.flags & symbol_flags::ALIAS != 0
+                && let Some(ref source_module) = symbol.import_module
+            {
+                let exported_name = symbol
+                    .import_name
+                    .clone()
+                    .unwrap_or_else(|| local_name.clone());
+
+                let kind = if exported_name == "*" {
+                    ImportKind::Namespace
+                } else if exported_name == "default" {
+                    ImportKind::Default
+                } else {
+                    ImportKind::Named
+                };
+
+                let info = ImportInfo {
+                    local_name: local_name.clone(),
+                    source_module: source_module.clone(),
+                    exported_name,
+                    kind,
+                };
+
+                self.imports
+                    .entry(file_name_owned.clone())
+                    .or_default()
+                    .push(info);
+
+                self.importers
+                    .entry(source_module.clone())
+                    .or_default()
+                    .insert(file_name_owned.clone());
+            }
+        }
+
+        // Index side-effect imports from binder's file_import_sources.
+        // These are `import 'module'` statements that don't bind any symbol
+        // but still create a dependency edge.
+        {
+            // Collect source modules already tracked from ALIAS symbols above
+            // to avoid duplicating entries for specifiers that also have named bindings.
+            let already_tracked: FxHashSet<String> = self
+                .imports
+                .get(&file_name_owned)
+                .map(|imports| imports.iter().map(|i| i.source_module.clone()).collect())
+                .unwrap_or_default();
+
+            for source_module in &binder.file_import_sources {
+                if !already_tracked.contains(source_module) {
+                    let info = ImportInfo {
+                        local_name: String::new(),
+                        source_module: source_module.clone(),
+                        exported_name: String::new(),
+                        kind: ImportKind::SideEffect,
+                    };
+
+                    self.imports
+                        .entry(file_name_owned.clone())
+                        .or_default()
+                        .push(info);
+
+                    self.importers
+                        .entry(source_module.clone())
+                        .or_default()
+                        .insert(file_name_owned.clone());
+                }
+            }
+        }
+
         // Scan for HeritageClause nodes (extends/implements)
         // This enables O(1) lookup for Go to Implementation and upward traversal for rename
         for i in 0..arena.nodes.len() {
@@ -623,13 +697,14 @@ impl SymbolIndex {
     }
 
     /// Check if the index contains any data for a given file.
+    ///
+    /// Uses the `file_symbols` reverse mapping for O(1) lookup instead of
+    /// scanning all `name_to_files` entries. Also checks `exports` and
+    /// `imports` for files that were registered through those paths.
     pub fn has_file(&self, file_name: &str) -> bool {
-        self.exports.contains_key(file_name)
+        self.file_symbols.contains_key(file_name)
+            || self.exports.contains_key(file_name)
             || self.imports.contains_key(file_name)
-            || self
-                .name_to_files
-                .values()
-                .any(|files| files.contains(file_name))
     }
 
     /// Get statistics about the index for debugging/monitoring.
