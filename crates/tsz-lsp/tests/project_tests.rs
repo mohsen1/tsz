@@ -5429,8 +5429,7 @@ fn test_set_file_populates_dependency_graph_from_binder() {
     );
     assert!(
         b_deps.unwrap().contains("./a"),
-        "b.ts should depend on './a', got: {:?}",
-        b_deps
+        "b.ts should depend on './a', got: {b_deps:?}",
     );
 
     // Reverse: "./a" should have b.ts as a dependent
@@ -5441,8 +5440,7 @@ fn test_set_file_populates_dependency_graph_from_binder() {
     );
     assert!(
         a_dependents.unwrap().contains("b.ts"),
-        "'./a' dependents should include 'b.ts', got: {:?}",
-        a_dependents
+        "'./a' dependents should include 'b.ts', got: {a_dependents:?}",
     );
 }
 
@@ -5461,13 +5459,11 @@ fn test_dependency_graph_tracks_reexports() {
     let deps = deps.unwrap();
     assert!(
         deps.contains("./impl"),
-        "barrel.ts should depend on './impl', got: {:?}",
-        deps
+        "barrel.ts should depend on './impl', got: {deps:?}",
     );
     assert!(
         deps.contains("./types"),
-        "barrel.ts should depend on './types', got: {:?}",
-        deps
+        "barrel.ts should depend on './types', got: {deps:?}",
     );
 }
 
@@ -5495,13 +5491,11 @@ fn test_dependency_graph_updates_on_file_change() {
     let deps = project.dependency_graph.get_dependencies("c.ts").unwrap();
     assert!(
         deps.contains("./new-dep"),
-        "c.ts should now depend on './new-dep', got: {:?}",
-        deps
+        "c.ts should now depend on './new-dep', got: {deps:?}",
     );
     assert!(
         !deps.contains("./old-dep"),
-        "c.ts should no longer depend on './old-dep', got: {:?}",
-        deps
+        "c.ts should no longer depend on './old-dep', got: {deps:?}",
     );
 }
 
@@ -5518,12 +5512,10 @@ fn test_dependency_graph_side_effect_imports() {
     let deps = project.dependency_graph.get_dependencies("app.ts").unwrap();
     assert!(
         deps.contains("./polyfill"),
-        "side-effect import should be in dependency graph, got: {:?}",
-        deps
+        "side-effect import should be in dependency graph, got: {deps:?}",
     );
     assert!(
         deps.contains("./lib"),
-        "named import should be in dependency graph, got: {:?}",
-        deps
+        "named import should be in dependency graph, got: {deps:?}",
     );
 }
