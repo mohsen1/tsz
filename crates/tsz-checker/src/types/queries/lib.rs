@@ -5,7 +5,8 @@
 //! `queries/type_only.rs`.
 
 use super::lib_resolution::{
-    lib_def_id_from_node_in_lib_contexts, resolve_lib_node_in_lib_contexts,
+    lib_def_id_from_node_in_lib_contexts, resolve_lib_context_fallback_arena,
+    resolve_lib_node_in_lib_contexts,
 };
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
@@ -42,11 +43,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
                 // Multi-arena setup: Get the fallback arena
-                let fallback_arena: &NodeArena = lib_ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&sym_id)
-                    .map_or_else(|| lib_ctx.arena.as_ref(), |arc| arc.as_ref());
+                let fallback_arena: &NodeArena = resolve_lib_context_fallback_arena(
+                    &lib_ctx.binder,
+                    sym_id,
+                    lib_ctx.arena.as_ref(),
+                );
 
                 // Build declaration -> arena pairs using the shared helper.
                 // No user_arena context here (per-lib-context iteration).
@@ -111,8 +112,7 @@ impl<'a> CheckerState<'a> {
                             // Cache type parameters for Application expansion.
                             // Use the canonical (merged-binder) SymbolId so the DefId
                             // matches what type reference resolution produces.
-                            let canonical_sym = self.ctx.canonical_lib_sym_id(name, sym_id);
-                            let def_id = self.ctx.get_lib_def_id(canonical_sym);
+                            let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
                             self.ctx.insert_def_type_params(def_id, params.clone());
 
                             lib_types.push(ty);
@@ -151,8 +151,7 @@ impl<'a> CheckerState<'a> {
                                 // Cache type parameters for Application expansion.
                                 // Use the canonical (merged-binder) SymbolId to avoid
                                 // collisions between per-lib-context and main binder identities.
-                                let canonical_sym = self.ctx.canonical_lib_sym_id(name, sym_id);
-                                let def_id = self.ctx.get_lib_def_id(canonical_sym);
+                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
                                 self.ctx.insert_def_type_params(def_id, params);
                                 lib_types.push(ty);
                                 break;
