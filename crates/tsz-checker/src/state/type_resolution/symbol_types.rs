@@ -452,7 +452,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|exports| exports.get(import_name))
             .or_else(|| target_binder.file_locals.get(import_name))?;
 
-        self.ctx.register_symbol_file_index(target_sym_id, target_idx);
+        self.ctx
+            .register_symbol_file_index(target_sym_id, target_idx);
         Some(target_sym_id)
     }
 
