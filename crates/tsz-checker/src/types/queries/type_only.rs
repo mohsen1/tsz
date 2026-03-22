@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
         if let Some(index) = self.ctx.global_module_exports_index.as_ref() {
             let all_binders = self.ctx.all_binders.as_ref()?;
             for candidate in candidates {
-                if let Some(entries) = index.get(&(candidate.to_string(), "export=".to_string())) {
+                if let Some(entries) = index.get(candidate).and_then(|inner| inner.get("export=")) {
                     for &(file_idx, sym_id) in entries {
                         if let Some(binder) = all_binders.get(file_idx) {
                             return Some((binder, sym_id));
