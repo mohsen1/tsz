@@ -58,7 +58,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .definition_store
                         .register_type_to_def(instance_type, def_id);
-                    self.ctx.register_class_instance_in_envs(def_id, instance_type);
+                    self.ctx
+                        .register_class_instance_in_envs(def_id, instance_type);
 
                     self.ctx.leave_recursion();
                     return instance_type;

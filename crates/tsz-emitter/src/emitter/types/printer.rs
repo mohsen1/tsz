@@ -714,7 +714,10 @@ impl<'a> TypePrinter<'a> {
     fn print_literal(&self, literal: &tsz_solver::types::LiteralValue) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {
-                format!("\"{}\"", escape_string_for_double_quote(&self.resolve_atom(*atom)))
+                format!(
+                    "\"{}\"",
+                    escape_string_for_double_quote(&self.resolve_atom(*atom))
+                )
             }
             tsz_solver::types::LiteralValue::Number(n) => {
                 let v = n.0;
@@ -2245,11 +2248,11 @@ impl<'a> TypePrinter<'a> {
 
         // Check type needs parens when it's a conditional, function, union, or intersection
         let check_str = self.print_type(cond.check_type);
-        let check_needs_parens =
-            visitor::conditional_type_id(self.interner, cond.check_type).is_some()
-                || visitor::function_shape_id(self.interner, cond.check_type).is_some()
-                || visitor::union_list_id(self.interner, cond.check_type).is_some()
-                || visitor::intersection_list_id(self.interner, cond.check_type).is_some();
+        let check_needs_parens = visitor::conditional_type_id(self.interner, cond.check_type)
+            .is_some()
+            || visitor::function_shape_id(self.interner, cond.check_type).is_some()
+            || visitor::union_list_id(self.interner, cond.check_type).is_some()
+            || visitor::intersection_list_id(self.interner, cond.check_type).is_some();
 
         // Extends type needs parens when it's a conditional type
         let extends_str = self.print_type(cond.extends_type);

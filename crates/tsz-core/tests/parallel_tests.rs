@@ -3714,7 +3714,8 @@ fn test_merge_deterministic_symbol_order() {
             }
         }
 
-        let mut globals_names: Vec<String> = merged.globals.iter().map(|(n, _)| n.clone()).collect();
+        let mut globals_names: Vec<String> =
+            merged.globals.iter().map(|(n, _)| n.clone()).collect();
         globals_names.sort();
 
         if let Some(ref prev) = prev_symbol_names {
@@ -3781,10 +3782,7 @@ fn test_merge_deterministic_global_namespace() {
             .get("Deep")
             .expect("Deep namespace must be in globals");
 
-        let deep_sym = merged
-            .symbols
-            .get(deep_id)
-            .expect("Deep symbol must exist");
+        let deep_sym = merged.symbols.get(deep_id).expect("Deep symbol must exist");
 
         let deep_exports: Vec<String> = deep_sym
             .exports

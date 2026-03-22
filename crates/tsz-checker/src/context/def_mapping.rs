@@ -265,21 +265,11 @@ impl<'a> CheckerContext<'a> {
     /// If the definition is a class (or already has a class-instance entry),
     /// updates the class-instance type. Otherwise, preserves existing type
     /// parameters (if any) when re-inserting the definition body.
-    pub fn register_augmented_def_in_envs(
-        &self,
-        def_id: DefId,
-        augmented: TypeId,
-        is_class: bool,
-    ) {
+    pub fn register_augmented_def_in_envs(&self, def_id: DefId, augmented: TypeId, is_class: bool) {
         use tsz_solver::TypeEnvironment;
 
         // Helper that applies the augmentation logic to a single env.
-        fn apply(
-            env: &mut TypeEnvironment,
-            def_id: DefId,
-            augmented: TypeId,
-            is_class: bool,
-        ) {
+        fn apply(env: &mut TypeEnvironment, def_id: DefId, augmented: TypeId, is_class: bool) {
             if is_class || env.get_class_instance_type(def_id).is_some() {
                 env.insert_class_instance_type(def_id, augmented);
             } else {

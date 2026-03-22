@@ -9,11 +9,11 @@ pub(crate) mod imports;
 pub(crate) mod module_specifiers;
 pub(crate) mod operations;
 
+#[cfg(test)]
+pub(crate) use self::core::FileIdAllocator;
 pub(crate) use self::core::{
     ExportMatch, ImportKind, ImportSpecifierTarget, ImportTarget, NamespaceReexportTarget,
 };
-#[cfg(test)]
-pub(crate) use self::core::FileIdAllocator;
 pub use self::core::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
     TsConfigSettings,

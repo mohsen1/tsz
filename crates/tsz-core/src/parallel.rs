@@ -2883,10 +2883,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // ensures declaration_arenas entries and nested merge pairs are always
         // collected in the same order across runs, producing identical merged
         // output for identical inputs.
-        let mut sorted_remap: Vec<(SymbolId, SymbolId)> = id_remap
-            .iter()
-            .map(|(&old, &new)| (old, new))
-            .collect();
+        let mut sorted_remap: Vec<(SymbolId, SymbolId)> =
+            id_remap.iter().map(|(&old, &new)| (old, new)).collect();
         sorted_remap.sort_unstable_by_key(|(old, _)| old.0);
 
         for &(old_id, new_id) in &sorted_remap {
