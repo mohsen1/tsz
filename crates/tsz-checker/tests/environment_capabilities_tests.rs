@@ -1,6 +1,6 @@
 //! Environment capabilities boundary regression tests.
 //!
-//! These tests verify that the EnvironmentCapabilities model correctly
+//! These tests verify that the `EnvironmentCapabilities` model correctly
 //! routes diagnostics for:
 //! - TS2318: Missing global types (lib availability)
 //! - TS2591: Node.js globals (known-global classification)

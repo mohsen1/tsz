@@ -1,4 +1,4 @@
-//! Regression tests for the ClassMemberClosure / OwnMemberSummary boundary.
+//! Regression tests for the `ClassMemberClosure` / `OwnMemberSummary` boundary.
 //!
 //! These tests verify that class/member summary extraction and routing
 //! through the boundary correctly handles:

@@ -1,6 +1,6 @@
+use std::hash::{Hash, Hasher};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use web_time::Duration;
 
@@ -1577,29 +1577,13 @@ impl Project {
     /// the re-parse and re-bind are skipped entirely. This avoids redundant work
     /// when the LSP receives `didOpen` for an already-loaded file, or `didSave`
     /// without content changes.
-    ///
-    /// Uses export signature comparison to avoid unnecessary cache invalidation:
-    /// if the file's public API (exports, re-exports, augmentations) didn't change,
-    /// dependent files keep their cached diagnostics.
-    ///
-    /// Returns an `InvalidationSummary` describing what changed and how many
-    /// dependents were invalidated. Returns `None` only when the file is new
-    /// (no previous version existed) — in that case, there are no dependents
-    /// to invalidate yet.
-    pub fn set_file(&mut self, file_name: String, source_text: String) -> InvalidationSummary {
+    pub fn set_file(&mut self, file_name: String, source_text: String) {
         // Fast path: skip re-parse if file exists with identical content.
         let new_hash = hash_source_content(&source_text);
-        if let Some(existing) = self.files.get(&file_name) {
-            if existing.content_hash == new_hash {
-                return InvalidationSummary::unchanged(
-                    file_name,
-                    existing.export_signature.0,
-                );
+        if let Some(existing) = self.files.get(&file_name)
+            && existing.content_hash == new_hash {
+                return;
             }
-        }
-
-        // Capture old export signature before replacing the file.
-        let old_signature = self.files.get(&file_name).map(|f| f.export_signature);
 
         let file = ProjectFile::with_shared_interner_and_def_store(
             file_name.clone(),
@@ -1608,8 +1592,6 @@ impl Project {
             Arc::clone(&self.type_interner),
             Arc::clone(&self.definition_store),
         );
-
-        let new_signature = file.export_signature;
 
         // Update symbol index with the new file's binder data and AST identifiers
         // We need to get the arena before moving the file into self.files
@@ -1620,30 +1602,6 @@ impl Project {
         self.files.insert(file_name.clone(), file);
         // Update dependency graph with imports from this file
         self.update_dependencies(&file_name);
-
-        // Smart cache invalidation: only invalidate dependents if the public API changed.
-        match old_signature {
-            Some(old_sig) if old_sig == new_signature => {
-                InvalidationSummary::unchanged(file_name, new_signature.0)
-            }
-            Some(old_sig) => {
-                let affected_files = self.dependency_graph.get_affected_files(&file_name);
-                let mut invalidated_count = 0;
-                for affected_file in affected_files {
-                    if let Some(dep_file) = self.files.get_mut(&affected_file) {
-                        dep_file.invalidate_caches();
-                        invalidated_count += 1;
-                    }
-                }
-                InvalidationSummary::changed(
-                    file_name,
-                    Some(old_sig.0),
-                    new_signature.0,
-                    invalidated_count,
-                )
-            }
-            None => InvalidationSummary::new_file(file_name, new_signature.0),
-        }
     }
 
     /// Update an existing file by applying incremental text edits.
@@ -1741,44 +1699,51 @@ impl Project {
         self.files.remove(file_name)
     }
 
-    /// Extract import paths from a file's binder data and AST.
+    /// Extract import paths from a file's AST.
     ///
-    /// Uses the binder's `file_import_sources` for static import/export-from
-    /// specifiers (collected during binding with zero extra AST traversal),
-    /// then supplements with dynamic `import()` / `require()` specifiers
-    /// found by walking the AST (only `CallExpression` nodes).
+    /// Walks the top-level statements to find `ImportDeclaration`,
+    /// `ExportDeclaration`, and dynamic imports (`import()`, `require()`) nodes
+    /// and extracts their module specifier strings for the `DependencyGraph`.
     fn extract_imports(&self, file_name: &str) -> Vec<String> {
+        let mut imports = Vec::new();
+
         let file = match self.files.get(file_name) {
             Some(f) => f,
-            None => return Vec::new(),
+            None => return imports,
         };
 
-        // Start with static import sources already collected by the binder.
-        // This covers: import ... from "x", export ... from "x", export * from "x",
-        // import X = require("x"), and side-effect imports.
-        let mut imports = file.binder.file_import_sources.clone();
-
-        // Supplement with dynamic import() / require() call expressions.
-        // These aren't captured by the binder because they're arbitrary
-        // call expressions that could appear anywhere in the AST.
         let arena = file.arena();
         let source_text = file.source_text();
 
+        // Walk all nodes to find ImportDeclaration, ExportDeclaration, and CallExpression
+        // In the flat NodeArena, we iterate over all nodes
         for (i, node) in arena.nodes.iter().enumerate() {
-            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-                continue;
-            }
             let node_idx = NodeIndex(i as u32);
 
-            if let Some(specifier_idx) = self.try_extract_dynamic_import(node_idx, arena) {
+            // Get the module specifier node for imports, exports, and dynamic imports
+            let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                arena.get_import_decl(node).map(|d| d.module_specifier)
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                // Handle: export ... from "module" (re-exports)
+                arena.get_export_decl(node).map(|d| d.module_specifier)
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                // Check for dynamic imports: import("./module") or require("./module")
+                self.try_extract_dynamic_import(node_idx, arena)
+            } else {
+                None
+            };
+
+            if let Some(specifier_idx) = specifier_idx {
                 if specifier_idx.is_none() {
                     continue;
                 }
 
-                let Some(specifier_node) = arena.get(specifier_idx) else {
-                    continue;
+                let specifier_node = match arena.get(specifier_idx) {
+                    Some(n) => n,
+                    None => continue,
                 };
 
+                // Extract the string text
                 let start = specifier_node.pos as usize;
                 let end = specifier_node.end as usize;
 

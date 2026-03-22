@@ -94,8 +94,7 @@ var n = config.name;
     // Should not produce TS2339 (property does not exist)
     assert!(
         !codes.contains(&2339),
-        "Expected no TS2339 for typedef property access, got: {:?}",
-        codes
+        "Expected no TS2339 for typedef property access, got: {codes:?}"
     );
 }
 
@@ -117,8 +116,7 @@ var pred = function(value) { return value > 0; };
     // Should not produce TS2322 (type not assignable)
     assert!(
         !codes.contains(&2322),
-        "Expected no TS2322 for callback typedef, got: {:?}",
-        codes
+        "Expected no TS2322 for callback typedef, got: {codes:?}"
     );
 }
 
@@ -139,8 +137,7 @@ var c = { value: "hello" };
     );
     assert!(
         !codes.contains(&2339),
-        "Expected no TS2339 for generic typedef, got: {:?}",
-        codes
+        "Expected no TS2339 for generic typedef, got: {codes:?}"
     );
 }
 
@@ -161,8 +158,7 @@ fn template_after_typedef_no_ts8039() {
     );
     assert!(
         !codes.contains(&8039),
-        "tsc 6.0 allows @template after @typedef, should not emit TS8039, got: {:?}",
-        codes
+        "tsc 6.0 allows @template after @typedef, should not emit TS8039, got: {codes:?}"
     );
 }
 
@@ -180,8 +176,7 @@ fn template_after_callback_no_ts8039() {
     );
     assert!(
         !codes.contains(&8039),
-        "tsc 6.0 allows @template after @callback, should not emit TS8039, got: {:?}",
-        codes
+        "tsc 6.0 allows @template after @callback, should not emit TS8039, got: {codes:?}"
     );
 }
 
@@ -199,8 +194,7 @@ fn template_before_typedef_no_ts8039() {
     );
     assert!(
         !codes.contains(&8039),
-        "Expected no TS8039 when @template is before @typedef, got: {:?}",
-        codes
+        "Expected no TS8039 when @template is before @typedef, got: {codes:?}"
     );
 }
 
@@ -219,8 +213,7 @@ fn template_before_callback_no_ts8039() {
     );
     assert!(
         !codes.contains(&8039),
-        "Expected no TS8039 when @template is before @callback, got: {:?}",
-        codes
+        "Expected no TS8039 when @template is before @callback, got: {codes:?}"
     );
 }
 
@@ -238,8 +231,7 @@ fn bare_typedef_emits_ts8021() {
     );
     assert!(
         codes.contains(&8021),
-        "Expected TS8021 for bare @typedef, got: {:?}",
-        codes
+        "Expected TS8021 for bare @typedef, got: {codes:?}"
     );
 }
 
@@ -253,8 +245,7 @@ fn typedef_with_type_no_ts8021() {
     );
     assert!(
         !codes.contains(&8021),
-        "Expected no TS8021 for @typedef with type, got: {:?}",
-        codes
+        "Expected no TS8021 for @typedef with type, got: {codes:?}"
     );
 }
 
@@ -262,7 +253,7 @@ fn typedef_with_type_no_ts8021() {
 // Kernel: no duplicate resolution (architectural regression test)
 // =============================================================================
 
-/// Ensure that resolve_jsdoc_reference handles import-style type references
+/// Ensure that `resolve_jsdoc_reference` handles import-style type references
 /// without needing a separate fallback chain.
 #[test]
 fn import_type_expression_resolved_through_kernel() {
@@ -277,13 +268,12 @@ var x;
     // import expression wasn't parsed at all.
     assert!(
         !codes.contains(&2339),
-        "Expected no TS2339 for import type expression, got: {:?}",
-        codes
+        "Expected no TS2339 for import type expression, got: {codes:?}"
     );
 }
 
 /// @type with a typedef name should resolve through the unified kernel
-/// without needing separate typedef/import/file_locals fallback.
+/// without needing separate `typedef/import/file_locals` fallback.
 #[test]
 fn type_tag_with_typedef_name_resolved_through_kernel() {
     let codes = check_js(
@@ -302,8 +292,7 @@ var py = p.y;
     );
     assert!(
         !codes.contains(&2339),
-        "Expected no TS2339 for typedef property access, got: {:?}",
-        codes
+        "Expected no TS2339 for typedef property access, got: {codes:?}"
     );
 }
 
@@ -347,8 +336,7 @@ var opts = { nested: { name: "test", value: 42 } };
     );
     assert!(
         !codes.contains(&2339),
-        "Expected no TS2339 for nested property access, got: {:?}",
-        codes
+        "Expected no TS2339 for nested property access, got: {codes:?}"
     );
 }
 
@@ -375,7 +363,6 @@ var c = { name: "test" };
     // so assigning without 'age' should be fine.
     assert!(
         !codes.contains(&2741),
-        "Expected no TS2741 for optional property, got: {:?}",
-        codes
+        "Expected no TS2741 for optional property, got: {codes:?}"
     );
 }

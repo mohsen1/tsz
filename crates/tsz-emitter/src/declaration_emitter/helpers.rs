@@ -3348,11 +3348,10 @@ impl<'a> DeclarationEmitter<'a> {
         // The binder may map these nodes to the resolved target symbol.
         let rightmost_idx = self.get_rightmost_name(module_spec_idx);
         for &idx in &[module_spec_idx, rightmost_idx] {
-            if let Some(&sym_id) = binder.node_symbols.get(&idx.0) {
-                if let Some(symbol) = binder.symbols.get(sym_id) {
+            if let Some(&sym_id) = binder.node_symbols.get(&idx.0)
+                && let Some(symbol) = binder.symbols.get(sym_id) {
                     return !self.symbol_is_value_only(symbol);
                 }
-            }
         }
 
         // Fall back to name-based lookup on the rightmost identifier.
@@ -3368,21 +3367,17 @@ impl<'a> DeclarationEmitter<'a> {
         // The import's own ALIAS symbol shares the same name, so skip it
         // to find the actual target entity.
         for scope in &binder.scopes {
-            if let Some(sym_id) = scope.table.get(name) {
-                if let Some(symbol) = binder.symbols.get(sym_id) {
-                    if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            if let Some(sym_id) = scope.table.get(name)
+                && let Some(symbol) = binder.symbols.get(sym_id)
+                    && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
                         return !self.symbol_is_value_only(symbol);
                     }
-                }
-            }
         }
-        if let Some(sym_id) = binder.file_locals.get(name) {
-            if let Some(symbol) = binder.symbols.get(sym_id) {
-                if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+        if let Some(sym_id) = binder.file_locals.get(name)
+            && let Some(symbol) = binder.symbols.get(sym_id)
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
                     return !self.symbol_is_value_only(symbol);
                 }
-            }
-        }
 
         // All symbols found were aliases — can't determine target.
         // Preserve conservatively.
@@ -3405,7 +3400,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Check if a symbol is value-only (plain variable, no type/namespace/class flags).
     /// Value-only entities resolve to primitive types in .d.ts and don't need aliases.
-    fn symbol_is_value_only(&self, symbol: &tsz_binder::Symbol) -> bool {
+    const fn symbol_is_value_only(&self, symbol: &tsz_binder::Symbol) -> bool {
         const VALUE_ONLY_FLAGS: u32 = tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
             | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
             | tsz_binder::symbol_flags::PROPERTY;

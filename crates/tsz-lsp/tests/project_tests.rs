@@ -3646,7 +3646,10 @@ fn test_project_remove_file_cleans_dependency_graph() {
 #[test]
 fn test_project_remove_file_invalidates_dependent_caches() {
     let mut project = Project::new();
-    project.set_file("a.ts".to_string(), "export const x: number = 1;\n".to_string());
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: number = 1;\n".to_string(),
+    );
     project.set_file(
         "b.ts".to_string(),
         "import { x } from \"./a\";\nconst y: number = x;\n".to_string(),
@@ -4597,13 +4600,19 @@ fn test_set_file_skips_reparse_on_identical_content() {
     let hash_1 = project.files["test.ts"].content_hash();
 
     // Second set with identical content: should be a no-op
-    project.set_file("test.ts".to_string(), source.clone());
+    project.set_file("test.ts".to_string(), source);
     let hash_2 = project.files["test.ts"].content_hash();
 
-    assert_eq!(hash_1, hash_2, "Content hash should be stable for identical source");
+    assert_eq!(
+        hash_1, hash_2,
+        "Content hash should be stable for identical source"
+    );
 
     // Verify the file still works correctly after the skip
-    assert_eq!(project.files["test.ts"].source_text(), "export const x = 1;");
+    assert_eq!(
+        project.files["test.ts"].source_text(),
+        "export const x = 1;"
+    );
 }
 
 #[test]
@@ -4617,8 +4626,14 @@ fn test_set_file_reparses_on_changed_content() {
     project.set_file("test.ts".to_string(), "export const x = 2;".to_string());
     let hash_2 = project.files["test.ts"].content_hash();
 
-    assert_ne!(hash_1, hash_2, "Content hash should differ for different source");
-    assert_eq!(project.files["test.ts"].source_text(), "export const x = 2;");
+    assert_ne!(
+        hash_1, hash_2,
+        "Content hash should differ for different source"
+    );
+    assert_eq!(
+        project.files["test.ts"].source_text(),
+        "export const x = 2;"
+    );
 }
 
 #[test]
@@ -4646,7 +4661,10 @@ fn test_content_hash_updated_by_update_source() {
     file.update_source("let x = 2;".to_string());
     let hash_after = file.content_hash();
 
-    assert_ne!(hash_before, hash_after, "Content hash should change after update_source");
+    assert_ne!(
+        hash_before, hash_after,
+        "Content hash should change after update_source"
+    );
 }
 
 #[test]

@@ -4869,7 +4869,7 @@ mod tests {
 
         let fake_target = dir.join("src/virtual.d.ts");
         std::fs::write(&fake_target, "export {};").unwrap();
-        let fake_target_clone = fake_target.clone();
+        let fake_target_clone = fake_target;
 
         let request = ModuleLookupRequest {
             specifier: "virtual-mod",
@@ -4916,7 +4916,7 @@ mod tests {
         let mut resolver = ModuleResolver::new(&options);
 
         let fake_target = dir.join("src/utils.ts");
-        let fake_target_clone = fake_target.clone();
+        let fake_target_clone = fake_target;
 
         let request = ModuleLookupRequest {
             specifier: "./utils",

@@ -2,7 +2,7 @@
 //!
 //! These verify that migrated reporters produce consistent anchor positions,
 //! related-information content, and diagnostic codes after the centralization
-//! from open-coded anchor/related-info decisions to DiagnosticRenderRequest.
+//! from open-coded anchor/related-info decisions to `DiagnosticRenderRequest`.
 
 use crate::test_utils::check_source_diagnostics;
 

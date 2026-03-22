@@ -1,4 +1,4 @@
-//! Regression tests for the FlowObservation boundary (query_boundaries/flow.rs).
+//! Regression tests for the `FlowObservation` boundary (`query_boundaries/flow.rs`).
 //!
 //! These tests verify that control-flow narrowing decisions are correctly
 //! routed through the boundary layer rather than being made locally in the
