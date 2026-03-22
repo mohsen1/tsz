@@ -763,113 +763,14 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Called once during checker construction after all `pre_populate_*` methods.
     /// Returns the number of heritage links resolved.
+    ///
+    /// NOTE: Currently a no-op stub. Full implementation requires
+    /// `SemanticDefEntry.extends_names`/`implements_names` fields and
+    /// `DefinitionStore::set_heritage`, which are not yet landed.
     pub fn resolve_cross_batch_heritage(&self) -> usize {
-        let mut resolved = 0;
-
-        // Iterate all semantic_defs from the primary binder (in multi-file mode,
-        // this contains ALL semantic_defs from all files via MergedProgram).
-        for (&sym_id, entry) in &self.binder.semantic_defs {
-            // Skip entries with no heritage to resolve.
-            if entry.extends_names.is_empty() && entry.implements_names.is_empty() {
-                continue;
-            }
-
-            // Find this entry's DefId.
-            let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() else {
-                continue;
-            };
-
-            // Check if heritage is already resolved.
-            let already_resolved = self
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| info.extends.is_some() || !info.implements.is_empty());
-            if already_resolved {
-                continue;
-            }
-
-            // Try to resolve heritage names using the DefinitionStore's name index.
-            let mut extends = None;
-            let mut implements = Vec::new();
-
-            for extends_name in &entry.extends_names {
-                if extends.is_some() {
-                    break;
-                }
-                let name_atom = self.types.intern_string(extends_name);
-                if let Some(target_def) = self.definition_store.find_def_by_name(name_atom) {
-                    extends = Some(target_def);
-                }
-            }
-
-            for impl_name in &entry.implements_names {
-                let name_atom = self.types.intern_string(impl_name);
-                if let Some(target_def) = self.definition_store.find_def_by_name(name_atom) {
-                    implements.push(target_def);
-                }
-            }
-
-            if extends.is_some() || !implements.is_empty() {
-                self.definition_store
-                    .set_heritage(def_id, extends, implements);
-                resolved += 1;
-            }
-        }
-
-        // Also check lib binders for any unresolved heritage.
-        for lib_ctx in &self.lib_contexts {
-            for (&sym_id, entry) in &lib_ctx.binder.semantic_defs {
-                if entry.extends_names.is_empty() && entry.implements_names.is_empty() {
-                    continue;
-                }
-
-                let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() else {
-                    continue;
-                };
-
-                let already_resolved = self
-                    .definition_store
-                    .get(def_id)
-                    .is_some_and(|info| info.extends.is_some() || !info.implements.is_empty());
-                if already_resolved {
-                    continue;
-                }
-
-                let mut extends = None;
-                let mut implements = Vec::new();
-
-                for extends_name in &entry.extends_names {
-                    if extends.is_some() {
-                        break;
-                    }
-                    let name_atom = self.types.intern_string(extends_name);
-                    if let Some(target_def) = self.definition_store.find_def_by_name(name_atom) {
-                        extends = Some(target_def);
-                    }
-                }
-
-                for impl_name in &entry.implements_names {
-                    let name_atom = self.types.intern_string(impl_name);
-                    if let Some(target_def) = self.definition_store.find_def_by_name(name_atom) {
-                        implements.push(target_def);
-                    }
-                }
-
-                if extends.is_some() || !implements.is_empty() {
-                    self.definition_store
-                        .set_heritage(def_id, extends, implements);
-                    resolved += 1;
-                }
-            }
-        }
-
-        if resolved > 0 {
-            trace!(
-                resolved_count = resolved,
-                "resolve_cross_batch_heritage: resolved cross-batch heritage links"
-            );
-        }
-
-        resolved
+        // Heritage resolution via SemanticDefEntry is not yet available.
+        // The checker walk resolves heritage through the normal type-checking
+        // pipeline (merge_interface_heritage_types, merge_lib_interface_heritage).
+        0
     }
 }
