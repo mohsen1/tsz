@@ -155,6 +155,11 @@ pub struct DeclarationEmitter<'a> {
     /// enforces portability via the exports map (TS2307).
     pub(super) skip_portability_check: bool,
     pub(super) strict_null_checks: bool,
+    /// Accumulated enum values from all previously-evaluated enums in this file.
+    /// Persists across enum declarations so cross-enum references (e.g., `B.Y = A.X`)
+    /// can be resolved.
+    pub(super) all_enum_values:
+        FxHashMap<String, FxHashMap<String, crate::enums::evaluator::EnumValue>>,
 }
 
 pub(super) struct SourceMapState {
@@ -244,6 +249,7 @@ impl<'a> DeclarationEmitter<'a> {
             diagnostics: Vec::new(),
             skip_portability_check: false,
             strict_null_checks: false,
+            all_enum_values: FxHashMap::default(),
         }
     }
 
@@ -315,6 +321,7 @@ impl<'a> DeclarationEmitter<'a> {
             diagnostics: Vec::new(),
             skip_portability_check: false,
             strict_null_checks: false,
+            all_enum_values: FxHashMap::default(),
         }
     }
 
@@ -2422,9 +2429,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Evaluate enum member values to get correct auto-increment behavior
-        let mut evaluator = EnumEvaluator::new(self.arena);
+        // Evaluate enum member values to get correct auto-increment behavior.
+        // Seed the evaluator with accumulated values from prior enums so that
+        // cross-enum references (e.g., `enum B { Y = A.X }`) can be resolved.
+        let prior = std::mem::take(&mut self.all_enum_values);
+        let mut evaluator = EnumEvaluator::with_prior_values(self.arena, prior);
         let member_values = evaluator.evaluate_enum(enum_idx);
+        self.all_enum_values = evaluator.take_all_enum_values();
 
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             if let Some(mn) = self.arena.get(member_idx) {

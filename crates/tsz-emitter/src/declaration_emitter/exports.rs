@@ -1041,9 +1041,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Evaluate enum member values to get correct auto-increment behavior
-        let mut evaluator = EnumEvaluator::new(self.arena);
+        // Evaluate enum member values to get correct auto-increment behavior.
+        // Seed with accumulated values for cross-enum reference resolution.
+        let prior = std::mem::take(&mut self.all_enum_values);
+        let mut evaluator = EnumEvaluator::with_prior_values(self.arena, prior);
         let member_values = evaluator.evaluate_enum(enum_idx);
+        self.all_enum_values = evaluator.take_all_enum_values();
 
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             self.write_indent();
