@@ -6,7 +6,6 @@
 
 use super::core::MergedProgram;
 
-use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 /// High-level residency counters for `MergedProgram` state.
@@ -43,25 +42,42 @@ pub struct MergedProgramResidencyStats {
     pub pre_merge_bind_total_bytes: usize,
     /// Total estimated in-memory size of all `BoundFile` entries in bytes.
     pub total_bound_file_bytes: usize,
+    /// Total estimated size of unique `NodeArena` allocations in bytes.
+    /// Computed by calling `estimated_size_bytes()` on each deduplicated arena.
+    pub unique_arena_estimated_bytes: usize,
 }
 
 impl MergedProgram {
     /// Return residency-oriented counters for the current merged program.
     #[must_use]
     pub fn residency_stats(&self) -> MergedProgramResidencyStats {
-        let mut unique_arenas: FxHashSet<usize> = FxHashSet::default();
+        use rustc_hash::FxHashMap;
+        use tsz_parser::parser::NodeArena;
+
+        // Collect unique arenas by pointer identity, keeping a reference to
+        // each for size estimation.
+        let mut unique_arena_map: FxHashMap<usize, &Arc<NodeArena>> = FxHashMap::default();
 
         for file in &self.files {
-            unique_arenas.insert(Arc::as_ptr(&file.arena) as usize);
+            let ptr = Arc::as_ptr(&file.arena) as usize;
+            unique_arena_map.entry(ptr).or_insert(&file.arena);
         }
         for arena in self.symbol_arenas.values() {
-            unique_arenas.insert(Arc::as_ptr(arena) as usize);
+            let ptr = Arc::as_ptr(arena) as usize;
+            unique_arena_map.entry(ptr).or_insert(arena);
         }
         for arenas in self.declaration_arenas.values() {
             for arena in arenas {
-                unique_arenas.insert(Arc::as_ptr(arena) as usize);
+                let ptr = Arc::as_ptr(arena) as usize;
+                unique_arena_map.entry(ptr).or_insert(arena);
             }
         }
+
+        let unique_arena_count = unique_arena_map.len();
+        let unique_arena_estimated_bytes: usize = unique_arena_map
+            .values()
+            .map(|a| a.estimated_size_bytes())
+            .sum();
 
         let (has_skeleton, skel_merge_count, skel_sym_count, skel_size) =
             if let Some(ref idx) = self.skeleton_index {
@@ -81,7 +97,7 @@ impl MergedProgram {
         MergedProgramResidencyStats {
             file_count: self.files.len(),
             bound_file_arena_count: self.files.len(),
-            unique_arena_count: unique_arenas.len(),
+            unique_arena_count,
             symbol_arena_count: self.symbol_arenas.len(),
             declaration_arena_bucket_count: self.declaration_arenas.len(),
             declaration_arena_mapping_count: self
@@ -95,6 +111,7 @@ impl MergedProgram {
             skeleton_estimated_size_bytes: skel_size,
             pre_merge_bind_total_bytes: self.pre_merge_bind_total_bytes,
             total_bound_file_bytes,
+            unique_arena_estimated_bytes,
         }
     }
 }
@@ -195,6 +212,7 @@ mod tests {
             skeleton_estimated_size_bytes: 0,
             pre_merge_bind_total_bytes: 300,
             total_bound_file_bytes: 200,
+            unique_arena_estimated_bytes: 0,
         };
         assert_eq!(budget.assess(&stats), MemoryPressure::Low);
     }
@@ -218,6 +236,7 @@ mod tests {
             skeleton_estimated_size_bytes: 50,
             pre_merge_bind_total_bytes: 1500,
             total_bound_file_bytes: 1000,
+            unique_arena_estimated_bytes: 0,
         };
         assert_eq!(budget.assess(&stats), MemoryPressure::High);
     }
@@ -237,6 +256,7 @@ mod tests {
             skeleton_estimated_size_bytes: 1000,
             pre_merge_bind_total_bytes: 50_000,
             total_bound_file_bytes: 20_000,
+            unique_arena_estimated_bytes: 0,
         };
         // Savings = pre_merge - skeleton = 50000 - 1000 = 49000
         assert_eq!(ResidencyBudget::eviction_savings(&stats), 49_000);
@@ -257,6 +277,7 @@ mod tests {
             skeleton_estimated_size_bytes: 0,
             pre_merge_bind_total_bytes: 50_000,
             total_bound_file_bytes: 20_000,
+            unique_arena_estimated_bytes: 0,
         };
         assert_eq!(ResidencyBudget::eviction_savings(&stats), 0);
     }
