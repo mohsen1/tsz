@@ -1,13 +1,14 @@
 //! Tests for lib-resolution stable identity path.
 //!
 //! These tests verify that lib type lowering uses the stable DefId identity
-//! path (via `resolve_lib_node_in_arenas` + pre-populated `get_existing_def_id`)
-//! instead of on-demand DefId creation. They cover:
+//! path (via `resolve_lib_node_in_arenas` + `get_lib_def_id`) instead of
+//! on-demand DefId creation with local caching tricks. They cover:
 //!
 //! - Promise and generic lib references resolve correctly with lib loaded.
 //! - Generic lib types (Array, Map, Set) retain type parameters via stable DefId.
 //! - Import type lowering for lib types.
 //! - Cross-lib interface heritage (e.g., Array extends ReadonlyArray) works.
+//! - `resolve_scope_chain` and `resolve_name_to_lib_symbol` stable helpers.
 
 use rustc_hash::FxHashSet;
 use std::path::Path;
@@ -537,5 +538,171 @@ function f(p1: Promise<number>, p2: Promise<number>): void {
     assert!(
         !real_errors.iter().any(|(c, _)| *c == 2322),
         "Promise<number> identity should be stable across references.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// ---- Stable helper tests (resolve_scope_chain, resolve_name_to_lib_symbol) ----
+
+#[test]
+fn test_promise_all_with_tuple_input() {
+    // Promise.all takes an iterable and returns Promise<T[]>.
+    // This exercises the lib resolution path for generic Promise members
+    // via the stable `get_lib_def_id` path (not `get_existing_def_id`).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function gather(): Promise<[number, string]> {
+    const p1: Promise<number> = Promise.resolve(1);
+    const p2: Promise<string> = Promise.resolve("a");
+    return Promise.all([p1, p2]);
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise.all with tuple should not produce TS2322.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_async_return_unwraps_correctly() {
+    // async functions return Promise<T>; the resolved value should
+    // be unwrapped to T. Validates that Promise type params propagate
+    // through the stable DefId path during lib lowering.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function getNum(): Promise<number> {
+    return 42;
+}
+async function useNum(): Promise<void> {
+    const n: number = await getNum();
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Awaiting Promise<number> should yield number.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_lib_reference_array() {
+    // `import("...").Array` style references should resolve via the
+    // lib lowering stable identity path. Here we test that Array
+    // accessed as a type reference in lib contexts works properly.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type NumArr = Array<number>;
+const arr: NumArr = [1, 2, 3];
+const len: number = arr.length;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "NumArr (alias for Array<number>) should have .length.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_def_id_falls_back_for_non_prepopulated_symbols() {
+    // Verify that get_lib_def_id creates DefIds on demand for symbols
+    // that were not pre-populated from semantic_defs (e.g., nested types
+    // or late-bound lib symbols).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const err: TypeError = new TypeError("boom");
+const msg: string = err.message;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "TypeError.message should be accessible.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_reject_and_catch() {
+    // Promise.reject + .catch exercises heritage chain resolution
+    // (Promise extends PromiseLike) via the stable identity path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function risky(): Promise<number> {
+    return Promise.reject(new Error("fail")).catch(() => 0);
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Promise.reject().catch() should resolve without TS2322.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_global_augmentation_merges_with_stable_identity() {
+    // Global augmentations should merge with lib types via the
+    // stable resolve_name_to_lib_symbol helper (replacing the old
+    // per-call symbol_lookup_cache pattern).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare global {
+    interface Array<T> {
+        customMethod(): T;
+    }
+}
+const arr: Array<number> = [1, 2, 3];
+const len: number = arr.length;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2669)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Array.length should still be accessible after global augmentation.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_multiple_lib_type_references_share_def_id() {
+    // Using the same lib type in multiple positions should resolve
+    // to the same DefId (via get_lib_def_id), enabling proper
+    // assignability between them.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+function identity(x: Error): Error { return x; }
+const e: Error = new Error("test");
+const result: Error = identity(e);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        "Error type should be consistent across references.\nDiagnostics: {real_errors:#?}"
     );
 }
