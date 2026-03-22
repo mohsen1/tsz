@@ -387,6 +387,21 @@ pub struct BinderState {
     /// Populated by `merge_bind_results` in parallel.rs.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 
+    /// Module specifier strings from static import/export declarations.
+    ///
+    /// Collected during binding so consumers (LSP, CLI) can query a file's
+    /// import sources without re-walking the AST. Contains the raw specifier
+    /// text (e.g. `"./utils"`, `"react"`) from:
+    /// - `import ... from "specifier"`
+    /// - `import "specifier"` (side-effect import)
+    /// - `export ... from "specifier"`
+    /// - `export * from "specifier"`
+    /// - `import X = require("specifier")`
+    ///
+    /// Does NOT include dynamic `import()` or `require()` call expressions,
+    /// which require AST-level analysis.
+    pub file_import_sources: Vec<String>,
+
     // ===== DefId-First Stable Identity (Phase 1) =====
     /// Binder-owned semantic definition index for top-level declarations.
     ///

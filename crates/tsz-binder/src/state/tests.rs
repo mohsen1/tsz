@@ -3727,3 +3727,120 @@ type Required<T> = { [P in keyof T]-?: T[P] };
         );
     }
 }
+
+// =============================================================================
+// file_import_sources tests
+// =============================================================================
+
+#[test]
+fn file_import_sources_static_imports() {
+    let source = r#"
+import { foo } from "./utils";
+import bar from "react";
+import "./side-effect";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.file_import_sources.contains(&"./utils".to_string()),
+        "expected './utils' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+    assert!(
+        binder.file_import_sources.contains(&"react".to_string()),
+        "expected 'react' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+    assert!(
+        binder.file_import_sources.contains(&"./side-effect".to_string()),
+        "expected './side-effect' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+}
+
+#[test]
+fn file_import_sources_export_from() {
+    let source = r#"
+export { x } from "./module-a";
+export * from "./module-b";
+export type { T } from "./types";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.file_import_sources.contains(&"./module-a".to_string()),
+        "expected './module-a' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+    assert!(
+        binder.file_import_sources.contains(&"./module-b".to_string()),
+        "expected './module-b' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+    assert!(
+        binder.file_import_sources.contains(&"./types".to_string()),
+        "expected './types' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+}
+
+#[test]
+fn file_import_sources_import_equals_require() {
+    let source = r#"
+import ts = require("typescript");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.file_import_sources.contains(&"typescript".to_string()),
+        "expected 'typescript' in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+}
+
+#[test]
+fn file_import_sources_reset_clears() {
+    let source = r#"import { a } from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(!binder.file_import_sources.is_empty());
+
+    binder.reset();
+    assert!(binder.file_import_sources.is_empty(), "reset should clear file_import_sources");
+}
+
+#[test]
+fn file_import_sources_no_dynamic_imports() {
+    // Dynamic imports (import() calls) should NOT appear in file_import_sources
+    let source = r#"
+const m = import("./dynamic");
+const r = require("./required");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.file_import_sources.is_empty(),
+        "dynamic imports should not be in file_import_sources, got: {:?}",
+        binder.file_import_sources
+    );
+}

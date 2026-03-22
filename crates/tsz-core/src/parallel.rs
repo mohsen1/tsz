@@ -242,6 +242,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
         semantic_defs: binder.semantic_defs,
+        file_import_sources: binder.file_import_sources,
     }
 }
 
@@ -454,6 +455,8 @@ pub struct BindResult {
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps pre-remap `SymbolId` → `SemanticDefEntry`.
     pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    /// Static import/export-from module specifiers collected during binding.
+    pub file_import_sources: Vec<String>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -524,6 +527,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 alias_partners: binder.alias_partners,
                 file_features: binder.file_features,
                 semantic_defs: binder.semantic_defs,
+                file_import_sources: binder.file_import_sources,
             }
         })
         .collect()
@@ -578,6 +582,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
         semantic_defs: binder.semantic_defs,
+        file_import_sources: binder.file_import_sources,
     }
 }
 
@@ -1043,6 +1048,7 @@ fn bind_file_with_libs(
         alias_partners: binder.alias_partners,
         file_features: binder.file_features,
         semantic_defs: binder.semantic_defs,
+        file_import_sources: binder.file_import_sources,
     }
 }
 
@@ -1154,6 +1160,9 @@ pub struct FileSkeleton {
     /// Expando property assignments: maps identifier name -> set of property names
     /// assigned via `X.prop = value` patterns. Used to suppress false TS2339 errors.
     pub expando_properties: Vec<(String, Vec<String>)>,
+    /// Static import/export-from module specifiers collected by the binder.
+    /// Enables dependency graph construction without re-walking the AST.
+    pub import_sources: Vec<String>,
     /// Binder-detected file features (generators, decorators, etc.).
     pub file_features: crate::binder::FileFeatures,
     /// Content fingerprint of all merge-relevant skeleton data.
@@ -1185,6 +1194,7 @@ impl FileSkeleton {
         self.shorthand_ambient_modules.hash(&mut hasher);
         self.module_export_specifiers.hash(&mut hasher);
         self.expando_properties.hash(&mut hasher);
+        self.import_sources.hash(&mut hasher);
         self.file_features.hash(&mut hasher);
         hasher.finish()
     }
@@ -1339,6 +1349,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         shorthand_ambient_modules,
         module_export_specifiers,
         expando_properties,
+        import_sources: result.file_import_sources.clone(),
         file_features: result.file_features,
         fingerprint: 0, // computed below
     };
@@ -1751,6 +1762,9 @@ impl FileSkeleton {
             for prop in props {
                 size += prop.capacity();
             }
+        }
+        for src in &self.import_sources {
+            size += src.capacity();
         }
         size
     }

@@ -99,6 +99,7 @@ impl BinderState {
             file_features: FileFeatures::NONE,
             alias_partners: FxHashMap::default(),
             semantic_defs: FxHashMap::default(),
+            file_import_sources: Vec::new(),
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -165,6 +166,7 @@ impl BinderState {
         self.continue_targets.clear();
         self.return_targets.clear();
         self.semantic_defs.clear();
+        self.file_import_sources.clear();
     }
 
     /// Set the current file name for debugging purposes.
@@ -298,6 +300,7 @@ impl BinderState {
             file_features: FileFeatures::NONE,
             alias_partners: FxHashMap::default(),
             semantic_defs: FxHashMap::default(),
+            file_import_sources: Vec::new(),
         };
         binder.recompute_module_export_equals_non_module();
         binder
@@ -419,6 +422,7 @@ impl BinderState {
             file_features: FileFeatures::NONE,
             alias_partners,
             semantic_defs: FxHashMap::default(),
+            file_import_sources: Vec::new(),
         };
         if let Some(root_scope) = binder.scopes.first() {
             binder.current_scope = root_scope.table.clone();
