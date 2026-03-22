@@ -121,6 +121,15 @@ impl<'a> CheckerContext<'a> {
         // Get span from the first declaration if available
         let span = symbol.declarations.first().map(|n| (n.0, n.0));
 
+        // Derive identity flags from symbol flags for the fallback path.
+        // These are best-effort: the binder's SemanticDefEntry has authoritative
+        // values, but the fallback fires for symbols not in semantic_defs.
+        let is_abstract = (symbol.flags & tsz_binder::symbol_flags::ABSTRACT) != 0;
+        let is_const = (symbol.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0;
+        // is_exported is not derivable from symbol flags alone; defaults to false.
+        // The binder's SemanticDefEntry.is_exported is the authoritative source.
+        let is_exported = false;
+
         let info = DefinitionInfo {
             kind,
             name,
@@ -130,11 +139,15 @@ impl<'a> CheckerContext<'a> {
             static_shape: None,
             extends: None,
             implements: Vec::new(),
+            heritage_names: Vec::new(),
             enum_members: Vec::new(),
             exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(file_idx),
             span,
             symbol_id: Some(sym_id.0),
+            is_abstract,
+            is_const,
+            is_exported,
         };
 
         let def_id = self.definition_store.register(info);
@@ -732,11 +745,15 @@ impl<'a> CheckerContext<'a> {
                 static_shape: None,
                 extends: None,
                 implements: Vec::new(),
+                heritage_names: entry.heritage_names.clone(),
                 enum_members,
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
                 symbol_id: Some(sym_id.0),
+                is_abstract: entry.is_abstract,
+                is_const: entry.is_const,
+                is_exported: entry.is_exported,
             };
 
             let def_id = self.definition_store.register(info);

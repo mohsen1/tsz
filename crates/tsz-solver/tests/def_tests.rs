@@ -191,6 +191,9 @@ fn test_definition_store_concurrent() {
                         file_id: None,
                         span: None,
                         symbol_id: None,
+                        is_abstract: false,
+                        is_const: false,
+                        is_exported: false,
                     };
                     let id = store.register(info);
                     assert!(store.contains(id));
@@ -394,6 +397,9 @@ fn test_find_type_alias_by_body_via_set_body() {
         file_id: None,
         span: None,
         symbol_id: None,
+        is_abstract: false,
+        is_const: false,
+        is_exported: false,
     };
     let def_id = store.register(info);
 
@@ -559,6 +565,9 @@ fn test_find_def_by_shape_via_set_instance_shape() {
         file_id: None,
         span: None,
         symbol_id: None,
+        is_abstract: false,
+        is_const: false,
+        is_exported: false,
     };
     let def_id = store.register(info);
 

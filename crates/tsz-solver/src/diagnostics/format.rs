@@ -3213,6 +3213,9 @@ mod tests {
             span: None,
             file_id: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         };
         let def_id = def_store.register(info);
 
@@ -3267,6 +3270,9 @@ mod tests {
             span: None,
             file_id: None,
             symbol_id: None,
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
         };
         let def_id = def_store.register(info);
 
