@@ -136,6 +136,9 @@ impl<'a> CheckerContext<'a> {
             span,
             symbol_id: Some(sym_id.0),
             heritage_names: Vec::new(),
+            is_exported: false,
+            is_const: false,
+            is_abstract: false,
         };
 
         let def_id = self.definition_store.register(info);
