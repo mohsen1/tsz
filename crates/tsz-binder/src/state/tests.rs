@@ -4847,3 +4847,250 @@ function nested() {
         "nested InnerIface should not be in semantic_defs"
     );
 }
+
+// =============================================================================
+// Declaration merging accumulation tests
+// =============================================================================
+
+#[test]
+fn semantic_defs_declaration_merging_accumulates_heritage_names() {
+    // When an interface is declared multiple times with different heritage
+    // clauses, heritage_names should accumulate from all declarations.
+    let binder = bind_source(
+        "
+interface Merged extends A { a: string }
+interface Merged extends B { b: number }
+interface Merged extends C { c: boolean }
+",
+    );
+    let sym_id = binder.file_locals.get("Merged").expect("expected Merged");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Merged");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    // Heritage names from all three declarations should be accumulated.
+    assert!(
+        entry.heritage_names.contains(&"A".to_string()),
+        "heritage should include A, got: {:?}",
+        entry.heritage_names
+    );
+    assert!(
+        entry.heritage_names.contains(&"B".to_string()),
+        "heritage should include B, got: {:?}",
+        entry.heritage_names
+    );
+    assert!(
+        entry.heritage_names.contains(&"C".to_string()),
+        "heritage should include C, got: {:?}",
+        entry.heritage_names
+    );
+    // Core identity (name, kind, span) should still be from the first declaration.
+    let first_decl = binder.symbols.get(sym_id).unwrap().declarations[0];
+    assert_eq!(entry.span_start, first_decl.0);
+}
+
+#[test]
+fn semantic_defs_declaration_merging_deduplicates_heritage() {
+    // If the same heritage name appears in multiple declarations,
+    // it should appear only once.
+    let binder = bind_source(
+        "
+interface Dup extends Base { a: string }
+interface Dup extends Base { b: number }
+",
+    );
+    let sym_id = binder.file_locals.get("Dup").expect("expected Dup");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Dup");
+    let base_count = entry.heritage_names.iter().filter(|h| *h == "Base").count();
+    assert_eq!(
+        base_count, 1,
+        "Base should appear exactly once in heritage_names"
+    );
+}
+
+#[test]
+fn semantic_defs_declaration_merging_promotes_type_param_count() {
+    // If the first interface declaration has no type params but a later
+    // one does (augmentation adding generics), the count should be promoted.
+    let binder = bind_source(
+        "
+interface Augmented { base: string }
+interface Augmented<T> { extra: T }
+",
+    );
+    let sym_id = binder
+        .file_locals
+        .get("Augmented")
+        .expect("expected Augmented");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Augmented");
+    assert_eq!(
+        entry.type_param_count, 1,
+        "type_param_count should be promoted from later declaration"
+    );
+}
+
+#[test]
+fn semantic_defs_declaration_merging_promotes_export_visibility() {
+    // If the first declaration is not exported but a later one is,
+    // the entry should be marked as exported.
+    let binder = bind_source(
+        "
+interface Internal { a: string }
+export interface Internal { b: number }
+",
+    );
+    let sym_id = binder
+        .file_locals
+        .get("Internal")
+        .expect("expected Internal");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Internal");
+    assert!(
+        entry.is_exported,
+        "export visibility should be promoted from later declaration"
+    );
+}
+
+#[test]
+fn semantic_defs_enum_merging_accumulates_members() {
+    // When an enum is declared in multiple blocks, members should accumulate.
+    let binder = bind_source(
+        "
+enum Direction { Up, Down }
+enum Direction { Left, Right }
+",
+    );
+    let sym_id = binder
+        .file_locals
+        .get("Direction")
+        .expect("expected Direction");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Direction");
+    assert_eq!(entry.kind, super::SemanticDefKind::Enum);
+    // All four members should be accumulated.
+    assert!(
+        entry.enum_member_names.contains(&"Up".to_string()),
+        "should contain Up"
+    );
+    assert!(
+        entry.enum_member_names.contains(&"Down".to_string()),
+        "should contain Down"
+    );
+    assert!(
+        entry.enum_member_names.contains(&"Left".to_string()),
+        "should contain Left"
+    );
+    assert!(
+        entry.enum_member_names.contains(&"Right".to_string()),
+        "should contain Right"
+    );
+}
+
+#[test]
+fn semantic_defs_declare_global_captures_declarations() {
+    // Declarations inside `declare global {}` blocks are in Module scope
+    // and should be captured as semantic defs.
+    let binder = bind_source(
+        r#"
+export {};
+declare global {
+    interface Window {
+        customProp: string;
+    }
+    type GlobalAlias = string;
+    function globalFn(): void;
+    const GLOBAL_CONST: number;
+}
+"#,
+    );
+    let has_window = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "Window" && e.kind == super::SemanticDefKind::Interface);
+    let has_alias = binder
+        .semantic_defs
+        .values()
+        .any(|e| e.name == "GlobalAlias" && e.kind == super::SemanticDefKind::TypeAlias);
+    assert!(
+        has_window,
+        "declare global interface Window should be in semantic_defs"
+    );
+    assert!(
+        has_alias,
+        "declare global type alias should be in semantic_defs"
+    );
+}
+
+#[test]
+fn semantic_defs_class_with_extends_and_implements() {
+    // Verify heritage_names captures both extends and implements.
+    let binder = bind_source(
+        "
+interface Serializable {}
+interface Printable {}
+class Base {}
+class Derived extends Base implements Serializable, Printable {}
+",
+    );
+    let sym_id = binder.file_locals.get("Derived").expect("expected Derived");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Derived");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+    assert!(
+        entry.heritage_names.contains(&"Base".to_string()),
+        "heritage should include Base, got: {:?}",
+        entry.heritage_names
+    );
+    assert!(
+        entry.heritage_names.contains(&"Serializable".to_string()),
+        "heritage should include Serializable, got: {:?}",
+        entry.heritage_names
+    );
+    assert!(
+        entry.heritage_names.contains(&"Printable".to_string()),
+        "heritage should include Printable, got: {:?}",
+        entry.heritage_names
+    );
+}
+
+#[test]
+fn semantic_defs_merging_preserves_first_kind_and_span() {
+    // Even when later declarations add heritage/type params, the
+    // original kind and span_start must be preserved.
+    let binder = bind_source(
+        "
+interface Stable { a: string }
+interface Stable extends Extra { b: number }
+",
+    );
+    let sym_id = binder.file_locals.get("Stable").expect("expected Stable");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for Stable");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+    // Span should be from the FIRST declaration
+    let first_decl = binder.symbols.get(sym_id).unwrap().declarations[0];
+    assert_eq!(
+        entry.span_start, first_decl.0,
+        "span_start must be from first declaration"
+    );
+    // But heritage should include Extra from the second declaration
+    assert!(
+        entry.heritage_names.contains(&"Extra".to_string()),
+        "heritage should include Extra from later declaration"
+    );
+}
