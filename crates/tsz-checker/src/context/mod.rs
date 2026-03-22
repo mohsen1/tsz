@@ -854,6 +854,11 @@ pub struct CheckerContext<'a> {
     /// forms of each module name are indexed.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
 
+    /// Pre-built arena-pointer → file-index map. Eliminates O(N) scans in
+    /// `get_binder_for_arena` / `get_file_idx_for_arena` (13+ call sites).
+    /// Key is `Arc::as_ptr(arena) as usize` for `Send`/`Sync` safety.
+    pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
@@ -1072,6 +1077,8 @@ pub struct ProjectEnv {
     /// Pre-computed global module binder index: module name -> Vec<`binder_idx`>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
+    /// Pre-computed arena-pointer → file-index map. O(1) arena→binder lookups.
+    pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
@@ -1133,6 +1140,9 @@ impl ProjectEnv {
         }
         if let Some(ref idx) = self.global_module_binder_index {
             ctx.global_module_binder_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_arena_index {
+            ctx.global_arena_index = Some(Arc::clone(idx));
         }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // Pre-populate DefIds from all cross-file binders' semantic_defs.
@@ -1260,6 +1270,13 @@ impl ProjectEnv {
         self.global_module_augmentations_index = Some(Arc::new(module_augs_index));
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
         self.global_module_binder_index = Some(Arc::new(module_binder_index));
+
+        // Build arena-pointer → file-index map
+        let mut arena_idx: FxHashMap<usize, usize> = FxHashMap::default();
+        for (file_idx, arena) in self.all_arenas.iter().enumerate() {
+            arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
+        }
+        self.global_arena_index = Some(Arc::new(arena_idx));
     }
 
     /// Build global indices only when the skeleton fingerprint has changed.
