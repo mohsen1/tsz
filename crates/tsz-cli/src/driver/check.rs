@@ -466,6 +466,11 @@ pub(super) fn collect_diagnostics(
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
+    // Accumulates query-cache statistics from whichever path is taken.
+    // Both branches unconditionally set this, so the initial value is never read.
+    #[allow(unused_assignments)]
+    let mut aggregated_qc_stats: Option<tsz_solver::QueryCacheStatistics> = None;
+
     if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
@@ -514,7 +519,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters)> = {
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics)> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -568,7 +573,7 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters)> =
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics)> =
             work_items
                 .iter()
                 .zip(per_file_binders.into_iter())
@@ -591,21 +596,25 @@ pub(super) fn collect_diagnostics(
                 })
                 .collect();
 
+        // Aggregate per-file query cache statistics from the parallel path.
+        let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters)) in
+            for (idx, (file_diags, type_cache, file_counters, qc_stats)) in
                 file_results.into_iter().enumerate()
             {
                 diagnostics.extend(file_diags);
                 request_cache_counters.merge(file_counters);
+                parallel_qc_stats.merge(&qc_stats);
                 if let Some(tc) = type_cache {
                     let file_path = PathBuf::from(&program.files[work_items[idx]].file_name);
                     tc_out.insert(file_path, tc);
                 }
             }
         }
+        aggregated_qc_stats = Some(parallel_qc_stats);
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
 
@@ -843,6 +852,8 @@ pub(super) fn collect_diagnostics(
             }
             request_cache_counters.merge(checker_counters);
         }
+        // Sequential path: single shared QueryCache — capture stats after all files.
+        aggregated_qc_stats = Some(query_cache.statistics());
     }
 
     // Collect diagnostics from cache for all files
@@ -867,11 +878,11 @@ pub(super) fn collect_diagnostics(
         program, options, base_dir,
     ));
 
-    // Capture query-cache statistics. In the sequential (cached) path, the
-    // shared `query_cache` accumulates stats across all files. In the parallel
-    // path each thread creates its own short-lived cache, so these reflect the
-    // aggregate from the last-created cache (still useful for type counts).
-    let query_cache_stats = Some(query_cache.statistics());
+    // Use the aggregated query-cache statistics. In the parallel path, these
+    // are merged from all per-file caches. In the sequential path, they come
+    // from the shared query_cache. Fall back to the top-level query_cache stats
+    // if neither path set the aggregated stats (shouldn't happen in practice).
+    let query_cache_stats = aggregated_qc_stats.or_else(|| Some(query_cache.statistics()));
 
     CollectDiagnosticsResult {
         diagnostics,
@@ -982,7 +993,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters) {
+) -> (Vec<Diagnostic>, Option<TypeCache>, RequestCacheCounters, tsz_solver::QueryCacheStatistics) {
     let CheckFileForParallelContext {
         file_idx,
         binder,
@@ -1000,7 +1011,7 @@ pub(super) fn check_file_for_parallel<'a>(
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (Vec::new(), None, RequestCacheCounters::default());
+        return (Vec::new(), None, RequestCacheCounters::default(), tsz_solver::QueryCacheStatistics::default());
     }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
@@ -1138,8 +1149,9 @@ pub(super) fn check_file_for_parallel<'a>(
     }
 
     let checker_counters = checker.ctx.request_cache_counters;
+    let qc_stats = query_cache.statistics();
     let type_cache = checker.extract_cache();
-    (file_diagnostics, Some(type_cache), checker_counters)
+    (file_diagnostics, Some(type_cache), checker_counters, qc_stats)
 }
 
 #[cfg(test)]
