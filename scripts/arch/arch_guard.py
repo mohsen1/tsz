@@ -29,7 +29,6 @@ CHECKS = [
             "exclude_dirs": {"query_boundaries", "tests"},
             "exclude_files": {
                 # These files use .lookup() in tracing::trace! macros for debug output only
-                "crates/tsz-checker/src/types/computation/call.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
                 # Pre-existing: overload candidate filtering via TypeData
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
@@ -268,7 +267,6 @@ CHECKS = [
                 # TODO: refactor to use query_boundaries wrappers
                 "crates/tsz-checker/src/types/property_access_type.rs",
                 "crates/tsz-checker/src/types/computation/call_inference.rs",
-                "crates/tsz-checker/src/types/computation/call.rs",
                 # query_boundaries is the canonical boundary layer — TypeData
                 # matching here is intentional and architecturally correct.
                 "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
