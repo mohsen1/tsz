@@ -2030,10 +2030,10 @@ impl TypeInterner {
     /// `DashMap::len()` calls — no per-entry iteration.
     ///
     /// The estimate accounts for:
-    /// - Per-type overhead in sharded storage (two DashMap entries per type)
+    /// - Per-type overhead in sharded storage (two `DashMap` entries per type)
     /// - Sub-interners for type lists, tuple lists, template lists, shapes
-    /// - Auxiliary caches (identity_comparable, alloc_order, display_properties)
-    /// - Fixed-size fields (array_base_type, boxed_types, etc.)
+    /// - Auxiliary caches (`identity_comparable`, `alloc_order`, `display_properties`)
+    /// - Fixed-size fields (`array_base_type`, `boxed_types`, etc.)
     #[must_use]
     pub fn estimated_size_bytes(&self) -> usize {
         let mut size = std::mem::size_of::<Self>();

@@ -592,11 +592,39 @@ impl<'a> CheckerState<'a> {
         if self.ctx.enclosing_class.is_none()
             && self.find_enclosing_non_arrow_function(idx).is_none()
         {
+            // Double-check the AST: `enclosing_class` may be None during lazy
+            // evaluation of class field initializers (e.g., `other = this.prop`),
+            // or `this` may be inside a namespace block (where `this` is the
+            // namespace's runtime context, not `globalThis`).
+            if self.is_inside_class_or_namespace(idx) {
+                return false;
+            }
             return true;
         }
         // `this` in a top-level arrow function that captures globalThis.
         if self.is_this_in_global_capturing_arrow(idx) {
             return true;
+        }
+        false
+    }
+
+    /// Check if a node is inside a class body or namespace by walking AST parents.
+    fn is_inside_class_or_namespace(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                && (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION)
+            {
+                return true;
+            }
+            current = parent_idx;
         }
         false
     }

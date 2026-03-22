@@ -274,7 +274,7 @@ pub struct SymbolArena {
     symbols: Vec<Symbol>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
     base_offset: u32,
-    /// Name-to-SymbolId index for O(1) lookups by escaped_name.
+    /// Name-to-SymbolId index for O(1) lookups by `escaped_name`.
     /// Maintained incrementally on `alloc`/`alloc_from`; rebuilt automatically
     /// after deserialization.
     #[serde(skip)]

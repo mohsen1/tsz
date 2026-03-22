@@ -686,12 +686,12 @@ impl<'a> CheckerState<'a> {
         // Use O(1) module binder index when available.
         if let Some(file_indices) = self.ctx.files_for_module_specifier(module_specifier) {
             for &file_idx in file_indices {
-                if let Some(binder) = binders.get(file_idx) {
-                    if let Some(exports) = binder.module_exports.get(module_specifier) {
-                        let mut combined = exports.clone();
-                        self.merge_export_equals_members(binder, exports, &mut combined);
-                        return Some(combined);
-                    }
+                if let Some(binder) = binders.get(file_idx)
+                    && let Some(exports) = binder.module_exports.get(module_specifier)
+                {
+                    let mut combined = exports.clone();
+                    self.merge_export_equals_members(binder, exports, &mut combined);
+                    return Some(combined);
                 }
             }
         } else {
@@ -1252,10 +1252,9 @@ impl<'a> CheckerState<'a> {
                 let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
                 if let Some(file_idx) = file_idx
                     && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+                    && let Some(sym) = binder.get_symbol(sym_id)
                 {
-                    if let Some(sym) = binder.get_symbol(sym_id) {
-                        return Some(sym);
-                    }
+                    return Some(sym);
                 }
             }
             self.ctx
@@ -1328,12 +1327,11 @@ impl<'a> CheckerState<'a> {
             if let Some(all_binders) = self.ctx.all_binders.as_ref() {
                 if let Some(file_indices) = self.ctx.files_for_module_specifier(&candidate) {
                     for &file_idx in file_indices {
-                        if let Some(binder) = all_binders.get(file_idx) {
-                            if let Some(exports) = binder.module_exports.get(&candidate)
-                                && let Some(sym_id) = resolve_from_exports(exports)
-                            {
-                                return Some(sym_id);
-                            }
+                        if let Some(binder) = all_binders.get(file_idx)
+                            && let Some(exports) = binder.module_exports.get(&candidate)
+                            && let Some(sym_id) = resolve_from_exports(exports)
+                        {
+                            return Some(sym_id);
                         }
                     }
                 } else {

@@ -1409,10 +1409,10 @@ impl<'a> HoverProvider<'a> {
         }
         let parsed = parse_jsdoc(doc);
         let mut parts = Vec::new();
-        if let Some(summary) = parsed.summary.as_ref() {
-            if !summary.is_empty() {
-                parts.push(summary.clone());
-            }
+        if let Some(summary) = parsed.summary.as_ref()
+            && !summary.is_empty()
+        {
+            parts.push(summary.clone());
         }
         // Include relevant tags in plain documentation
         for tag in &parsed.tags {

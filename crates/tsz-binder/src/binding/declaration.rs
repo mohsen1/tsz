@@ -2421,6 +2421,7 @@ impl BinderState {
     /// Only records entries for declarations at the source file scope (ScopeId(0))
     /// to avoid noise from nested declarations that are less likely to be
     /// cross-file semantic references.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_semantic_def_ext(
         &mut self,
         sym_id: SymbolId,

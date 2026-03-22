@@ -331,7 +331,7 @@ impl<'a> CheckerState<'a> {
                 && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let index_str = format!("\"{}\"", name);
+                let index_str = format!("\"{name}\"");
                 self.error_at_node(
                     idx,
                     &format_message(

@@ -210,11 +210,11 @@ impl<'a> CheckerState<'a> {
                     || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION)
             {
                 let body_idx = func.body;
-                if let Some(body_node) = self.ctx.arena.get(body_idx) {
-                    if let Some(block) = self.ctx.arena.get_block(body_node) {
-                        return !block.statements.nodes.is_empty()
-                            && self.block_always_throws(&block.statements.nodes);
-                    }
+                if let Some(body_node) = self.ctx.arena.get(body_idx)
+                    && let Some(block) = self.ctx.arena.get_block(body_node)
+                {
+                    return !block.statements.nodes.is_empty()
+                        && self.block_always_throws(&block.statements.nodes);
                 }
             }
             return false;

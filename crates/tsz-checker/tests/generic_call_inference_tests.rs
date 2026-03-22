@@ -1,6 +1,6 @@
 //! Focused tests for generic call inference and contextual instantiation.
 //!
-//! These exercise the call_inference.rs module:
+//! These exercise the `call_inference.rs` module:
 //! - Round-2 contextual typing for callback parameters
 //! - Return-context substitution collection
 //! - Generic function argument refinement against targets

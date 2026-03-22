@@ -1079,10 +1079,7 @@ impl<'a> CheckerState<'a> {
         // No explicit modifier: check if homomorphic and inherit from source.
         // Homomorphic pattern: template is IndexAccess(source, param) where
         // param matches the mapped type's iteration parameter.
-        if let Some(tsz_solver::TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template)
-            && let Some(tsz_solver::TypeData::TypeParameter(param)) = db.lookup(idx)
-            && param.name == mapped.type_param.name
-        {
+        if let Some(source) = tsz_solver::type_queries::homomorphic_mapped_source(db, type_id) {
             // This is a homomorphic mapped type. Resolve the source type
             // through the checker environment and check the property.
             let resolved_source = self.evaluate_type_with_resolution(source);

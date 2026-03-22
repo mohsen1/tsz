@@ -1413,15 +1413,14 @@ impl<'a> Printer<'a> {
             // After emitting a prologue directive (string literal expression statement
             // like "use strict"), update the hoisted var insertion point to AFTER it.
             // tsc places hoisted temp vars after all prologue directives.
-            if emitted_output && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-                if let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) {
-                    if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
-                        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-                            hoisted_var_byte_offset = self.writer.len();
-                            hoisted_var_line = self.writer.current_line();
-                        }
-                    }
-                }
+            if emitted_output
+                && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
+                && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+                && expr_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                hoisted_var_byte_offset = self.writer.len();
+                hoisted_var_line = self.writer.current_line();
             }
         }
 

@@ -2753,7 +2753,7 @@ fn test_lookup_fallback_rescues_not_found() {
     };
     let mut resolver = ModuleResolver::new(&options);
 
-    let fallback_path = virtual_path.clone();
+    let fallback_path = virtual_path;
     let request = ModuleLookupRequest {
         specifier: "./nonexistent-specifier",
         containing_file: &dir.join("main.ts"),

@@ -730,6 +730,29 @@ fn is_keyof_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// For a mapped type, return the homomorphic source type if the template is `T[K]`
+/// where `K` matches the mapped type's iteration parameter.
+///
+/// Returns `Some(source)` for homomorphic mapped types like `{ [K in keyof T]: T[K] }`,
+/// `None` otherwise.
+pub fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let Some(TypeData::Mapped(mapped_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let mapped = db.mapped_type(mapped_id);
+    let Some(TypeData::IndexAccess(source, idx)) = db.lookup(mapped.template) else {
+        return None;
+    };
+    let Some(TypeData::TypeParameter(param)) = db.lookup(idx) else {
+        return None;
+    };
+    if param.name == mapped.type_param.name {
+        Some(source)
+    } else {
+        None
+    }
+}
+
 /// Get the union of all element types in a tuple.
 ///
 /// For each element: rest elements are unwrapped to their array element type,
