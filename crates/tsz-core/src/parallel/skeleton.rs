@@ -12,7 +12,6 @@ use super::core::can_merge_symbols_cross_file;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
-
 /// A top-level symbol as seen from the skeleton layer.
 ///
 /// This contains only the merge-relevant fields from `Symbol`, not the full
@@ -781,4 +780,3 @@ impl FileSkeleton {
 // =============================================================================
 // Symbol Merging
 // =============================================================================
-
