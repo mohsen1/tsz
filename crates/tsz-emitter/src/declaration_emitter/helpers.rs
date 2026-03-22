@@ -4801,6 +4801,33 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut element_types = Vec::with_capacity(array.elements.nodes.len());
         for elem_idx in array.elements.nodes.iter().copied() {
+            // When strictNullChecks is off, skip null/undefined/void elements
+            // so they don't pollute the array element type (tsc widens them away).
+            if !self.strict_null_checks {
+                if let Some(elem_node) = self.arena.get(elem_idx) {
+                    let k = elem_node.kind;
+                    if k == SyntaxKind::NullKeyword as u16
+                        || k == SyntaxKind::UndefinedKeyword as u16
+                    {
+                        continue;
+                    }
+                    // Also skip void expressions (e.g., void 0)
+                    if self.is_void_expression(elem_node) {
+                        continue;
+                    }
+                }
+                // Skip elements whose inferred type is null/undefined
+                if let Some(type_id) = self.get_node_type_or_names(&[elem_idx]) {
+                    if matches!(
+                        type_id,
+                        tsz_solver::types::TypeId::NULL
+                            | tsz_solver::types::TypeId::UNDEFINED
+                            | tsz_solver::types::TypeId::VOID
+                    ) {
+                        continue;
+                    }
+                }
+            }
             let elem_type = self.preferred_expression_type_text(elem_idx).or_else(|| {
                 self.get_node_type_or_names(&[elem_idx])
                     .map(|type_id| self.print_type_id(type_id))
