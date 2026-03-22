@@ -22,7 +22,23 @@ impl<'a> CheckerState<'a> {
                 return Some(sym);
             }
         }
-        // 3. Check other files in the project (multi-file mode)
+        // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
+        //    file via cross_file_symbol_targets, go directly to that binder.
+        {
+            let file_idx = self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .copied();
+            if let Some(file_idx) = file_idx
+                && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+                && let Some(sym) = binder.get_symbol(sym_id)
+            {
+                return Some(sym);
+            }
+        }
+        // 4. Fallback: O(N) scan over all binders
         if let Some(binders) = &self.ctx.all_binders {
             for binder in binders.iter() {
                 if let Some(sym) = binder.get_symbol(sym_id) {
