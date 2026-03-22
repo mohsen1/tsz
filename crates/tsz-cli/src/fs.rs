@@ -100,6 +100,13 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 continue;
             }
 
+            // tsc never includes config files (tsconfig.json, jsconfig.json) as
+            // program inputs, even when resolveJsonModule is enabled. Skip them
+            // during pattern-based discovery.
+            if is_json_file(path) && is_config_json(path) {
+                continue;
+            }
+
             let rel_path = path.strip_prefix(&options.base_dir).unwrap_or(path);
             if !include_set.is_match(rel_path) {
                 continue;
@@ -340,6 +347,16 @@ pub(crate) fn is_valid_module_or_js_file(path: &Path) -> bool {
 
 fn is_json_file(path: &Path) -> bool {
     matches!(path.extension().and_then(|ext| ext.to_str()), Some("json"))
+}
+
+/// Returns true for tsconfig.json / jsconfig.json files, which tsc excludes
+/// from program inputs even when resolveJsonModule is enabled.
+fn is_config_json(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|f| f.to_str())
+        .map_or(false, |name| {
+            name.eq_ignore_ascii_case("tsconfig.json") || name.eq_ignore_ascii_case("jsconfig.json")
+        })
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
@@ -637,6 +654,49 @@ mod tests {
         assert!(
             result_with_json.iter().any(|p| p.ends_with("data.json")),
             ".json file should be included from pattern with resolveJsonModule"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_excludes_tsconfig_json_even_with_resolve_json_module() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_config_json_excluded");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("tsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("jsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("data.json"), r#"{ "key": "value" }"#).unwrap();
+        fs::write(dir.join("app.ts"), "const x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None, // defaults to **/*
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: true,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("app.ts")),
+            "should discover .ts files"
+        );
+        assert!(
+            result.iter().any(|p| p.ends_with("data.json")),
+            "should discover regular .json files with resolveJsonModule"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("tsconfig.json")),
+            "tsconfig.json must not be included as program input"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("jsconfig.json")),
+            "jsconfig.json must not be included as program input"
         );
 
         let _ = fs::remove_dir_all(&dir);
