@@ -1999,6 +1999,37 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     }
 
     // ==========================================================================
+    // PHASE 1.6: Propagate lib semantic_defs directly to global semantic_defs
+    // ==========================================================================
+    // Lib binders record `semantic_defs` for their top-level declarations during
+    // binding (TypeAlias, Interface, Class, Enum, Namespace, Function, Variable).
+    // Phase 1 already remapped lib SymbolIds to global IDs. We propagate the
+    // semantic_defs using that remap so the checker can pre-create solver DefIds
+    // for ALL lib symbols at construction time.
+    //
+    // Previously, lib semantic_defs only reached the global map indirectly through
+    // per-file binders (which ran `merge_lib_symbols` Phase 4). That path is
+    // redundant and order-dependent — by propagating directly here, the merge is
+    // self-contained and deterministic.
+    for lib_binder in &lib_binders {
+        let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
+        for (&old_sym_id, entry) in &lib_binder.semantic_defs {
+            if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
+                // Keep first occurrence (declaration merging keeps first identity).
+                semantic_defs.entry(global_id).or_insert_with(|| {
+                    let mut remapped = entry.clone();
+                    // Update file_id to match the global symbol's decl_file_idx
+                    // so DefinitionStore composite key lookups stay consistent.
+                    remapped.file_id = global_symbols
+                        .get(global_id)
+                        .map_or(entry.file_id, |s| s.decl_file_idx);
+                    remapped
+                });
+            }
+        }
+    }
+
+    // ==========================================================================
     // PHASE 2: Process user files
     // ==========================================================================
 
@@ -2361,8 +2392,12 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
 
-        // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first)
+        // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first).
+        // Skip lib-originated symbols — they were already propagated in Phase 1.6.
         for (old_sym_id, entry) in &result.semantic_defs {
+            if result.lib_symbol_ids.contains(old_sym_id) {
+                continue;
+            }
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 // Update file_id to use the global file index
                 let mut remapped_entry = entry.clone();

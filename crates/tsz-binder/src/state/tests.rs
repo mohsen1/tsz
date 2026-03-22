@@ -4376,3 +4376,130 @@ namespace Outer {
         );
     }
 }
+
+#[test]
+fn semantic_defs_enriched_fields_survive_lib_merge() {
+    // Enriched fields (is_abstract, is_const, enum_member_names) captured at
+    // bind time must survive the lib merge path so the checker's DefId
+    // pre-population gets complete identity information.
+    let lib_source = r"
+abstract class AbstractBase { abstract foo(): void; }
+const enum Direction { Up, Down, Left, Right }
+enum Color { Red, Green, Blue }
+";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    // Verify fields are captured in the lib binder
+    let abs = lib_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "AbstractBase")
+        .expect("AbstractBase should be in lib semantic_defs");
+    assert!(
+        abs.is_abstract,
+        "abstract class should preserve is_abstract in lib binder"
+    );
+
+    let dir = lib_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Direction")
+        .expect("Direction should be in lib semantic_defs");
+    assert!(
+        dir.is_const,
+        "const enum should preserve is_const in lib binder"
+    );
+    assert_eq!(dir.enum_member_names, vec!["Up", "Down", "Left", "Right"]);
+
+    // Merge into a user binder
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+    let user_source = "let x = 1;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    // Verify enriched fields survived the merge
+    let abs_merged = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "AbstractBase")
+        .expect("AbstractBase should survive lib merge");
+    assert!(
+        abs_merged.is_abstract,
+        "is_abstract should survive lib merge"
+    );
+
+    let dir_merged = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Direction")
+        .expect("Direction should survive lib merge");
+    assert!(dir_merged.is_const, "is_const should survive lib merge");
+    assert_eq!(
+        dir_merged.enum_member_names,
+        vec!["Up", "Down", "Left", "Right"],
+        "enum_member_names should survive lib merge"
+    );
+
+    let color_merged = main_binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Color")
+        .expect("Color should survive lib merge");
+    assert!(
+        !color_merged.is_const,
+        "regular enum should not be const after merge"
+    );
+    assert_eq!(
+        color_merged.enum_member_names,
+        vec!["Red", "Green", "Blue"],
+        "enum_member_names should survive lib merge for regular enum"
+    );
+}
+
+#[test]
+fn semantic_defs_all_families_have_correct_kinds() {
+    // Verify that all seven declaration families produce the correct
+    // SemanticDefKind after binding.
+    let source = r"
+class MyClass {}
+interface MyIface {}
+type MyAlias = string;
+enum MyEnum { A }
+namespace MyNS {}
+function myFunc() {}
+const myVar = 1;
+";
+    let binder = bind_source(source);
+
+    let expected: Vec<(&str, super::SemanticDefKind)> = vec![
+        ("MyClass", super::SemanticDefKind::Class),
+        ("MyIface", super::SemanticDefKind::Interface),
+        ("MyAlias", super::SemanticDefKind::TypeAlias),
+        ("MyEnum", super::SemanticDefKind::Enum),
+        ("MyNS", super::SemanticDefKind::Namespace),
+        ("myFunc", super::SemanticDefKind::Function),
+        ("myVar", super::SemanticDefKind::Variable),
+    ];
+
+    for (name, expected_kind) in expected {
+        let entry = binder
+            .semantic_defs
+            .values()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("expected semantic_def for '{}'", name));
+        assert_eq!(
+            entry.kind, expected_kind,
+            "wrong kind for '{}': expected {:?}, got {:?}",
+            name, expected_kind, entry.kind
+        );
+    }
+}
