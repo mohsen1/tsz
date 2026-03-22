@@ -2238,10 +2238,35 @@ impl<'a> TypePrinter<'a> {
 
     fn print_conditional(&self, cond_id: tsz_solver::types::ConditionalTypeId) -> String {
         let cond = self.interner.conditional_type(cond_id);
+
+        // Check type needs parens when it's a conditional, function, union, or intersection
+        let check_str = self.print_type(cond.check_type);
+        let check_needs_parens =
+            visitor::conditional_type_id(self.interner, cond.check_type).is_some()
+                || visitor::function_shape_id(self.interner, cond.check_type).is_some()
+                || visitor::union_list_id(self.interner, cond.check_type).is_some()
+                || visitor::intersection_list_id(self.interner, cond.check_type).is_some();
+
+        // Extends type needs parens when it's a conditional type
+        let extends_str = self.print_type(cond.extends_type);
+        let extends_needs_parens =
+            visitor::conditional_type_id(self.interner, cond.extends_type).is_some();
+
+        let check = if check_needs_parens {
+            format!("({check_str})")
+        } else {
+            check_str
+        };
+        let extends = if extends_needs_parens {
+            format!("({extends_str})")
+        } else {
+            extends_str
+        };
+
         format!(
             "{} extends {} ? {} : {}",
-            self.print_type(cond.check_type),
-            self.print_type(cond.extends_type),
+            check,
+            extends,
             self.print_type(cond.true_type),
             self.print_type(cond.false_type),
         )
@@ -2299,7 +2324,17 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
-        format!("{}[{}]", self.print_type(container), self.print_type(index))
+        let container_str = self.print_type(container);
+        // Parenthesize union, intersection, and function types in indexed access position
+        // e.g., (A | B)[K], (A & B)[K], ((x: number) => void)[K]
+        let needs_parens = visitor::union_list_id(self.interner, container).is_some()
+            || visitor::intersection_list_id(self.interner, container).is_some()
+            || visitor::function_shape_id(self.interner, container).is_some();
+        if needs_parens {
+            format!("({})[{}]", container_str, self.print_type(index))
+        } else {
+            format!("{}[{}]", container_str, self.print_type(index))
+        }
     }
 
     fn print_string_intrinsic(
