@@ -2124,6 +2124,10 @@ pub struct MergedProgram {
     /// and stored here so downstream consumers can begin migrating off arena-backed
     /// lookups toward skeleton-based queries.
     pub skeleton_index: Option<SkeletonIndex>,
+    /// Sum of `BindResult::estimated_size_bytes()` across all input files, computed
+    /// before the merge consumes per-file data. This captures the pre-merge memory
+    /// footprint so it can be compared to the post-merge `MergedProgram` residency.
+    pub pre_merge_bind_total_bytes: usize,
 }
 
 /// High-level residency counters for `MergedProgram` state.
@@ -2154,6 +2158,10 @@ pub struct MergedProgramResidencyStats {
     /// Estimated in-memory size of the skeleton index in bytes.
     /// Zero if no skeleton index is present.
     pub skeleton_estimated_size_bytes: usize,
+    /// Sum of `BindResult::estimated_size_bytes()` across all input files,
+    /// captured before the merge. Useful for comparing pre-merge vs post-merge
+    /// memory footprint and for LSP eviction budgeting.
+    pub pre_merge_bind_total_bytes: usize,
 }
 
 impl MergedProgram {
@@ -2201,6 +2209,7 @@ impl MergedProgram {
             skeleton_merge_candidate_count: skel_merge_count,
             skeleton_total_symbol_count: skel_sym_count,
             skeleton_estimated_size_bytes: skel_size,
+            pre_merge_bind_total_bytes: self.pre_merge_bind_total_bytes,
         }
     }
 }
@@ -2396,6 +2405,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // per-file symbol/augmentation/re-export data without any remapping.
     let skeletons: Vec<FileSkeleton> = results.iter().map(|r| extract_skeleton(r)).collect();
     let skeleton_index = reduce_skeletons(&skeletons);
+
+    // Capture aggregate pre-merge memory footprint before we start consuming data.
+    let pre_merge_bind_total_bytes: usize =
+        results.iter().map(|r| r.estimated_size_bytes()).sum();
 
     // Collect lib_binders from all results (deduplicated by address), paired with their arenas
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
@@ -3529,6 +3542,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         alias_partners,
         semantic_defs,
         skeleton_index: Some(skeleton_index),
+        pre_merge_bind_total_bytes,
     }
 }
 

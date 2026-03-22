@@ -420,6 +420,10 @@ fn test_merged_program_residency_stats_track_unique_file_arenas() {
         stats.skeleton_estimated_size_bytes > 0,
         "skeleton size estimate should be nonzero when skeleton is present"
     );
+    assert!(
+        stats.pre_merge_bind_total_bytes > 0,
+        "pre-merge bind total should be nonzero for any non-empty merge"
+    );
 }
 
 #[test]
@@ -3964,5 +3968,57 @@ fn test_bind_result_estimated_size_accounts_for_flow_nodes() {
         "file with control flow ({} bytes) should be larger than simple file ({} bytes)",
         size,
         simple_size
+    );
+}
+
+#[test]
+fn test_pre_merge_bind_total_bytes_equals_sum_of_individual() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        (
+            "b.ts".to_string(),
+            "export function foo(x: number): string { return String(x); }".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "export interface Bar { name: string; value: number; }".to_string(),
+        ),
+    ];
+
+    // Compute individual sizes before merge
+    let bind_results = parse_and_bind_parallel(files);
+    let individual_sum: usize = bind_results.iter().map(|r| r.estimated_size_bytes()).sum();
+
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert_eq!(
+        stats.pre_merge_bind_total_bytes, individual_sum,
+        "pre_merge_bind_total_bytes ({}) should equal sum of individual BindResult sizes ({})",
+        stats.pre_merge_bind_total_bytes, individual_sum
+    );
+    assert!(
+        stats.pre_merge_bind_total_bytes > 0,
+        "total should be nonzero for 3 files"
+    );
+}
+
+#[test]
+fn test_pre_merge_bind_total_bytes_scales_with_file_count() {
+    let one_file = vec![("a.ts".to_string(), "export const a = 1;".to_string())];
+    let three_files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+        ("c.ts".to_string(), "export const c = 3;".to_string()),
+    ];
+
+    let prog1 = merge_bind_results(parse_and_bind_parallel(one_file));
+    let prog3 = merge_bind_results(parse_and_bind_parallel(three_files));
+
+    assert!(
+        prog3.pre_merge_bind_total_bytes > prog1.pre_merge_bind_total_bytes,
+        "3-file merge ({} bytes) should have larger pre-merge total than 1-file ({} bytes)",
+        prog3.pre_merge_bind_total_bytes,
+        prog1.pre_merge_bind_total_bytes
     );
 }
