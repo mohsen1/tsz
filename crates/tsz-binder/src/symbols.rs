@@ -413,6 +413,11 @@ impl SymbolArena {
         self.symbols.iter()
     }
 
+    /// Iterate over all symbols in the arena mutably.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Symbol> {
+        self.symbols.iter_mut()
+    }
+
     /// Reserve `SymbolIds` in this arena by pre-allocating placeholder symbols.
     ///
     /// This is used when copying lib `file_locals` into a user binder:

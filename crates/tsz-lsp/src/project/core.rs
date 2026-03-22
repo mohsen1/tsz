@@ -109,6 +109,16 @@ pub struct ProjectFile {
     /// identical content (e.g., `didOpen` on an already-loaded file, or `didSave`
     /// without changes). Computed via `FxHasher` for speed.
     pub(crate) content_hash: u64,
+    /// Stable file index assigned by the `Project`'s `FileIdAllocator`.
+    ///
+    /// Used as the `file_id` in `DefinitionStore` registrations, enabling
+    /// per-file invalidation when a file is removed or replaced. The binder's
+    /// symbols have their `decl_file_idx` set to this value, so all
+    /// `DefinitionInfo` records created by the checker carry the correct
+    /// file provenance.
+    ///
+    /// `u32::MAX` means no stable ID was assigned (standalone mode).
+    pub(crate) file_idx: u32,
 }
 
 /// Compute a fast content hash for source text.
@@ -153,12 +163,37 @@ impl ProjectFile {
         strict: bool,
         type_interner: Arc<TypeInterner>,
     ) -> Self {
+        Self::with_shared_interner_and_file_idx(
+            file_name,
+            source_text,
+            strict,
+            type_interner,
+            u32::MAX,
+        )
+    }
+
+    /// Parse and bind a single source file with a shared `TypeInterner` and
+    /// a driver-assigned stable file index.
+    ///
+    /// The `file_idx` is stamped onto all binder symbols (`decl_file_idx`)
+    /// during binding, enabling per-file `DefinitionStore` invalidation.
+    /// Pass `u32::MAX` for standalone mode (no invalidation tracking).
+    fn with_shared_interner_and_file_idx(
+        file_name: String,
+        source_text: String,
+        strict: bool,
+        type_interner: Arc<TypeInterner>,
+        file_idx: u32,
+    ) -> Self {
         let content_hash = hash_source_content(&source_text);
         let mut parser = ParserState::new(file_name.clone(), source_text);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
         let mut binder = BinderState::new();
+        if file_idx != u32::MAX {
+            binder.set_file_idx(file_idx);
+        }
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(parser.get_source_text());
@@ -178,6 +213,7 @@ impl ProjectFile {
             diagnostics_dirty: false,
             export_signature,
             content_hash,
+            file_idx,
         }
     }
 
@@ -194,6 +230,31 @@ impl ProjectFile {
         definition_store: Arc<DefinitionStore>,
     ) -> Self {
         let mut file = Self::with_shared_interner(file_name, source_text, strict, type_interner);
+        file.definition_store = Some(definition_store);
+        file
+    }
+
+    /// Parse and bind a file with shared interner, shared def store, and a
+    /// driver-assigned stable file index for per-file invalidation.
+    ///
+    /// This is the full constructor used by `Project::set_file`. The `file_idx`
+    /// is stamped onto binder symbols so that `DefinitionStore::invalidate_file`
+    /// can later clean up all definitions from this file.
+    fn with_full_project_context(
+        file_name: String,
+        source_text: String,
+        strict: bool,
+        type_interner: Arc<TypeInterner>,
+        definition_store: Arc<DefinitionStore>,
+        file_idx: u32,
+    ) -> Self {
+        let mut file = Self::with_shared_interner_and_file_idx(
+            file_name,
+            source_text,
+            strict,
+            type_interner,
+            file_idx,
+        );
         file.definition_store = Some(definition_store);
         file
     }
@@ -253,6 +314,11 @@ impl ProjectFile {
 
         let arena = self.parser.get_arena();
         self.binder.reset();
+        // Preserve file_idx across re-binds so the DefinitionStore can
+        // track which definitions belong to this file.
+        if self.file_idx != u32::MAX {
+            self.binder.set_file_idx(self.file_idx);
+        }
         self.binder.bind_source_file(arena, self.root);
 
         self.line_map = LineMap::build(self.parser.get_source_text());
@@ -440,6 +506,9 @@ impl ProjectFile {
             plan.reparse_start,
         ) {
             self.binder.reset();
+            if self.file_idx != u32::MAX {
+                self.binder.set_file_idx(self.file_idx);
+            }
             self.binder.bind_source_file(arena, self.root);
         }
         self.reset_analysis_state();
@@ -1250,6 +1319,75 @@ pub struct Project {
     /// method uses `CheckerState::with_cache_and_shared_def_store` (or
     /// `new_with_shared_def_store`) to propagate it into the checker context.
     pub(crate) definition_store: Arc<DefinitionStore>,
+    /// Stable file ID allocator for per-file `DefinitionStore` invalidation.
+    ///
+    /// Assigns a unique `u32` to each file name, ensuring that definitions
+    /// registered in the `DefinitionStore` carry stable file provenance.
+    /// When a file is removed or replaced, `invalidate_file(file_idx)` cleans
+    /// up all stale definitions.
+    pub(crate) file_id_allocator: FileIdAllocator,
+}
+
+/// Assigns stable `u32` file indices to file names.
+///
+/// Each file name gets a unique, monotonically increasing ID. IDs are never
+/// reused (even after file removal) to avoid ABA problems where a new file
+/// might accidentally inherit stale definitions from an old file with the
+/// same ID.
+///
+/// The allocator is O(1) for both allocation and lookup.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FileIdAllocator {
+    /// Maps file name to its assigned `u32` file index.
+    name_to_id: FxHashMap<String, u32>,
+    /// Next ID to allocate.
+    next_id: u32,
+}
+
+impl FileIdAllocator {
+    /// Create a new allocator.
+    pub fn new() -> Self {
+        Self {
+            name_to_id: FxHashMap::default(),
+            // Start at 0; u32::MAX is reserved as "unassigned".
+            next_id: 0,
+        }
+    }
+
+    /// Get or allocate a stable file index for the given file name.
+    ///
+    /// If the file already has an ID, returns it. Otherwise, allocates a new
+    /// one. IDs are never reused.
+    pub fn get_or_allocate(&mut self, file_name: &str) -> u32 {
+        if let Some(&id) = self.name_to_id.get(file_name) {
+            return id;
+        }
+        let id = self.next_id;
+        self.next_id = self.next_id.checked_add(1).expect("file ID overflow");
+        self.name_to_id.insert(file_name.to_string(), id);
+        id
+    }
+
+    /// Look up the file index for a file name without allocating.
+    ///
+    /// Returns `None` if the file was never registered.
+    pub fn lookup(&self, file_name: &str) -> Option<u32> {
+        self.name_to_id.get(file_name).copied()
+    }
+
+    /// Remove a file name from the allocator.
+    ///
+    /// The ID is NOT recycled — future allocations continue from `next_id`.
+    /// This prevents stale definition collisions.
+    pub fn remove(&mut self, file_name: &str) -> Option<u32> {
+        self.name_to_id.remove(file_name)
+    }
+
+    /// Number of currently tracked files.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.name_to_id.len()
+    }
 }
 
 /// Parsed settings from tsconfig.json relevant to LSP operation.
@@ -1300,6 +1438,7 @@ impl Project {
             tsconfig_settings: FxHashMap::default(),
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
+            file_id_allocator: FileIdAllocator::new(),
         }
     }
 
@@ -1321,6 +1460,7 @@ impl Project {
             tsconfig_settings: FxHashMap::default(),
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
+            file_id_allocator: FileIdAllocator::new(),
         }
     }
 
@@ -1586,12 +1726,24 @@ impl Project {
             return;
         }
 
-        let file = ProjectFile::with_shared_interner_and_def_store(
+        // Allocate a stable file index. If the file already has one, reuse it
+        // (the allocator returns the existing ID). This ensures that
+        // invalidate_file + re-register uses the same ID.
+        let file_idx = self.file_id_allocator.get_or_allocate(&file_name);
+
+        // Invalidate old definitions in the DefinitionStore before re-binding.
+        // This cleans up stale DefIds from the previous version of this file.
+        if self.files.contains_key(&file_name) {
+            self.definition_store.invalidate_file(file_idx);
+        }
+
+        let file = ProjectFile::with_full_project_context(
             file_name.clone(),
             source_text,
             self.strict,
             Arc::clone(&self.type_interner),
             Arc::clone(&self.definition_store),
+            file_idx,
         );
 
         // Update symbol index with the new file's binder data and AST identifiers
@@ -1639,6 +1791,12 @@ impl Project {
         // Capture old export signature before updating
         let old_signature = self.files.get(file_name)?.export_signature;
 
+        // Invalidate old definitions before re-binding. The re-bind will
+        // create new definitions with the same file_idx.
+        if let Some(file_idx) = self.file_id_allocator.lookup(file_name) {
+            self.definition_store.invalidate_file(file_idx);
+        }
+
         let file = self.files.get_mut(file_name)?;
         file.update_source_with_edits(updated_source, edits);
 
@@ -1677,10 +1835,21 @@ impl Project {
     /// Remove a file from the project.
     ///
     /// Cleans up:
+    /// - Stale definitions in the shared `DefinitionStore`
     /// - Symbol index entries for the file
     /// - Dependency graph edges (both imports and dependents)
     /// - Cached diagnostics/types in files that depended on the removed file
+    /// - File ID allocation (ID is retired, not recycled)
     pub fn remove_file(&mut self, file_name: &str) -> Option<ProjectFile> {
+        // Invalidate definitions in the DefinitionStore for this file.
+        // This must happen before removing from the files map so the file_idx
+        // is still available.
+        if let Some(file_idx) = self.file_id_allocator.lookup(file_name) {
+            self.definition_store.invalidate_file(file_idx);
+        }
+        // Remove the file ID (retired, not recycled).
+        self.file_id_allocator.remove(file_name);
+
         // Remove from symbol index
         self.symbol_index.remove_file(file_name);
 

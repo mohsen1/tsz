@@ -10,7 +10,8 @@ pub(crate) mod module_specifiers;
 pub(crate) mod operations;
 
 pub(crate) use self::core::{
-    ExportMatch, ImportKind, ImportSpecifierTarget, ImportTarget, NamespaceReexportTarget,
+    ExportMatch, FileIdAllocator, ImportKind, ImportSpecifierTarget, ImportTarget,
+    NamespaceReexportTarget,
 };
 pub use self::core::{
     FileRename, Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
