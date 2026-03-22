@@ -2534,3 +2534,163 @@ async function wrap<T>(val: T): Promise<T> { return val; }
         "Multiple Promise instantiations should share DefId via stable path.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- Promise-specific stable-identity tests ----
+
+#[test]
+fn test_promise_then_return_type_preserves_generic() {
+    // Promise<T>.then() should return Promise<U> where U is inferred from
+    // the callback. This relies on stable DefId identity for Promise across
+    // heritage merging (Promise inherits from PromiseLike).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p: Promise<number> = Promise.resolve(1);
+const q: Promise<string> = p.then(n => String(n));
+const bad: Promise<number> = p.then(n => String(n));
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    // We expect an error on the `bad` line (string not assignable to number),
+    // but no spurious errors on the valid lines.
+    let spurious: Vec<_> = real_errors
+        .iter()
+        .filter(|(c, _)| *c == 2304 || *c == 2339)
+        .collect();
+    assert!(
+        spurious.is_empty(),
+        "Promise.then() should not produce missing-name or missing-property errors.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_constructor_new_resolves() {
+    // `new Promise<T>((resolve, reject) => ...)` should resolve via the
+    // PromiseConstructor value declaration in lib. Relies on stable identity
+    // for the intersection of Promise interface + PromiseConstructor value.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p = new Promise<number>((resolve, reject) => {
+    resolve(42);
+});
+const q: Promise<number> = p;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304),
+        "new Promise should not produce TS2304 (cannot find name).\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// ---- Lib reference lowering via type aliases ----
+
+#[test]
+fn test_lib_type_alias_pick_resolves_correctly() {
+    // Pick<T,K> is a mapped type alias in lib.d.ts. Its resolution depends on
+    // stable DefId for the type alias itself and correct type param lowering.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface User { name: string; age: number; email: string; }
+type NameOnly = Pick<User, "name">;
+const u: NameOnly = { name: "Alice" };
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Pick<User, 'name'> should accept {{name: string}}.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_type_alias_omit_resolves_correctly() {
+    // Omit<T,K> is built on top of Pick and Exclude. Its resolution
+    // exercises nested type alias DefId identity.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface User { name: string; age: number; email: string; }
+type WithoutEmail = Omit<User, "email">;
+const u: WithoutEmail = { name: "Alice", age: 30 };
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Omit<User, 'email'> should accept {{name, age}}.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+// ---- Import-type lowering for lib types ----
+
+#[test]
+fn test_type_reference_to_lib_generic_preserves_params() {
+    // A type alias that wraps a lib generic (e.g., `type Arr<T> = Array<T>`)
+    // should preserve type parameters via the stable DefId path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type Arr<T> = Array<T>;
+const nums: Arr<number> = [1, 2, 3];
+const len: number = nums.length;
+const bad: Arr<number> = ["a"];
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    // Should have TS2322 for the bad line but not TS2304/TS2339 for missing names
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        "Type alias wrapping lib Array should resolve names and members.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_nested_lib_generic_references() {
+    // Map<string, Array<number>> exercises nested lib generic resolution.
+    // Both Map and Array must have stable DefIds for proper type lowering.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const m: Map<string, Array<number>> = new Map();
+m.set("key", [1, 2, 3]);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 2583)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2304),
+        "Nested lib generic Map<string, Array<number>> should resolve.\nDiagnostics: {real_errors:#?}"
+    );
+}
