@@ -410,3 +410,46 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
     assert_eq!(prop_a.unwrap().type_id, TypeId::STRING);
     assert_eq!(prop_b.unwrap().type_id, TypeId::STRING);
 }
+
+#[test]
+fn type_parameter_constraint_query_boundary() {
+    // Validates the type_parameter_constraint query boundary: the checker
+    // can discover a type parameter's constraint through solver queries
+    // without accessing TypeData directly. This is used to pre-resolve
+    // constraint types into the TypeEnvironment for homomorphic mapped types.
+    let types = TypeInterner::new();
+
+    // TypeParameter with constraint
+    let constrained = types.type_param(tsz_solver::TypeParamInfo {
+        name: types.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    assert_eq!(
+        type_parameter_constraint(&types, constrained),
+        Some(TypeId::STRING),
+        "Constrained type parameter should return its constraint"
+    );
+
+    // TypeParameter without constraint
+    let unconstrained = types.type_param(tsz_solver::TypeParamInfo {
+        name: types.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    assert_eq!(
+        type_parameter_constraint(&types, unconstrained),
+        None,
+        "Unconstrained type parameter should return None"
+    );
+
+    // Non-TypeParameter types should return None
+    assert_eq!(type_parameter_constraint(&types, TypeId::STRING), None);
+    assert_eq!(type_parameter_constraint(&types, TypeId::ANY), None);
+
+    // Application type (not a type parameter) should return None
+    let app = types.application(TypeId::STRING, vec![TypeId::NUMBER]);
+    assert_eq!(type_parameter_constraint(&types, app), None);
+}

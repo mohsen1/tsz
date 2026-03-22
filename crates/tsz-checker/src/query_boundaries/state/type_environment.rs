@@ -172,6 +172,16 @@ pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     tsz_solver::type_queries::keyof_inner_type(db, type_id)
 }
 
+/// Get the constraint of a type parameter.
+///
+/// Returns `Some(constraint)` if the type is a `TypeParameter` or `Infer`
+/// with a constraint, `None` otherwise. Used by the checker to discover
+/// types reachable through type parameter constraints for pre-resolution
+/// into the TypeEnvironment, without accessing TypeData directly.
+pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
 /// Check if a type is an array or tuple type.
 pub(crate) fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)

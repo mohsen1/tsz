@@ -719,6 +719,22 @@ impl<'a> CheckerState<'a> {
             self.ensure_relation_input_ready(nt);
         }
 
+        // For homomorphic mapped types where the source is a type parameter
+        // (e.g., `{ [K in keyof P]: P[K] }` with `P extends SomeType<Foo>`),
+        // pre-resolve the type parameter's constraint into the TypeEnvironment.
+        // The solver's evaluate_index_access resolves IndexAccess on type parameters
+        // through their constraints, but this requires the constraint's Lazy types
+        // (Application/Lazy DefIds) to be resolvable via the environment. Without
+        // this, the solver defers IndexAccess because the constraint's types aren't
+        // in the environment, and the checker falls back to local expansion.
+        if let query::MappedConstraintKind::KeyOf(source) =
+            query::classify_mapped_constraint(self.ctx.types, mapped.constraint)
+        {
+            if let Some(constraint) = query::type_parameter_constraint(self.ctx.types, source) {
+                self.ensure_relation_input_ready(constraint);
+            }
+        }
+
         // Use solver classification to decide whether to preserve array/tuple identity.
         // This replaces the checker-local `mapped_constraint_source_needs_array_like_preservation`
         // with a solver-owned query, keeping structural classification behind the boundary.
