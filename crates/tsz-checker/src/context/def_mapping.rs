@@ -814,6 +814,66 @@ impl<'a> CheckerContext<'a> {
         count
     }
 
+    /// Warm local `symbol_to_def` / `def_to_symbol` caches from the shared
+    /// `DefinitionStore` in a single pass.
+    ///
+    /// When the checker receives a pre-populated `DefinitionStore` from the
+    /// merge pipeline (via `with_options_and_shared_def_store`), this method
+    /// is more efficient than `pre_populate_def_ids_from_binder()` +
+    /// `pre_populate_def_ids_from_lib_binders()` because it reads directly
+    /// from the store's authoritative symbol→DefId index instead of
+    /// re-iterating each binder's `semantic_defs` and re-converting
+    /// `SemanticDefEntry` → `DefinitionInfo`.
+    ///
+    /// Returns the number of mappings warmed.
+    pub fn warm_local_caches_from_shared_store(&self) -> usize {
+        if self.definition_store.is_empty() {
+            return 0;
+        }
+
+        let mappings = self.definition_store.all_symbol_mappings();
+        let mut count = 0;
+
+        for (raw_sym_id, def_id) in &mappings {
+            let sym_id = tsz_binder::SymbolId(*raw_sym_id);
+
+            // Skip if already in local cache (e.g., from a prior warm pass).
+            if self.symbol_to_def.borrow().contains_key(&sym_id) {
+                continue;
+            }
+
+            self.symbol_to_def.borrow_mut().insert(sym_id, *def_id);
+            self.def_to_symbol.borrow_mut().insert(*def_id, sym_id);
+
+            // Propagate DefKind to both TypeEnvironments so the evaluator
+            // and flow-analyzer can query it without waiting for first access.
+            if let Some(info) = self.definition_store.get(*def_id) {
+                self.register_def_kind_in_envs(*def_id, info.kind);
+            }
+
+            count += 1;
+        }
+
+        trace!(
+            count,
+            total_mappings = mappings.len(),
+            "Warmed local caches from shared DefinitionStore"
+        );
+
+        count
+    }
+
+    /// Returns `true` if the shared `DefinitionStore` has been pre-populated
+    /// (i.e., it contains definitions registered at merge time, not just an
+    /// empty store created by the default constructor).
+    ///
+    /// When true, `warm_local_caches_from_shared_store()` can replace the
+    /// more expensive `pre_populate_def_ids_from_binder()` +
+    /// `pre_populate_def_ids_from_lib_binders()` calls.
+    pub fn has_shared_store(&self) -> bool {
+        !self.definition_store.is_empty()
+    }
+
     /// Resolve heritage for definitions whose extends/implements targets were
     /// not found during their batch's pass 2 (cross-batch heritage).
     ///
