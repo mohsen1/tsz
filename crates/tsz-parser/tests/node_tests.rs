@@ -505,3 +505,148 @@ fn test_parent_mapping_function() {
         "Function should have no parent"
     );
 }
+
+// ============================================================================
+// NodeArena::estimated_size_bytes tests
+// ============================================================================
+
+#[test]
+fn estimated_size_bytes_default_arena_is_nonzero() {
+    let arena = NodeArena::default();
+    let size = arena.estimated_size_bytes();
+    assert!(
+        size > 0,
+        "estimated_size_bytes should be nonzero even for a default arena (struct overhead)"
+    );
+    // At minimum it should account for size_of::<NodeArena>()
+    assert!(
+        size >= size_of::<NodeArena>(),
+        "estimated_size_bytes ({}) should be >= size_of::<NodeArena>() ({})",
+        size,
+        size_of::<NodeArena>(),
+    );
+}
+
+#[test]
+fn estimated_size_bytes_grows_with_nodes() {
+    let mut arena = NodeArena::new();
+    let baseline = arena.estimated_size_bytes();
+
+    // Add several tokens to grow the nodes Vec
+    for i in 0..100 {
+        arena.add_token(SyntaxKind::AsteriskToken as u16, i * 2, i * 2 + 1);
+    }
+    let after_tokens = arena.estimated_size_bytes();
+    assert!(
+        after_tokens > baseline,
+        "estimated_size_bytes should grow after adding nodes: {} vs {}",
+        after_tokens,
+        baseline,
+    );
+}
+
+#[test]
+fn estimated_size_bytes_grows_with_identifiers() {
+    let mut arena = NodeArena::new();
+    let baseline = arena.estimated_size_bytes();
+
+    // Add identifiers with string data
+    for i in 0..50 {
+        let name = format!("identifier_{}_with_some_length", i);
+        arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            10,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: name,
+                original_text: None,
+                type_arguments: None,
+            },
+        );
+    }
+    let after_ids = arena.estimated_size_bytes();
+    assert!(
+        after_ids > baseline,
+        "estimated_size_bytes should grow after adding identifiers: {} vs {}",
+        after_ids,
+        baseline,
+    );
+    // The growth should account for string heap data (each identifier ~30 chars)
+    // 50 identifiers * ~30 bytes = ~1500 bytes of string data minimum
+    let growth = after_ids - baseline;
+    assert!(
+        growth >= 1000,
+        "growth ({}) should account for heap string data in identifiers",
+        growth,
+    );
+}
+
+#[test]
+fn estimated_size_bytes_grows_with_literals() {
+    let mut arena = NodeArena::new();
+    let baseline = arena.estimated_size_bytes();
+
+    // Add string literals
+    for i in 0..30 {
+        let text = format!("literal string value number {}", i);
+        arena.add_literal(
+            SyntaxKind::StringLiteral as u16,
+            0,
+            50,
+            LiteralData {
+                text,
+                raw_text: None,
+                value: None,
+            },
+        );
+    }
+    let after_lits = arena.estimated_size_bytes();
+    assert!(
+        after_lits > baseline,
+        "estimated_size_bytes should grow after adding literals: {} vs {}",
+        after_lits,
+        baseline,
+    );
+}
+
+#[test]
+fn estimated_size_bytes_larger_arena_beats_smaller() {
+    // Parse a small source
+    let small_arena = {
+        let mut state =
+            ParserState::new("test.ts".into(), "let x = 1;".into());
+        state.parse_source_file();
+        state.into_arena()
+    };
+
+    // Parse a larger source
+    let large_src = r#"
+        interface Foo { a: string; b: number; c: boolean; }
+        function bar(x: Foo): string { return x.a; }
+        class Baz implements Foo {
+            a = "";
+            b = 0;
+            c = false;
+            method(): void {}
+        }
+        const arr: number[] = [1, 2, 3];
+        type Union = string | number | boolean;
+        enum Direction { Up, Down, Left, Right }
+    "#;
+    let large_arena = {
+        let mut state =
+            ParserState::new("test.ts".into(), large_src.into());
+        state.parse_source_file();
+        state.into_arena()
+    };
+
+    let small_size = small_arena.estimated_size_bytes();
+    let large_size = large_arena.estimated_size_bytes();
+    assert!(
+        large_size > small_size,
+        "larger source should produce larger estimated_size_bytes: large={} vs small={}",
+        large_size,
+        small_size,
+    );
+}
