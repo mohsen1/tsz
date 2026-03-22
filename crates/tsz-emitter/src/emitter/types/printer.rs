@@ -1599,8 +1599,12 @@ impl<'a> TypePrinter<'a> {
         let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
             let s = self.composition_member_text(type_id);
-            // Parenthesize function/constructor types in intersection position
-            if self.type_needs_parentheses_in_composition(type_id) {
+            // Parenthesize function/constructor types AND union types in intersection position.
+            // Union types need parens because `&` binds tighter than `|`:
+            // `(A | B) & C` is different from `A | B & C`.
+            let needs_parens = self.type_needs_parentheses_in_composition(type_id)
+                || visitor::union_list_id(self.interner, type_id).is_some();
+            if needs_parens {
                 members.push((self.intersection_member_priority(type_id), format!("({s})")));
             } else {
                 members.push((self.intersection_member_priority(type_id), s));
