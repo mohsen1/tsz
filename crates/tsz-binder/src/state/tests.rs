@@ -4503,3 +4503,106 @@ const myVar = 1;
         );
     }
 }
+
+#[test]
+fn test_heritage_names_captured_for_class_extends() {
+    let source = "class Foo extends Bar {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Bar"]);
+}
+
+#[test]
+fn test_heritage_names_captured_for_class_implements() {
+    let source = "class Foo implements Iface1, Iface2 {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Iface1", "Iface2"]);
+}
+
+#[test]
+fn test_heritage_names_captured_for_class_extends_and_implements() {
+    let source = "class Foo extends Base implements I1, I2 {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Base", "I1", "I2"]);
+}
+
+#[test]
+fn test_heritage_names_captured_for_interface_extends() {
+    let source = "interface Foo extends Bar, Baz {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["Bar", "Baz"]);
+}
+
+#[test]
+fn test_heritage_names_empty_for_no_heritage() {
+    let source = "class Plain {} interface Empty {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let plain = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Plain")
+        .expect("expected semantic_def for Plain");
+    assert!(plain.heritage_names.is_empty());
+
+    let empty = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Empty")
+        .expect("expected semantic_def for Empty");
+    assert!(empty.heritage_names.is_empty());
+}
+
+#[test]
+fn test_heritage_names_property_access_expression() {
+    let source = "class Foo extends ns.Base {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Foo")
+        .expect("expected semantic_def for Foo");
+    assert_eq!(entry.heritage_names, vec!["ns.Base"]);
+}

@@ -35,6 +35,11 @@ pub struct SkeletonSymbol {
     pub is_import_alias: bool,
     /// Import module specifier, if this is an import alias.
     pub import_module: Option<String>,
+    /// Heritage clause names (`extends` / `implements`) from the declaration.
+    ///
+    /// Only populated for class and interface symbols. Changes to heritage
+    /// references affect cross-file type resolution and must trigger re-merge.
+    pub heritage_names: Vec<String>,
 }
 
 /// Augmentation candidate as seen from the skeleton layer.
@@ -161,6 +166,10 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             continue;
         }
         if let Some(sym) = result.symbols.get(sym_id) {
+            let heritage_names = result
+                .semantic_defs
+                .get(&sym_id)
+                .map_or_else(Vec::new, |def| def.heritage_names.clone());
             symbols.push(SkeletonSymbol {
                 name: name.clone(),
                 flags: sym.flags,
@@ -171,6 +180,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                 is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                 is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
                 import_module: sym.import_module.clone(),
+                heritage_names,
             });
         }
     }
@@ -184,6 +194,10 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             }
             if let Some(sym) = result.symbols.get(sym_id) {
                 seen_names.insert(name.clone());
+                let heritage_names = result
+                    .semantic_defs
+                    .get(&sym_id)
+                    .map_or_else(Vec::new, |def| def.heritage_names.clone());
                 symbols.push(SkeletonSymbol {
                     name: name.clone(),
                     flags: sym.flags,
@@ -194,6 +208,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                     is_lib_origin: result.lib_symbol_ids.contains(&sym_id),
                     is_import_alias: (sym.flags & crate::binder::symbol_flags::ALIAS) != 0,
                     import_module: sym.import_module.clone(),
+                    heritage_names,
                 });
             }
         }
@@ -733,6 +748,9 @@ impl FileSkeleton {
             if let Some(ref m) = sym.import_module {
                 size += m.capacity();
             }
+            for h in &sym.heritage_names {
+                size += h.capacity();
+            }
         }
         for aug in &self.global_augmentations {
             size += std::mem::size_of::<SkeletonAugmentation>();
@@ -952,5 +970,166 @@ mod tests {
         assert_eq!(diff.removed, vec!["remove.ts"]);
         assert_eq!(diff.affected_count(), 3);
         assert!(diff.topology_changed);
+    }
+
+    #[test]
+    fn heritage_names_affect_skeleton_fingerprint() {
+        // Two skeletons identical except for heritage_names on a symbol
+        // should produce different fingerprints.
+        let sym_no_heritage = SkeletonSymbol {
+            name: "Foo".to_string(),
+            flags: 0,
+            is_exported: true,
+            declaration_count: 1,
+            has_exports: false,
+            has_members: false,
+            is_lib_origin: false,
+            is_import_alias: false,
+            import_module: None,
+            heritage_names: vec![],
+        };
+        let sym_with_heritage = SkeletonSymbol {
+            heritage_names: vec!["Bar".to_string()],
+            ..sym_no_heritage.clone()
+        };
+
+        let mut skel1 = FileSkeleton {
+            file_name: "test.ts".to_string(),
+            is_external_module: true,
+            symbols: vec![sym_no_heritage],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel1.fingerprint = skel1.compute_fingerprint();
+
+        let mut skel2 = FileSkeleton {
+            file_name: "test.ts".to_string(),
+            is_external_module: true,
+            symbols: vec![sym_with_heritage],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel2.fingerprint = skel2.compute_fingerprint();
+
+        assert_ne!(
+            skel1.fingerprint, skel2.fingerprint,
+            "Heritage names should change the skeleton fingerprint"
+        );
+    }
+
+    #[test]
+    fn heritage_names_included_in_skeleton_symbol_hash() {
+        use std::hash::{Hash, Hasher};
+
+        let sym1 = SkeletonSymbol {
+            name: "Foo".to_string(),
+            flags: 0,
+            is_exported: false,
+            declaration_count: 1,
+            has_exports: false,
+            has_members: false,
+            is_lib_origin: false,
+            is_import_alias: false,
+            import_module: None,
+            heritage_names: vec![],
+        };
+        let sym2 = SkeletonSymbol {
+            heritage_names: vec!["Base".to_string(), "Iface".to_string()],
+            ..sym1.clone()
+        };
+
+        let hash_of = |sym: &SkeletonSymbol| {
+            let mut h = rustc_hash::FxHasher::default();
+            sym.hash(&mut h);
+            h.finish()
+        };
+
+        assert_ne!(
+            hash_of(&sym1),
+            hash_of(&sym2),
+            "Different heritage_names should produce different hashes"
+        );
+    }
+
+    #[test]
+    fn diff_detects_heritage_change() {
+        // Heritage name change should be detected as a changed file.
+        let sym1 = SkeletonSymbol {
+            name: "Foo".to_string(),
+            flags: 0,
+            is_exported: true,
+            declaration_count: 1,
+            has_exports: false,
+            has_members: false,
+            is_lib_origin: false,
+            is_import_alias: false,
+            import_module: None,
+            heritage_names: vec!["OldBase".to_string()],
+        };
+        let sym2 = SkeletonSymbol {
+            heritage_names: vec!["NewBase".to_string()],
+            ..sym1.clone()
+        };
+
+        let mut prev = FileSkeleton {
+            file_name: "a.ts".to_string(),
+            is_external_module: true,
+            symbols: vec![sym1],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        prev.fingerprint = prev.compute_fingerprint();
+
+        let mut curr = FileSkeleton {
+            file_name: "a.ts".to_string(),
+            is_external_module: true,
+            symbols: vec![sym2],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        curr.fingerprint = curr.compute_fingerprint();
+
+        let diff = diff_skeletons(&[prev], &[curr]);
+        assert_eq!(
+            diff.changed,
+            vec!["a.ts"],
+            "Heritage name change should be detected"
+        );
     }
 }

@@ -56,6 +56,72 @@ impl BinderState {
         None
     }
 
+    /// Extract names from a heritage clause list (`extends` / `implements`).
+    ///
+    /// Given the `heritage_clauses: Option<NodeList>` from a class or interface
+    /// declaration, walks all heritage clause types and extracts the simple
+    /// identifier names. Property-access expressions like `ns.Base` are stored
+    /// as dot-separated strings (e.g., `"ns.Base"`).
+    ///
+    /// Returns an empty `Vec` if there are no heritage clauses or no extractable names.
+    pub(crate) fn collect_heritage_clause_names(
+        arena: &NodeArena,
+        heritage_clauses: Option<&NodeList>,
+    ) -> Vec<String> {
+        let clauses = match heritage_clauses {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let mut names = Vec::new();
+        for &clause_idx in &clauses.nodes {
+            let clause_node = match arena.get(clause_idx) {
+                Some(n) => n,
+                None => continue,
+            };
+            let heritage_data = match arena.get_heritage_clause(clause_node) {
+                Some(d) => d,
+                None => continue,
+            };
+            for &type_idx in &heritage_data.types.nodes {
+                let type_node = match arena.get(type_idx) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                // Heritage clause types are ExpressionWithTypeArguments wrapping an expression.
+                let expr_idx = if let Some(expr_data) = arena.get_expr_type_args(type_node) {
+                    expr_data.expression
+                } else {
+                    type_idx
+                };
+                if let Some(name) = Self::extract_heritage_expression_name(arena, expr_idx) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
+    /// Extract a name from a heritage expression node.
+    ///
+    /// Handles simple identifiers (`Foo`) and property-access chains (`ns.Base`).
+    fn extract_heritage_expression_name(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        // Simple identifier
+        if let Some(id) = arena.get_identifier(node) {
+            return Some(id.escaped_text.clone());
+        }
+        // Property access expression: expression.name (e.g., ns.Base)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = arena.get_access_expr(node) {
+                let lhs = Self::extract_heritage_expression_name(arena, access.expression)?;
+                let rhs_node = arena.get(access.name_or_argument)?;
+                let rhs_id = arena.get_identifier(rhs_node)?;
+                return Some(format!("{}.{}", lhs, rhs_id.escaped_text));
+            }
+        }
+        None
+    }
+
     /// Get the declared name from a declaration node (`ClassDeclaration`,
     /// `FunctionDeclaration`, etc.) by looking up its `name` child identifier.
     pub(crate) fn get_declaration_name(arena: &NodeArena, idx: NodeIndex) -> Option<&str> {

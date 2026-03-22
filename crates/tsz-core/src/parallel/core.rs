@@ -639,6 +639,9 @@ impl BindResult {
                 + std::mem::size_of::<crate::binder::SemanticDefEntry>()
                 + 8;
             size += def.name.capacity();
+            for h in &def.heritage_names {
+                size += h.capacity();
+            }
         }
 
         // file_import_sources
@@ -3047,7 +3050,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker.ctx.set_current_file_idx(file_idx);
             for (sym_id, owner_idx) in &symbol_file_targets {
-                checker.ctx.register_symbol_file_index(*sym_id, *owner_idx);
+                checker.ctx.register_symbol_file_target(*sym_id, *owner_idx);
             }
 
             let mut function_results = Vec::new();
@@ -3160,7 +3163,7 @@ pub fn check_files_parallel(
             checker.ctx.set_current_file_idx(file_idx);
 
             for (sym_id, owner_idx) in &symbol_file_targets {
-                checker.ctx.register_symbol_file_index(*sym_id, *owner_idx);
+                checker.ctx.register_symbol_file_target(*sym_id, *owner_idx);
             }
 
             if !lib_contexts.is_empty() {
