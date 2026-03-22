@@ -1536,6 +1536,28 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             }
         }
 
+        // Module dependency graph statistics
+        if let Some(ref md) = result.module_dep_stats {
+            println!(
+                "Module files:                  {}",
+                md.file_count,
+            );
+            println!(
+                "Dependency edges:              {}",
+                md.dependency_edges,
+            );
+            println!(
+                "Import cycles:                 {}",
+                md.import_cycles,
+            );
+            if md.largest_cycle_size > 0 {
+                println!(
+                    "Largest cycle:                 {} files",
+                    md.largest_cycle_size,
+                );
+            }
+        }
+
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }
