@@ -657,13 +657,27 @@ impl<'a> InferenceContext<'a> {
         {
             return true;
         }
-        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
-            let members = self.interner.type_list(list_id);
-            return members
-                .iter()
-                .any(|&m| self.declared_constraint_is_primitive(m));
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.declared_constraint_is_primitive(m))
+            }
+            // `keyof T` constraints produce string literal unions at runtime,
+            // so literals should be preserved (not widened to `string`).
+            // This matches the behavior in constraint_is_primitive_type.
+            Some(TypeData::KeyOf(_)) => true,
+            // Intersections like `keyof T & string` — check if any member
+            // implies literal preservation.
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.declared_constraint_is_primitive(m))
+            }
+            _ => false,
         }
-        false
     }
 
     /// Check whether a declared constraint contains a `TypeParameter` whose own
