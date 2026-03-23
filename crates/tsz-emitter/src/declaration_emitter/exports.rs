@@ -1428,11 +1428,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get(current_body)
                 .and_then(|body_node| self.arena.get_module_block(body_node))
-                .map_or(true, |module_block| {
+                .is_none_or(|module_block| {
                     module_block
                         .statements
                         .as_ref()
-                        .map_or(true, |stmts| stmts.nodes.is_empty())
+                        .is_none_or(|stmts| stmts.nodes.is_empty())
                 });
 
             if is_empty_body {
