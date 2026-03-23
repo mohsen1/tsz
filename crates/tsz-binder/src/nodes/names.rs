@@ -606,6 +606,14 @@ impl BinderState {
         arena.has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
     }
 
+    /// Check if modifiers list contains the 'declare' keyword.
+    ///
+    /// Used to capture ambient declaration status in `SemanticDefEntry.is_declare`.
+    /// Declarations with `declare` have no runtime representation.
+    pub(crate) fn has_declare_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
+        arena.has_modifier_ref(modifiers, SyntaxKind::DeclareKeyword)
+    }
+
     /// Check if modifiers include a parameter property keyword
     /// (public, private, protected, or readonly).
     pub(crate) fn has_parameter_property_modifier(

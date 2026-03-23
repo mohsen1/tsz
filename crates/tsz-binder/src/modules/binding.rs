@@ -191,7 +191,8 @@ impl BinderState {
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
                 module_symbol_id = self.declare_symbol(&name, flags, idx, is_exported);
-                self.record_semantic_def(
+                let is_declare = Self::has_declare_modifier(arena, module.modifiers.as_ref());
+                self.record_semantic_def_with_declare(
                     module_symbol_id,
                     crate::state::SemanticDefKind::Namespace,
                     &name,
@@ -199,6 +200,7 @@ impl BinderState {
                     0,
                     Vec::new(), // namespaces are not generic
                     is_exported,
+                    is_declare,
                 );
 
                 // `declare global { namespace X { ... } }` makes X visible at the global

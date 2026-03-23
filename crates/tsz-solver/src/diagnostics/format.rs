@@ -3217,6 +3217,7 @@ mod tests {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         };
         let def_id = def_store.register(info);
 
@@ -3275,6 +3276,7 @@ mod tests {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         };
         let def_id = def_store.register(info);
 

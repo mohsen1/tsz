@@ -140,6 +140,7 @@ impl<'a> CheckerContext<'a> {
             is_const: false,
             is_exported: false,
             is_global_augmentation: false,
+            is_declare: false,
         };
 
         let def_id = self.definition_store.register(info);
@@ -819,6 +820,7 @@ impl<'a> CheckerContext<'a> {
                 is_const: entry.is_const,
                 is_exported: entry.is_exported,
                 is_global_augmentation: entry.is_global_augmentation,
+                is_declare: entry.is_declare,
             };
 
             let def_id = self.definition_store.register(info);
@@ -866,6 +868,7 @@ impl<'a> CheckerContext<'a> {
                     is_const: false,
                     is_exported: entry.is_exported,
                     is_global_augmentation: false,
+                    is_declare: entry.is_declare,
                 };
                 let ctor_def_id = self.definition_store.register(ctor_info);
                 self.definition_store
