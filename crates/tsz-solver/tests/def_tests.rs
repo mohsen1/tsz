@@ -1400,3 +1400,276 @@ fn all_symbol_mappings_empty_store() {
     let mappings = store.all_symbol_mappings();
     assert!(mappings.is_empty(), "empty store should return no mappings");
 }
+
+// =============================================================================
+// from_semantic_defs factory tests
+// =============================================================================
+
+#[test]
+fn from_semantic_defs_empty_map() {
+    let defs = rustc_hash::FxHashMap::default();
+    let store =
+        DefinitionStore::from_semantic_defs(&defs, |s| tsz_common::interner::Atom(s.len() as u32));
+    assert_eq!(store.statistics().total_definitions, 0);
+}
+
+#[test]
+fn from_semantic_defs_creates_all_declaration_families() {
+    use tsz_binder::{SemanticDefEntry, SemanticDefKind, SymbolId};
+
+    let mut defs = rustc_hash::FxHashMap::default();
+
+    let make_entry = |kind: SemanticDefKind, name: &str| SemanticDefEntry {
+        kind,
+        name: name.to_string(),
+        file_id: 1,
+        span_start: 0,
+        type_param_count: 0,
+        type_param_names: Vec::new(),
+        is_exported: true,
+        enum_member_names: Vec::new(),
+        is_const: false,
+        is_abstract: false,
+        is_declare: false,
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
+        parent_namespace: None,
+        is_global_augmentation: false,
+    };
+
+    defs.insert(SymbolId(1), make_entry(SemanticDefKind::Class, "MyClass"));
+    defs.insert(
+        SymbolId(2),
+        make_entry(SemanticDefKind::Interface, "MyIface"),
+    );
+    defs.insert(
+        SymbolId(3),
+        make_entry(SemanticDefKind::TypeAlias, "MyAlias"),
+    );
+    defs.insert(SymbolId(4), {
+        let mut e = make_entry(SemanticDefKind::Enum, "MyEnum");
+        e.enum_member_names = vec!["A".to_string(), "B".to_string()];
+        e
+    });
+    defs.insert(SymbolId(5), make_entry(SemanticDefKind::Namespace, "MyNS"));
+    defs.insert(SymbolId(6), make_entry(SemanticDefKind::Function, "myFunc"));
+    defs.insert(SymbolId(7), make_entry(SemanticDefKind::Variable, "myVar"));
+
+    // Use a simple hash-based interning for the test
+    let names: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    let store = DefinitionStore::from_semantic_defs(&defs, |s| {
+        let mut names = names.borrow_mut();
+        let idx = names.len();
+        names.push(s.to_string());
+        tsz_common::interner::Atom(idx as u32)
+    });
+
+    // 7 declarations + 1 ClassConstructor companion = 8
+    assert_eq!(
+        store.statistics().total_definitions,
+        8,
+        "7 decls + 1 class constructor companion = 8"
+    );
+
+    // Verify each kind via symbol lookup
+    assert!(store.find_def_by_symbol(1).is_some(), "Class should exist");
+    assert!(
+        store.find_def_by_symbol(2).is_some(),
+        "Interface should exist"
+    );
+    assert!(
+        store.find_def_by_symbol(3).is_some(),
+        "TypeAlias should exist"
+    );
+    assert!(store.find_def_by_symbol(4).is_some(), "Enum should exist");
+    assert!(
+        store.find_def_by_symbol(5).is_some(),
+        "Namespace should exist"
+    );
+    assert!(
+        store.find_def_by_symbol(6).is_some(),
+        "Function should exist"
+    );
+    assert!(
+        store.find_def_by_symbol(7).is_some(),
+        "Variable should exist"
+    );
+
+    // Verify class has constructor companion
+    let class_def = store.find_def_by_symbol(1).unwrap();
+    let ctor = store.get_constructor_def(class_def);
+    assert!(
+        ctor.is_some(),
+        "Class should have ClassConstructor companion"
+    );
+    let ctor_info = store.get(ctor.unwrap()).unwrap();
+    assert_eq!(ctor_info.kind, super::DefKind::ClassConstructor);
+
+    // Verify enum has members
+    let enum_def = store.find_def_by_symbol(4).unwrap();
+    let enum_info = store.get(enum_def).unwrap();
+    assert_eq!(enum_info.enum_members.len(), 2);
+}
+
+#[test]
+fn from_semantic_defs_wires_namespace_exports() {
+    use tsz_binder::{SemanticDefEntry, SemanticDefKind, SymbolId};
+
+    let mut defs = rustc_hash::FxHashMap::default();
+
+    // Namespace parent
+    defs.insert(
+        SymbolId(10),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Namespace,
+            name: "NS".to_string(),
+            file_id: 1,
+            span_start: 0,
+            type_param_count: 0,
+            type_param_names: Vec::new(),
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            is_declare: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+            parent_namespace: None,
+            is_global_augmentation: false,
+        },
+    );
+
+    // Child inside namespace
+    defs.insert(
+        SymbolId(11),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Inner".to_string(),
+            file_id: 1,
+            span_start: 10,
+            type_param_count: 0,
+            type_param_names: Vec::new(),
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            is_declare: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+            parent_namespace: Some(SymbolId(10)),
+            is_global_augmentation: false,
+        },
+    );
+
+    let store = DefinitionStore::from_semantic_defs(&defs, |s| {
+        tsz_common::interner::Atom(
+            s.bytes()
+                .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)),
+        )
+    });
+
+    let ns_def = store.find_def_by_symbol(10).unwrap();
+    let ns_info = store.get(ns_def).unwrap();
+    assert_eq!(
+        ns_info.exports.len(),
+        1,
+        "Namespace should have 1 export (Inner)"
+    );
+}
+
+#[test]
+fn from_semantic_defs_resolves_heritage() {
+    use tsz_binder::{SemanticDefEntry, SemanticDefKind, SymbolId};
+
+    let mut defs = rustc_hash::FxHashMap::default();
+
+    // Parent class
+    defs.insert(
+        SymbolId(20),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Base".to_string(),
+            file_id: 1,
+            span_start: 0,
+            type_param_count: 0,
+            type_param_names: Vec::new(),
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            is_declare: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+            parent_namespace: None,
+            is_global_augmentation: false,
+        },
+    );
+
+    // Interface
+    defs.insert(
+        SymbolId(21),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Interface,
+            name: "Printable".to_string(),
+            file_id: 1,
+            span_start: 20,
+            type_param_count: 0,
+            type_param_names: Vec::new(),
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            is_declare: false,
+            extends_names: Vec::new(),
+            implements_names: Vec::new(),
+            parent_namespace: None,
+            is_global_augmentation: false,
+        },
+    );
+
+    // Child class extending Base, implementing Printable
+    defs.insert(
+        SymbolId(22),
+        SemanticDefEntry {
+            kind: SemanticDefKind::Class,
+            name: "Child".to_string(),
+            file_id: 1,
+            span_start: 40,
+            type_param_count: 0,
+            type_param_names: Vec::new(),
+            is_exported: true,
+            enum_member_names: Vec::new(),
+            is_const: false,
+            is_abstract: false,
+            is_declare: false,
+            extends_names: vec!["Base".to_string()],
+            implements_names: vec!["Printable".to_string()],
+            parent_namespace: None,
+            is_global_augmentation: false,
+        },
+    );
+
+    // Use a deterministic interning scheme for tests
+    let store = DefinitionStore::from_semantic_defs(&defs, |s| {
+        tsz_common::interner::Atom(
+            s.bytes()
+                .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)),
+        )
+    });
+
+    let base_def = store.find_def_by_symbol(20).unwrap();
+    let printable_def = store.find_def_by_symbol(21).unwrap();
+    let child_def = store.find_def_by_symbol(22).unwrap();
+
+    let child_info = store.get(child_def).unwrap();
+
+    assert_eq!(
+        child_info.extends,
+        Some(base_def),
+        "Child.extends should point to Base"
+    );
+    assert!(
+        child_info.implements.contains(&printable_def),
+        "Child.implements should contain Printable"
+    );
+}
