@@ -264,6 +264,7 @@ CHECKS = [
                 # query_boundaries is the canonical boundary layer — TypeData
                 # matching here is intentional and architecturally correct.
                 "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
+                "crates/tsz-checker/src/query_boundaries/class.rs",
             },
             "ignore_comment_lines": True,
         },

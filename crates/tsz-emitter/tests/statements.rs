@@ -1234,3 +1234,60 @@ fn type_assertion_prefix_comment_emitted() {
         "Comment inside `<T>` type assertion should be preserved (tsc behavior).\nOutput:\n{output}"
     );
 }
+
+/// `export as namespace X;` is a TypeScript-only UMD global declaration.
+/// It must be completely erased in JS output, and any attached comments
+/// must not leak into the output.
+#[test]
+fn namespace_export_declaration_erased_in_js() {
+    let source = "export function foo() {}\n// ns export comment\nexport as namespace myLib;\nexport function bar() {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("namespace"),
+        "`export as namespace` should be erased in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("ns export comment"),
+        "Comments attached to erased `export as namespace` should not leak.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export function foo()"),
+        "Other exports should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export function bar()"),
+        "Other exports should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// `export as namespace X;` with a block comment on the same line should
+/// also be erased completely.
+#[test]
+fn namespace_export_declaration_inline_comment_erased() {
+    let source = "export function foo() {}\nexport as namespace myLib; /* global */\nexport function bar() {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("namespace"),
+        "`export as namespace` should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("global"),
+        "Trailing comment on erased `export as namespace` should not leak.\nOutput:\n{output}"
+    );
+}

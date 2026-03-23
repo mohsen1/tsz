@@ -1581,6 +1581,15 @@ impl<'a> Printer<'a> {
                     self.skip_comments_for_erased_node(node);
                 }
             }
+            k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
+                // `export as namespace X` is TypeScript-only (UMD global declaration) -
+                // erased in JS output, preserved only in .d.ts declaration emit.
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_namespace_export_declaration(node);
+                } else {
+                    self.skip_comments_for_erased_node(node);
+                }
+            }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(node, idx);
             }

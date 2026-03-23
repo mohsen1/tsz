@@ -774,12 +774,13 @@ mod tests {
             optional_modifier: None,
         };
         let mapped_type = interner.mapped(mapped);
-        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("mapped type should have id");
 
         // `any` with no array constraint -> produces object with index signatures (not `any`)
         let result = evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::ANY);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("result should be Some");
         assert_ne!(
             result,
             TypeId::ANY,
@@ -829,7 +830,8 @@ mod tests {
             optional_modifier: None,
         };
         let mapped_type = interner.mapped(mapped);
-        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("mapped type should have id");
 
         // `any` with array constraint -> passthrough
         assert_eq!(
@@ -867,7 +869,8 @@ mod tests {
             optional_modifier: None,
         };
         let mapped_type = interner.mapped(mapped);
-        let mapped_id = crate::mapped_type_id(&interner, mapped_type).unwrap();
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("mapped type should have id");
 
         // Non-identity mapped type -> no passthrough
         assert_eq!(
