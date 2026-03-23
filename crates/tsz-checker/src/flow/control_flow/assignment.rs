@@ -5,17 +5,17 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
-    enum_member_domain, fallback_compound_assignment_result, get_array_element_type,
-    get_lazy_def_id, is_assignable, is_assignable_with_env, is_compound_assignment_operator,
-    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
-    widen_literal_to_primitive,
+    enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
+    get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
+    is_compound_assignment_operator, map_compound_assignment_to_binary, tuple_elements_for_type,
+    union_members_for_type, widen_literal_to_primitive,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ApplicationEvaluator, TupleElement, TypeId};
+use tsz_solver::{TupleElement, TypeId};
 
 #[derive(Clone, Copy, Debug)]
 struct DestructuringSource {
@@ -1681,7 +1681,6 @@ impl<'a> FlowAnalyzer<'a> {
             return resolved;
         };
         let env = env.borrow();
-        let evaluator = ApplicationEvaluator::new(self.interner, &*env);
-        evaluator.evaluate_or_original(resolved)
+        evaluate_application_type(self.interner, &*env, resolved)
     }
 }
