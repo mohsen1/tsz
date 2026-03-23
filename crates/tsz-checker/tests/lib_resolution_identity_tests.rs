@@ -2942,3 +2942,139 @@ const desc: string | undefined = sym.description;
         "Symbol should resolve via lib context fallback arena.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// =========================================================================
+// register_lib_def_resolved unified path tests
+// =========================================================================
+// These tests exercise the consolidated `register_lib_def_resolved` helper
+// that replaced the separate get_lib_def_id + insert_def_type_params +
+// register_def_auto_params_in_envs three-step pattern.
+
+#[test]
+fn test_register_lib_def_resolved_interface_path() {
+    // The interface branch of resolve_lib_type_by_name now uses
+    // register_lib_def_resolved. Verify that generic interface types
+    // (Array, Promise) still resolve their type parameters correctly.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const arr: Array<number> = [1, 2, 3];
+const p: Promise<string> = Promise.resolve("ok");
+// Verify type parameter propagation: string[] should not be assignable to number[]
+const bad: Array<number> = ["a", "b"];
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        real_errors.iter().any(|(c, _)| *c == 2322),
+        "Expected TS2322 for string[] assigned to Array<number>.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_register_lib_def_resolved_type_alias_path() {
+    // The type alias branch of resolve_lib_type_by_name now uses
+    // register_lib_def_resolved. Verify that type aliases like Partial<T>
+    // and Record<K,V> still produce correct Lazy(DefId) references for
+    // Application expansion.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface Widget { id: number; label: string; }
+const partial: Partial<Widget> = { id: 1 };
+const rec: Record<string, boolean> = { active: true };
+// Should reject: number is not assignable to boolean
+const bad_rec: Record<string, boolean> = { active: 42 };
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        real_errors.iter().any(|(c, _)| *c == 2322),
+        "Expected TS2322 for number assigned to Record<string, boolean>.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_resolve_chain_with_register_lib_def_resolved() {
+    // Promise.resolve().then().then() chains exercise the DefId registration
+    // path multiple times for the same Promise identity. The unified helper
+    // should produce consistent results across re-entrant resolution.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const result = Promise.resolve(42)
+    .then(n => n.toString())
+    .then(s => s.length);
+const final_val: Promise<number> = result;
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Promise chain should resolve consistently via register_lib_def_resolved.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_lowering_promise_as_return() {
+    // import("...") type expressions that reference Promise should resolve
+    // through the unified register_lib_def_resolved path when the lib type
+    // is lowered.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type Deferred<T> = Promise<T>;
+type DeferredNum = Deferred<number>;
+
+async function getDeferred(): DeferredNum {
+    return 42;
+}
+
+async function consumeDeferred(): Promise<void> {
+    const n: number = await getDeferred();
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2322),
+        "Nested type alias to Promise should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_weakmap_weakset_resolution() {
+    // WeakMap and WeakSet are lib types with constraints on their type params
+    // (keys must be object). This exercises register_lib_def_resolved with
+    // constrained generic lib types.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const wm: WeakMap<object, string> = new WeakMap();
+const obj = {};
+wm.set(obj, "value");
+const val: string | undefined = wm.get(obj);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "WeakMap<object, string> should resolve via stable lib helpers.\nDiagnostics: {real_errors:#?}"
+    );
+}

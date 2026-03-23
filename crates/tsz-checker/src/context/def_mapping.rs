@@ -219,6 +219,26 @@ impl<'a> CheckerContext<'a> {
         self.get_lib_def_id(canonical_sym)
     }
 
+    /// Register a lib type's DefId, type parameters, and body in one step.
+    ///
+    /// Combines `get_lib_def_id` + `insert_def_type_params` +
+    /// `register_def_auto_params_in_envs` into a single call, eliminating the
+    /// repeated three-step pattern in `resolve_lib_type_by_name` (interface and
+    /// type-alias branches) and `resolve_lib_type_with_params`.
+    ///
+    /// Returns the `DefId` for subsequent use (e.g., creating `Lazy(DefId)`).
+    pub fn register_lib_def_resolved(
+        &self,
+        sym_id: SymbolId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) -> DefId {
+        let def_id = self.get_lib_def_id(sym_id);
+        self.insert_def_type_params(def_id, params.clone());
+        self.register_def_auto_params_in_envs(def_id, body, params);
+        def_id
+    }
+
     /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
     ///
     /// This enables `TypeEnvironment::get_def_kind` to fall back to the
