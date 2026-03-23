@@ -1436,8 +1436,18 @@ impl<'a> DeclarationEmitter<'a> {
                 });
 
             if is_empty_body {
-                self.write(" { }");
-                self.write_line();
+                // tsc uses single-line `{ }` for empty namespaces nested inside
+                // another declare namespace, but multi-line `{\n}` for top-level.
+                if self.inside_declare_namespace {
+                    self.write(" { }");
+                    self.write_line();
+                } else {
+                    self.write(" {");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("}");
+                    self.write_line();
+                }
                 return;
             }
 
@@ -1715,6 +1725,20 @@ impl<'a> DeclarationEmitter<'a> {
                 let is_parameter_property = self.in_constructor_params
                     && self.parameter_has_property_modifier(&param.modifiers);
 
+                // For public parameter properties, tsc appends `| undefined` to the
+                // constructor parameter type as well as the property declaration.
+                // For private/protected parameter properties, the type is hidden on
+                // the property (`private x?;`) so no `| undefined` is added to the
+                // constructor parameter.
+                let is_private_param_property = is_parameter_property
+                    && param.modifiers.as_ref().is_some_and(|mods| {
+                        mods.nodes.iter().any(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == SyntaxKind::PrivateKeyword as u16)
+                        })
+                    });
+
                 // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
                 self.emit_inline_parameter_comment(param_node.pos);
 
@@ -1752,8 +1776,14 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         self.emit_type(param.type_annotation);
                     }
-                    if is_parameter_property && param.question_token {
-                        self.write(" | undefined");
+                    // For non-private parameter properties with `?`, tsc appends
+                    // `| undefined` to both the property declaration and the constructor
+                    // parameter type. For private params, the type is hidden so skip.
+                    if is_parameter_property && !is_private_param_property && param.question_token {
+                        let output = self.writer.get_output();
+                        if !output.ends_with("| undefined") {
+                            self.write(" | undefined");
+                        }
                     }
                 } else if let Some(jsdoc_param) = jsdoc_param {
                     self.write(": ");
@@ -1772,9 +1802,22 @@ impl<'a> DeclarationEmitter<'a> {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
                 } else if !self.source_is_declaration_file {
-                    // In declaration emit from source, parameters without
-                    // explicit type annotations default to `any` (matching tsc)
-                    self.write(": any");
+                    // Empty object binding pattern `{}` without a type annotation
+                    // gets type `{}` (not `any`), matching tsc behavior.
+                    let is_empty_object_binding = self.arena.get(param.name).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            && self
+                                .arena
+                                .get_binding_pattern(n)
+                                .is_none_or(|bp| bp.elements.nodes.is_empty())
+                    });
+                    if is_empty_object_binding {
+                        self.write(": {}");
+                    } else {
+                        // In declaration emit from source, parameters without
+                        // explicit type annotations default to `any` (matching tsc)
+                        self.write(": any");
+                    }
                 }
 
                 // When strictNullChecks is true and a parameter has an
