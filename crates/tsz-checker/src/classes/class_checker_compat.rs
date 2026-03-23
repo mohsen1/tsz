@@ -340,8 +340,41 @@ impl<'a> CheckerState<'a> {
         let mut inherited_string_index: Option<(NodeIndex, String, TypeId)> = None;
         let mut inherited_number_index: Option<(NodeIndex, String, TypeId)> = None;
 
-        // Collect ALL heritage clauses across ALL declarations of this interface
+        // Collect ALL heritage clauses across ALL declarations of this interface.
+        // When an interface is declaration-merged with a class, the class's `extends`
+        // clause contributes an implicit base whose members must be checked for
+        // cross-base conflicts with the interface's explicit `extends` bases (TS2320).
+        // The class base is added first to match tsc's ordering in error messages.
         let mut all_heritage_types: Vec<(NodeIndex, NodeIndex)> = Vec::new(); // (clause_idx, type_idx)
+
+        // First: collect heritage from merged class declaration (if any)
+        if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&_iface_idx.0)
+            && let Some(sym) = self.ctx.binder.symbols.get(sym_id)
+        {
+            for &decl_idx in &sym.declarations {
+                if let Some(node) = self.ctx.arena.get(decl_idx)
+                    && self.ctx.arena.get_class(node).is_some()
+                {
+                    let class_data = self.ctx.arena.get_class(node).unwrap();
+                    if let Some(ref heritage_clauses) = class_data.heritage_clauses {
+                        for &clause_idx in &heritage_clauses.nodes {
+                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                                && let Some(heritage) =
+                                    self.ctx.arena.get_heritage_clause(clause_node)
+                                && heritage.token == SyntaxKind::ExtendsKeyword as u16
+                            {
+                                for &type_idx in &heritage.types.nodes {
+                                    all_heritage_types.push((clause_idx, type_idx));
+                                }
+                            }
+                        }
+                    }
+                    break; // Only one class declaration per merged symbol
+                }
+            }
+        }
+
+        // Then: collect heritage from all interface declarations
         for &decl_idx in &all_iface_decls {
             if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                 && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
