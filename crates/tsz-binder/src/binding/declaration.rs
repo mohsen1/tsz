@@ -2459,6 +2459,7 @@ impl BinderState {
     }
 
     /// Like `record_semantic_def` but with explicit `is_declare` flag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_semantic_def_with_declare(
         &mut self,
         sym_id: SymbolId,
