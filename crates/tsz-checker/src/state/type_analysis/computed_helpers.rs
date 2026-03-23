@@ -433,13 +433,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let evaluated = match classify_for_traversal(self.ctx.types, resolved_type) {
-            TypeTraversalKind::Application { .. }
-            | TypeTraversalKind::Conditional(_)
-            | TypeTraversalKind::Mapped(_)
-            | TypeTraversalKind::IndexAccess { .. }
-            | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(resolved_type),
-            _ => resolved_type,
+        // Skip evaluation when the type contains a TypeQuery (typeof) referencing
+        // the symbol being checked. TypeQuery accesses the VALUE namespace, not the
+        // TYPE namespace, so `type X = Static<typeof X>` (where `const X` also exists)
+        // is NOT circular. Evaluating such types would re-enter the type alias
+        // resolution for the merged symbol and produce a false TS2456.
+        let has_typeof_self = tsz_solver::collect_type_queries(self.ctx.types, resolved_type)
+            .iter()
+            .any(|sym_ref| sym_ref.0 == sym_id.0);
+        let evaluated = if has_typeof_self {
+            resolved_type
+        } else {
+            match classify_for_traversal(self.ctx.types, resolved_type) {
+                TypeTraversalKind::Application { .. }
+                | TypeTraversalKind::Conditional(_)
+                | TypeTraversalKind::Mapped(_)
+                | TypeTraversalKind::IndexAccess { .. }
+                | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(resolved_type),
+                _ => resolved_type,
+            }
         };
         if evaluated != resolved_type
             && self.is_direct_circular_reference(
