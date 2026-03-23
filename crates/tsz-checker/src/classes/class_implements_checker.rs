@@ -1117,9 +1117,27 @@ impl<'a> CheckerState<'a> {
                                 ));
                             }
                         } else if !inherited_private_member_names.contains(&member_name) {
-                            // Only report as missing if it's not a private/protected
-                            // member inherited from the same base class chain.
-                            missing_members.push(member_name);
+                            // Before reporting as missing, check the class instance type.
+                            // Members from module augmentations or declaration merging appear
+                            // in the computed instance type but not in the AST body or
+                            // inheritance chain. E.g., `class X implements X {}` where X is
+                            // augmented from another file via `declare module`.
+                            let in_instance_type = {
+                                let inst = self.get_class_instance_type(class_idx, class_data);
+                                if let Some(shape) =
+                                    tsz_solver::type_queries::get_object_shape(self.ctx.types, inst)
+                                {
+                                    let member_atom = self.ctx.types.intern_string(&member_name);
+                                    shape.properties.iter().any(|p| p.name == member_atom)
+                                } else {
+                                    false
+                                }
+                            };
+                            if !in_instance_type {
+                                // Only report as missing if it's not a private/protected
+                                // member inherited from the same base class chain.
+                                missing_members.push(member_name);
+                            }
                         }
                     }
 

@@ -1582,6 +1582,20 @@ impl<'a> CheckerState<'a> {
             if let Some(interface_type) = merged_interface_type_for_class {
                 instance_type = self.merge_interface_types(instance_type, interface_type);
             }
+
+            // Apply module augmentations targeting this class's interface name.
+            // When another file has `declare module './thisFile' { interface ClassName { ... } }`,
+            // those augmented members must be merged into the class instance type so that
+            // `ClassName.prototype` and value-position usage see the full merged type.
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                let class_name = symbol.escaped_name.clone();
+                if let Some(sf) = self.ctx.arena.source_files.first() {
+                    let file_name = sf.file_name.clone();
+                    instance_type =
+                        self.apply_module_augmentations(&file_name, &class_name, instance_type);
+                }
+            }
+
             visited.remove(&sym_id);
             visited_nodes.remove(&class_idx);
             // Only remove from global set if we inserted it ourselves
