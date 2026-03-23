@@ -744,6 +744,12 @@ impl<'a> NarrowingContext<'a> {
         }
 
         let mut matching: Vec<TypeId> = Vec::new();
+        // Track whether any member actually has the discriminant property.
+        // If no member has the property, discriminant narrowing is inapplicable
+        // and we should return the original type instead of `never`.
+        // This matches TSC behavior: `obj.nonExistent === value` does not
+        // narrow `obj` to `never` when the property doesn't exist.
+        let mut any_member_has_property = false;
 
         for &member in &members {
             // Special case: any and unknown always match
@@ -762,7 +768,7 @@ impl<'a> NarrowingContext<'a> {
                 .map(|members_id| self.db.type_list(members_id));
 
             // Helper function to check if a type has a matching property at the path
-            let check_member_for_property = |check_type_id: TypeId| -> bool {
+            let check_member_for_property = |check_type_id: TypeId| -> Option<bool> {
                 // Get the type at the property path
                 let prop_type = match self.get_type_at_path(
                     check_type_id,
@@ -776,7 +782,7 @@ impl<'a> NarrowingContext<'a> {
                             "Member {} does not have property path {:?}",
                             check_type_id.0, property_path
                         );
-                        return false;
+                        return None;
                     }
                 };
 
@@ -801,7 +807,7 @@ impl<'a> NarrowingContext<'a> {
                     );
                 }
 
-                matches
+                Some(matches)
             };
 
             // Check for property match
@@ -822,15 +828,24 @@ impl<'a> NarrowingContext<'a> {
                     .collect();
                 if prop_types.is_empty() {
                     false
-                } else if prop_types.len() == 1 {
-                    is_subtype_of(self.db, literal_value, prop_types[0])
                 } else {
-                    let effective_type = self.db.intersection(prop_types);
-                    is_subtype_of(self.db, literal_value, effective_type)
+                    any_member_has_property = true;
+                    if prop_types.len() == 1 {
+                        is_subtype_of(self.db, literal_value, prop_types[0])
+                    } else {
+                        let effective_type = self.db.intersection(prop_types);
+                        is_subtype_of(self.db, literal_value, effective_type)
+                    }
                 }
             } else {
                 // For non-Intersection: check the single member
-                check_member_for_property(resolved_member)
+                match check_member_for_property(resolved_member) {
+                    Some(matches) => {
+                        any_member_has_property = true;
+                        matches
+                    }
+                    None => false,
+                }
             };
 
             if has_property_match {
@@ -841,6 +856,16 @@ impl<'a> NarrowingContext<'a> {
         // Return result based on matches
 
         if matching.is_empty() {
+            if !any_member_has_property {
+                // No member has the discriminant property at all — this means the
+                // comparison is against a non-existent property. TSC does not narrow
+                // to `never` in this case; the type is left unchanged.
+                trace!(
+                    "No members have discriminant property {:?}, returning original type",
+                    property_path
+                );
+                return union_type;
+            }
             trace!("No members matched discriminant check, returning never");
             TypeId::NEVER
         } else if matching.len() == members.len() {
