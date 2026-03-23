@@ -25,6 +25,24 @@ use crate::diagnostics::Diagnostic;
 use super::{CheckerContext, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey};
 
 // ---------------------------------------------------------------------------
+// Internal helpers (free functions to avoid borrow conflicts)
+// ---------------------------------------------------------------------------
+
+/// Remove `emitted_ts2454_errors` dedup entries for discarded diagnostics
+/// with code 2454. Without this cleanup, discarded TS2454 errors remain in
+/// the dedup set and prevent re-emission on subsequent passes.
+fn cleanup_ts2454_dedup(
+    emitted_ts2454_errors: &mut FxHashSet<(u32, SymbolId)>,
+    discarded: &[Diagnostic],
+) {
+    for diag in discarded {
+        if diag.code == 2454 {
+            emitted_ts2454_errors.retain(|&(pos, _)| pos != diag.start);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot types
 // ---------------------------------------------------------------------------
 
@@ -127,30 +145,33 @@ impl CheckerContext<'_> {
     // Rollback methods
     // -----------------------------------------------------------------------
 
-    /// Roll back to a diagnostic-only snapshot, discarding all speculative
-    /// diagnostics and restoring the dedup set.
-    pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
-        // Remove TS2454 entries from the dedup set for any discarded diagnostics.
-        // The emitted_ts2454_errors set is separate from emitted_diagnostics and
-        // is NOT restored by this rollback. Without cleanup, discarded TS2454
-        // errors remain in the dedup set and prevent re-emission later.
-        //
-        // Clamp to current length: nested speculation or cross-path diagnostic
-        // removal can make the list shorter than the snapshot expected.
-        let truncate_at = snap.diagnostics_len.min(self.diagnostics.len());
-        for diag in &self.diagnostics[truncate_at..] {
-            if diag.code == 2454 {
-                self.emitted_ts2454_errors
-                    .retain(|&(pos, _)| pos != diag.start);
-            }
-        }
-        self.diagnostics.truncate(truncate_at);
-        self.emitted_diagnostics
-            .clone_from(&snap.emitted_diagnostics);
+    /// Clamp a snapshot length to the current diagnostics length, handling
+    /// nested/cross-path speculation where the vector may already be shorter.
+    fn clamped_diag_len(&self, snap: &DiagnosticSnapshot) -> usize {
+        snap.diagnostics_len.min(self.diagnostics.len())
+    }
+
+    /// Truncate `deferred_ts2454_errors` back to the snapshot length, clamping
+    /// to the current length to handle nested/cross-path shrinkage.
+    fn truncate_deferred_ts2454(&mut self, snap: &DiagnosticSnapshot) {
         self.deferred_ts2454_errors.truncate(
             snap.deferred_ts2454_len
                 .min(self.deferred_ts2454_errors.len()),
         );
+    }
+
+    /// Roll back to a diagnostic-only snapshot, discarding all speculative
+    /// diagnostics and restoring the dedup set.
+    pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        let truncate_at = self.clamped_diag_len(snap);
+        cleanup_ts2454_dedup(
+            &mut self.emitted_ts2454_errors,
+            &self.diagnostics[truncate_at..],
+        );
+        self.diagnostics.truncate(truncate_at);
+        self.emitted_diagnostics
+            .clone_from(&snap.emitted_diagnostics);
+        self.truncate_deferred_ts2454(snap);
     }
 
     /// Roll back to a full snapshot, discarding speculative diagnostics and
@@ -195,22 +216,20 @@ impl CheckerContext<'_> {
         snap: &DiagnosticSnapshot,
         mut keep: impl FnMut(&Diagnostic) -> bool,
     ) {
-        // Clamp to current length: nested speculation or cross-path diagnostic
-        // removal can make the list shorter than the snapshot expected.
-        let split_at = snap.diagnostics_len.min(self.diagnostics.len());
+        let split_at = self.clamped_diag_len(snap);
         let speculative = self.diagnostics.split_off(split_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
+        // Truncate deferred TS2454 errors to match rollback_diagnostics behavior.
+        // Without this, deferred entries pushed during speculation survive a
+        // filtered rollback and can cause spurious TS2454 emissions later.
+        self.truncate_deferred_ts2454(snap);
         for diag in speculative {
             if keep(&diag) {
                 let key = self.diagnostic_dedup_key(&diag);
                 self.emitted_diagnostics.insert(key);
                 self.diagnostics.push(diag);
             } else if diag.code == 2454 {
-                // When a TS2454 diagnostic is discarded during rollback, also
-                // remove it from the separate emitted_ts2454_errors dedup set.
-                // Without this, the error cannot be re-emitted on a subsequent
-                // pass because the dedup set still marks it as "already reported".
                 self.emitted_ts2454_errors
                     .retain(|&(pos, _)| pos != diag.start);
             }
@@ -269,18 +288,12 @@ impl CheckerContext<'_> {
         &mut self,
         snap: &DiagnosticSnapshot,
     ) -> Vec<Diagnostic> {
-        let split_at = snap.diagnostics_len.min(self.diagnostics.len());
+        let split_at = self.clamped_diag_len(snap);
         let taken = self.diagnostics.split_off(split_at);
-        // Clean up TS2454 dedup entries for taken diagnostics. Without this,
-        // if the caller later discards some TS2454 diagnostics from the returned
-        // vec, those entries remain orphaned in emitted_ts2454_errors and prevent
-        // re-emission on subsequent passes.
-        for diag in &taken {
-            if diag.code == 2454 {
-                self.emitted_ts2454_errors
-                    .retain(|&(pos, _)| pos != diag.start);
-            }
-        }
+        // Clean up TS2454 dedup entries for taken diagnostics.
+        cleanup_ts2454_dedup(&mut self.emitted_ts2454_errors, &taken);
+        // Truncate deferred TS2454 errors to match rollback_diagnostics behavior.
+        self.truncate_deferred_ts2454(snap);
         taken
     }
 
@@ -294,10 +307,7 @@ impl CheckerContext<'_> {
     ) {
         // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
         // that are not in the replacement set.
-        //
-        // Clamp to current length: nested speculation or cross-path diagnostic
-        // removal can make the list shorter than the snapshot expected.
-        let truncate_at = snap.diagnostics_len.min(self.diagnostics.len());
+        let truncate_at = self.clamped_diag_len(snap);
         let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
             .iter()
             .filter(|d| d.code == 2454)
@@ -312,11 +322,7 @@ impl CheckerContext<'_> {
         self.diagnostics.truncate(truncate_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
-        // Also truncate deferred TS2454 errors, matching rollback_diagnostics behavior.
-        self.deferred_ts2454_errors.truncate(
-            snap.deferred_ts2454_len
-                .min(self.deferred_ts2454_errors.len()),
-        );
+        self.truncate_deferred_ts2454(snap);
         for diag in &replacement {
             let key = self.diagnostic_dedup_key(diag);
             self.emitted_diagnostics.insert(key);
