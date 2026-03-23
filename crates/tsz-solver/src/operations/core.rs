@@ -2111,7 +2111,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index,
                     expected,
                     actual,
-                    fallback_return: TypeId::ERROR,
+                    ..
                 } => {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;

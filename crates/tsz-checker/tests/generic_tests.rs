@@ -32,16 +32,18 @@ const result2 = identity("string"); // TS2322: "string" doesn't satisfy "extends
 
     checker.check_source_file(root);
 
-    // Should emit TS2322 for string argument
-    let ts2322_count = checker
+    // Should emit TS2345 for string argument not assignable to number parameter.
+    // tsc reports TS2345 ("Argument of type 'string' is not assignable to parameter
+    // of type 'number'") because the constraint violation is at the argument level.
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {ts2322_count}"
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error, got {ts2345_count}"
     );
 }
 

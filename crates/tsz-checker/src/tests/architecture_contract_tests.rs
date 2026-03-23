@@ -933,10 +933,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         type_computation_complex_src.contains("check_argument_assignable_or_report("),
         "computation/complex argument mismatch checks should route through check_argument_assignable_or_report"
     );
-    assert!(
-        type_computation_complex_src.contains("check_assignable_or_report_generic_at("),
-        "computation/complex callback constraint mismatch checks should route through check_assignable_or_report_generic_at"
-    );
+    // TypeParameterConstraintViolation is now handled as an argument-level
+    // mismatch (TS2345), matching tsc behavior. The handler uses
+    // check_argument_assignable_or_report, which is already asserted above.
     assert!(
         type_computation_complex_src.contains("ensure_relation_input_ready(")
             && type_computation_complex_src.contains("ensure_relation_inputs_ready("),
