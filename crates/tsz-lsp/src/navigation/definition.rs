@@ -1098,7 +1098,7 @@ impl<'a> GoToDefinition<'a> {
                     if hd.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
                         continue;
                     }
-                    for &type_idx in &hd.types.nodes {
+                    if let Some(&type_idx) = hd.types.nodes.first() {
                         let type_node = self.arena.get(type_idx)?;
                         let expr_idx =
                             if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {

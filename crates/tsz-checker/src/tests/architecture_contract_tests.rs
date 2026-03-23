@@ -4079,7 +4079,7 @@ fn test_core_type_resolution_has_ensure_def_ready_call() {
     );
 }
 
-/// Guard: reference_helpers.rs must expose `ensure_def_ready_for_lowering`.
+/// Guard: `reference_helpers.rs` must expose `ensure_def_ready_for_lowering`.
 ///
 /// This helper consolidates the DefId + type-param + body priming pattern.
 #[test]
@@ -4117,9 +4117,9 @@ fn test_ensure_def_ready_delegates_to_extract_declared_params() {
     );
 }
 
-/// Guard: namespace_checker.rs must NOT directly construct `TypeData::Lazy`.
+/// Guard: `namespace_checker.rs` must NOT directly construct `TypeData::Lazy`.
 ///
-/// Namespace types should use structural object types (via build_namespace_object_type)
+/// Namespace types should use structural object types (via `build_namespace_object_type`)
 /// or stable-identity helpers — never raw Lazy construction.
 #[test]
 fn test_namespace_checker_no_raw_lazy_construction() {

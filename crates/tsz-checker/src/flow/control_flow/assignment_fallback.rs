@@ -699,7 +699,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    /// Resolve the type of an expression operand using node_types cache,
+    /// Resolve the type of an expression operand using `node_types` cache,
     /// literal detection, or reference resolution.
     fn resolve_operand_type(&self, idx: NodeIndex) -> Option<TypeId> {
         let idx = self.skip_parens_and_assertions(idx);
