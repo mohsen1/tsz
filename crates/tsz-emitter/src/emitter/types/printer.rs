@@ -2270,9 +2270,9 @@ impl<'a> TypePrinter<'a> {
         // conditional return type). Without parens the inner `extends` would be
         // mis-parsed as the outer conditional's extends clause.
         let extends_str = self.print_type(cond.extends_type);
-        let extends_needs_parens =
-            visitor::conditional_type_id(self.interner, cond.extends_type).is_some()
-                || self.function_like_has_conditional_return(cond.extends_type);
+        let extends_needs_parens = visitor::conditional_type_id(self.interner, cond.extends_type)
+            .is_some()
+            || self.function_like_has_conditional_return(cond.extends_type);
 
         let check = if check_needs_parens {
             format!("({check_str})")
