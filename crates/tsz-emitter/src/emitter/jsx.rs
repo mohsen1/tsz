@@ -47,6 +47,12 @@ impl<'a> Printer<'a> {
 
         self.emit(jsx.opening_element);
         for &child in &jsx.children.nodes {
+            // tsc strips empty JSX expression containers `{}` that have no
+            // inner comments in preserve mode.  Expressions with comments
+            // like `{/* comment */}` are kept.
+            if self.is_empty_jsx_expression_without_comments(child) {
+                continue;
+            }
             self.emit(child);
         }
         self.emit(jsx.closing_element);
@@ -81,6 +87,9 @@ impl<'a> Printer<'a> {
 
         self.write("<>");
         for &child in &jsx.children.nodes {
+            if self.is_empty_jsx_expression_without_comments(child) {
+                continue;
+            }
             self.emit(child);
         }
         self.write("</>");
@@ -865,6 +874,29 @@ impl<'a> Printer<'a> {
         self.arena
             .get_jsx_expression(node)
             .is_some_and(|e| e.expression.is_none())
+    }
+
+    /// Check if a JSX child is a truly empty expression container `{}` with no
+    /// inner comments.  Used in preserve mode to strip bare `{}` from JSX output
+    /// (matching tsc behavior) while keeping `{/* comment */}` intact.
+    fn is_empty_jsx_expression_without_comments(&self, child: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(child) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return false;
+        }
+        let Some(expr) = self.arena.get_jsx_expression(node) else {
+            return false;
+        };
+        if expr.expression.is_some() {
+            return false;
+        }
+        // Check that there are no comments inside the expression range
+        !self
+            .all_comments
+            .iter()
+            .any(|c| c.pos >= node.pos && c.end <= node.end)
     }
 
     /// Walk all JSX children in source order, emitting non-empty children and

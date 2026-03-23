@@ -702,9 +702,12 @@ impl<'a> Printer<'a> {
                 if let Some(literal_node) = self.arena.get(object_literal)
                     && let Some(literal) = self.arena.get_literal_expr(literal_node)
                 {
+                    let has_trailing_comma =
+                        self.has_trailing_comma_in_source(literal_node, &literal.elements.nodes);
                     self.emit_object_literal_es5(
                         &literal.elements.nodes,
                         Some((node.pos, node.end)),
+                        has_trailing_comma,
                     );
                     return;
                 }
@@ -1424,9 +1427,12 @@ impl<'a> Printer<'a> {
                 if let Some(literal_node) = self.arena.get(*object_literal)
                     && let Some(literal) = self.arena.get_literal_expr(literal_node)
                 {
+                    let has_trailing_comma =
+                        self.has_trailing_comma_in_source(literal_node, &literal.elements.nodes);
                     self.emit_object_literal_es5(
                         &literal.elements.nodes,
                         Some((node.pos, node.end)),
+                        has_trailing_comma,
                     );
                     return;
                 }
