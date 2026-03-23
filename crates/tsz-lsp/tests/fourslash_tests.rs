@@ -3725,6 +3725,36 @@ fn completions_no_completions_in_string() {
 }
 
 #[test]
+fn definition_this_property_in_method() {
+    let mut t = FourslashTest::new(
+        "
+        class Counter {
+            /*def*/count: number = 0;
+            increment() {
+                this./*ref*/count++;
+            }
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn hover_this_property_access() {
+    let mut t = FourslashTest::new(
+        "
+        class Config {
+            host: string = 'localhost';
+            getUrl() {
+                return this./*h*/host;
+            }
+        }
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
 fn completions_type_position() {
     let mut t = FourslashTest::new(
         "
