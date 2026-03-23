@@ -35298,10 +35298,10 @@ class Report implements Printable, Loggable {
     );
 }
 
-/// Test that ClassConstructor companion DefIds are pre-populated for classes.
+/// Test that `ClassConstructor` companion `DefId`s are pre-populated for classes.
 ///
-/// Verifies that the single-file pre-population path creates ClassConstructor
-/// companion DefIds for top-level class declarations, moving constructor
+/// Verifies that the single-file pre-population path creates `ClassConstructor`
+/// companion `DefId`s for top-level class declarations, moving constructor
 /// identity from checker on-demand creation to binder-owned stable identity.
 #[test]
 fn test_class_constructor_companion_prepopulated_single_file() {
@@ -35353,7 +35353,7 @@ abstract class Gamma {}
     );
 
     // Verify each class has a constructor companion
-    for (_, entry) in &binder.semantic_defs {
+    for entry in binder.semantic_defs.values() {
         if entry.kind != crate::binder::SemanticDefKind::Class {
             continue;
         }
@@ -35371,7 +35371,7 @@ abstract class Gamma {}
             .unwrap()
             .iter()
             .find(|&&d| store.get_kind(d) == Some(tsz_solver::def::DefKind::Class))
-            .expect(&format!("Class {} should have a Class DefId", entry.name));
+            .unwrap_or_else(|| panic!("Class {} should have a Class DefId", entry.name));
 
         let ctor_def = store.get_constructor_def(*class_def);
         assert!(
@@ -35382,8 +35382,8 @@ abstract class Gamma {}
     }
 }
 
-/// Test that def_fallback_count stays at zero for standard declarations
-/// (all should be covered by binder semantic_defs pre-population).
+/// Test that `def_fallback_count` stays at zero for standard declarations
+/// (all should be covered by binder `semantic_defs` pre-population).
 #[test]
 fn test_def_fallback_count_zero_for_standard_declarations() {
     let source = r#"
@@ -35448,16 +35448,14 @@ const myVar: number = 42;
         );
     }
 
-    // Log fallback count for observability
-    if fallback_count > 0 {
-        eprintln!("INFO: def_fallback_count = {fallback_count} (expected for internal symbols)");
-    }
+    // Fallback count may be non-zero for internal symbols; this is expected.
+    let _ = fallback_count;
 }
 
-/// Test that using a shared DefinitionStore (pre-populated at merge time)
+/// Test that using a shared `DefinitionStore` (pre-populated at merge time)
 /// reduces checker fallback to zero for all top-level declaration families.
 /// This verifies that the merge pipeline's `pre_populate_definition_store`
-/// + checker's `warm_local_caches_from_shared_store` path provides complete
+/// and checker's `warm_local_caches_from_shared_store` path provides complete
 /// stable identity coverage.
 #[test]
 fn test_shared_def_store_eliminates_fallback_for_top_level() {

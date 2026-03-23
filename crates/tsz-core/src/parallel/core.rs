@@ -1655,7 +1655,7 @@ fn remap_expando_properties(
 /// per-file during checker pre-population.
 ///
 /// Delegates to `DefinitionStore::from_semantic_defs` — the canonical
-/// solver-owned factory for converting binder identity to solver DefIds.
+/// solver-owned factory for converting binder identity to solver `DefId`s.
 pub fn pre_populate_definition_store(
     semantic_defs: &FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
     interner: &TypeInterner,
