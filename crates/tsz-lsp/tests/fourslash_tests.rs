@@ -2831,6 +2831,23 @@ fn definition_inherited_method_deep_chain() {
 }
 
 #[test]
+fn definition_inherited_via_type_annotation() {
+    let mut t = FourslashTest::new(
+        "
+        class Animal {
+            /*def*/speak() { return 'sound'; }
+        }
+        class Dog extends Animal {
+            fetch() { return 'ball'; }
+        }
+        const pet: Dog = new Dog();
+        pet./*ref*/speak();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
 fn hover_optional_chaining() {
     let mut t = FourslashTest::new(
         "

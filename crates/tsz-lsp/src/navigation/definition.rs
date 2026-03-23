@@ -587,31 +587,10 @@ impl<'a> GoToDefinition<'a> {
 
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let type_symbol_id = walker.resolve_node(root, type_name_idx)?;
-        let type_symbol = self.binder.symbols.get(type_symbol_id)?;
 
-        // Look up in members table (class instance members)
-        if let Some(ref members) = type_symbol.members
-            && let Some(member_id) = members.get(member_name)
-        {
-            return Some(member_id);
-        }
-
-        // Look up in exports table (enum members, namespace exports)
-        if let Some(ref exports) = type_symbol.exports
-            && let Some(member_id) = exports.get(member_name)
-        {
-            return Some(member_id);
-        }
-
-        // Walk the type's declarations to find interface/class member declarations
-        // directly from the AST (the binder may not have populated `members` for interfaces)
-        for &decl_idx in &type_symbol.declarations {
-            if let Some(member_id) = self.find_member_in_declaration(decl_idx, member_name) {
-                return Some(member_id);
-            }
-        }
-
-        None
+        // Use the class chain resolver which handles direct members, exports,
+        // AST member walking, and extends-chain inheritance.
+        self.resolve_member_in_class_chain(root, type_symbol_id, member_name, 0)
     }
 
     /// Walk a declaration node (interface/class) to find a named member.
