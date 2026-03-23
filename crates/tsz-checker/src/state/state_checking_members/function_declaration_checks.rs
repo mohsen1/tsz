@@ -30,6 +30,17 @@ impl<'a> CheckerState<'a> {
             checker.check_function_declaration(func_idx);
         }
 
+        // TS2394: Check overload compatibility for function declarations with a body.
+        // When a function has overload signatures followed by an implementation,
+        // verify the implementation signature is compatible with all overloads.
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            if let Some(func) = self.ctx.arena.get_function(node) {
+                if func.body.is_some() {
+                    self.check_overload_compatibility(func_idx);
+                }
+            }
+        }
+
         // Validate indexed access types in the return type annotation of ambient
         // (declare) function declarations. This catches TS2536 for patterns like
         // `T[keyof T]["foo"]` in return types. Limited to declare functions to
