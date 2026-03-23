@@ -115,7 +115,9 @@ pub(crate) fn exit_refs_resolution_scope() {
 
 impl<'a> CheckerState<'a> {
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
-        use tsz_solver::TypeEvaluator;
+        use crate::query_boundaries::state::type_environment::{
+            contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
+        };
 
         if type_id.is_intrinsic() {
             return type_id;
@@ -163,120 +165,69 @@ impl<'a> CheckerState<'a> {
 
         let mut depth_exceeded = false;
         let result = {
+            // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
-            // Pre-seed evaluator cache with previously computed results to avoid
-            // re-evaluating intermediate types (e.g., nested generic application
-            // chains like `Omit<Omit<...> & {...}, ...>`). Without this, each
-            // evaluator instance re-expands the entire chain from scratch.
-            if use_cache {
+            let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();
-                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
-            }
-            let result = evaluator.evaluate(type_id);
-            if evaluator.is_depth_exceeded() {
+                // Collect seed entries — cache borrow must not overlap with evaluate_type_with_cache.
+                cache
+                    .iter()
+                    .map(|(&k, v)| (k, v.result))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let eval_result = evaluate_type_with_cache(
+                self.ctx.types,
+                &*env,
+                type_id,
+                seed_iter.into_iter(),
+                use_cache,
+            );
+            if eval_result.depth_exceeded {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
             // Persist intermediate evaluation results to the shared cache.
-            // This prevents re-evaluating recursive type expansions (e.g.,
-            // RecursivePaths, DeepPartial) that produce many intermediate TypeIds.
-            //
-            // Skip entries whose result contains unbound `infer` types. These
-            // arise when a conditional type's identity shortcut or subtype check
-            // fires before infer pattern matching can bind the infer variables
-            // (e.g., `Synthetic<number,number> extends Synthetic<T, infer V>`
-            // where both sides evaluate to the same empty object). Caching such
-            // entries would poison later lookups with the unbound infer type.
+            // Skip entries whose result contains unbound `infer` types or type queries.
             if use_cache {
-                let mut cache = self.ctx.env_eval_cache.borrow_mut();
-                for (k, v) in evaluator.drain_cache() {
-                    if k != v
-                        && !k.is_intrinsic()
-                        && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
-                        && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
-                    {
-                        // Guard against union→non-union cache poisoning: when the
-                        // evaluator maps a union type to a non-union Application,
-                        // this indicates a failed or incomplete evaluation (e.g.,
-                        // an Application whose DefId wasn't yet resolved in the
-                        // TypeEnvironment). Caching such entries causes downstream
-                        // assignability checks to fail because union member checking
-                        // is bypassed. Skip these entries to allow re-evaluation
-                        // once the type environment is more complete.
-                        if tsz_solver::is_union_type(self.ctx.types, k)
-                            && !tsz_solver::is_union_type(self.ctx.types, v)
-                            && matches!(
-                                self.ctx.types.as_type_database().lookup(v),
-                                Some(tsz_solver::TypeData::Application(_))
-                            )
-                        {
-                            continue;
-                        }
-                        cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
-                            result: v,
-                            depth_exceeded: false,
-                        });
-                    }
-                }
+                self.persist_eval_cache_entries(eval_result.cache_entries);
             }
-            result
+            eval_result.result
         };
 
         // Second pass with CheckerContext as resolver: the first pass uses
         // TypeEnvironment which has limited Lazy resolution. If the result still
         // contains unresolved IndexAccess or Mapped types, retry with the full
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
-        // get_type_of_symbol. This eliminates the need for checker-side mapped
-        // type expansion in many cases.
-        //
-        // For mapped types: trigger the second pass even when result == type_id.
-        // The TypeEnvironment resolver may lack Lazy resolution for the mapped
-        // type's constraint or template operands (e.g., homomorphic `keyof T`
-        // where T is still Lazy). The CheckerContext resolver can resolve these,
-        // allowing the solver's evaluate_mapped to expand the type fully. This
-        // reduces reliance on the checker's fallback mapped type expansion.
+        // get_type_of_symbol.
         let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
             || query::mapped_type_id(self.ctx.types, result).is_some();
         let final_result = if needs_resolver_pass {
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
-            if use_cache {
+            let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();
-                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
-            }
-            let result = evaluator.evaluate(type_id);
-            if evaluator.is_depth_exceeded() {
+                cache
+                    .iter()
+                    .map(|(&k, v)| (k, v.result))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let eval_result = evaluate_type_with_cache(
+                self.ctx.types,
+                &self.ctx,
+                type_id,
+                seed_iter.into_iter(),
+                use_cache,
+            );
+            if eval_result.depth_exceeded {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
-            // Persist intermediate results from the second evaluator pass too.
-            // Same guards: skip caching leaked Infer results and union→Application poisoning.
             if use_cache {
-                let mut cache = self.ctx.env_eval_cache.borrow_mut();
-                for (k, v) in evaluator.drain_cache() {
-                    if k != v
-                        && !k.is_intrinsic()
-                        && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, v)
-                        && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, v)
-                    {
-                        // Guard: skip union→Application entries (same as first pass)
-                        if tsz_solver::is_union_type(self.ctx.types, k)
-                            && !tsz_solver::is_union_type(self.ctx.types, v)
-                            && matches!(
-                                self.ctx.types.as_type_database().lookup(v),
-                                Some(tsz_solver::TypeData::Application(_))
-                            )
-                        {
-                            continue;
-                        }
-                        cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
-                            result: v,
-                            depth_exceeded: false,
-                        });
-                    }
-                }
+                self.persist_eval_cache_entries(eval_result.cache_entries);
             }
-            result
+            eval_result.result
         } else {
             result
         };
@@ -284,8 +235,8 @@ impl<'a> CheckerState<'a> {
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
         if use_cache
-            && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, final_result)
-            && !tsz_solver::type_queries::contains_type_query_db(self.ctx.types, final_result)
+            && !contains_infer_types_db(self.ctx.types, final_result)
+            && !contains_type_query_db(self.ctx.types, final_result)
         {
             self.ctx.env_eval_cache.borrow_mut().insert(
                 type_id,
@@ -298,6 +249,46 @@ impl<'a> CheckerState<'a> {
 
         EVAL_ENV_DEPTH.set(eval_depth);
         final_result
+    }
+
+    /// Persist evaluator cache entries to the shared env_eval_cache.
+    ///
+    /// Filters out entries that would poison the cache:
+    /// - Entries containing unbound `infer` types (from partially-evaluated conditionals)
+    /// - Entries containing type query references
+    /// - Union→Application entries (incomplete evaluation artifacts)
+    fn persist_eval_cache_entries(&self, entries: Vec<(TypeId, TypeId)>) {
+        use crate::query_boundaries::common::is_union_type;
+        use crate::query_boundaries::state::type_environment::{
+            contains_infer_types_db, contains_type_query_db, is_application_type,
+        };
+
+        let mut cache = self.ctx.env_eval_cache.borrow_mut();
+        for (k, v) in entries {
+            if k != v
+                && !k.is_intrinsic()
+                && !contains_infer_types_db(self.ctx.types, v)
+                && !contains_type_query_db(self.ctx.types, v)
+            {
+                // Guard against union→non-union cache poisoning: when the
+                // evaluator maps a union type to a non-union Application,
+                // this indicates a failed or incomplete evaluation (e.g.,
+                // an Application whose DefId wasn't yet resolved in the
+                // TypeEnvironment). Caching such entries causes downstream
+                // assignability checks to fail because union member checking
+                // is bypassed.
+                if is_union_type(self.ctx.types, k)
+                    && !is_union_type(self.ctx.types, v)
+                    && is_application_type(self.ctx.types, v)
+                {
+                    continue;
+                }
+                cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
+                    result: v,
+                    depth_exceeded: false,
+                });
+            }
+        }
     }
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).

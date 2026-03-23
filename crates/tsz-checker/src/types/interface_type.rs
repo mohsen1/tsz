@@ -892,7 +892,7 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
         if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, type_id) {
-            // Use the solver evaluator directly without ensure_relation_input_ready.
+            // Use the solver evaluator without ensure_relation_input_ready.
             // evaluate_type_with_env triggers lazy ref resolution which can cause
             // explosive type creation on augmented module interfaces (react + emotion).
             //
@@ -901,11 +901,9 @@ impl<'a> CheckerState<'a> {
             // unbound until the final derived interface is constructed; binding it
             // here would incorrectly lock it to the base interface identity (e.g.,
             // `A` instead of the derived `D`).
-            use tsz_solver::TypeEvaluator;
+            use crate::query_boundaries::state::type_environment::evaluate_type_suppressing_this;
             let env = self.ctx.type_env.borrow();
-            let mut evaluator =
-                TypeEvaluator::with_resolver(self.ctx.types, &*env).with_suppress_this_binding();
-            let evaluated = evaluator.evaluate(type_id);
+            let evaluated = evaluate_type_suppressing_this(self.ctx.types, &*env, type_id);
             if evaluated != type_id {
                 return evaluated;
             }
