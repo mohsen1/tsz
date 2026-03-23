@@ -1442,18 +1442,16 @@ impl<'a> CheckerState<'a> {
                 let ident = self.ctx.arena.get_identifier(name_node)?;
                 Some((ident.escaped_text.clone(), var_decl.name))
             })();
-            if let Some((name, name_idx)) = decl_name {
-                if name == catch_var_name {
-                    let message = format_message(
-                        diagnostic_messages::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
-                        &[&name],
-                    );
-                    self.error_at_node(
-                        name_idx,
-                        &message,
-                        diagnostic_codes::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
-                    );
-                }
+            if let Some((name, name_idx)) = decl_name.filter(|(name, _)| name == &catch_var_name) {
+                let message = format_message(
+                    diagnostic_messages::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
+                    &[&name],
+                );
+                self.error_at_node(
+                    name_idx,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
+                );
             }
         }
     }

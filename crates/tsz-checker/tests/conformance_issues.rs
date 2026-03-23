@@ -5088,9 +5088,7 @@ class Test1 {
 }
         ",
         {
-            let mut opts = CheckerOptions::default();
-            opts.target = tsz_common::common::ScriptTarget::ES5;
-            opts
+            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
         },
     );
 
@@ -5123,9 +5121,7 @@ class B {
 }
         ",
         {
-            let mut opts = CheckerOptions::default();
-            opts.target = tsz_common::common::ScriptTarget::ES5;
-            opts
+            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
         },
     );
 
@@ -5163,9 +5159,7 @@ export class Test1 {
 }
         ",
         {
-            let mut opts = CheckerOptions::default();
-            opts.target = tsz_common::common::ScriptTarget::ES5;
-            opts
+            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
         },
     );
 
