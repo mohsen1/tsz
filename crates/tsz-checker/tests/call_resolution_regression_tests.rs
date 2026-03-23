@@ -1377,3 +1377,289 @@ let result: number = wrap(identity);
         "Nested generic call should not produce false TS7006"
     );
 }
+
+// ============================================================================
+// Query boundary regression tests
+// ============================================================================
+// These tests verify that call resolution works correctly through the query
+// boundary layer (no direct solver internal type inspection).
+
+#[test]
+fn overload_with_union_return_types() {
+    // Verifies overload resolution returns the correct signature's return type
+    // when signatures differ in both param and return types.
+    let source = r#"
+declare function parse(input: string): object;
+declare function parse(input: string, reviver: (key: string, value: any) => any): object;
+let result: object = parse("{}");
+"#;
+    assert!(
+        no_errors(source),
+        "Overload with fewer args should match first signature"
+    );
+}
+
+#[test]
+fn overload_with_literal_discrimination() {
+    // Overloads discriminated by string literal types.
+    let source = r#"
+declare function create(kind: "a"): number;
+declare function create(kind: "b"): string;
+let x: number = create("a");
+let y: string = create("b");
+"#;
+    assert!(
+        no_errors(source),
+        "Literal-discriminated overloads should resolve correctly"
+    );
+}
+
+#[test]
+fn overload_literal_discrimination_wrong_return() {
+    let source = r#"
+declare function create(kind: "a"): number;
+declare function create(kind: "b"): string;
+let x: string = create("a");
+"#;
+    assert!(
+        has_error(source, 2322),
+        "Wrong return type from literal-discriminated overload should emit TS2322"
+    );
+}
+
+#[test]
+fn property_call_on_mapped_type() {
+    // Method call on a property obtained from a mapped type.
+    let source = r#"
+type Methods = {
+    greet(): string;
+    count(): number;
+};
+declare let m: Methods;
+let s: string = m.greet();
+let n: number = m.count();
+"#;
+    assert!(
+        no_errors(source),
+        "Method calls on mapped-type properties should resolve correctly"
+    );
+}
+
+#[test]
+fn property_call_on_indexed_access() {
+    // Calling a method obtained through bracket access on a typed object.
+    let source = r#"
+interface Obj {
+    method(x: number): string;
+}
+declare let obj: Obj;
+let r: string = obj["method"](42);
+"#;
+    assert!(
+        no_errors(source),
+        "Element access call with string literal key should resolve"
+    );
+}
+
+#[test]
+fn overload_with_rest_and_fixed_params() {
+    // Overload where one signature has rest params and another has fixed params.
+    let source = r#"
+declare function log(message: string): void;
+declare function log(message: string, ...args: any[]): void;
+log("hello");
+log("hello", 1, 2, 3);
+"#;
+    assert!(
+        no_errors(source),
+        "Rest param overload should accept both fixed and variadic calls"
+    );
+}
+
+#[test]
+fn generic_overload_with_constraint() {
+    // Generic overload where type param has a constraint.
+    let source = r#"
+declare function pick<T, K extends keyof T>(obj: T, key: K): T[K];
+let o = { a: 1, b: "hello" };
+let n: number = pick(o, "a");
+"#;
+    assert!(
+        no_errors(source),
+        "Generic overload with keyof constraint should infer correctly"
+    );
+}
+
+#[test]
+fn property_call_on_union_of_interfaces() {
+    // Method call on union where both members have the method.
+    let source = r#"
+interface A { run(x: number): void; }
+interface B { run(x: number): void; }
+declare let ab: A | B;
+ab.run(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Method call on union with common method should succeed"
+    );
+}
+
+#[test]
+fn property_call_on_union_missing_method() {
+    // One union member lacks the method.
+    let source = r#"
+interface A { run(x: number): void; }
+interface B { stop(): void; }
+declare let ab: A | B;
+ab.run(42);
+"#;
+    assert!(
+        has_error(source, 2339),
+        "Method call on union where one member lacks the method should emit TS2339"
+    );
+}
+
+#[test]
+fn overload_generic_inference_with_callbacks() {
+    // Generic overload where callback param type is inferred.
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+let result: number[] = map(["a", "b"], x => x.length);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with callback should infer T from array and U from callback return"
+    );
+}
+
+#[test]
+fn call_with_spread_from_tuple() {
+    // Spread argument from a tuple type matches parameter positions.
+    let source = r#"
+declare function add(a: number, b: number): number;
+let args: [number, number] = [1, 2];
+add(...args);
+"#;
+    assert!(
+        no_errors(source),
+        "Spread from tuple matching exact param count should succeed"
+    );
+}
+
+#[test]
+fn call_with_spread_wrong_tuple_length() {
+    // Spread from tuple with wrong length.
+    let source = r#"
+declare function add(a: number, b: number): number;
+let args: [number, number, number] = [1, 2, 3];
+add(...args);
+"#;
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2554) || codes.contains(&2556),
+        "Spread from wrong-length tuple should emit argument count error, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn overload_resolution_with_optional_and_required() {
+    // Overload where one signature has optional param, another requires it.
+    let source = r#"
+declare function test(x: string): number;
+declare function test(x: string, y?: number): string;
+let a: number = test("hello");
+"#;
+    assert!(no_errors(source), "Should match first overload with 1 arg");
+}
+
+#[test]
+fn property_call_through_type_alias() {
+    // Method call on an object typed through a type alias.
+    let source = r#"
+type Handler = { handle(input: string): boolean };
+declare let h: Handler;
+let ok: boolean = h.handle("test");
+"#;
+    assert!(
+        no_errors(source),
+        "Method call through type alias should resolve correctly"
+    );
+}
+
+#[test]
+fn generic_call_with_multiple_constraints() {
+    // Generic function with multiple constrained type params.
+    let source = r#"
+declare function merge<A extends object, B extends object>(a: A, b: B): A & B;
+let result = merge({ x: 1 }, { y: 2 });
+let x: number = result.x;
+let y: number = result.y;
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with multiple constraints should infer intersection type"
+    );
+}
+
+#[test]
+fn overload_with_never_param() {
+    // Overload that has `never` in a param position should be skippable.
+    let source = r#"
+declare function test(x: never): never;
+declare function test(x: string): number;
+let r: number = test("ok");
+"#;
+    assert!(
+        no_errors(source),
+        "Should skip never-param overload and match string overload"
+    );
+}
+
+#[test]
+fn call_expression_on_conditional_type_result() {
+    // Calling a value whose type comes from a conditional type.
+    let source = r#"
+type IsString<T> = T extends string ? (x: T) => void : never;
+declare let fn1: IsString<string>;
+fn1("hello");
+"#;
+    assert!(
+        no_errors(source),
+        "Calling a value typed by conditional type should work when condition is true"
+    );
+}
+
+#[test]
+fn property_call_on_generic_class_instance() {
+    // Method call on an instance of a generic class.
+    let source = r#"
+declare class Container<T> {
+    get(): T;
+    set(value: T): void;
+}
+declare let c: Container<number>;
+let n: number = c.get();
+c.set(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Method calls on generic class instance should resolve with concrete type args"
+    );
+}
+
+#[test]
+fn property_call_wrong_arg_type_on_generic_class() {
+    let source = r#"
+declare class Container<T> {
+    set(value: T): void;
+}
+declare let c: Container<number>;
+c.set("wrong");
+"#;
+    assert!(
+        has_error(source, 2345),
+        "Passing string to Container<number>.set should emit TS2345"
+    );
+}
