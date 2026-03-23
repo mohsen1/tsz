@@ -172,8 +172,10 @@ impl<'a> InlayHintsProvider<'a> {
             return;
         }
 
-        // Collect parameter name hints for call expressions
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+        // Collect parameter name hints for call and new expressions
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            || node.kind == syntax_kind_ext::NEW_EXPRESSION
+        {
             self.collect_parameter_hints(node_idx, hints);
         }
 
@@ -259,17 +261,23 @@ impl<'a> InlayHintsProvider<'a> {
         }
     }
 
-    /// Get parameter names from a function declaration.
+    /// Get parameter names from a function, method, or constructor declaration.
     fn get_parameter_names(&self, decl_idx: NodeIndex) -> Vec<Option<String>> {
         let Some(node) = self.arena.get(decl_idx) else {
             return Vec::new();
         };
 
-        // get_function handles FunctionDeclaration, FunctionExpression, and ArrowFunction
         let params = if let Some(func) = self.arena.get_function(node) {
             Some(&func.parameters)
         } else if let Some(method) = self.arena.get_method_decl(node) {
             Some(&method.parameters)
+        } else if let Some(ctor) = self.arena.get_constructor(node) {
+            Some(&ctor.parameters)
+        } else if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            // For class declarations (from new expressions), find the constructor
+            return self.get_constructor_param_names(node);
         } else {
             return Vec::new();
         };
@@ -278,6 +286,14 @@ impl<'a> InlayHintsProvider<'a> {
             return Vec::new();
         };
 
+        self.extract_param_names(params)
+    }
+
+    /// Extract parameter names from a NodeList of parameters.
+    fn extract_param_names(
+        &self,
+        params: &tsz_parser::parser::base::NodeList,
+    ) -> Vec<Option<String>> {
         params
             .nodes
             .iter()
@@ -289,6 +305,27 @@ impl<'a> InlayHintsProvider<'a> {
                     .map(std::string::ToString::to_string)
             })
             .collect()
+    }
+
+    /// Find and extract parameter names from the constructor of a class declaration.
+    fn get_constructor_param_names(
+        &self,
+        class_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<Option<String>> {
+        let Some(class) = self.arena.get_class(class_node) else {
+            return Vec::new();
+        };
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                if let Some(ctor) = self.arena.get_constructor(member_node) {
+                    return self.extract_param_names(&ctor.parameters);
+                }
+            }
+        }
+        Vec::new()
     }
 
     /// Check if we should skip showing a parameter hint for this argument.

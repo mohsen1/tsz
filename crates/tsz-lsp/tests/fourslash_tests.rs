@@ -4130,6 +4130,26 @@ fn inlay_hints_method_call_parameters() {
 // =============================================================================
 
 #[test]
+fn inlay_hints_constructor_parameters() {
+    let t = FourslashTest::new(
+        "
+        class User {
+            constructor(name: string, age: number) {}
+        }
+        const u = new User('Alice', 30);
+    ",
+    );
+    let result = t.inlay_hints("test.ts");
+    let has_name_hint = result.hints.iter().any(|h| h.label.contains("name"));
+    let has_age_hint = result.hints.iter().any(|h| h.label.contains("age"));
+    assert!(
+        has_name_hint && has_age_hint,
+        "Expected constructor parameter hints, got: {:?}",
+        result.hints.iter().map(|h| &h.label).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn type_hierarchy_deep_inheritance() {
     let t = FourslashTest::new(
         "
