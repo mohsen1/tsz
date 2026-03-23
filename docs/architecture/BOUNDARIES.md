@@ -187,6 +187,8 @@ The following contract tests in `crates/tsz-checker/tests/architecture_contract_
 - **`test_no_direct_relation_policy_construction_outside_query_boundaries`**: `RelationPolicy` and `RelationContext` must only be constructed inside `query_boundaries/` where checker-level concepts are translated to solver-level knobs.
 - **`test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries`**: `CallEvaluator` must stay in query boundaries.
 - **`test_control_flow_avoids_direct_union_interning`**: Control flow must not intern union types directly.
+- **`test_no_direct_type_evaluator_construction_outside_query_boundaries`**: `TypeEvaluator` must only be constructed inside `query_boundaries/`. Checker code should use boundary wrappers: `evaluate_type_with_resolver` (simple), `evaluate_type_with_cache` (with cache seeding/draining), or `evaluate_type_suppressing_this` (heritage merging).
+- **`test_no_direct_type_data_pattern_matching_outside_query_boundaries`**: Checker code must not pattern-match on `tsz_solver::TypeData` variants directly. Use solver query functions wrapped through `query_boundaries/` for type classification.
 
 New contract tests should be added as new boundary rules are enforced.
 
