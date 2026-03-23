@@ -1000,14 +1000,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let target_to_source = self
                         .check_subtype(target_constraint, source_constraint)
                         .is_true();
-                    if !target_to_source {
-                        return false;
-                    }
+                    let source_to_target = self
+                        .check_subtype(source_constraint, target_constraint)
+                        .is_true();
 
-                    !mapped_constraint_sensitive
-                        || self
-                            .check_subtype(source_constraint, target_constraint)
-                            .is_true()
+                    if mapped_constraint_sensitive {
+                        // Both directions must hold for mapped/indexed contexts
+                        // to preserve constraint information
+                        target_to_source && source_to_target
+                    } else {
+                        // Match tsc's typeParametersRelatedTo: allow alpha-rename
+                        // if constraints are compatible in EITHER direction.
+                        // e.g., <T>(a: T) => T  vs  <T extends Derived>(a: T) => T
+                        // target_constraint=unknown, source_constraint=Derived:
+                        // unknown ≤ Derived fails, but Derived ≤ unknown succeeds.
+                        target_to_source || source_to_target
+                    }
                 });
 
             if constraints_allow_alpha_rename {
