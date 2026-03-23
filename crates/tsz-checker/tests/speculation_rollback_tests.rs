@@ -417,3 +417,239 @@ fn deeply_nested_speculation_callback_conditional_no_panic() {
         diags.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Additional edge cases for nested/cross-path speculation robustness
+// ---------------------------------------------------------------------------
+
+/// Three-level nesting: overload resolution with a callback argument that
+/// contains an overloaded call inside a conditional. This exercises snapshot
+/// clamping at multiple nesting depths.
+#[test]
+fn three_level_nested_overload_callback_conditional_overload() {
+    let diags = check(
+        r#"
+        declare function outer(cb: (x: string) => string): string;
+        declare function outer(cb: (x: number) => number): number;
+        declare function inner(x: string): string;
+        declare function inner(x: number): number;
+        let result = outer((x) => typeof x === "string" ? inner(x) : inner(x));
+    "#,
+    );
+    // Must not panic from nested snapshot/rollback interactions.
+    assert!(
+        diags.len() <= 5,
+        "Expected bounded diagnostics for three-level nesting, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Overload resolution where the successful candidate's callback body
+/// contains another overloaded call that fails — the inner failure
+/// diagnostics should not leak after the outer overload succeeds.
+#[test]
+fn overload_success_with_inner_overload_failure_no_leak() {
+    let diags = check(
+        r#"
+        declare function process(cb: (x: number) => void): void;
+        declare function process(cb: (x: string) => void): void;
+        declare function format(x: string): string;
+        declare function format(x: boolean): boolean;
+        process((x) => { format(x); });
+    "#,
+    );
+    // The outer overload should match (number or string).
+    // Inner `format(x)` may fail if the contextual type doesn't match format's
+    // overloads, but the speculative diagnostics from failed inner overloads
+    // must not duplicate.
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert!(
+        ts2769_count <= 1,
+        "Inner overload failure should not produce duplicate TS2769: {diags:?}"
+    );
+}
+
+/// Multiple overloaded calls on the same line with different resolution
+/// outcomes: ensures per-call snapshot isolation.
+#[test]
+fn multiple_overloaded_calls_same_statement_isolation() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        let a = f(1) + f("hello") + f(true);
+    "#,
+    );
+    // f(1) and f("hello") should succeed, f(true) should produce TS2769.
+    // No diagnostic cross-contamination between calls.
+    let ts2769_count = diags.iter().filter(|d| d.code == 2769).count();
+    assert!(
+        ts2769_count <= 1,
+        "Expected at most one TS2769 from f(true), got {ts2769_count}: {diags:?}"
+    );
+}
+
+/// Overload resolution inside a switch/if-else narrowing chain where
+/// each branch tests a different overload. Exercises snapshot/rollback
+/// with flow-narrowed types at each branch.
+#[test]
+fn overload_in_switch_narrowing_branches_no_panic() {
+    let diags = check(
+        r#"
+        declare function handler(x: string): string;
+        declare function handler(x: number): number;
+        declare function handler(x: boolean): boolean;
+        function dispatch(x: string | number | boolean) {
+            if (typeof x === "string") {
+                return handler(x);
+            } else if (typeof x === "number") {
+                return handler(x);
+            } else {
+                return handler(x);
+            }
+        }
+    "#,
+    );
+    // All branches should resolve cleanly via narrowing.
+    let error_count = diags
+        .iter()
+        .filter(|d| d.code == 2769 || d.code == 2345)
+        .count();
+    assert_eq!(
+        error_count, 0,
+        "Narrowed overload calls should resolve cleanly: {diags:?}"
+    );
+}
+
+/// Overloaded generic function with multiple callback arguments:
+/// the second callback's contextual type depends on the first callback's
+/// return type, creating a dependency chain during speculation.
+#[test]
+fn overload_generic_chained_callback_inference() {
+    let diags = check(
+        r#"
+        declare function chain<T, U>(
+            first: (x: number) => T,
+            second: (y: T) => U
+        ): U;
+        declare function chain(
+            first: (x: number) => string,
+            second: (y: string) => number
+        ): number;
+        let result = chain((x) => x + 1, (y) => y.toFixed());
+    "#,
+    );
+    // Generic overload should match: T=number, U=string
+    // No leaked diagnostics from inference probing.
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for chained generic callback inference, got: {diags:?}"
+    );
+}
+
+/// Nested speculation where inner call uses `as` assertion inside overload:
+/// ensures that type assertion evaluation during speculation doesn't corrupt
+/// the outer rollback state.
+#[test]
+fn nested_speculation_with_type_assertion_no_corruption() {
+    let diags = check(
+        r#"
+        declare function convert(x: string): number;
+        declare function convert(x: number): string;
+        declare let input: string | number;
+        let result = convert(input as string);
+    "#,
+    );
+    // Should not panic and should have bounded diagnostics.
+    assert!(
+        diags.len() <= 2,
+        "Expected bounded diagnostics with type assertion, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Variable declaration with overloaded call as initializer and explicit
+/// type annotation: exercises the variable_checking snapshot interacting
+/// with overload resolution speculation.
+#[test]
+fn variable_decl_overloaded_init_with_annotation() {
+    let diags = check(
+        r#"
+        declare function parse(x: string): number;
+        declare function parse(x: number): string;
+        let x: number = parse("hello");
+        let y: string = parse(42);
+    "#,
+    );
+    // Both should type-check successfully.
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for correctly typed overloaded initializers, got: {diags:?}"
+    );
+}
+
+/// Deeply nested conditional with overloads at leaf positions:
+/// exercises maximum nesting depth for snapshot clamping.
+#[test]
+fn deeply_nested_conditional_overloads_at_leaves() {
+    let diags = check(
+        r#"
+        declare function f(x: string): string;
+        declare function f(x: number): number;
+        declare let a: boolean;
+        declare let b: boolean;
+        declare let c: boolean;
+        let result: string | number = a ? (b ? f("a") : f(1)) : (c ? f("b") : f(2));
+    "#,
+    );
+    // All four leaf calls should resolve; no panic from deep nesting.
+    assert!(
+        diags.len() <= 2,
+        "Expected bounded diagnostics for deeply nested conditionals, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Overload with spread argument: the spread unpacking interacts with
+/// speculation rollback for argument type collection.
+#[test]
+fn overload_with_spread_argument_no_panic() {
+    let diags = check(
+        r#"
+        declare function f(a: string, b: number): void;
+        declare function f(a: number, b: string): void;
+        let args: [string, number] = ["hello", 42];
+        f(...args);
+    "#,
+    );
+    // Should resolve to first overload without panic.
+    assert!(
+        diags.len() <= 2,
+        "Expected bounded diagnostics for spread argument, got {}: {diags:?}",
+        diags.len()
+    );
+}
+
+/// Regression test: ensure that after a filtered rollback that keeps some
+/// diagnostics, a subsequent full rollback to the same outer snapshot
+/// clamps correctly and doesn't panic.
+#[test]
+fn filtered_rollback_then_full_rollback_no_panic() {
+    let diags = check(
+        r#"
+        declare function g(x: string): string;
+        declare function g(x: number): number;
+        declare function h(x: boolean): boolean;
+        // g(true) will fail overload resolution (inner), then the result
+        // is used in h() which may produce additional diagnostics (outer).
+        let result = h(g(true) as any as boolean);
+    "#,
+    );
+    // The key invariant: no panic from nested rollback interactions.
+    // g(true) fails, but the `as any as boolean` cast makes h() succeed.
+    assert!(
+        diags.len() <= 3,
+        "Expected bounded diagnostics, got {}: {diags:?}",
+        diags.len()
+    );
+}
