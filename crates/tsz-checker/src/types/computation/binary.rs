@@ -375,6 +375,13 @@ impl<'a> CheckerState<'a> {
                 .all(|&m| self.type_may_represent_primitive(m));
         }
 
+        // Empty object type `{}` may represent primitive values (string, number,
+        // boolean all extend `{}`). tsc emits TS2638 for `"a" in y` when y
+        // has been narrowed to `{}` from `unknown`.
+        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
+            return true;
+        }
+
         false
     }
 
