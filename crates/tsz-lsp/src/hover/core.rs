@@ -299,6 +299,64 @@ impl<'a> HoverProvider<'a> {
             .map(|id| id.escaped_text.clone())
             .filter(|s| !s.is_empty())?;
 
+        // Try binder-based member resolution first (enum members, namespace exports,
+        // class statics). This handles cases where the expression resolves to a symbol
+        // with exports/members that contain the accessed property.
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let expr_symbol_id = walker.resolve_node(root, access.expression);
+        let binder_result = expr_symbol_id.and_then(|expr_sym_id| {
+            let expr_symbol = self.binder.symbols.get(expr_sym_id)?;
+            let member_sym_id = expr_symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(&name))
+                .or_else(|| {
+                    expr_symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(&name))
+                })?;
+            let member_type_id = checker.get_type_of_symbol(member_sym_id);
+            let type_string = checker.format_type(member_type_id);
+            if type_string.is_empty() || type_string == "error" {
+                return None;
+            }
+            let container_name = expr_symbol.escaped_name.clone();
+            let member_symbol = self.binder.symbols.get(member_sym_id);
+            let is_enum_member = member_symbol
+                .map(|s| s.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0)
+                .unwrap_or(false);
+            Some((type_string, container_name, is_enum_member))
+        });
+
+        if let Some((type_string, container_name, is_enum_member)) = binder_result {
+            *type_cache = Some(checker.extract_cache());
+            let display_string = if is_enum_member {
+                format!("(enum member) {container_name}.{name} = {type_string}")
+            } else {
+                format!("(property) {container_name}.{name}: {type_string}")
+            };
+            let documentation = self
+                .property_access_member_documentation(root, &container_name, &name)
+                .unwrap_or_default();
+            let start = self.line_map.offset_to_position(node.pos, self.source_text);
+            let end = self.line_map.offset_to_position(node.end, self.source_text);
+            return Some(HoverInfo {
+                contents: vec![format!("```typescript\n{display_string}\n```")],
+                range: Some(Range::new(start, end)),
+                display_string,
+                kind: if is_enum_member {
+                    "enum member".to_string()
+                } else {
+                    "property".to_string()
+                },
+                kind_modifiers: String::new(),
+                documentation,
+                tags: Vec::new(),
+            });
+        }
+
+        // Fallback: resolve via checker type and object shape inspection
         let expr_type_id = checker.get_type_of_node(access.expression);
         // Resolve Lazy(DefId) → concrete type so contextual_property_type_from_type
         // can inspect the object shape (e.g., interface I { m: () => void })
