@@ -59,7 +59,9 @@ impl<'a> CheckerState<'a> {
                     None,
                 );
 
-                // Resolver triplet: delegates to stable helpers.
+                // Resolver triplet: delegates to stable helpers. The `resolver`
+                // closure extracts the raw `u32` at the TypeLowering boundary;
+                // all internal resolution uses type-safe `SymbolId`.
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_lib_contexts(
                         node_idx,
@@ -67,6 +69,7 @@ impl<'a> CheckerState<'a> {
                         fallback_arena,
                         lib_contexts,
                     )
+                    .map(|sym_id| sym_id.0)
                 };
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     lib_def_id_from_node_in_lib_contexts(

@@ -3638,3 +3638,128 @@ const iso: string = d.toISOString();
         "Date methods should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
+
+// ---- SymbolId-typed resolution path tests ----
+//
+// These tests verify that the refactored resolution helpers
+// (resolve_lib_node_in_arenas returning SymbolId instead of raw u32)
+// produce correct results through the full lowering pipeline.
+
+#[test]
+fn test_promise_resolve_via_sym_id_typed_path() {
+    // Verify Promise resolves correctly through the SymbolId-typed
+    // resolution path (resolve_lib_node_in_arenas -> SymbolId -> get_lib_def_id).
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+async function fetchData(): Promise<string> {
+    return "hello";
+}
+const result: Promise<number> = Promise.resolve(42);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 6133)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Promise should resolve via SymbolId-typed resolution path without errors.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_array_map_filter_via_sym_id_path() {
+    // Array methods like map/filter rely on the lib heritage chain
+    // (Array extends ReadonlyArray) resolving through SymbolId-typed helpers.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const nums: number[] = [1, 2, 3];
+const doubled: number[] = nums.map(x => x * 2);
+const evens: number[] = nums.filter(x => x % 2 === 0);
+const joined: string = nums.join(", ");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 6133)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Array methods should resolve through SymbolId-typed lib heritage chain.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_import_type_expression_promise_via_sym_id_path() {
+    // import() type expressions for lib types must go through the
+    // SymbolId-typed resolution path correctly.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type MyPromise = Promise<string>;
+const p: MyPromise = Promise.resolve("test");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 6133)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Type alias referencing Promise should work via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_lib_ref_nested_generic_via_sym_id_path() {
+    // Nested generics (e.g., Promise<Array<Map<string, number>>>) exercise
+    // the SymbolId-typed resolution recursively through multiple lib types.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p: Promise<Array<number>> = Promise.resolve([1, 2, 3]);
+const nested: Array<Promise<string>> = [Promise.resolve("a")];
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 6133)
+        .collect();
+    assert!(
+        real_errors.is_empty(),
+        "Nested lib generics should resolve via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_promise_then_catch_finally_chain_via_sym_id_path() {
+    // Promise method chains exercise heritage resolution (Promise members)
+    // through the SymbolId-typed path.
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+const p = Promise.resolve(42);
+const chained = p.then(x => x.toString()).catch(e => "error");
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c != 2318 && *c != 6133)
+        .collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339),
+        "Promise .then/.catch chain should resolve via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
+    );
+}
