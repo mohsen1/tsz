@@ -880,7 +880,30 @@ impl<'a> CheckerState<'a> {
                 // contains parse errors. tsc skips TS2456 for malformed
                 // declarations (e.g. `type T1<in in> = T1`) where syntax errors
                 // take priority over semantic circularity detection.
-                let decl_has_parse_error = self.node_contains_any_parse_error(decl_idx);
+                // Check two signals:
+                // 1. node_contains_any_parse_error (from parser error positions)
+                // 2. Empty type parameter names (parser recovery creates empty
+                //    identifiers when reserved words like `in` appear as names)
+                let has_empty_tp_name =
+                    type_alias.type_parameters.as_ref().is_some_and(|tp_list| {
+                        tp_list.nodes.iter().any(|&tp_idx| {
+                            self.ctx
+                                .arena
+                                .get(tp_idx)
+                                .and_then(|tp_node| self.ctx.arena.get_type_parameter(tp_node))
+                                .and_then(|tp| {
+                                    self.ctx
+                                        .arena
+                                        .get(tp.name)
+                                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                                })
+                                .is_some_and(|ident| {
+                                    self.ctx.arena.resolve_identifier_text(ident).is_empty()
+                                })
+                        })
+                    });
+                let decl_has_parse_error =
+                    self.node_contains_any_parse_error(decl_idx) || has_empty_tp_name;
                 let circularity_eligible = flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE)
                     == 0
                     && !decl_has_parse_error;

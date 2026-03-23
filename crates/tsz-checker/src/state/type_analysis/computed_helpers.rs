@@ -800,7 +800,31 @@ impl<'a> CheckerState<'a> {
                                         == symbol.escaped_name.as_str()
                                 })
                                 .unwrap_or(false);
-                            if name_matches {
+                            // Suppress TS2456 when the declaration has parse
+                            // errors (empty type parameter names from reserved
+                            // word recovery, e.g., `type T1<in in> = T1`).
+                            let has_parse_error_tp =
+                                ta.type_parameters.as_ref().is_some_and(|tp_list| {
+                                    tp_list.nodes.iter().any(|&tp_idx| {
+                                        self.ctx
+                                            .arena
+                                            .get(tp_idx)
+                                            .and_then(|n| self.ctx.arena.get_type_parameter(n))
+                                            .and_then(|tp| {
+                                                self.ctx
+                                                    .arena
+                                                    .get(tp.name)
+                                                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                                            })
+                                            .is_some_and(|ident| {
+                                                self.ctx
+                                                    .arena
+                                                    .resolve_identifier_text(ident)
+                                                    .is_empty()
+                                            })
+                                    })
+                                });
+                            if name_matches && !has_parse_error_tp {
                                 self.error_at_node(
                                     ta.name,
                                     &message,
