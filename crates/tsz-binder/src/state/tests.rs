@@ -4597,7 +4597,8 @@ fn test_heritage_names_captured_for_class_extends() {
         .values()
         .find(|e| e.name == "Foo")
         .expect("expected semantic_def for Foo");
-    assert_eq!(entry.heritage_names, vec!["Bar"]);
+    assert_eq!(entry.extends_names, vec!["Bar"]);
+    assert!(entry.implements_names.is_empty());
 }
 
 #[test]
@@ -4613,7 +4614,8 @@ fn test_heritage_names_captured_for_class_implements() {
         .values()
         .find(|e| e.name == "Foo")
         .expect("expected semantic_def for Foo");
-    assert_eq!(entry.heritage_names, vec!["Iface1", "Iface2"]);
+    assert!(entry.extends_names.is_empty());
+    assert_eq!(entry.implements_names, vec!["Iface1", "Iface2"]);
 }
 
 #[test]
@@ -4629,7 +4631,10 @@ fn test_heritage_names_captured_for_class_extends_and_implements() {
         .values()
         .find(|e| e.name == "Foo")
         .expect("expected semantic_def for Foo");
-    assert_eq!(entry.heritage_names, vec!["Base", "I1", "I2"]);
+    assert_eq!(entry.extends_names, vec!["Base"]);
+    assert_eq!(entry.implements_names, vec!["I1", "I2"]);
+    // Combined heritage_names() accessor should include all
+    assert_eq!(entry.heritage_names(), vec!["Base", "I1", "I2"]);
 }
 
 #[test]
@@ -4645,7 +4650,9 @@ fn test_heritage_names_captured_for_interface_extends() {
         .values()
         .find(|e| e.name == "Foo")
         .expect("expected semantic_def for Foo");
-    assert_eq!(entry.heritage_names, vec!["Bar", "Baz"]);
+    // Interfaces use `extends`, not `implements`
+    assert_eq!(entry.extends_names, vec!["Bar", "Baz"]);
+    assert!(entry.implements_names.is_empty());
 }
 
 #[test]
@@ -4661,14 +4668,16 @@ fn test_heritage_names_empty_for_no_heritage() {
         .values()
         .find(|e| e.name == "Plain")
         .expect("expected semantic_def for Plain");
-    assert!(plain.heritage_names.is_empty());
+    assert!(plain.extends_names.is_empty());
+    assert!(plain.implements_names.is_empty());
 
     let empty = binder
         .semantic_defs
         .values()
         .find(|e| e.name == "Empty")
         .expect("expected semantic_def for Empty");
-    assert!(empty.heritage_names.is_empty());
+    assert!(empty.extends_names.is_empty());
+    assert!(empty.implements_names.is_empty());
 }
 
 #[test]
@@ -4684,7 +4693,8 @@ fn test_heritage_names_property_access_expression() {
         .values()
         .find(|e| e.name == "Foo")
         .expect("expected semantic_def for Foo");
-    assert_eq!(entry.heritage_names, vec!["ns.Base"]);
+    assert_eq!(entry.extends_names, vec!["ns.Base"]);
+    assert!(entry.implements_names.is_empty());
 }
 
 // =========================================================================
@@ -4951,20 +4961,21 @@ interface Merged extends C { c: boolean }
         .expect("expected semantic def for Merged");
     assert_eq!(entry.kind, super::SemanticDefKind::Interface);
     // Heritage names from all three declarations should be accumulated.
+    // Interface heritage uses extends, not implements
     assert!(
-        entry.heritage_names.contains(&"A".to_string()),
-        "heritage should include A, got: {:?}",
-        entry.heritage_names
+        entry.extends_names.contains(&"A".to_string()),
+        "extends should include A, got: {:?}",
+        entry.extends_names
     );
     assert!(
-        entry.heritage_names.contains(&"B".to_string()),
-        "heritage should include B, got: {:?}",
-        entry.heritage_names
+        entry.extends_names.contains(&"B".to_string()),
+        "extends should include B, got: {:?}",
+        entry.extends_names
     );
     assert!(
-        entry.heritage_names.contains(&"C".to_string()),
-        "heritage should include C, got: {:?}",
-        entry.heritage_names
+        entry.extends_names.contains(&"C".to_string()),
+        "extends should include C, got: {:?}",
+        entry.extends_names
     );
     // Core identity (name, kind, span) should still be from the first declaration.
     let first_decl = binder.symbols.get(sym_id).unwrap().declarations[0];
@@ -4986,10 +4997,10 @@ interface Dup extends Base { b: number }
         .semantic_defs
         .get(&sym_id)
         .expect("expected semantic def for Dup");
-    let base_count = entry.heritage_names.iter().filter(|h| *h == "Base").count();
+    let base_count = entry.extends_names.iter().filter(|h| *h == "Base").count();
     assert_eq!(
         base_count, 1,
-        "Base should appear exactly once in heritage_names"
+        "Base should appear exactly once in extends_names"
     );
 }
 
@@ -5131,19 +5142,19 @@ class Derived extends Base implements Serializable, Printable {}
         .expect("expected semantic def for Derived");
     assert_eq!(entry.kind, super::SemanticDefKind::Class);
     assert!(
-        entry.heritage_names.contains(&"Base".to_string()),
-        "heritage should include Base, got: {:?}",
-        entry.heritage_names
+        entry.extends_names.contains(&"Base".to_string()),
+        "extends should include Base, got: {:?}",
+        entry.extends_names
     );
     assert!(
-        entry.heritage_names.contains(&"Serializable".to_string()),
-        "heritage should include Serializable, got: {:?}",
-        entry.heritage_names
+        entry.implements_names.contains(&"Serializable".to_string()),
+        "implements should include Serializable, got: {:?}",
+        entry.implements_names
     );
     assert!(
-        entry.heritage_names.contains(&"Printable".to_string()),
-        "heritage should include Printable, got: {:?}",
-        entry.heritage_names
+        entry.implements_names.contains(&"Printable".to_string()),
+        "implements should include Printable, got: {:?}",
+        entry.implements_names
     );
 }
 
@@ -5171,8 +5182,8 @@ interface Stable extends Extra { b: number }
     );
     // But heritage should include Extra from the second declaration
     assert!(
-        entry.heritage_names.contains(&"Extra".to_string()),
-        "heritage should include Extra from later declaration"
+        entry.extends_names.contains(&"Extra".to_string()),
+        "extends should include Extra from later declaration"
     );
 }
 
@@ -5535,7 +5546,8 @@ fn merge_cross_file_accumulates_heritage() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: vec!["Bar".to_string()],
+        extends_names: vec!["Bar".to_string()],
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
     let second = super::SemanticDefEntry {
@@ -5549,14 +5561,15 @@ fn merge_cross_file_accumulates_heritage() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: vec!["Bar".to_string(), "Baz".to_string()],
+        extends_names: vec!["Bar".to_string(), "Baz".to_string()],
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
 
     first.merge_cross_file(&second);
 
     // Heritage: Bar (already present, not duplicated) + Baz (new)
-    assert_eq!(first.heritage_names, vec!["Bar", "Baz"]);
+    assert_eq!(first.extends_names, vec!["Bar", "Baz"]);
     // Type param arity and names updated from 0 to 2
     assert_eq!(first.type_param_count, 2);
     assert_eq!(first.type_param_names, vec!["T", "U"]);
@@ -5580,7 +5593,8 @@ fn merge_cross_file_accumulates_enum_members() {
         enum_member_names: vec!["Red".to_string(), "Green".to_string()],
         is_const: false,
         is_abstract: false,
-        heritage_names: Vec::new(),
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
     let second = super::SemanticDefEntry {
@@ -5594,7 +5608,8 @@ fn merge_cross_file_accumulates_enum_members() {
         enum_member_names: vec!["Green".to_string(), "Blue".to_string()],
         is_const: true,
         is_abstract: false,
-        heritage_names: Vec::new(),
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
 
@@ -5623,7 +5638,8 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: Vec::new(),
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
     let second = super::SemanticDefEntry {
@@ -5637,7 +5653,8 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: vec!["Extra".to_string()],
+        extends_names: vec!["Extra".to_string()],
+        implements_names: Vec::new(),
         parent_namespace: None,
     };
 
@@ -5648,5 +5665,5 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         "type_param_count should not decrease"
     );
     assert!(first.is_exported, "export flag should not be lost");
-    assert_eq!(first.heritage_names, vec!["Extra"]);
+    assert_eq!(first.extends_names, vec!["Extra"]);
 }

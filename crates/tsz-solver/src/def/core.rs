@@ -881,6 +881,26 @@ impl DefinitionStore {
         }
     }
 
+    /// Set the `extends` (parent class/interface) for an existing definition.
+    ///
+    /// Used by heritage resolution at pre-populate time to wire class/interface
+    /// hierarchy from binder-owned stable identity rather than checker repair.
+    pub fn set_extends(&self, id: DefId, extends: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.extends = Some(extends);
+        }
+    }
+
+    /// Set the `implements` list for an existing definition.
+    ///
+    /// Used by heritage resolution at pre-populate time to wire interface
+    /// implementations from binder-owned stable identity.
+    pub fn set_implements(&self, id: DefId, implements: Vec<DefId>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.implements = implements;
+        }
+    }
+
     /// Find a `DefId` by its instance shape.
     ///
     /// This is used by the `TypeFormatter` to preserve interface names in error messages.

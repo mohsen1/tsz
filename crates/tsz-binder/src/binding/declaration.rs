@@ -607,8 +607,10 @@ impl BinderState {
                     .map_or(0, |tp| tp.nodes.len() as u16);
                 let tp_names =
                     Self::collect_type_param_names(arena, class.type_parameters.as_ref());
-                let heritage_names =
-                    Self::collect_heritage_clause_names(arena, class.heritage_clauses.as_ref());
+                let (extends_names, implements_names) = Self::collect_heritage_clause_names_split(
+                    arena,
+                    class.heritage_clauses.as_ref(),
+                );
                 self.record_semantic_def_ext(
                     sym_id,
                     crate::state::SemanticDefKind::Class,
@@ -620,7 +622,8 @@ impl BinderState {
                     Vec::new(),
                     false, // is_const
                     is_abstract,
-                    heritage_names,
+                    extends_names,
+                    implements_names,
                 );
             }
 
@@ -872,8 +875,8 @@ impl BinderState {
                 .as_ref()
                 .map_or(0, |tp| tp.nodes.len() as u16);
             let tp_names = Self::collect_type_param_names(arena, iface.type_parameters.as_ref());
-            let heritage_names =
-                Self::collect_heritage_clause_names(arena, iface.heritage_clauses.as_ref());
+            let (extends_names, implements_names) =
+                Self::collect_heritage_clause_names_split(arena, iface.heritage_clauses.as_ref());
             self.record_semantic_def_ext(
                 sym_id,
                 crate::state::SemanticDefKind::Interface,
@@ -885,7 +888,8 @@ impl BinderState {
                 Vec::new(),
                 false,
                 false,
-                heritage_names,
+                extends_names,
+                implements_names,
             );
 
             // Track symbols declared inside module augmentation blocks so the checker
@@ -1074,7 +1078,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 false,      // is_abstract
-                Vec::new(), // heritage_names
+                Vec::new(), // extends_names
+                Vec::new(), // implements_names
             );
 
             // Get existing exports (for namespace merging)
@@ -2443,11 +2448,13 @@ impl BinderState {
             false,
             false,
             Vec::new(),
+            Vec::new(),
         );
     }
 
     /// Extended version of `record_semantic_def` that also captures enriched
-    /// identity data: enum member names, const-enum flag, and abstract-class flag.
+    /// identity data: enum member names, const-enum flag, abstract-class flag,
+    /// and split heritage names (extends vs implements).
     ///
     /// This captures stable identity information at bind time so the checker
     /// can pre-create solver `DefIds` during construction rather than inventing
@@ -2469,7 +2476,8 @@ impl BinderState {
         enum_member_names: Vec<String>,
         is_const: bool,
         is_abstract: bool,
-        heritage_names: Vec<String>,
+        extends_names: Vec<String>,
+        implements_names: Vec<String>,
     ) {
         // Only capture top-level declarations (source file scope or module scope).
         // Nested declarations (inside function bodies, class bodies, etc.) are not
@@ -2488,16 +2496,21 @@ impl BinderState {
             return;
         }
         // Declaration merging: keep the first declaration's core identity stable
-        // (kind, name, span, file_id) but accumulate heritage_names and
-        // type_param_count from later declarations.  This ensures the
-        // pre-populated DefinitionInfo has complete heritage information
-        // (e.g., `interface A extends B {}` + `interface A extends C {}`
-        // yields heritage_names = ["B", "C"]).
+        // (kind, name, span, file_id) but accumulate heritage and type_param_count
+        // from later declarations.  This ensures the pre-populated DefinitionInfo
+        // has complete heritage information (e.g., `interface A extends B {}` +
+        // `interface A extends C {}` yields extends_names = ["B", "C"]).
         if let Some(existing) = self.semantic_defs.get_mut(&sym_id) {
-            // Accumulate new heritage_names that aren't already present.
-            for h in &heritage_names {
-                if !existing.heritage_names.contains(h) {
-                    existing.heritage_names.push(h.clone());
+            // Accumulate new extends_names that aren't already present.
+            for h in &extends_names {
+                if !existing.extends_names.contains(h) {
+                    existing.extends_names.push(h.clone());
+                }
+            }
+            // Accumulate new implements_names that aren't already present.
+            for h in &implements_names {
+                if !existing.implements_names.contains(h) {
+                    existing.implements_names.push(h.clone());
                 }
             }
             // If the first declaration had no type params but this one does
@@ -2554,7 +2567,8 @@ impl BinderState {
                 enum_member_names,
                 is_const,
                 is_abstract,
-                heritage_names,
+                extends_names,
+                implements_names,
                 parent_namespace,
             },
         );

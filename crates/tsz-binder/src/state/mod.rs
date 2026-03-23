@@ -504,17 +504,28 @@ pub struct SemanticDefEntry {
     ///
     /// Only meaningful for `SemanticDefKind::Class`; always `false` for other kinds.
     pub is_abstract: bool,
-    /// Names referenced in heritage clauses (`extends` / `implements`).
+    /// Names referenced in `extends` heritage clauses.
     ///
-    /// Captured at bind time from the heritage clause expressions of class and
-    /// interface declarations. For example, `class Foo extends Bar implements Baz`
-    /// yields `["Bar", "Baz"]`. Only simple identifier names are captured;
-    /// property-access heritage expressions (e.g., `ns.Base`) are stored as
-    /// dot-separated strings (e.g., `"ns.Base"`).
+    /// Captured at bind time from `extends` clause expressions of class and
+    /// interface declarations. For example, `class Foo extends Bar` yields
+    /// `["Bar"]` and `interface A extends B, C` yields `["B", "C"]`.
     ///
-    /// Used by `BinderFileSummary` fingerprinting so that heritage changes (which
-    /// affect cross-file type resolution) trigger re-merge.
-    pub heritage_names: Vec<String>,
+    /// Only simple identifier names are captured; property-access heritage
+    /// expressions (e.g., `ns.Base`) are stored as dot-separated strings.
+    ///
+    /// Used by pre-population to wire `DefinitionInfo.extends` at identity
+    /// creation time, moving class hierarchy identity from checker-side type
+    /// resolution to binder-owned stable identity.
+    pub extends_names: Vec<String>,
+    /// Names referenced in `implements` heritage clauses.
+    ///
+    /// Captured at bind time from `implements` clause expressions of class
+    /// declarations. For example, `class Foo implements IBar, IBaz` yields
+    /// `["IBar", "IBaz"]`. Interfaces do not have `implements` clauses.
+    ///
+    /// Used by pre-population to wire `DefinitionInfo.implements` at identity
+    /// creation time.
+    pub implements_names: Vec<String>,
     /// The `SymbolId` of the containing namespace/module, if this declaration
     /// lives inside one.
     ///
@@ -529,6 +540,17 @@ pub struct SemanticDefEntry {
 }
 
 impl SemanticDefEntry {
+    /// Combined heritage names (extends + implements) for fingerprinting.
+    ///
+    /// Returns a combined view of `extends_names` and `implements_names` for
+    /// backward compatibility with code that uses the combined heritage list
+    /// (e.g., `BinderFileSummary` fingerprinting).
+    pub fn heritage_names(&self) -> Vec<String> {
+        let mut combined = self.extends_names.clone();
+        combined.extend(self.implements_names.iter().cloned());
+        combined
+    }
+
     /// Accumulate metadata from a cross-file declaration merge into this entry.
     ///
     /// When the same symbol appears in multiple files (e.g., cross-file interface
@@ -539,10 +561,16 @@ impl SemanticDefEntry {
     /// This mirrors the within-file accumulation logic in `record_semantic_def_ext`
     /// but runs during the merge phase in `parallel/core.rs`.
     pub fn merge_cross_file(&mut self, other: &SemanticDefEntry) {
-        // Accumulate heritage names not already present.
-        for h in &other.heritage_names {
-            if !self.heritage_names.contains(h) {
-                self.heritage_names.push(h.clone());
+        // Accumulate extends names not already present.
+        for h in &other.extends_names {
+            if !self.extends_names.contains(h) {
+                self.extends_names.push(h.clone());
+            }
+        }
+        // Accumulate implements names not already present.
+        for h in &other.implements_names {
+            if !self.implements_names.contains(h) {
+                self.implements_names.push(h.clone());
             }
         }
         // If the first declaration had no type params but a later file does
@@ -656,7 +684,10 @@ mod file_summary {
             let mut heritage_deps_set = FxHashSet::default();
 
             for entry in self.semantic_defs.values() {
-                for h in &entry.heritage_names {
+                for h in &entry.extends_names {
+                    heritage_deps_set.insert(h.clone());
+                }
+                for h in &entry.implements_names {
                     heritage_deps_set.insert(h.clone());
                 }
                 if entry.is_exported {
