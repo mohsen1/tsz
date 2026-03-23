@@ -792,6 +792,16 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         }
         return other == TypeId::BIGINT;
     }
+    // symbol is comparable to unique symbol (unique symbol is a subtype of symbol)
+    if base == TypeId::SYMBOL {
+        return matches!(db.lookup(other), Some(TypeData::UniqueSymbol(_)))
+            || other == TypeId::SYMBOL;
+    }
+    // unique symbol is comparable to symbol and to other unique symbols
+    if let Some(TypeData::UniqueSymbol(_)) = db.lookup(base) {
+        return other == TypeId::SYMBOL
+            || matches!(db.lookup(other), Some(TypeData::UniqueSymbol(_)));
+    }
     // Two literals of the same primitive kind are comparable (e.g. "foo" ~ "baz",  1 ~ 2).
     // In tsc, comparability checks the "base constraint" — both widen to the same primitive.
     if let Some(TypeData::Literal(lit_a)) = db.lookup(base) {
