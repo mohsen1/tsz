@@ -968,16 +968,19 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
 
     let dispatch_src =
         fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
+    let dispatch_yield_src = fs::read_to_string("src/dispatch_yield.rs")
+        .expect("failed to read src/dispatch_yield.rs for guard");
+    let dispatch_combined = format!("{dispatch_src}\n{dispatch_yield_src}");
     assert!(
-        dispatch_src.contains("check_assignable_or_report("),
+        dispatch_combined.contains("check_assignable_or_report("),
         "dispatch mismatch checks should route through check_assignable_or_report"
     );
     assert!(
-        dispatch_src.contains("ensure_relation_input_ready("),
+        dispatch_combined.contains("ensure_relation_input_ready("),
         "dispatch relation precondition setup should route through ensure_relation_input_ready"
     );
     assert!(
-        !dispatch_src.contains("ensure_application_symbols_resolved("),
+        !dispatch_combined.contains("ensure_application_symbols_resolved("),
         "dispatch should not manually orchestrate application-symbol preconditions"
     );
 
