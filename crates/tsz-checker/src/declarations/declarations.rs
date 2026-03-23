@@ -918,6 +918,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
 
+            // Clear const enum evaluation memo cache before evaluating members.
+            // This ensures fresh evaluation for each enum declaration while still
+            // benefiting from memoization across members within the same enum.
+            crate::types_domain::utilities::const_enum_eval::clear_const_eval_memo();
+
             for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;

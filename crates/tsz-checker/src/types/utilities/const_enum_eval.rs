@@ -19,6 +19,13 @@ thread_local! {
         = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
 }
 
+// Memoization cache for const enum member evaluation results.
+// Avoids redundant evaluation when multiple members reference the same target.
+thread_local! {
+    static CONST_EVAL_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<NodeIndex, Option<f64>>>
+        = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
 /// RAII guard that removes a `NodeIndex` from `CONST_EVAL_VISITED` on drop.
 struct ConstEvalGuard(NodeIndex);
 impl Drop for ConstEvalGuard {
@@ -27,6 +34,13 @@ impl Drop for ConstEvalGuard {
             v.borrow_mut().remove(&self.0);
         });
     }
+}
+
+/// Clear the const enum evaluation memo cache.
+/// Should be called after completing a top-level evaluation batch
+/// (e.g., after checking all members of an enum declaration).
+pub(crate) fn clear_const_eval_memo() {
+    CONST_EVAL_MEMO.with(|m| m.borrow_mut().clear());
 }
 
 /// Evaluate a const enum member's initializer value, resolving references to other members.
@@ -259,6 +273,12 @@ fn resolve_external_enum_member(
             // Found the target enum — look up the member
             if let Some(member_idx) = enum_member_index(arena, candidate_enum, member_name) {
                 let m_idx = candidate_enum.members.nodes[member_idx];
+
+                // Check memoization cache first.
+                if let Some(cached) = CONST_EVAL_MEMO.with(|m| m.borrow().get(&m_idx).copied()) {
+                    return cached;
+                }
+
                 let m_node = arena.get(m_idx)?;
                 let m_data = arena.get_enum_member(m_node)?;
 
@@ -269,35 +289,41 @@ fn resolve_external_enum_member(
                 }
                 let _guard = ConstEvalGuard(m_idx);
 
-                if m_data.initializer.is_some() {
-                    return evaluate_const_enum_initializer(
+                let result = if m_data.initializer.is_some() {
+                    evaluate_const_enum_initializer(
                         arena,
                         m_data.initializer,
                         candidate_enum,
                         Some(target_enum_name),
                         depth + 1,
-                    );
-                }
-
-                // Auto-incremented: find base and add offset
-                let mut offset = 1u32;
-                for i in (0..member_idx).rev() {
-                    let prev_idx = candidate_enum.members.nodes[i];
-                    let prev_node = arena.get(prev_idx)?;
-                    let prev_data = arena.get_enum_member(prev_node)?;
-                    if prev_data.initializer.is_some() {
-                        let base = evaluate_const_enum_initializer(
-                            arena,
-                            prev_data.initializer,
-                            candidate_enum,
-                            Some(target_enum_name),
-                            depth + 1,
-                        )?;
-                        return Some(base + offset as f64);
+                    )
+                } else {
+                    // Auto-incremented: find base and add offset
+                    let mut auto_result = Some(member_idx as f64);
+                    let mut offset = 1u32;
+                    for i in (0..member_idx).rev() {
+                        let prev_idx = candidate_enum.members.nodes[i];
+                        let prev_node = arena.get(prev_idx)?;
+                        let prev_data = arena.get_enum_member(prev_node)?;
+                        if prev_data.initializer.is_some() {
+                            auto_result = evaluate_const_enum_initializer(
+                                arena,
+                                prev_data.initializer,
+                                candidate_enum,
+                                Some(target_enum_name),
+                                depth + 1,
+                            )
+                            .map(|base| base + offset as f64);
+                            break;
+                        }
+                        offset += 1;
                     }
-                    offset += 1;
-                }
-                return Some(member_idx as f64);
+                    auto_result
+                };
+
+                // Cache the result.
+                CONST_EVAL_MEMO.with(|m| m.borrow_mut().insert(m_idx, result));
+                return result;
             }
         }
         for child_idx in arena.get_children(node_idx) {
@@ -327,6 +353,12 @@ fn resolve_enum_member_value(
         find_enum_member_decl(arena, enum_data, enum_name, name)?;
     let target_enum_data = arena.get_enum_at(target_enum_decl_idx)?;
     let m_idx = target_enum_data.members.nodes[target_idx];
+
+    // Check memoization cache first.
+    if let Some(cached) = CONST_EVAL_MEMO.with(|m| m.borrow().get(&m_idx).copied()) {
+        return cached;
+    }
+
     let m_node = arena.get(m_idx)?;
     let m_data = arena.get_enum_member(m_node)?;
 
@@ -337,39 +369,43 @@ fn resolve_enum_member_value(
     }
     let _guard = ConstEvalGuard(m_idx);
 
-    // If it has an explicit initializer, evaluate it directly
-    if m_data.initializer.is_some() {
-        return evaluate_const_enum_initializer(
+    let result = if m_data.initializer.is_some() {
+        // Explicit initializer — evaluate it directly
+        evaluate_const_enum_initializer(
             arena,
             m_data.initializer,
             target_enum_data,
             Some(enum_name),
             depth + 1,
-        );
-    }
-
-    // Auto-incremented member: find the nearest prior member with an initializer
-    // and count the offset
-    let mut offset = 1u32;
-    for i in (0..target_idx).rev() {
-        let prev_idx = target_enum_data.members.nodes[i];
-        let prev_node = arena.get(prev_idx)?;
-        let prev_data = arena.get_enum_member(prev_node)?;
-        if prev_data.initializer.is_some() {
-            let base = evaluate_const_enum_initializer(
-                arena,
-                prev_data.initializer,
-                target_enum_data,
-                Some(enum_name),
-                depth + 1,
-            )?;
-            return Some(base + offset as f64);
+        )
+    } else {
+        // Auto-incremented member: find the nearest prior member with an initializer
+        // and count the offset
+        let mut auto_result = Some(target_idx as f64);
+        let mut offset = 1u32;
+        for i in (0..target_idx).rev() {
+            let prev_idx = target_enum_data.members.nodes[i];
+            let prev_node = arena.get(prev_idx)?;
+            let prev_data = arena.get_enum_member(prev_node)?;
+            if prev_data.initializer.is_some() {
+                auto_result = evaluate_const_enum_initializer(
+                    arena,
+                    prev_data.initializer,
+                    target_enum_data,
+                    Some(enum_name),
+                    depth + 1,
+                )
+                .map(|base| base + offset as f64);
+                break;
+            }
+            offset += 1;
         }
-        offset += 1;
-    }
+        auto_result
+    };
 
-    // No prior initializer found — auto-increment from 0
-    Some(target_idx as f64)
+    // Cache the result.
+    CONST_EVAL_MEMO.with(|m| m.borrow_mut().insert(m_idx, result));
+    result
 }
 
 fn find_enum_member_decl(

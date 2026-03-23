@@ -851,3 +851,288 @@ fn const_enum_cycle_in_deeply_nested_expression() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+// =========================================================================
+// Multiple mutually recursive enums — non-constant reporting
+// =========================================================================
+
+/// Three non-const enums with interleaved references across multiple members.
+/// `enum A { X = B.Y + C.Z }; enum B { Y = C.Z + A.X }; enum C { Z = A.X + B.Y }`.
+/// All members cycle. Must not stack-overflow.
+#[test]
+fn enum_three_way_interleaved_references() {
+    let diags = check_source_diagnostics(
+        "enum A { X = B.Y + C.Z }\n\
+         enum B { Y = C.Z + A.X }\n\
+         enum C { Z = A.X + B.Y }",
+    );
+    // All are circular — no crash is the critical invariant
+    let _ = diags;
+}
+
+/// Const enum version of three-way interleaved references should emit TS2474.
+#[test]
+fn const_enum_three_way_interleaved_references() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.Y + C.Z }\n\
+         const enum B { Y = C.Z + A.X }\n\
+         const enum C { Z = A.X + B.Y }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum interleaved three-way cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Multiple members in each enum, some cycling and some valid.
+/// Valid members must still resolve correctly despite cycling siblings.
+#[test]
+fn enum_multiple_members_mixed_cycle_and_valid() {
+    let diags = check_source_diagnostics(
+        "enum A { V1 = 1, V2 = B.W2, V3 = 3 }\n\
+         enum B { W1 = 10, W2 = C.X2, W3 = 30 }\n\
+         enum C { X1 = 100, X2 = A.V2, X3 = 300 }",
+    );
+    // V2 -> W2 -> X2 -> V2 is a cycle. V1, V3, W1, W3, X1, X3 are fine.
+    let _ = diags;
+}
+
+/// Const enum with multiple members — cycling members get TS2474, valid ones don't.
+#[test]
+fn const_enum_multiple_members_mixed_cycle_and_valid() {
+    let diags = check_source_diagnostics(
+        "const enum A { V1 = 1, V2 = B.W2, V3 = 3 }\n\
+         const enum B { W1 = 10, W2 = C.X2, W3 = 30 }\n\
+         const enum C { X1 = 100, X2 = A.V2, X3 = 300 }",
+    );
+    // Cycling members (V2, W2, X2) should get TS2474
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for cycling const enum members, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Six enums in a ring: A → B → C → D → E → F → A.
+/// Must not stack-overflow.
+#[test]
+fn enum_six_way_ring_cycle() {
+    let diags = check_source_diagnostics(
+        "enum A { V = B.V }\n\
+         enum B { V = C.V }\n\
+         enum C { V = D.V }\n\
+         enum D { V = E.V }\n\
+         enum E { V = F.V }\n\
+         enum F { V = A.V }",
+    );
+    let _ = diags;
+}
+
+/// Const enum six-way ring should emit TS2474.
+#[test]
+fn const_enum_six_way_ring_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum A { V = B.V }\n\
+         const enum B { V = C.V }\n\
+         const enum C { V = D.V }\n\
+         const enum D { V = E.V }\n\
+         const enum E { V = F.V }\n\
+         const enum F { V = A.V }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for six-way const enum ring, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Nested auto-increment chains through multiple enums
+// =========================================================================
+
+/// Auto-increment members depending on cycling explicit initializers across enums.
+/// `enum A { X = B.Z, Y }; enum B { W = A.Y, Z }`.
+/// A.X depends on B.Z (auto-inc from B.W), B.W depends on A.Y (auto-inc from A.X).
+/// This is an indirect cycle through auto-increment. Must not stack-overflow.
+#[test]
+fn enum_auto_increment_indirect_cycle_two_enums() {
+    let diags = check_source_diagnostics("enum A { X = B.Z, Y }\nenum B { W = A.Y, Z }");
+    let _ = diags;
+}
+
+/// Three enums with auto-increment members cycling indirectly.
+/// `enum A { X = B.Z, Y }; enum B { W = C.Z, Z }; enum C { W = A.Y, Z }`.
+#[test]
+fn enum_auto_increment_indirect_cycle_three_enums() {
+    let diags = check_source_diagnostics(
+        "enum A { X = B.Z, Y }\n\
+         enum B { W = C.Z, Z }\n\
+         enum C { W = A.Y, Z }",
+    );
+    let _ = diags;
+}
+
+/// Const enum with auto-increment through cycle should emit TS2474.
+#[test]
+fn const_enum_auto_increment_indirect_cycle() {
+    let diags =
+        check_source_diagnostics("const enum A { X = B.Z, Y }\nconst enum B { W = A.Y, Z }");
+    // The cycle prevents evaluation → TS2474
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum auto-increment cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Complex mixed const/non-const patterns
+// =========================================================================
+
+/// Non-const enum references const enum which references back.
+/// `enum A { X = B.Y }; const enum B { Y = A.X }`.
+/// The const evaluator cannot resolve A.X (non-const enum), so B.Y fails.
+/// A.X evaluation may or may not succeed depending on path.
+/// Must not stack-overflow.
+#[test]
+fn mixed_nonconst_references_const_references_back() {
+    let diags = check_source_diagnostics("enum A { X = B.Y }\nconst enum B { Y = A.X }");
+    let _ = diags;
+}
+
+/// Three-way mixed cycle: const → non-const → const → first.
+/// `const enum A { X = B.Y }; enum B { Y = C.Z }; const enum C { Z = A.X }`.
+#[test]
+fn mixed_three_way_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.Y }\n\
+         enum B { Y = C.Z }\n\
+         const enum C { Z = A.X }",
+    );
+    // Must not stack-overflow.
+    let _ = diags;
+}
+
+// =========================================================================
+// Memoization correctness: shared references should resolve correctly
+// =========================================================================
+
+/// Multiple members reference the same external member.
+/// `enum A { X = B.V, Y = B.V + 1 }; enum B { V = 42 }`.
+/// Both X and Y should resolve (memoization should return cached value for B.V).
+#[test]
+fn enum_shared_reference_resolves_with_memoization() {
+    let diags = check_source_diagnostics("enum A { X = B.V, Y = B.V + 1 }\nenum B { V = 42 }");
+    // No errors expected — both should resolve
+    let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        !error_codes.iter().any(|&c| c == 2474 || c == 2565),
+        "Unexpected errors for valid shared reference, got: {:?}",
+        error_codes
+    );
+}
+
+/// Const enum shared reference: multiple members in A reference B.V = 10.
+#[test]
+fn const_enum_shared_reference_memoization() {
+    let diags = check_source_diagnostics(
+        "const enum B { V = 10 }\n\
+         const enum A { X = B.V, Y = B.V + 1, Z = B.V * 2 }",
+    );
+    let ts2474 = diags.iter().filter(|d| d.code == 2474).count();
+    assert_eq!(
+        ts2474, 0,
+        "Unexpected TS2474 for valid const enum shared reference"
+    );
+}
+
+/// Fan-out pattern: many enums reference a single shared base.
+/// `enum Base { V = 5 }; enum A { X = Base.V }; enum B { X = Base.V }; enum C { X = Base.V }`.
+#[test]
+fn enum_fan_out_shared_base() {
+    let diags = check_source_diagnostics(
+        "enum Base { V = 5 }\n\
+         enum A { X = Base.V }\n\
+         enum B { X = Base.V }\n\
+         enum C { X = Base.V }",
+    );
+    let _ = diags;
+}
+
+/// Fan-in pattern: one enum references members from many enums.
+/// `enum A { V = 1 }; enum B { V = 2 }; enum C { V = 3 }; enum D { X = A.V + B.V + C.V }`.
+#[test]
+fn enum_fan_in_multiple_sources() {
+    let diags = check_source_diagnostics(
+        "enum A { V = 1 }\n\
+         enum B { V = 2 }\n\
+         enum C { V = 3 }\n\
+         enum D { X = A.V + B.V + C.V }",
+    );
+    let _ = diags;
+}
+
+// =========================================================================
+// Depth guard: deeply nested non-cyclic expressions
+// =========================================================================
+
+/// Deeply nested parenthesized expression should not overflow.
+/// Even without cycles, deeply nested expressions are bounded by the depth guard.
+#[test]
+fn enum_deeply_nested_parenthesized_no_overflow() {
+    // Create a deeply nested expression: (((((...(42)...)))))
+    let mut expr = "42".to_string();
+    for _ in 0..150 {
+        expr = format!("({})", expr);
+    }
+    let source = format!("enum E {{ A = {} }}", expr);
+    let diags = check_source_diagnostics(&source);
+    // Should not panic or overflow. The value may or may not resolve
+    // depending on the depth limit, but no crash.
+    let _ = diags;
+}
+
+/// Deeply nested unary expressions should not overflow.
+#[test]
+fn enum_deeply_nested_unary_no_overflow() {
+    // Create: ~~~...~~~42
+    let mut expr = "42".to_string();
+    for _ in 0..150 {
+        expr = format!("~{}", expr);
+    }
+    let source = format!("enum E {{ A = {} }}", expr);
+    let diags = check_source_diagnostics(&source);
+    let _ = diags;
+}
+
+// =========================================================================
+// Self-referencing enum with computed property name pattern
+// =========================================================================
+
+/// `enum E { A = 1, B = E["A"] + E["A"] }` — repeated element access, same member.
+/// Should resolve correctly (A is before B, no cycle).
+#[test]
+fn enum_repeated_element_access_same_member() {
+    let diags = check_source_diagnostics("enum E { A = 1, B = E[\"A\"] + E[\"A\"] }");
+    let ts2651 = diags.iter().filter(|d| d.code == 2651).count();
+    let ts2565 = diags.iter().filter(|d| d.code == 2565).count();
+    assert_eq!(
+        ts2651, 0,
+        "Unexpected TS2651 for valid repeated element access"
+    );
+    assert_eq!(
+        ts2565, 0,
+        "Unexpected TS2565 for valid repeated element access"
+    );
+}
+
+/// `enum E { A = 1, B = A + A + A }` — repeated bare identifier references.
+#[test]
+fn enum_repeated_bare_identifier_references() {
+    let diags = check_source_diagnostics("enum E { A = 1, B = A + A + A }");
+    let ts2651 = diags.iter().filter(|d| d.code == 2651).count();
+    let ts2565 = diags.iter().filter(|d| d.code == 2565).count();
+    assert_eq!(ts2651, 0, "Unexpected TS2651 for valid repeated bare refs");
+    assert_eq!(ts2565, 0, "Unexpected TS2565 for valid repeated bare refs");
+}
