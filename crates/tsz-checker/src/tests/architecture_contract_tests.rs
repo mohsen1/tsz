@@ -1489,10 +1489,9 @@ fn checker_files_stay_under_loc_limit() {
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
     //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805)
+    //   types/computation/call.rs (1805), checkers/call_checker.rs (1396)
     let grandfathered: &[(&str, usize)] = &[
         ("types/function_type.rs", 1920),
-        ("checkers/call_checker.rs", 2070),
         ("checkers/jsx/props.rs", 2070),
     ];
 
@@ -3240,7 +3239,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
 /// These calls bypass the `query_boundaries` layer and should be migrated to use
 /// `flow_analysis::union_types()` or equivalent boundary helpers.
 ///
-/// Current ceiling: 15 occurrences. This number must only decrease over time.
+/// Current ceiling: 13 occurrences. This number must only decrease over time.
 #[test]
 fn test_direct_interner_type_construction_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -3292,7 +3291,7 @@ fn test_direct_interner_type_construction_ceiling() {
 
     // Ceiling: current count of direct interner type-construction calls.
     // This number must only shrink as calls are migrated to query_boundaries.
-    const CEILING: usize = 15;
+    const CEILING: usize = 13;
     assert!(
         total_count <= CEILING,
         "Direct interner type-construction calls outside query_boundaries have increased \
@@ -3375,7 +3374,7 @@ fn test_error_reporter_does_not_perform_type_construction() {
 /// This ratchet captures the current state (14 files over 2000 lines) and prevents
 /// regression. As files are split, this ceiling must be lowered.
 ///
-/// Current ceiling: 14 files over 2000 lines. This number must only decrease over time.
+/// Current ceiling: 12 files over 2000 lines. This number must only decrease over time.
 #[test]
 fn test_checker_file_size_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -3413,7 +3412,7 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
-    const FILE_COUNT_CEILING: usize = 14;
+    const FILE_COUNT_CEILING: usize = 12;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
         "Number of checker source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
@@ -3425,7 +3424,7 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: maximum line count of any single checker source file.
     // This prevents existing large files from growing further.
-    const MAX_LOC_CEILING: usize = 2650;
+    const MAX_LOC_CEILING: usize = 2610;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
