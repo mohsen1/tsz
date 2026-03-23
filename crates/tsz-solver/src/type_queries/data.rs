@@ -2349,7 +2349,6 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 mod tests {
     use super::*;
     use crate::TypeInterner;
-    use crate::caches::db::QueryDatabase;
     use crate::types::{CallSignature, CallableShape, ParamInfo, TypeParamInfo};
 
     fn make_callable_with_construct_sig(

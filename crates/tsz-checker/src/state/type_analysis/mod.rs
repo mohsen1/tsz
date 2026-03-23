@@ -6,6 +6,7 @@ mod computed_alias;
 mod computed_commonjs;
 pub(crate) mod computed_helpers;
 mod computed_helpers_binding;
+mod computed_helpers_private;
 mod computed_loops;
 mod core;
 mod core_type_query;
