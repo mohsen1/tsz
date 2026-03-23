@@ -187,6 +187,56 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
+    /// Ensure a DefId has its type parameters cached and body registered before lowering.
+    ///
+    /// This is the stable-identity helper for the "prime DefId before TypeLowering"
+    /// pattern.  It consolidates the ad hoc inline block that manually iterated
+    /// declarations to find type parameters and then checked body registration.
+    ///
+    /// Steps:
+    /// 1. Get or create a DefId for the symbol.
+    /// 2. If type params are not yet cached, extract them from AST declarations
+    ///    (via [`extract_declared_type_params_for_reference_symbol`]) and register.
+    /// 3. For lib types, ensure the body is resolved so `resolve_lazy` succeeds.
+    ///
+    /// Returns the DefId ready for use in `Lazy(DefId)`.
+    pub(crate) fn ensure_def_ready_for_lowering(
+        &mut self,
+        sym_id: SymbolId,
+        name: &str,
+    ) -> tsz_solver::def::DefId {
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+
+        // Step 2: extract and cache type parameters if not already cached.
+        if self.ctx.get_def_type_params(def_id).is_none() {
+            let params = self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+            if !params.is_empty() {
+                self.ctx.insert_def_type_params(def_id, params);
+            } else if !self.ctx.lib_contexts.is_empty() {
+                // Not found in the file arena — try lib types which populates
+                // both body and type params in the type environment.
+                let _ = self.resolve_lib_type_by_name(name);
+            }
+        }
+
+        // Step 3: ensure the body is registered in type_env for lib generic types
+        // so that the solver's resolve_lazy can perform property access with
+        // type parameter substitution.
+        if self.ctx.get_def_type_params(def_id).is_some() && !self.ctx.lib_contexts.is_empty() {
+            let has_body = self
+                .ctx
+                .type_env
+                .try_borrow()
+                .map(|env| env.get_def(def_id).is_some())
+                .unwrap_or(false);
+            if !has_body {
+                let _ = self.resolve_lib_type_by_name(name);
+            }
+        }
+
+        def_id
+    }
+
     pub(crate) fn extract_declared_type_params_for_reference_symbol(
         &mut self,
         sym_id: SymbolId,
