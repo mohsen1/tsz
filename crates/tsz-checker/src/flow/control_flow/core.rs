@@ -187,42 +187,23 @@ pub(crate) struct PredicateSignature {
 }
 
 impl<'a> FlowAnalyzer<'a> {
-    fn flow_merge_member_subsumes(&self, candidate_super: TypeId, candidate_sub: TypeId) -> bool {
-        if candidate_super == candidate_sub {
-            return true;
-        }
-
-        // Flow merge must always use strict-null-checks semantics so that
-        // `null` and `undefined` are never silently collapsed into other types.
-        // Without this, `if (x !== null) {} else {}` merges to just `number`
-        // instead of `number | null`, breaking downstream argument/assignment checks.
-        if let Some(env) = &self.type_environment {
-            let env = env.borrow();
-            return query::is_assignable_with_env(
-                self.interner,
-                &env,
-                candidate_sub,
-                candidate_super,
-                true,
-            );
-        }
-
-        query::is_assignable_strict_null(self.interner, candidate_sub, candidate_super)
-    }
-
+    /// Deduplicate flow merge members using identity only.
+    ///
+    /// Flow merges must NOT use structural assignability to eliminate types.
+    /// Structural subtype reduction collapses distinct class types that share
+    /// the same interface (e.g. `Derived1 | Derived2` → `Derived1` when
+    /// Derived2 has all of Derived1's members), which loses narrowing
+    /// information needed by subsequent control flow analysis.
+    ///
+    /// The solver's `union()` handles any appropriate subtype reduction
+    /// when constructing the actual union type.
     fn simplify_flow_merge_types(&self, types: Vec<TypeId>) -> Vec<TypeId> {
+        let mut seen = FxHashSet::with_capacity_and_hasher(types.len(), Default::default());
         let mut simplified = Vec::with_capacity(types.len());
         for ty in types {
-            if simplified
-                .iter()
-                .copied()
-                .any(|existing| self.flow_merge_member_subsumes(existing, ty))
-            {
-                continue;
+            if seen.insert(ty) {
+                simplified.push(ty);
             }
-
-            simplified.retain(|&existing| !self.flow_merge_member_subsumes(ty, existing));
-            simplified.push(ty);
         }
         simplified
     }
