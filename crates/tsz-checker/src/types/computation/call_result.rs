@@ -543,11 +543,16 @@ impl<'a> CheckerState<'a> {
                 constraint_type,
                 return_type,
             } => {
-                let _ = self.check_assignable_or_report_generic_at(
+                // Type parameter constraint violations in generic calls are
+                // semantically argument-level mismatches: the argument's inferred
+                // type doesn't satisfy the constraint. tsc reports TS2345
+                // ("Argument of type X is not assignable to parameter of type Y")
+                // at the argument level. Use the first argument as the anchor.
+                let anchor = args.first().copied().unwrap_or(call_idx);
+                let _ = self.check_argument_assignable_or_report(
                     inferred_type,
                     constraint_type,
-                    call_idx,
-                    call_idx,
+                    anchor,
                 );
                 return_type
             }
