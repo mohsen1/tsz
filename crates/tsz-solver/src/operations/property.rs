@@ -3,7 +3,7 @@
 
 use crate::caches::db::QueryDatabase;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TypeData, TypeId};
+use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
 use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
 use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
@@ -319,181 +319,80 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
         *self.current_prop_atom.borrow_mut() = prop_atom;
 
-        // Use visitor for types we've migrated (Intrinsic, Object, ObjectWithIndex, Array, Tuple)
-        // Due to TypeVisitor requiring &mut self, we inline the visitor logic here
-        // This maintains the visitor pattern while avoiding unsafe casts
-        let key_opt = self.interner().lookup(obj_type);
-        if let Some(key) = key_opt {
-            let result = match key {
-                TypeData::Error => {
-                    // Error types propagate silently (like any) — property access
-                    // succeeds with ERROR to prevent cascading diagnostics.
-                    Some(PropertyAccessResult::simple(TypeId::ERROR))
-                }
-                TypeData::Intrinsic(kind) => {
-                    // Inline visitor logic for intrinsics
-                    match kind {
-                        IntrinsicKind::Any => Some(PropertyAccessResult::simple(TypeId::ANY)),
-                        IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
-                        IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
-                            let cause = if kind == IntrinsicKind::Void
-                                || kind == IntrinsicKind::Undefined
-                            {
-                                TypeId::UNDEFINED
-                            } else {
-                                TypeId::NULL
-                            };
-                            Some(PropertyAccessResult::PossiblyNullOrUndefined {
-                                property_type: None,
-                                cause,
-                            })
-                        }
-                        IntrinsicKind::Symbol => {
-                            let prop_atom_inner = prop_atom
-                                .unwrap_or_else(|| self.interner().intern_string(prop_name));
-                            Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
-                        }
-                        IntrinsicKind::Never => {
-                            // never is the bottom type — all property accesses are valid
-                            // and return never (the code is unreachable).
-                            Some(PropertyAccessResult::simple(TypeId::NEVER))
-                        }
-                        _ => None,
-                    }
-                }
-                TypeData::Object(shape_id) => {
-                    // Inline visitor logic for Object - calls visit_object implementation
-                    self.visit_object_impl(shape_id.0, prop_name, prop_atom)
-                }
-                TypeData::ObjectWithIndex(shape_id) => {
-                    // Inline visitor logic for ObjectWithIndex - calls visit_object_with_index implementation
-                    self.visit_object_with_index_impl(shape_id.0, prop_name, prop_atom)
-                }
-                TypeData::Array(_elem) => {
-                    // Inline visitor logic for Array
-                    self.visit_array_impl(obj_type, prop_name, prop_atom)
-                }
-                TypeData::Tuple(_list_id) => {
-                    // Inline visitor logic for Tuple
-                    self.visit_array_impl(obj_type, prop_name, prop_atom)
-                }
-                TypeData::Union(list_id) => {
-                    // Inline visitor logic for Union - calls visit_union implementation
-                    self.visit_union_impl(list_id.0, prop_name, prop_atom)
-                }
-                // Note: TypeData::Application is handled in the fallback section with proper type substitution
-                _ => None, // Not yet migrated to visitor
+        // Single-lookup dispatch: resolve property access based on type data.
+        // All type variants are handled in one match to avoid redundant interner lookups.
+        let Some(key) = self.interner().lookup(obj_type) else {
+            let prop_atom =
+                prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: obj_type,
+                property_name: prop_atom,
             };
-
-            if let Some(res) = result {
-                return res;
-            }
-        }
-
-        // Fallback to existing match statement for types not yet migrated
-        // Look up the type key
-        let key = match self.interner().lookup(obj_type) {
-            Some(k) => k,
-            None => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                return PropertyAccessResult::PropertyNotFound {
-                    type_id: obj_type,
-                    property_name: prop_atom,
-                };
-            }
         };
 
         match key {
-            TypeData::Object(shape_id) => {
-                let shape = self.interner().object_shape(shape_id);
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                if let Some(prop) =
-                    self.lookup_object_property(shape_id, &shape.properties, prop_atom)
-                {
-                    return PropertyAccessResult::simple(self.optional_property_type(prop));
-                }
-                // Const enums must not inherit Object.prototype members.
-                if !shape.flags.contains(ObjectFlags::CONST_ENUM)
-                    && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
-                {
-                    return result;
-                }
-
-                // Check for index signatures using IndexSignatureResolver
-                // Some Object types may have index signatures that aren't in ObjectWithIndex
-                use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
-                let resolver = IndexSignatureResolver::new(self.interner());
-                let is_symbol_key = prop_name.starts_with("__unique_");
-
-                // Try string index signature first (most common).
-                // Symbol-keyed properties (internal "__unique_N" names) must NOT
-                // fall through to string index signatures — tsc treats symbol keys
-                // as distinct from string keys for index signature purposes.
-                if !is_symbol_key
-                    && resolver.has_index_signature(obj_type, IndexKind::String)
-                    && let Some(value_type) = resolver.resolve_string_index(obj_type)
-                {
-                    return PropertyAccessResult::from_index(
-                        self.add_undefined_if_unchecked(value_type),
-                    );
-                }
-
-                // Try numeric index signature if property name looks numeric
-                if resolver.is_numeric_index_name(prop_name)
-                    && let Some(value_type) = resolver.resolve_number_index(obj_type)
-                {
-                    return PropertyAccessResult::from_index(
-                        self.add_undefined_if_unchecked(value_type),
-                    );
-                }
-
-                PropertyAccessResult::PropertyNotFound {
-                    type_id: obj_type,
-                    property_name: prop_atom,
-                }
+            TypeData::Error => {
+                // Error types propagate silently (like any) — property access
+                // succeeds with ERROR to prevent cascading diagnostics.
+                PropertyAccessResult::simple(TypeId::ERROR)
             }
 
-            TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.interner().object_shape(shape_id);
+            TypeData::Object(shape_id) => self
+                .visit_object_impl(shape_id.0, prop_name, prop_atom)
+                .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
+
+            TypeData::ObjectWithIndex(shape_id) => self
+                .visit_object_with_index_impl(shape_id.0, prop_name, prop_atom)
+                .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
+
+            TypeData::Array(_) | TypeData::Tuple(_) => self
+                .visit_array_impl(obj_type, prop_name, prop_atom)
+                .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
+
+            TypeData::Union(list_id) => self
+                .visit_union_impl(list_id.0, prop_name, prop_atom)
+                .unwrap_or_else(|| PropertyAccessResult::simple(TypeId::ANY)),
+
+            TypeData::Intrinsic(kind) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                if let Some(prop) =
-                    self.lookup_object_property(shape_id, &shape.properties, prop_atom)
-                {
-                    return PropertyAccessResult::simple(self.optional_property_type(prop));
-                }
-
-                // Const enums must not inherit Object.prototype members.
-                if !shape.flags.contains(ObjectFlags::CONST_ENUM)
-                    && let Some(result) = self.resolve_object_member(prop_name, prop_atom)
-                {
-                    return result;
-                }
-
-                // Check string index signature (skip for symbol-keyed properties)
-                let is_symbol_key = prop_name.starts_with("__unique_");
-                if !is_symbol_key && let Some(ref idx) = shape.string_index {
-                    return PropertyAccessResult::from_index(
-                        self.add_undefined_if_unchecked(idx.value_type),
-                    );
-                }
-
-                // Check numeric index signature if property name looks numeric
-                use crate::objects::index_signatures::IndexSignatureResolver;
-                let resolver = IndexSignatureResolver::new(self.interner());
-                if resolver.is_numeric_index_name(prop_name)
-                    && let Some(ref idx) = shape.number_index
-                {
-                    return PropertyAccessResult::from_index(
-                        self.add_undefined_if_unchecked(idx.value_type),
-                    );
-                }
-
-                PropertyAccessResult::PropertyNotFound {
-                    type_id: obj_type,
-                    property_name: prop_atom,
+                match kind {
+                    IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
+                    IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
+                    IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                        let cause = if kind == IntrinsicKind::Void
+                            || kind == IntrinsicKind::Undefined
+                        {
+                            TypeId::UNDEFINED
+                        } else {
+                            TypeId::NULL
+                        };
+                        PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: None,
+                            cause,
+                        }
+                    }
+                    IntrinsicKind::Symbol => {
+                        self.resolve_symbol_primitive_property(prop_name, prop_atom)
+                    }
+                    IntrinsicKind::Never => PropertyAccessResult::simple(TypeId::NEVER),
+                    IntrinsicKind::String => self.resolve_string_property(prop_name, prop_atom),
+                    IntrinsicKind::Number => self.resolve_number_property(prop_name, prop_atom),
+                    IntrinsicKind::Boolean => {
+                        self.resolve_boolean_property(prop_name, prop_atom)
+                    }
+                    IntrinsicKind::Bigint => self.resolve_bigint_property(prop_name, prop_atom),
+                    IntrinsicKind::Object => {
+                        self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
+                    }
+                    // Other intrinsic kinds: try apparent members
+                    _ => {
+                        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                            result
+                        } else {
+                            PropertyAccessResult::simple(TypeId::ANY)
+                        }
+                    }
                 }
             }
 
@@ -538,8 +437,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
 
-            // TypeData::Union - migrated to visitor pattern (see visit_union_impl)
-            // This should never be reached since visitor handles it above
             TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 let prop_atom =
@@ -757,49 +654,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_string_property(prop_name, prop_atom)
-            }
-
-            // Built-in properties
-            TypeData::Intrinsic(IntrinsicKind::String) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_string_property(prop_name, prop_atom)
-            }
-
-            TypeData::Intrinsic(IntrinsicKind::Number) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_number_property(prop_name, prop_atom)
-            }
-
-            TypeData::Intrinsic(IntrinsicKind::Boolean) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_boolean_property(prop_name, prop_atom)
-            }
-
-            TypeData::Intrinsic(IntrinsicKind::Bigint) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_bigint_property(prop_name, prop_atom)
-            }
-
-            TypeData::Intrinsic(IntrinsicKind::Object) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
-            }
-
-            TypeData::Array(_) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_array_property(obj_type, prop_name, prop_atom)
-            }
-
-            TypeData::Tuple(_) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
 
             // Application: handle nominally (preserve class/interface identity)
