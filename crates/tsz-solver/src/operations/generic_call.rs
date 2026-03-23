@@ -1703,6 +1703,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             final_subst.insert(tp.name, ty_for_check);
                             continue;
                         }
+                        // When the inferred type is a TypeParameter from an outer
+                        // scope, its constraint is guaranteed to be at least as
+                        // specific as the function's type parameter constraint
+                        // (the inference already validated upper bounds during
+                        // resolution). Accept the TypeParameter to preserve the
+                        // more specific type information instead of collapsing
+                        // to the constraint. This handles cases like:
+                        //   U extends MessageList<T>, MessageList<T> extends Message
+                        //   → U satisfies V extends Message
+                        // where structural comparison may fail due to `this` types
+                        // or unresolved Application types in the constraint chain.
+                        final_subst.insert(tp.name, ty_for_check);
+                        continue;
                     }
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
