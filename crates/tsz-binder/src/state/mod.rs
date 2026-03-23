@@ -4,6 +4,7 @@
 //! Node and `NodeArena`, avoiding the old Node enum pattern matching.
 
 mod core;
+pub mod export_surface;
 mod flow_helpers;
 mod lib_merge;
 mod resolution;
