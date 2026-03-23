@@ -340,9 +340,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type "may represent a primitive value" for TS2638.
     /// In tsc, this check fires for type parameters (`InstantiableNonPrimitive`) whose
-    /// constraint is missing or could also represent a primitive. Empty object types
-    /// like `{}` are NOT flagged — they structurally accept primitives, but an empty
-    /// object value at runtime is always an object, not a primitive.
+    /// constraint is missing or could also represent a primitive.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
         // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
@@ -753,29 +751,19 @@ impl<'a> CheckerState<'a> {
                 // our parser but by tsc's checker, so they set has_parse_errors in our
                 // pipeline but shouldn't suppress TS2695. Only suppress when the binary
                 // expression itself has structural parse errors (e.g., `(a, new)`).
+                // In tsc, TS2695 is emitted via grammarErrorOnNode which checks
+                // !hasParseDiagnostics(sourceFile). Use has_syntax_parse_errors
+                // which matches tsc's hasParseDiagnostics() (excludes grammar-only
+                // codes like TS1009/TS1014/TS1185 that don't suppress grammar errors).
+                // Also check node-level flags as a fallback for inline parse errors.
                 let node_has_parse_error = self.ctx.arena.get(node_idx).is_some_and(|n| {
                     use tsz_parser::parser::node_flags;
                     let flags = n.flags as u32;
                     (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
                         || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
                 });
-                // Also suppress when a parse error exists near this expression
-                // (e.g., `{ a, b } = fn()` where TS2809 is emitted for the `=`).
-                // The comma in the block is side-effect-free but tsc suppresses
-                // TS2695 because TS2809 already indicates the parse failure.
-                let nearby_parse_error = {
-                    if let Some(node) = self.ctx.arena.get(node_idx) {
-                        let end = node.end;
-                        self.ctx
-                            .all_parse_error_positions
-                            .iter()
-                            .any(|&pos| pos >= node.pos && pos <= end + 5)
-                    } else {
-                        false
-                    }
-                };
                 if !node_has_parse_error
-                    && !nearby_parse_error
+                    && !self.ctx.has_syntax_parse_errors
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)

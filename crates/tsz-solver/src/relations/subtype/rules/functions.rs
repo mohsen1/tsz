@@ -1034,24 +1034,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             )
                         });
 
+                    // For alpha-rename to succeed, the target's constraint must be
+                    // assignable to the source's constraint. This ensures the source
+                    // function's constraint requirements are at least as permissive
+                    // as the target's. For example:
+                    //   source: <S extends T> (stricter constraint)
+                    //   target: <S> (no constraint = unknown)
+                    //   check: unknown ≤ T → false → alpha-rename fails
+                    //   → falls through to erasure/inference which correctly
+                    //   rejects the assignment (TS2322).
+                    //
+                    // For mapped/indexed contexts, both directions must hold
+                    // to preserve constraint information.
                     let target_to_source = self
                         .check_subtype(target_constraint, source_constraint)
                         .is_true();
-                    let source_to_target = self
-                        .check_subtype(source_constraint, target_constraint)
-                        .is_true();
 
                     if mapped_constraint_sensitive {
-                        // Both directions must hold for mapped/indexed contexts
-                        // to preserve constraint information
+                        let source_to_target = self
+                            .check_subtype(source_constraint, target_constraint)
+                            .is_true();
                         target_to_source && source_to_target
                     } else {
-                        // Match tsc's typeParametersRelatedTo: allow alpha-rename
-                        // if constraints are compatible in EITHER direction.
-                        // e.g., <T>(a: T) => T  vs  <T extends Derived>(a: T) => T
-                        // target_constraint=unknown, source_constraint=Derived:
-                        // unknown ≤ Derived fails, but Derived ≤ unknown succeeds.
-                        target_to_source || source_to_target
+                        target_to_source
                     }
                 });
 
