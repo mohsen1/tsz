@@ -20,6 +20,7 @@ pub mod symbols;
 // Re-export core data types at crate root for convenience.
 pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 pub use scopes::{ContainerKind, Scope, ScopeContext, ScopeId};
+pub use state::export_surface::{ExportSurface, ExportedSymbol, NamedReexport, WildcardReexport};
 pub use state::{
     BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
     ModuleAugmentation, SemanticDefEntry, SemanticDefKind, ValidationError,
