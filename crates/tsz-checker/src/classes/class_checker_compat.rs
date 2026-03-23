@@ -1083,6 +1083,7 @@ impl<'a> CheckerState<'a> {
             let substitution =
                 TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
+            let mut ts2430_emitted_for_base = false;
             'derived_loop: for (member_name, member_type, derived_member_idx, derived_kind) in
                 &derived_members
             {
@@ -1164,6 +1165,7 @@ impl<'a> CheckerState<'a> {
                                 );
                             // Don't return — continue checking other base types.
                             // Each incompatible base gets its own TS2430 diagnostic.
+                            ts2430_emitted_for_base = true;
                             break 'derived_loop;
                         }
 
@@ -1172,6 +1174,98 @@ impl<'a> CheckerState<'a> {
 
                     if found {
                         break;
+                    }
+                }
+            }
+
+            // Method overload coverage check: the 'derived_loop above only compares
+            // each derived overload against the FIRST matching base overload. When the
+            // base has multiple overloads for the same method, we must verify that EACH
+            // base overload is matched by at least one derived overload. If any base
+            // overload is unmatched, emit TS2430.
+            if !ts2430_emitted_for_base {
+                // Collect all base method overloads grouped by name
+                let base_method_overloads: Vec<(String, Vec<TypeId>)>;
+                {
+                    let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
+                        rustc_hash::FxHashMap::default();
+                    for &base_iface_idx in &base_iface_indices {
+                        if let Some(base_node) = self.ctx.arena.get(base_iface_idx)
+                            && let Some(base_iface) = self.ctx.arena.get_interface(base_node)
+                        {
+                            for &base_member_idx in &base_iface.members.nodes {
+                                let Some(base_member_node) = self.ctx.arena.get(base_member_idx)
+                                else {
+                                    continue;
+                                };
+                                if base_member_node.kind != METHOD_SIGNATURE {
+                                    continue;
+                                }
+                                let Some(sig) = self.ctx.arena.get_signature(base_member_node)
+                                else {
+                                    continue;
+                                };
+                                let Some(name) = self.get_property_name(sig.name) else {
+                                    continue;
+                                };
+                                if !derived_member_names.contains(&name) {
+                                    continue;
+                                }
+                                let base_type = instantiate_type(
+                                    self.ctx.types,
+                                    self.get_type_of_interface_member(base_member_idx),
+                                    &substitution,
+                                );
+                                by_name.entry(name).or_default().push(base_type);
+                            }
+                        }
+                    }
+                    base_method_overloads =
+                        by_name.into_iter().filter(|(_, v)| v.len() > 1).collect();
+                }
+
+                // Collect derived method overloads grouped by name
+                let mut derived_method_overloads: rustc_hash::FxHashMap<
+                    String,
+                    Vec<(TypeId, NodeIndex)>,
+                > = rustc_hash::FxHashMap::default();
+                for (name, type_id, idx, kind) in &derived_members {
+                    if *kind == METHOD_SIGNATURE {
+                        derived_method_overloads
+                            .entry(name.clone())
+                            .or_default()
+                            .push((*type_id, *idx));
+                    }
+                }
+
+                // For each method with multiple base overloads, check coverage
+                'overload_check: for (method_name, base_sigs) in &base_method_overloads {
+                    let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
+                        continue;
+                    };
+                    for &base_type in base_sigs {
+                        let mut matched = false;
+                        for &(derived_type, derived_idx) in derived_sigs {
+                            if !should_report_member_type_mismatch(
+                                self,
+                                derived_type,
+                                base_type,
+                                derived_idx,
+                            ) {
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if !matched {
+                            self.error_at_node(
+                                iface_data.name,
+                                &format!(
+                                    "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                ),
+                                diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                            );
+                            break 'overload_check;
+                        }
                     }
                 }
             }
