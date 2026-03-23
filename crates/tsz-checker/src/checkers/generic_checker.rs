@@ -777,7 +777,19 @@ impl<'a> CheckerState<'a> {
                     query::contains_type_parameters(self.ctx.types, type_arg);
                 let base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
-                    .filter(|&base| base != type_arg);
+                    .filter(|&base| base != type_arg)
+                    // Discard degenerate base constraints (undefined, null, never)
+                    // that arise from incomplete evaluation of composite generic types
+                    // like NonNullable<T["states"]>[K]. These are artifacts of the
+                    // base-constraint resolution failing to see through type-level
+                    // applications (NonNullable, Extract, etc.) and should not be used
+                    // to make eager TS2344 decisions.
+                    .filter(|&base| {
+                        base != TypeId::UNDEFINED
+                            && base != TypeId::NULL
+                            && base != TypeId::NEVER
+                            && base != TypeId::VOID
+                    });
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
