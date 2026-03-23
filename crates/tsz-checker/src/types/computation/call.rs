@@ -903,11 +903,13 @@ impl<'a> CheckerState<'a> {
                             .map(|(i, p)| {
                                 let arg_type = round1_arg_types.get(i).copied();
                                 let preserve_raw_application = arg_type.is_some_and(|arg_type| {
-                                    common::both_are_applications_with_generic_param(
-                                        self.ctx.types,
-                                        p.type_id,
-                                        arg_type,
-                                    )
+                                    query::get_application_info(self.ctx.types, p.type_id).is_some()
+                                        && query::get_application_info(self.ctx.types, arg_type)
+                                            .is_some()
+                                        && common::contains_type_parameters(
+                                            self.ctx.types,
+                                            p.type_id,
+                                        )
                                 });
 
                                 common::ParamInfo {
@@ -1198,10 +1200,17 @@ impl<'a> CheckerState<'a> {
                                         || n.kind == syntax_kind_ext::ARROW_FUNCTION
                                 })
                                 && shape.params.get(i).is_some_and(|p| {
-                                    common::is_type_param_at_top_or_in_intersection(
-                                        self.ctx.types,
-                                        p.type_id,
-                                    )
+                                    // Check if the param type is a bare type parameter
+                                    // or an intersection containing a type parameter
+                                    let pt = p.type_id;
+                                    common::type_param_info(self.ctx.types, pt).is_some()
+                                        || common::intersection_members(self.ctx.types, pt)
+                                            .is_some_and(|members| {
+                                                members.iter().any(|&m| {
+                                                    common::type_param_info(self.ctx.types, m)
+                                                        .is_some()
+                                                })
+                                            })
                                 })
                             {
                                 TypeId::UNKNOWN
@@ -1453,7 +1462,9 @@ impl<'a> CheckerState<'a> {
                                     || common::contains_type_parameters(self.ctx.types, expected)
                             });
                             let arg_is_callable =
-                                common::has_any_call_signatures(self.ctx.types, arg_type);
+                                query::get_function_shape(self.ctx.types, arg_type).is_some()
+                                    || common::callable_shape_for_type(self.ctx.types, arg_type)
+                                        .is_some();
                             let skip_return_only_refinement = self
                                 .ctx
                                 .arena
