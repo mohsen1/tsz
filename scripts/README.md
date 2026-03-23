@@ -28,11 +28,27 @@ scripts/
 | `scripts/conformance/conformance-detail.json` | Per-test failure data (offline analysis) |
 | `scripts/conformance/tsc-cache-full.json` | TSC expected diagnostics cache |
 
-### Emit & Fourslash
+### Emit Testing & Analysis
 | Script | Purpose |
 |--------|---------|
 | `scripts/emit/run.sh` | Run emit tests (JS + declaration output) |
+| `scripts/emit/run.sh --json-out` | Run emit tests and write `emit-detail.json` |
+| `scripts/emit/query-emit.py` | Offline emit results analysis and querying |
+| `scripts/emit/emit-detail.json` | Per-test emit results (offline analysis) |
+
+### Fourslash Testing & Analysis
+| Script | Purpose |
+|--------|---------|
 | `scripts/fourslash/run-fourslash.sh` | Run language service fourslash tests |
+| `scripts/fourslash/run-fourslash.sh ... --json-out` | Run fourslash tests and write `fourslash-detail.json` |
+| `scripts/fourslash/query-fourslash.py` | Offline fourslash results analysis and querying |
+| `scripts/fourslash/fourslash-detail.json` | Per-test fourslash results (offline analysis) |
+
+### README Progress Refresh
+| Script | Purpose |
+|--------|---------|
+| `scripts/refresh-readme.py` | Update README progress bars from artifact JSON files |
+| `scripts/refresh-readme.py --write` | Apply changes (default is dry-run) |
 
 ### Benchmarking
 | Script | Purpose |
