@@ -361,8 +361,7 @@ impl<'a> CheckerState<'a> {
                     .is_some();
             let has_jsdoc_param = if param.type_annotation.is_none() {
                 let from_func_jsdoc = if let Some(jsdoc) = func_decl_jsdoc {
-                    let pname =
-                        self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
+                    let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                     Self::jsdoc_has_param_type(jsdoc, &pname)
                         || has_callable_jsdoc_type
                         || self.ctx.arena.get(param.name).is_some_and(|n| {
@@ -475,7 +474,11 @@ impl<'a> CheckerState<'a> {
         // type information. Only check here for actual function declarations.
         if !is_closure {
             self.check_function_implicit_any_return(
-                func_idx, func, func_decl_jsdoc, has_type_annotation, return_type,
+                func_idx,
+                func,
+                func_decl_jsdoc,
+                has_type_annotation,
+                return_type,
             );
         }
 
@@ -552,8 +555,7 @@ impl<'a> CheckerState<'a> {
         // but function_depth is used to detect crosses over function boundary
 
         // Save outer generator's yield collection state (for nested generators)
-        let saved_yield_collection =
-            std::mem::take(&mut self.ctx.generator_yield_operand_types);
+        let saved_yield_collection = std::mem::take(&mut self.ctx.generator_yield_operand_types);
         let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
 
         self.check_statement_with_request(func.body, &TypingRequest::NONE);
@@ -689,10 +691,11 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::ERROR)
             };
             if generator_base != TypeId::ERROR {
-                let any_gen = self.ctx.types.factory().application(
-                    generator_base,
-                    vec![TypeId::ANY, TypeId::ANY, TypeId::ANY],
-                );
+                let any_gen = self
+                    .ctx
+                    .types
+                    .factory()
+                    .application(generator_base, vec![TypeId::ANY, TypeId::ANY, TypeId::ANY]);
 
                 // Fast path: if the return type is already recognized as a valid generator type,
                 // we don't need to do the complex structural subtyping check that fails due to overloads.
@@ -719,11 +722,7 @@ impl<'a> CheckerState<'a> {
                         .get_generator_return_type_argument(return_type)
                         .is_none()
                 {
-                    self.check_assignable_or_report(
-                        any_gen,
-                        return_type,
-                        func.type_annotation,
-                    );
+                    self.check_assignable_or_report(any_gen, return_type, func.type_annotation);
                 }
             }
 
