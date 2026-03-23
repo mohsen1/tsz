@@ -915,3 +915,63 @@ pub fn evaluate_contextual_structure_with(
 
     visit(db, type_id, evaluate_leaf)
 }
+
+// =============================================================================
+// Compound Type Classification Queries
+// =============================================================================
+
+/// Check if a type is a type parameter at the top level, or is an intersection
+/// that contains a type parameter member.
+///
+/// Used by generic call inference to determine whether excess property checking
+/// should be skipped for a parameter position (because the type parameter
+/// captures the full object type).
+pub fn is_type_parameter_or_intersection_with_type_parameter(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| {
+                matches!(
+                    db.lookup(m),
+                    Some(
+                        TypeData::TypeParameter(_)
+                            | TypeData::BoundParameter(_)
+                            | TypeData::Infer(_)
+                    )
+                )
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Check if both types are application (generic instantiation) types and the
+/// parameter type contains type parameters.
+///
+/// When true, the parameter type should be preserved without evaluation during
+/// generic inference, because evaluating it would lose the type parameter
+/// information needed for inference against the argument type.
+pub fn should_preserve_application_for_inference(
+    db: &dyn TypeDatabase,
+    param_type: TypeId,
+    arg_type: TypeId,
+) -> bool {
+    matches!(db.lookup(param_type), Some(TypeData::Application(_)))
+        && matches!(db.lookup(arg_type), Some(TypeData::Application(_)))
+        && super::data::contains_type_parameters_db(db, param_type)
+}
+
+/// Check if a type represents an unresolved inference result.
+///
+/// Returns true if the type is `error`, contains infer types, or transitively
+/// references `error`. Used to detect provisional inference results from
+/// Round 1 of generic call resolution that should not pollute outer inference.
+pub fn is_unresolved_inference_result(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::ERROR
+        || super::data::contains_infer_types_db(db, type_id)
+        || crate::visitor::collect_referenced_types(db, type_id).contains(&TypeId::ERROR)
+}

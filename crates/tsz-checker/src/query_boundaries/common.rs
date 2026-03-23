@@ -392,6 +392,35 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check if a type is a type parameter at the top level, or an intersection
+/// containing a type parameter member.
+///
+/// Used by generic call inference to decide whether excess property checking
+/// should be skipped for a parameter position.
+pub(crate) fn is_type_parameter_or_intersection_with_type_parameter(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_type_parameter_or_intersection_with_type_parameter(db, type_id)
+}
+
+/// Check if both types are application (generic instantiation) types and the
+/// parameter type contains type parameters, indicating the parameter should be
+/// preserved without evaluation during generic inference.
+pub(crate) fn should_preserve_application_for_inference(
+    db: &dyn TypeDatabase,
+    param_type: TypeId,
+    arg_type: TypeId,
+) -> bool {
+    tsz_solver::type_queries::should_preserve_application_for_inference(db, param_type, arg_type)
+}
+
+/// Check if a type represents an unresolved inference result (error, contains
+/// infer types, or transitively references error).
+pub(crate) fn is_unresolved_inference_result(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_unresolved_inference_result(db, type_id)
+}
+
 /// Unpack a tuple rest parameter into individual positional parameters.
 ///
 /// Converts `...args: [string, number]` into `(arg0: string, arg1: number)`.
