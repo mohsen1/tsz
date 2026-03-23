@@ -14,7 +14,7 @@ use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
-use crate::visitor::{application_id, enum_components, lazy_def_id};
+use crate::visitor::{application_id, enum_components, lazy_def_id, union_list_id};
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
 //
@@ -36,6 +36,49 @@ thread_local! {
 const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Check if a Lazy type resolved to an Enum with the same DefId.
+    ///
+    /// When `Lazy(DefId(X))` resolves to `Enum(DefId(X), ...)`, the recursive call
+    /// in `check_subtype` would extract the same DefId and falsely detect a cycle.
+    /// This helper identifies that case so the caller can release the def_guard.
+    /// For non-enum resolutions (e.g., recursive interfaces), the def_guard is
+    /// critical for preventing infinite recursion and must NOT be released.
+    fn is_lazy_to_same_enum(&self, original: TypeId, resolved: TypeId) -> bool {
+        if let Some(lazy_def) = lazy_def_id(self.interner, original)
+            && let Some((enum_def, _)) = enum_components(self.interner, resolved)
+        {
+            return lazy_def == enum_def;
+        }
+        false
+    }
+
+    /// Guard against evaluation collapsing a compound type (union/intersection).
+    ///
+    /// When evaluation simplifies a union/intersection to a non-compound type
+    /// (e.g., subtype reduction removes a member), we must preserve the original
+    /// so the visitor can iterate over all members. Without this, a union like
+    /// `{} | Dictionary<string>` could collapse to just `{}`, losing the constraint
+    /// that ALL members must satisfy the target.
+    fn guard_compound_collapse(&self, original: TypeId, evaluated: TypeId) -> TypeId {
+        if evaluated == original {
+            return evaluated;
+        }
+        let original_is_compound = union_list_id(self.interner, original).is_some()
+            || matches!(
+                self.interner.lookup(original),
+                Some(TypeData::Intersection(_))
+            );
+        if !original_is_compound {
+            return evaluated;
+        }
+        let eval_is_compound = union_list_id(self.interner, evaluated).is_some()
+            || matches!(
+                self.interner.lookup(evaluated),
+                Some(TypeData::Intersection(_))
+            );
+        if eval_is_compound { evaluated } else { original }
+    }
+
     /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
     /// which implements greatest fixed point semantics - the correct behavior for
     /// recursive type checking. When depth/iteration limits are exceeded, we return
@@ -456,21 +499,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let source_resolved = self.resolve_lazy_type(source);
                 let target_resolved = self.resolve_lazy_type(target);
                 if source_resolved != source || target_resolved != target {
-                    // Leave def_guard before recursing ONLY when a Lazy type resolved to
-                    // an Enum with the same DefId. This prevents false cycle detection when
-                    // Lazy(DefId(X)) resolves to Enum(DefId(X), ...) — the recursive call
-                    // would extract the same DefId and falsely detect a cycle. For non-enum
-                    // resolutions (e.g., recursive interfaces), the def_guard is critical.
-                    let has_lazy_to_enum = |orig: TypeId, resolved: TypeId| -> bool {
-                        if let Some(lazy_def) = lazy_def_id(self.interner, orig)
-                            && let Some((enum_def, _)) = enum_components(self.interner, resolved)
-                        {
-                            return lazy_def == enum_def;
-                        }
-                        false
-                    };
-                    if (has_lazy_to_enum(source, source_resolved)
-                        || has_lazy_to_enum(target, target_resolved))
+                    if (self.is_lazy_to_same_enum(source, source_resolved)
+                        || self.is_lazy_to_same_enum(target, target_resolved))
                         && let Some(dp) = def_entered.take()
                     {
                         self.def_guard.leave(dp);
@@ -481,74 +511,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         } else {
-            let source_eval = self.evaluate_type(source);
-            let target_eval = self.evaluate_type(target);
-
-            // Guard: if evaluation simplified a union/intersection (e.g., subtype
-            // reduction removed a member), preserve the original compound type.
-            // The visitor pattern handles unions/intersections by iterating over
-            // members and checking each one individually. Letting evaluation
-            // collapse a union like `{} | Dictionary<string>` to just `{}`
-            // loses the constraint that ALL members must satisfy the target,
-            // which can cause false assignability (e.g., {} passes where the
-            // full union should fail).
-            let source_eval = if source_eval != source {
-                use crate::visitor::union_list_id;
-                let source_is_compound = union_list_id(self.interner, source).is_some()
-                    || matches!(
-                        self.interner.lookup(source),
-                        Some(TypeData::Intersection(_))
-                    );
-                let eval_is_compound = union_list_id(self.interner, source_eval).is_some()
-                    || matches!(
-                        self.interner.lookup(source_eval),
-                        Some(TypeData::Intersection(_))
-                    );
-                if source_is_compound && !eval_is_compound {
-                    // Evaluation collapsed the compound type — preserve original
-                    source
-                } else {
-                    source_eval
-                }
-            } else {
-                source_eval
-            };
-            let target_eval = if target_eval != target {
-                use crate::visitor::union_list_id;
-                let target_is_compound = union_list_id(self.interner, target).is_some()
-                    || matches!(
-                        self.interner.lookup(target),
-                        Some(TypeData::Intersection(_))
-                    );
-                let eval_is_compound = union_list_id(self.interner, target_eval).is_some()
-                    || matches!(
-                        self.interner.lookup(target_eval),
-                        Some(TypeData::Intersection(_))
-                    );
-                if target_is_compound && !eval_is_compound {
-                    target
-                } else {
-                    target_eval
-                }
-            } else {
-                target_eval
-            };
+            let source_raw = self.evaluate_type(source);
+            let target_raw = self.evaluate_type(target);
+            let source_eval = self.guard_compound_collapse(source, source_raw);
+            let target_eval = self.guard_compound_collapse(target, target_raw);
 
             if source_eval != source || target_eval != target {
-                // Leave def_guard before recursing ONLY when a Lazy type resolved to an
-                // Enum with the same DefId. When Lazy(DefId(X)) evaluates to Enum(DefId(X), ...),
-                // the recursive call extracts the same DefId and falsely detects a cycle.
-                // For non-enum Lazy resolutions (e.g., recursive generic interfaces), the
-                // def_guard is critical for preventing infinite recursion — don't release it.
-                let has_lazy_to_enum = |orig: TypeId, eval: TypeId| -> bool {
-                    if let Some(lazy_def) = lazy_def_id(self.interner, orig)
-                        && let Some((enum_def, _)) = enum_components(self.interner, eval)
-                    {
-                        return lazy_def == enum_def;
-                    }
-                    false
-                };
-                if (has_lazy_to_enum(source, source_eval) || has_lazy_to_enum(target, target_eval))
+                if (self.is_lazy_to_same_enum(source, source_eval)
+                    || self.is_lazy_to_same_enum(target, target_eval))
                     && let Some(dp) = def_entered.take()
                 {
                     self.def_guard.leave(dp);
