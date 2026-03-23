@@ -191,5 +191,9 @@ path = "tests/enum_member_cache_tests.rs"
 name = "enum_merge_tests"
 path = "tests/enum_merge_tests.rs"
 
+[[test]]
+name = "ts2450_const_enum_tests"
+path = "tests/ts2450_const_enum_tests.rs"
+
 [lints]
 workspace = true
