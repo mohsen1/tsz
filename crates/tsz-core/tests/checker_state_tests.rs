@@ -35298,6 +35298,90 @@ class Report implements Printable, Loggable {
     );
 }
 
+/// Test that ClassConstructor companion DefIds are pre-populated for classes.
+///
+/// Verifies that the single-file pre-population path creates ClassConstructor
+/// companion DefIds for top-level class declarations, moving constructor
+/// identity from checker on-demand creation to binder-owned stable identity.
+#[test]
+fn test_class_constructor_companion_prepopulated_single_file() {
+    let source = r#"
+class Alpha {}
+class Beta<T> { value: T; }
+abstract class Gamma {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Verify binder captured all 3 classes
+    let class_count = binder
+        .semantic_defs
+        .values()
+        .filter(|e| e.kind == crate::binder::SemanticDefKind::Class)
+        .count();
+    assert_eq!(
+        class_count, 3,
+        "Binder should capture 3 class semantic defs"
+    );
+
+    let types = TypeInterner::new();
+    let checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let store = &checker.ctx.definition_store;
+    let stats = store.statistics();
+
+    assert!(
+        stats.class_constructors >= 3,
+        "expected at least 3 ClassConstructor companions, got {}",
+        stats.class_constructors
+    );
+    assert!(
+        stats.class_to_constructor_entries >= 3,
+        "expected at least 3 class_to_constructor entries, got {}",
+        stats.class_to_constructor_entries
+    );
+
+    // Verify each class has a constructor companion
+    for (_, entry) in &binder.semantic_defs {
+        if entry.kind != crate::binder::SemanticDefKind::Class {
+            continue;
+        }
+        let class_atom = types.intern_string(&entry.name);
+        let defs = store.find_defs_by_name(class_atom);
+        assert!(
+            defs.is_some(),
+            "Class {} should have defs by name",
+            entry.name
+        );
+
+        // Find the Class def and check it has a companion
+        let class_def = defs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|&&d| store.get_kind(d) == Some(tsz_solver::def::DefKind::Class))
+            .expect(&format!("Class {} should have a Class DefId", entry.name));
+
+        let ctor_def = store.get_constructor_def(*class_def);
+        assert!(
+            ctor_def.is_some(),
+            "Class {} should have a ClassConstructor companion",
+            entry.name
+        );
+    }
+}
+
 /// Test that def_fallback_count stays at zero for standard declarations
 /// (all should be covered by binder semantic_defs pre-population).
 #[test]

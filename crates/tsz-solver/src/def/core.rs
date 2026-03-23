@@ -483,6 +483,15 @@ pub struct DefinitionStore {
     /// formatter use case is best-effort diagnostic naming.
     shape_to_def: DashMap<u64, DefId>,
 
+    /// Reverse index: Class `DefId` -> ClassConstructor `DefId`.
+    ///
+    /// Populated during pre-population when a `DefKind::Class` definition is
+    /// registered alongside its companion `DefKind::ClassConstructor` identity.
+    /// Enables O(1) lookup of the constructor companion for a class, so the
+    /// checker can reuse the pre-populated identity instead of creating a new
+    /// `DefId` on demand during type checking.
+    class_to_constructor: DashMap<DefId, DefId>,
+
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
     /// Populated during `register()` for every definition. Enables O(1) lookup
@@ -538,6 +547,8 @@ pub struct StoreStatistics {
     pub body_to_alias_entries: usize,
     /// Number of entries in the shape hash -> `DefId` index.
     pub shape_to_def_entries: usize,
+    /// Number of entries in the class -> constructor companion index.
+    pub class_to_constructor_entries: usize,
     /// Number of unique names in the name -> `DefId` index.
     pub name_to_defs_entries: usize,
     /// Number of files with registered definitions.
@@ -573,6 +584,7 @@ impl StoreStatistics {
         self.symbol_only_index_entries += other.symbol_only_index_entries;
         self.body_to_alias_entries += other.body_to_alias_entries;
         self.shape_to_def_entries += other.shape_to_def_entries;
+        self.class_to_constructor_entries += other.class_to_constructor_entries;
         self.name_to_defs_entries += other.name_to_defs_entries;
         self.file_count += other.file_count;
         // next_def_id: take the maximum (high-water mark)
@@ -607,6 +619,11 @@ impl std::fmt::Display for StoreStatistics {
         )?;
         writeln!(f, "    body_to_alias={}", self.body_to_alias_entries)?;
         writeln!(f, "    shape_to_def={}", self.shape_to_def_entries)?;
+        writeln!(
+            f,
+            "    class_to_constructor={}",
+            self.class_to_constructor_entries
+        )?;
         writeln!(f, "    name_to_defs={}", self.name_to_defs_entries)?;
         writeln!(f, "  files: {}", self.file_count)?;
         writeln!(f, "  next_def_id: {}", self.next_def_id)?;
@@ -640,6 +657,7 @@ impl DefinitionStore {
             body_to_alias: DashMap::new(),
             shape_to_def: DashMap::new(),
             file_to_defs: DashMap::new(),
+            class_to_constructor: DashMap::new(),
             name_to_defs: DashMap::new(),
         }
     }
@@ -854,6 +872,7 @@ impl DefinitionStore {
         self.body_to_alias.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
+        self.class_to_constructor.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
@@ -872,6 +891,24 @@ impl DefinitionStore {
     /// Returns `Some(def_id)` if a class/interface was registered for this type.
     pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_to_def.get(&type_id).map(|r| *r)
+    }
+
+    /// Register a mapping from a Class `DefId` to its ClassConstructor companion `DefId`.
+    ///
+    /// Called during pre-population to establish constructor identity at merge time
+    /// rather than on-demand during type checking. The checker can then look up the
+    /// companion with `get_constructor_def` and reuse the stable identity.
+    pub fn register_constructor_companion(&self, class_def: DefId, ctor_def: DefId) {
+        self.class_to_constructor.insert(class_def, ctor_def);
+    }
+
+    /// Look up the pre-populated ClassConstructor `DefId` for a class.
+    ///
+    /// Returns `Some(ctor_def_id)` if a constructor companion was registered
+    /// during pre-population. Returns `None` for classes without a pre-populated
+    /// companion (e.g., anonymous classes or those created on-demand).
+    pub fn get_constructor_def(&self, class_def: DefId) -> Option<DefId> {
+        self.class_to_constructor.get(&class_def).map(|r| *r)
     }
 
     /// Get exports for a namespace/module `DefId`.
@@ -1110,6 +1147,14 @@ impl DefinitionStore {
                     }
                 }
 
+                // Clean up class_to_constructor (both directions).
+                if info.kind == DefKind::Class {
+                    self.class_to_constructor.remove(def_id);
+                } else if info.kind == DefKind::ClassConstructor {
+                    // Remove any forward mapping that points to this constructor.
+                    self.class_to_constructor.retain(|_, v| *v != *def_id);
+                }
+
                 // Clean up name_to_defs.
                 if let Some(mut name_entry) = self.name_to_defs.get_mut(&info.name) {
                     name_entry.retain(|d| d != def_id);
@@ -1151,6 +1196,7 @@ impl DefinitionStore {
             symbol_only_index_entries: self.symbol_only_index.len(),
             body_to_alias_entries: self.body_to_alias.len(),
             shape_to_def_entries: self.shape_to_def.len(),
+            class_to_constructor_entries: self.class_to_constructor.len(),
             name_to_defs_entries: self.name_to_defs.len(),
             file_count: self.file_to_defs.len(),
             next_def_id: self.next_id.load(Ordering::Relaxed),
@@ -1233,6 +1279,12 @@ impl DefinitionStore {
         // shape_to_def: u64 -> DefId
         size += self.shape_to_def.len()
             * (std::mem::size_of::<u64>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
+
+        // class_to_constructor: DefId -> DefId
+        size += self.class_to_constructor.len()
+            * (std::mem::size_of::<DefId>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
 
         // file_to_defs: u32 -> Vec<DefId>
         for entry in &self.file_to_defs {

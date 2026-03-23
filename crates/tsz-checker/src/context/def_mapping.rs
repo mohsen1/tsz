@@ -843,6 +843,36 @@ impl<'a> CheckerContext<'a> {
             // Propagate DefKind to both TypeEnvironments (evaluator + flow-analyzer)
             self.register_def_kind_in_envs(def_id, kind);
 
+            // For classes, create a ClassConstructor companion DefId so the
+            // checker can reuse stable identity instead of creating one on demand.
+            // The body is left empty (filled lazily during type checking).
+            if kind == DefKind::Class {
+                let ctor_info = DefinitionInfo {
+                    kind: DefKind::ClassConstructor,
+                    name: self.types.intern_string(&entry.name),
+                    type_params: Vec::new(),
+                    body: None,
+                    instance_shape: None,
+                    static_shape: None,
+                    extends: None,
+                    implements: Vec::new(),
+                    enum_members: Vec::new(),
+                    exports: Vec::new(),
+                    file_id: Some(entry.file_id),
+                    span: Some((entry.span_start, entry.span_start)),
+                    symbol_id: Some(sym_id.0),
+                    heritage_names: Vec::new(),
+                    is_abstract: entry.is_abstract,
+                    is_const: false,
+                    is_exported: entry.is_exported,
+                    is_global_augmentation: false,
+                };
+                let ctor_def_id = self.definition_store.register(ctor_info);
+                self.definition_store
+                    .register_constructor_companion(def_id, ctor_def_id);
+                self.register_def_kind_in_envs(ctor_def_id, DefKind::ClassConstructor);
+            }
+
             count += 1;
         }
 
