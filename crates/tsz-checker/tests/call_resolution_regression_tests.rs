@@ -648,3 +648,315 @@ let result: number[] = map(["a", "b"], x => x.length);
         "Generic call with callback inference should work"
     );
 }
+
+// ============================================================================
+// Regression tests for solver query-based call resolution (query boundary layer)
+// ============================================================================
+
+/// When a generic function parameter is `T` (bare type parameter), sanitization
+/// should replace the sensitive placeholder with `unknown` to avoid contaminating
+/// the solver's second inference pass. The query `is_type_param_at_top_or_in_intersection`
+/// drives this decision.
+#[test]
+fn generic_call_bare_type_param_sanitizes_callback() {
+    let source = r#"
+declare function wrap<T>(fn: T): T;
+let result = wrap((x: number) => x + 1);
+"#;
+    assert!(
+        no_errors(source),
+        "Bare type param sanitization should not cause false errors"
+    );
+}
+
+/// Same sanitization applies when the shape parameter is `T & SomeInterface`.
+#[test]
+fn generic_call_intersection_type_param_sanitizes_callback() {
+    let source = r#"
+interface HasLength { length: number; }
+declare function constrained<T extends HasLength>(fn: T & HasLength): T;
+let result = constrained({ length: 5 });
+"#;
+    assert!(
+        no_errors(source),
+        "Intersection containing type param should sanitize correctly"
+    );
+}
+
+/// When a generic shape parameter is a concrete callable like `Predicate<A>`,
+/// the sensitive placeholder should NOT be sanitized because its callable
+/// structure helps infer the inner type param A.
+#[test]
+fn generic_call_concrete_callable_param_preserves_placeholder() {
+    let source = r#"
+type Predicate<T> = (x: T) => boolean;
+declare function filter<T>(arr: T[], pred: Predicate<T>): T[];
+let nums = filter([1, 2, 3], x => x > 0);
+"#;
+    assert!(
+        no_errors(source),
+        "Concrete callable param should preserve placeholder for inner inference"
+    );
+}
+
+/// When both param and arg are Application types and param contains type params,
+/// the pre-evaluation step should preserve raw Application form. The query
+/// `both_are_applications_with_generic_param` drives this decision.
+#[test]
+fn generic_call_preserves_raw_application_for_aligned_shapes() {
+    let source = r#"
+interface Opts<S> { state: S; }
+declare function createStore<S>(opts: Opts<S>): S;
+let store = createStore({ state: 42 });
+"#;
+    assert!(
+        no_errors(source),
+        "Aligned Application shapes should be preserved during pre-evaluation"
+    );
+}
+
+/// Overload resolution: when multiple signatures exist, the first matching one wins.
+#[test]
+fn overload_resolution_picks_first_match() {
+    let source = r#"
+declare function overloaded(x: string): string;
+declare function overloaded(x: number): number;
+let r1: string = overloaded("hello");
+let r2: number = overloaded(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Overload resolution should pick correct signature"
+    );
+}
+
+/// Overload resolution should emit TS2769 when no overload matches.
+#[test]
+fn overload_resolution_no_match_emits_error() {
+    let source = r#"
+declare function overloaded(x: string): string;
+declare function overloaded(x: number): number;
+overloaded(true);
+"#;
+    assert!(
+        has_error(source, 2769),
+        "No matching overload should emit TS2769"
+    );
+}
+
+/// Property call: calling a method via property access on a typed object.
+#[test]
+fn property_call_method_on_interface() {
+    let source = r#"
+interface Obj {
+    greet(name: string): string;
+}
+declare const obj: Obj;
+let result: string = obj.greet("world");
+"#;
+    assert!(
+        no_errors(source),
+        "Property method call should resolve correctly"
+    );
+}
+
+/// The `has_any_call_signatures` query unifies Function and Callable checks
+/// to decide whether an arg type is callable during generic inference refinement.
+#[test]
+fn callable_arg_type_detected_for_refinement() {
+    let source = r#"
+declare function apply<T, R>(fn: (x: T) => R, arg: T): R;
+let result: number = apply(x => x + 1, 5);
+"#;
+    assert!(
+        no_errors(source),
+        "Callable arg type should be detected for generic refinement"
+    );
+}
+
+/// Spread arguments in calls should be handled correctly.
+#[test]
+fn spread_args_in_generic_call() {
+    let source = r#"
+declare function concat<T>(...args: T[]): T[];
+let arr = [1, 2, 3];
+let result = concat(...arr);
+"#;
+    assert!(no_errors(source), "Spread args in generic call should work");
+}
+
+// ============================================================================
+// Overload resolution edge cases
+// ============================================================================
+
+#[test]
+fn overload_resolution_preserves_first_match_ordering() {
+    // When multiple overloads could match, tsc picks the first one.
+    let source = r#"
+declare function f(x: string): string;
+declare function f(x: string | number): number;
+let result: string = f("hello");
+"#;
+    assert!(
+        no_errors(source),
+        "First matching overload should be selected"
+    );
+}
+
+#[test]
+fn overload_with_rest_params() {
+    let source = r#"
+declare function f(...args: string[]): void;
+declare function f(x: number): void;
+f("a", "b", "c");
+f(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Overloads with rest params should resolve"
+    );
+}
+
+#[test]
+fn overload_with_type_arg_count_mismatch_recovery() {
+    // TS2558 for wrong type arg count; should still recover return type
+    let source = r#"
+declare function f<T>(x: T): T;
+f<string, number>("hello");
+"#;
+    assert!(
+        has_error(source, 2558),
+        "Wrong type argument count should emit TS2558"
+    );
+}
+
+// ============================================================================
+// Property-call patterns
+// ============================================================================
+
+#[test]
+fn method_call_on_class_instance() {
+    let source = r#"
+class Foo {
+    bar(x: number): string { return ""; }
+}
+let f = new Foo();
+let result: string = f.bar(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Method call on class instance should work"
+    );
+}
+
+#[test]
+fn method_call_on_nested_property() {
+    let source = r#"
+declare let obj: { inner: { method(x: string): number } };
+let result: number = obj.inner.method("hello");
+"#;
+    assert!(no_errors(source), "Nested property method call should work");
+}
+
+#[test]
+fn optional_chain_method_call_on_union() {
+    let source = r#"
+declare let x: { f(): number } | undefined;
+let result = x?.f();
+"#;
+    assert!(
+        no_errors(source),
+        "Optional chain method call on union should work"
+    );
+}
+
+#[test]
+fn element_access_call() {
+    let source = r#"
+declare let obj: { [key: string]: (x: number) => string };
+let result: string = obj["test"](42);
+"#;
+    assert!(no_errors(source), "Element access call should work");
+}
+
+// ============================================================================
+// Generic call inference with callbacks
+// ============================================================================
+
+#[test]
+fn generic_callback_contextual_typing_preserves_param_type() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+let result = map([1, 2, 3], x => x + 1);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic callback should have contextual param type"
+    );
+}
+
+#[test]
+fn generic_call_with_multiple_callbacks() {
+    // Multi-callback generic inference is complex; verify no TS2349 (not callable)
+    let source = r#"
+declare function combine<T, U>(
+    a: T[],
+    f: (x: T) => U
+): U[];
+let result = combine([1, 2], x => x + 1);
+"#;
+    assert!(
+        no_errors(source),
+        "Single callback generic call should work"
+    );
+}
+
+#[test]
+fn generic_call_with_object_literal_arg() {
+    let source = r#"
+declare function create<T>(config: { value: T }): T;
+let result = create({ value: 42 });
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call with object literal arg should work"
+    );
+}
+
+// ============================================================================
+// Union callee edge cases
+// ============================================================================
+
+#[test]
+fn union_callee_with_compatible_return_types() {
+    let source = r#"
+declare let f: ((x: string) => number) | ((x: string) => number);
+let result: number = f("hello");
+"#;
+    assert!(
+        no_errors(source),
+        "Union callee with identical signatures should work"
+    );
+}
+
+#[test]
+fn union_callee_incompatible_arity() {
+    let source = r#"
+declare let f: ((a: string) => void) | ((a: string, b: number) => void);
+f("hello");
+"#;
+    // tsc emits TS2554 for missing second arg against second union member
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2554) || codes.contains(&2345),
+        "Union callee with incompatible arity should emit error: got {:?}",
+        codes
+    );
+}
+
+// ============================================================================
+// Super call edge cases
+// ============================================================================
+
+// NOTE: super<T>() should emit TS2754 but tsz does not yet implement this.
+// Add a test once TS2754 support is implemented.
