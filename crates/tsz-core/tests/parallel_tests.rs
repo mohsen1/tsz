@@ -7472,3 +7472,184 @@ fn stable_identity_cross_file_merge_preserves_all_defs() {
     assert!(file1_names.contains("Alias"), "impl.ts should own Alias");
     assert!(file1_names.contains("Status"), "impl.ts should own Status");
 }
+
+// =============================================================================
+// is_declare flag through merge pipeline
+// =============================================================================
+
+#[test]
+fn is_declare_flag_survives_merge_for_all_families() {
+    // Verify that the binder's `is_declare` flag propagates through merge
+    // into the merged `semantic_defs` and the shared `DefinitionStore`.
+    // Only test families where `declare` is semantically meaningful and
+    // captured as a modifier (class, enum, namespace).
+    let files = vec![(
+        "ambient.ts".to_string(),
+        r"
+declare class DeclaredClass {}
+declare enum DeclaredEnum { A, B }
+declare namespace DeclaredNS {}
+"
+        .to_string(),
+    )];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    // Check that is_declare survived in the merged semantic_defs.
+    let find_entry = |name: &str| -> Option<&tsz_binder::SemanticDefEntry> {
+        program.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let dc = find_entry("DeclaredClass").expect("Missing DeclaredClass in merged semantic_defs");
+    assert!(
+        dc.is_declare,
+        "DeclaredClass should have is_declare=true after merge"
+    );
+
+    let de = find_entry("DeclaredEnum").expect("Missing DeclaredEnum in merged semantic_defs");
+    assert!(
+        de.is_declare,
+        "DeclaredEnum should have is_declare=true after merge"
+    );
+
+    let dn = find_entry("DeclaredNS").expect("Missing DeclaredNS in merged semantic_defs");
+    assert!(
+        dn.is_declare,
+        "DeclaredNS should have is_declare=true after merge"
+    );
+
+    // Also verify the DefinitionStore has is_declare set correctly.
+    let store = &program.definition_store;
+    let interner = &program.type_interner;
+
+    let check_store_declare = |name: &str| {
+        let atom = interner.intern_string(name);
+        let defs = store.find_defs_by_name(atom).unwrap_or_default();
+        assert!(!defs.is_empty(), "{name} should have DefId in store");
+        for &def_id in &defs {
+            let info = store.get(def_id).expect("DefId should have DefinitionInfo");
+            assert!(
+                info.is_declare,
+                "{name} DefinitionInfo should have is_declare=true"
+            );
+        }
+    };
+
+    check_store_declare("DeclaredClass");
+    check_store_declare("DeclaredEnum");
+    check_store_declare("DeclaredNS");
+}
+
+#[test]
+fn non_ambient_declarations_have_is_declare_false_after_merge() {
+    // Verify that non-ambient declarations have is_declare=false after merge.
+    let files = vec![(
+        "regular.ts".to_string(),
+        r"
+export class RegClass {}
+export interface RegIface {}
+export type RegAlias = number;
+export enum RegEnum { X }
+export namespace RegNS {}
+"
+        .to_string(),
+    )];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    for entry in program.semantic_defs.values() {
+        assert!(
+            !entry.is_declare,
+            "{} should have is_declare=false for non-ambient declaration",
+            entry.name
+        );
+    }
+}
+
+#[test]
+fn semantic_def_identity_stable_across_remerge() {
+    // Verify that merging the same files twice produces identical
+    // semantic_defs structure (kind, name, arity, flags). This is a
+    // fundamental invariant for incremental compilation.
+    let files = vec![
+        (
+            "types.ts".to_string(),
+            r"
+export class MyClass<T> extends Object {}
+export interface MyInterface<A, B> { x: number }
+export type MyAlias<X> = X | null;
+"
+            .to_string(),
+        ),
+        (
+            "values.ts".to_string(),
+            r"
+export enum MyEnum { Red, Green, Blue }
+export namespace MyNS { export type Inner = number }
+declare class AmbientClass {}
+"
+            .to_string(),
+        ),
+    ];
+
+    // First merge
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+
+    // Second merge (fresh parse + bind + merge)
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+
+    // Same number of semantic_defs
+    assert_eq!(
+        program1.semantic_defs.len(),
+        program2.semantic_defs.len(),
+        "Remerge should produce the same number of semantic_defs"
+    );
+
+    // Each entry in program1 should have a match in program2 with same metadata
+    for entry1 in program1.semantic_defs.values() {
+        let entry2 = program2
+            .semantic_defs
+            .values()
+            .find(|e| e.name == entry1.name)
+            .unwrap_or_else(|| panic!("Missing {} after remerge", entry1.name));
+
+        assert_eq!(entry1.kind, entry2.kind, "{}: kind mismatch", entry1.name);
+        assert_eq!(
+            entry1.type_param_count, entry2.type_param_count,
+            "{}: type_param_count mismatch",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.is_exported, entry2.is_exported,
+            "{}: is_exported mismatch",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.is_declare, entry2.is_declare,
+            "{}: is_declare mismatch",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.is_abstract, entry2.is_abstract,
+            "{}: is_abstract mismatch",
+            entry1.name
+        );
+        assert_eq!(
+            entry1.extends_names, entry2.extends_names,
+            "{}: extends_names mismatch",
+            entry1.name
+        );
+    }
+
+    // DefinitionStore should have the same number of definitions
+    let stats1 = program1.definition_store.statistics();
+    let stats2 = program2.definition_store.statistics();
+    assert_eq!(
+        stats1.total_definitions, stats2.total_definitions,
+        "DefinitionStore should have same size after remerge"
+    );
+}
