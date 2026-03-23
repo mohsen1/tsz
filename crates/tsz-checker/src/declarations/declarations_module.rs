@@ -504,7 +504,25 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 match self.ctx.arena.get_export_decl(stmt_node) {
                                     Some(export_decl) => {
                                         if export_decl.is_default_export {
-                                            true
+                                            // Default export of a type declaration (interface,
+                                            // type alias, etc.) is valid in module augmentations
+                                            // — it merges with the existing default export.
+                                            // Only plain `export default <expr>` is forbidden.
+                                            if let Some(clause_node) =
+                                                self.ctx.arena.get(export_decl.export_clause)
+                                            {
+                                                !matches!(
+                                                    clause_node.kind,
+                                                    syntax_kind_ext::FUNCTION_DECLARATION
+                                                        | syntax_kind_ext::CLASS_DECLARATION
+                                                        | syntax_kind_ext::INTERFACE_DECLARATION
+                                                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                        | syntax_kind_ext::ENUM_DECLARATION
+                                                        | syntax_kind_ext::MODULE_DECLARATION
+                                                )
+                                            } else {
+                                                true
+                                            }
                                         } else if export_decl.module_specifier.is_some() {
                                             // Re-exports are not permitted in augmentations
                                             true
