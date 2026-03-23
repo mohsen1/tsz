@@ -32,8 +32,8 @@ use tsz_solver::is_compiler_managed_type;
 
 /// Stub value resolver for lib lowering — lib declarations have no runtime values.
 ///
-/// All four lib-lowering sites (resolve_lib_type_by_name, prime_lib_type_params,
-/// resolve_lib_type_with_params, lower_augmentation_for_arena) pass this as the
+/// All four lib-lowering sites (`resolve_lib_type_by_name`, `prime_lib_type_params`,
+/// `resolve_lib_type_with_params`, `lower_augmentation_for_arena`) pass this as the
 /// `value_resolver` argument to `TypeLowering::with_hybrid_resolver`.
 pub(crate) const fn no_value_resolver(_: NodeIndex) -> Option<u32> {
     None

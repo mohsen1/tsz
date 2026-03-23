@@ -497,7 +497,7 @@ pub struct DefinitionStore {
     /// formatter use case is best-effort diagnostic naming.
     shape_to_def: DashMap<u64, DefId>,
 
-    /// Reverse index: Class `DefId` -> ClassConstructor `DefId`.
+    /// Reverse index: Class `DefId` -> `ClassConstructor` `DefId`.
     ///
     /// Populated during pre-population when a `DefKind::Class` definition is
     /// registered alongside its companion `DefKind::ClassConstructor` identity.
@@ -907,7 +907,7 @@ impl DefinitionStore {
         self.type_to_def.get(&type_id).map(|r| *r)
     }
 
-    /// Register a mapping from a Class `DefId` to its ClassConstructor companion `DefId`.
+    /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.
     ///
     /// Called during pre-population to establish constructor identity at merge time
     /// rather than on-demand during type checking. The checker can then look up the
@@ -916,7 +916,7 @@ impl DefinitionStore {
         self.class_to_constructor.insert(class_def, ctor_def);
     }
 
-    /// Look up the pre-populated ClassConstructor `DefId` for a class.
+    /// Look up the pre-populated `ClassConstructor` `DefId` for a class.
     ///
     /// Returns `Some(ctor_def_id)` if a constructor companion was registered
     /// during pre-population. Returns `None` for classes without a pre-populated

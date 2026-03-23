@@ -6565,7 +6565,7 @@ fn heritage_extends_stable_after_merge_rebind() {
         ("b.ts".to_string(), "export class Other {}".to_string()),
     ];
 
-    let results = parse_and_bind_parallel(files.clone());
+    let results = parse_and_bind_parallel(files);
     let program = merge_bind_results(results);
     let store = &program.definition_store;
     let interner = &program.type_interner;
@@ -7738,7 +7738,7 @@ fn solver_from_semantic_defs_matches_core_helper() {
 
 /// Verify stable identity for all declaration families across merge/rebind.
 /// Bind two files, merge, then verify all top-level declarations from both
-/// files have stable DefIds in the merged DefinitionStore.
+/// files have stable `DefId`s in the merged `DefinitionStore`.
 #[test]
 fn stable_identity_survives_multi_file_merge() {
     use tsz_solver::def::DefKind;
@@ -7862,7 +7862,7 @@ fn heritage_resolution_survives_merge() {
                     })
                 })
             })
-            .expect(&format!("{name} should have a DefId"))
+            .unwrap_or_else(|| panic!("{name} should have a DefId"))
     };
 
     let readable_def = find("Readable");

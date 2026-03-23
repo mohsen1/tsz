@@ -3518,7 +3518,7 @@ fn test_cli_must_not_import_checker_internals() {
 /// `tsz_solver::type_queries::` calls in code that has been migrated to use
 /// boundary wrappers.
 ///
-/// When a new module is cleaned up, add its relative path to CLEAN_MODULES.
+/// When a new module is cleaned up, add its relative path to `CLEAN_MODULES`.
 #[test]
 fn test_no_inline_type_queries_in_cleaned_modules() {
     // Modules that have been fully migrated to use query_boundaries wrappers.

@@ -1843,10 +1843,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             return self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true();
                         }
                         // Check if the property name is a numeric index matching a tuple element
-                        if let Ok(idx) = name.parse::<usize>() {
-                            if let Some(elem) = elements.get(idx) {
-                                return self.check_subtype(elem.type_id, t_prop.type_id).is_true();
-                            }
+                        if let Ok(idx) = name.parse::<usize>()
+                            && let Some(elem) = elements.get(idx)
+                        {
+                            return self.check_subtype(elem.type_id, t_prop.type_id).is_true();
                         }
                         // Non-numeric property: try the Array interface
                         t_prop.optional
