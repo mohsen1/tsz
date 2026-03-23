@@ -765,16 +765,17 @@ impl<'a> Printer<'a> {
             if needs_parens {
                 self.write(")");
             }
-            // Emit type arguments only for ES5 targets.
-            // For ES6+, type arguments should be erased since JavaScript
-            // doesn't support generics at runtime.
-            if self.ctx.target_es5
+            // Type arguments are erased in JS output since JavaScript doesn't
+            // support generics at runtime. Skip any comments inside the erased
+            // type arguments so they don't leak into subsequent output.
+            if !self.ctx.options.remove_comments
                 && let Some(ref type_args) = expr.type_arguments
-                && !type_args.nodes.is_empty()
             {
-                self.write("<");
-                self.emit_comma_separated(&type_args.nodes);
-                self.write(">");
+                for &ta_idx in &type_args.nodes {
+                    if let Some(ta_node) = self.arena.get(ta_idx) {
+                        self.skip_comments_in_range(ta_node.pos, ta_node.end);
+                    }
+                }
             }
         } else {
             // Direct expression (no ExpressionWithTypeArguments wrapper).
