@@ -191,10 +191,21 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
         } else if !body_is_block && self.concise_body_needs_parens(func.body) {
+            // Emit comments between => and the body expression (e.g. triple-slash comments)
+            if let Some(body_node) = self.arena.get(func.body) {
+                self.emit_comments_before_pos(body_node.pos);
+            }
             self.write("(");
             self.emit(func.body);
             self.write(")");
         } else {
+            // Emit comments between => and the body expression (e.g. triple-slash comments)
+            // tsc preserves these and places the body on a new line when comments exist.
+            if !body_is_block {
+                if let Some(body_node) = self.arena.get(func.body) {
+                    self.emit_comments_before_pos(body_node.pos);
+                }
+            }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;

@@ -1582,8 +1582,8 @@ fn class_extends_comma_recovery_keeps_single_base_type() {
     let clause = arena.get_heritage(clause_node).expect("heritage data");
     assert_eq!(
         clause.types.nodes.len(),
-        1,
-        "comma extends recovery should keep only the first base type"
+        2,
+        "comma extends recovery should preserve all base types for emit (matching tsc)"
     );
 }
 
