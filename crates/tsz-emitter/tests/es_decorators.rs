@@ -281,9 +281,14 @@ fn test_decorated_class_with_extends() {
     let source = "@sealed class Dog extends Animal { }";
     let output = emit_decorator(source);
 
+    // With class decorators, tsc captures the super class in _classSuper
     assert!(
-        output.contains("extends Animal"),
-        "Expected extends clause preserved.\nOutput:\n{output}"
+        output.contains("let _classSuper = Animal;"),
+        "Expected _classSuper variable declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("extends _classSuper"),
+        "Expected extends clause to use _classSuper alias.\nOutput:\n{output}"
     );
 }
 

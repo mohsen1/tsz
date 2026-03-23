@@ -190,10 +190,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let decorated_members = self.collect_decorated_members(&class_data.members);
         let has_extends = self.has_extends_clause(&class_data.heritage_clauses);
 
+        let has_class_decorators = !class_decorators.is_empty();
+
+        // If there are no class decorators and no decorated members (e.g., all members
+        // are abstract), return empty to signal that no transform is needed.
+        if !has_class_decorators && decorated_members.is_empty() {
+            return String::new();
+        }
+
         let has_any_instance = decorated_members.iter().any(|m| !m.is_static);
         let has_any_static = decorated_members.iter().any(|m| m.is_static);
-
-        let has_class_decorators = !class_decorators.is_empty();
 
         // Compute temp var allocation.
         // For IIFE mode (ES2015), always need a class alias (_a).
@@ -249,6 +255,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i1}let _classDescriptor;\n"));
             out.push_str(&format!("{i1}let _classExtraInitializers = [];\n"));
             out.push_str(&format!("{i1}let _classThis;\n"));
+            // When a decorated class extends a base class, tsc captures the super class
+            // in a _classSuper variable so it can be used for metadata and super access.
+            if has_extends {
+                if let Some(extends_text) = self.get_extends_text(class_data) {
+                    out.push_str(&format!("{i1}let _classSuper = {extends_text};\n"));
+                }
+            }
         }
 
         // Instance/static extra initializer arrays
@@ -338,8 +351,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
         }
-        if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
-            out.push_str(&format!(" extends {extends_text}"));
+        if has_extends {
+            if has_class_decorators {
+                // When class decorators + extends, use the _classSuper alias
+                out.push_str(" extends _classSuper");
+            } else if let Some(extends_text) = self.get_extends_text(class_data) {
+                out.push_str(&format!(" extends {extends_text}"));
+            }
         }
         out.push_str(" {\n");
 
@@ -552,9 +570,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         out: &mut String,
     ) {
         // Metadata
+        let has_class_decorators = !class_decorators.is_empty();
         if has_extends {
-            if let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({extends_text}[Symbol.metadata] ?? null) : void 0;\n"));
+            // When class decorators are present, use _classSuper alias; otherwise use extends text directly
+            let super_ref = if has_class_decorators {
+                Some("_classSuper".to_string())
+            } else {
+                self.get_extends_text(class_data)
+            };
+            if let Some(super_ref) = super_ref {
+                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({super_ref}[Symbol.metadata] ?? null) : void 0;\n"));
             } else {
                 out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
             }
@@ -1388,6 +1413,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 }
                 _ => continue,
             };
+
+            // Abstract and declare members have no runtime representation — skip them entirely.
+            // tsc strips abstract/ambient decorated members from the decorator transform output.
+            if self
+                .arena
+                .has_modifier(&modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
 
             // Collect decorator expressions
             let mut decorator_exprs = Vec::new();
