@@ -10941,13 +10941,11 @@ export abstract class AbstractBase {
     );
     assert!(
         result.contains("abstract get name(): string;"),
-        "Missing abstract getter: {}",
-        result
+        "Missing abstract getter: {result}"
     );
     assert!(
         result.contains("abstract set name(value: string);"),
-        "Missing abstract setter: {}",
-        result
+        "Missing abstract setter: {result}"
     );
 }
 
@@ -10964,18 +10962,15 @@ export class OverloadedCtor {
     );
     assert!(
         result.contains("constructor(x: number);"),
-        "Missing first overload: {}",
-        result
+        "Missing first overload: {result}"
     );
     assert!(
         result.contains("constructor(x: string, y: number);"),
-        "Missing second overload: {}",
-        result
+        "Missing second overload: {result}"
     );
     assert!(
         !result.contains("constructor(x: number | string"),
-        "Implementation should be omitted: {}",
-        result
+        "Implementation should be omitted: {result}"
     );
 }
 
@@ -10990,18 +10985,15 @@ export type Complex<T extends Record<string, unknown> = Record<string, any>, U e
     );
     assert!(
         result.contains("Record<string, unknown>"),
-        "Missing constraint: {}",
-        result
+        "Missing constraint: {result}"
     );
     assert!(
         result.contains("Record<string, any>"),
-        "Missing default: {}",
-        result
+        "Missing default: {result}"
     );
     assert!(
         result.contains("keyof T"),
-        "Missing keyof constraint: {}",
-        result
+        "Missing keyof constraint: {result}"
     );
 }
 
@@ -11014,18 +11006,15 @@ export type Callable = { (): void } & { (x: number): number } & { name: string }
     );
     assert!(
         result.contains("(): void"),
-        "Missing first call sig: {}",
-        result
+        "Missing first call sig: {result}"
     );
     assert!(
         result.contains("(x: number): number"),
-        "Missing second call sig: {}",
-        result
+        "Missing second call sig: {result}"
     );
     assert!(
         result.contains("name: string"),
-        "Missing property: {}",
-        result
+        "Missing property: {result}"
     );
 }
 
@@ -11041,8 +11030,7 @@ export type Tree<T> = {
     );
     assert!(
         result.contains("Tree<T>[]"),
-        "Missing recursive ref: {}",
-        result
+        "Missing recursive ref: {result}"
     );
 }
 
@@ -11059,11 +11047,10 @@ export const enum Color {
     );
     assert!(
         result.contains("const enum Color"),
-        "Missing const enum: {}",
-        result
+        "Missing const enum: {result}"
     );
-    assert!(result.contains("Red = 1"), "Missing Red: {}", result);
-    assert!(result.contains("Green = 2"), "Missing Green: {}", result);
+    assert!(result.contains("Red = 1"), "Missing Red: {result}");
+    assert!(result.contains("Green = 2"), "Missing Green: {result}");
 }
 
 #[test]
@@ -11077,8 +11064,7 @@ export class IndexClass {
     );
     assert!(
         result.contains("[key: string]: any;"),
-        "Missing index sig: {}",
-        result
+        "Missing index sig: {result}"
     );
 }
 
@@ -11099,8 +11085,7 @@ export class MixedParams {
     // In d.ts, parameter properties become both constructor params and property declarations
     assert!(
         result.contains("readonly x: number"),
-        "Missing readonly property: {}",
-        result
+        "Missing readonly property: {result}"
     );
 }
 
@@ -11111,11 +11096,10 @@ fn test_conditional_type_with_infer() {
 export type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
 "#,
     );
-    assert!(result.contains("infer U"), "Missing infer: {}", result);
+    assert!(result.contains("infer U"), "Missing infer: {result}");
     assert!(
         result.contains("Promise<infer U>"),
-        "Missing Promise<infer U>: {}",
-        result
+        "Missing Promise<infer U>: {result}"
     );
 }
 
@@ -11132,13 +11116,11 @@ declare module "express" {
     );
     assert!(
         result.contains("declare module \"express\""),
-        "Missing module augmentation: {}",
-        result
+        "Missing module augmentation: {result}"
     );
     assert!(
         result.contains("userId?"),
-        "Missing augmented property: {}",
-        result
+        "Missing augmented property: {result}"
     );
 }
 
@@ -11156,13 +11138,11 @@ declare global {
     );
     assert!(
         result.contains("declare global"),
-        "Missing global augmentation: {}",
-        result
+        "Missing global augmentation: {result}"
     );
     assert!(
         result.contains("customProp: number"),
-        "Missing global property: {}",
-        result
+        "Missing global property: {result}"
     );
 }
 
@@ -11175,18 +11155,15 @@ export type ReadonlyTuple = readonly [first: string, ...rest: number[]];
     );
     assert!(
         result.contains("readonly ["),
-        "Missing readonly tuple: {}",
-        result
+        "Missing readonly tuple: {result}"
     );
     assert!(
         result.contains("first: string"),
-        "Missing labeled element: {}",
-        result
+        "Missing labeled element: {result}"
     );
     assert!(
         result.contains("...rest: number[]"),
-        "Missing rest element: {}",
-        result
+        "Missing rest element: {result}"
     );
 }
 
@@ -11199,8 +11176,7 @@ export type Greeting<T extends string> = `Hello, ${T}!`;
     );
     assert!(
         result.contains("${T}"),
-        "Missing template literal type: {}",
-        result
+        "Missing template literal type: {result}"
     );
 }
 
@@ -11213,8 +11189,7 @@ export type LazyModule = typeof import("fs");
     );
     assert!(
         result.contains("import(\"fs\")"),
-        "Missing import type: {}",
-        result
+        "Missing import type: {result}"
     );
 }
 
@@ -11234,14 +11209,12 @@ export namespace Shapes {
     );
     assert!(
         result.contains("namespace Shapes"),
-        "Missing namespace: {}",
-        result
+        "Missing namespace: {result}"
     );
-    assert!(result.contains("class Circle"), "Missing class: {}", result);
+    assert!(result.contains("class Circle"), "Missing class: {result}");
     assert!(
         result.contains("interface Circle"),
-        "Missing interface: {}",
-        result
+        "Missing interface: {result}"
     );
 }
 
@@ -11258,13 +11231,11 @@ export class IterableClass {
     );
     assert!(
         result.contains("[Symbol.iterator]"),
-        "Missing Symbol.iterator: {}",
-        result
+        "Missing Symbol.iterator: {result}"
     );
     assert!(
         result.contains("Iterator<number>"),
-        "Missing return type: {}",
-        result
+        "Missing return type: {result}"
     );
 }
 
@@ -11279,13 +11250,11 @@ export class GetOnly {
     );
     assert!(
         result.contains("get value(): number;"),
-        "Missing getter: {}",
-        result
+        "Missing getter: {result}"
     );
     assert!(
         !result.contains("set value"),
-        "Should not have setter: {}",
-        result
+        "Should not have setter: {result}"
     );
 }
 
@@ -11302,8 +11271,7 @@ export class FluentBuilder {
     );
     assert!(
         result.contains("setName(name: string): this;"),
-        "Missing this return type: {}",
-        result
+        "Missing this return type: {result}"
     );
 }
 
@@ -11318,8 +11286,7 @@ export type EventMap<T extends string> = {
     );
     assert!(
         result.contains("as `on${Capitalize<K>}`"),
-        "Missing as clause with template: {}",
-        result
+        "Missing as clause with template: {result}"
     );
 }
 
@@ -11334,8 +11301,7 @@ export abstract class AbstractGeneric<T> {
     );
     assert!(
         result.contains("abstract transform<U>(input: T): U;"),
-        "Missing abstract generic method: {}",
-        result
+        "Missing abstract generic method: {result}"
     );
 }
 
