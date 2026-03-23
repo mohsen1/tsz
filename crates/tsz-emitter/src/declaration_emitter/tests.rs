@@ -11902,3 +11902,80 @@ export type OverloadedFn = {
     let expected = "export type OverloadedFn = {\n    (x: string): string;\n    (x: number): number;\n    readonly length: number;\n};\n";
     assert_eq!(result, expected, "Mismatch with tsc");
 }
+
+#[test]
+fn test_import_type_equals_require_preserves_type_keyword() {
+    // `export import type X = require("module")` must preserve the `type` keyword in .d.ts
+    let output = emit_dts(r#"export import type Foo = require("some-module");"#);
+    assert!(
+        output.contains("import type Foo = require("),
+        "import type equals should preserve 'type' keyword: {output}"
+    );
+}
+
+#[test]
+fn test_import_equals_require_without_type() {
+    // Regular `import X = require("module")` should NOT have `type` keyword
+    let output = emit_dts_with_usage_analysis(
+        r#"
+import Foo = require("some-module");
+export declare function useFoo(): Foo;
+"#,
+    );
+    // When usage analysis is active, the non-exported import may be elided
+    // unless it's actually referenced. The key assertion is that if it IS
+    // emitted, it does NOT have "type" in it.
+    if output.contains("import ") && output.contains("= require(") {
+        assert!(
+            !output.contains("import type Foo"),
+            "Regular import equals should not have 'type' keyword: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_export_import_type_equals_require() {
+    // `export import type X = require("module")` - exported type-only import equals
+    let output = emit_dts(r#"export import type Bar = require("bar-module");"#);
+    assert!(
+        output.contains("import type Bar = require("),
+        "export import type equals should preserve 'type' keyword: {output}"
+    );
+}
+
+#[test]
+fn test_import_defer_preserves_keyword() {
+    // `import defer * as ns from "mod"` must preserve the `defer` keyword in .d.ts
+    let output = emit_dts_with_usage_analysis(
+        r#"
+import defer * as ns from "./mod";
+export declare function useMod(): typeof ns;
+"#,
+    );
+    // If the import is emitted (not elided), it should have defer
+    if output.contains("import ") && output.contains("* as ns") {
+        assert!(
+            output.contains("import defer * as ns"),
+            "import defer should preserve 'defer' keyword: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_accessor_keyword_preserved_on_class_field() {
+    // TypeScript `accessor` keyword (auto-accessor) should be preserved in .d.ts
+    let output = emit_dts(
+        r#"export class Foo {
+    accessor name: string;
+    static accessor count: number;
+}"#,
+    );
+    assert!(
+        output.contains("accessor name: string;"),
+        "accessor keyword should be preserved: {output}"
+    );
+    assert!(
+        output.contains("static accessor count: number;"),
+        "static accessor keyword should be preserved: {output}"
+    );
+}

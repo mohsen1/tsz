@@ -1270,6 +1270,9 @@ impl<'a> DeclarationEmitter<'a> {
             if clause.is_type_only {
                 self.write("type ");
             }
+            if clause.is_deferred {
+                self.write("defer ");
+            }
 
             let mut has_default = false;
 
@@ -1569,7 +1572,11 @@ impl<'a> DeclarationEmitter<'a> {
         if is_public_exported {
             self.write("export ");
         }
-        self.write("import ");
+        if import_eq.is_type_only {
+            self.write("import type ");
+        } else {
+            self.write("import ");
+        }
 
         // Emit variable name from import_clause
         if import_eq.import_clause.is_some() {
