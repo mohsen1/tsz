@@ -803,7 +803,6 @@ let p = <NeedsProp />;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_property_access_class_component_missing_required_prop_emits_ts2322_not_ts2741() {
     let source = format!(
         r#"
@@ -1535,7 +1534,6 @@ const Test = () => {{
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_jsx_children_presence_narrows_union_component_type_for_body_children() {
     let source = format!(
         r#"
@@ -1586,7 +1584,6 @@ const Test = () => (
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_jsx_children_presence_narrows_union_component_type_for_explicit_children_attr() {
     let source = format!(
         r#"
@@ -1639,7 +1636,6 @@ const Test = () => (
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_jsx_children_presence_narrows_react_component_type_wrappers() {
     let source = format!(
         r#"
