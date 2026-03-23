@@ -54,6 +54,10 @@ impl<'a> CheckerState<'a> {
                 else {
                     if self.is_generic_jsx_component(member)
                         || tsz_solver::contains_type_parameters(self.ctx.types, member)
+                        // String-like union members (e.g., `string` in `React.ReactType`)
+                        // are valid intrinsic element references — skip them rather than
+                        // aborting props extraction for the entire union.
+                        || self.is_jsx_string_tag_type(member)
                     {
                         continue;
                     }
@@ -147,15 +151,32 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the type (or any union member) has call/construct signatures
-        let types_to_check = if let Some(members) =
+        let (types_to_check, is_union) = if let Some(members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
         {
-            members
+            (members, true)
         } else {
-            vec![component_type]
+            (vec![component_type], false)
         };
 
         let has_signatures = types_to_check.iter().any(|&ty| {
+            // Types containing unresolved type parameters may resolve to callable
+            // types once instantiated — treat them as potentially having signatures
+            // to avoid false TS2604.  This mirrors the skip logic in
+            // `get_jsx_props_type_for_component` for union members.
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, ty)
+                || tsz_solver::contains_type_parameters(self.ctx.types, ty)
+                || self.is_generic_jsx_component(ty)
+            {
+                return true;
+            }
+            // In unions like `React.ReactType` (`string | ComponentClass | SFC`),
+            // string-like members are valid intrinsic element references and don't
+            // need call/construct signatures.  Only apply this for union members,
+            // not standalone string literal tags (which go through intrinsic lookup).
+            if is_union && self.is_jsx_string_tag_type(ty) {
+                return true;
+            }
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
                 .is_some_and(|sigs| !sigs.is_empty())
                 || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
