@@ -766,9 +766,10 @@ impl<'a> CheckerState<'a> {
                 let nearby_parse_error = {
                     if let Some(node) = self.ctx.arena.get(node_idx) {
                         let end = node.end;
-                        self.ctx.all_parse_error_positions.iter().any(|&pos| {
-                            pos >= node.pos && pos <= end + 5
-                        })
+                        self.ctx
+                            .all_parse_error_positions
+                            .iter()
+                            .any(|&pos| pos >= node.pos && pos <= end + 5)
                     } else {
                         false
                     }
