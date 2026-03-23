@@ -1494,9 +1494,7 @@ fn checker_files_stay_under_loc_limit() {
     //   symbol_types.rs (892), error_reporter/core.rs (1576),
     //   types/computation/call.rs (1805), checkers/call_checker.rs (1396),
     //   checkers/jsx/props.rs (1469)
-    let grandfathered: &[(&str, usize)] = &[
-        ("types/function_type.rs", 1920),
-    ];
+    let grandfathered: &[(&str, usize)] = &[("types/function_type.rs", 1920)];
 
     let mut violations = Vec::new();
 

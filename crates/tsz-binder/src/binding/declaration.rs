@@ -2471,7 +2471,8 @@ impl BinderState {
         is_abstract: bool,
         heritage_names: Vec<String>,
     ) {
-        // Only capture top-level declarations (source file scope or module scope).
+        // Only capture top-level declarations (source file scope or module scope)
+        // and declarations inside `declare global { }` blocks.
         // Nested declarations (inside function bodies, class bodies, etc.) are not
         // recorded because they don't participate in cross-file identity.
         let is_top_level = self.current_scope_id == crate::ScopeId(0)
@@ -2484,7 +2485,12 @@ impl BinderState {
                         crate::ContainerKind::SourceFile | crate::ContainerKind::Module
                     )
                 });
-        if !is_top_level {
+        // Declarations inside `declare global { }` blocks are semantically
+        // top-level even if their scope chain doesn't directly match
+        // SourceFile/Module (e.g., when the global block is nested inside
+        // another module declaration). Capture them so the pre-population
+        // pipeline creates stable DefIds for global augmentations.
+        if !is_top_level && !self.in_global_augmentation {
             return;
         }
         // Declaration merging: keep the first declaration's core identity stable
@@ -2517,6 +2523,10 @@ impl BinderState {
                         existing.enum_member_names.push(m.clone());
                     }
                 }
+            }
+            // Promote global augmentation flag if any declaration is from declare global.
+            if self.in_global_augmentation {
+                existing.is_global_augmentation = true;
             }
             return;
         }
@@ -2556,6 +2566,7 @@ impl BinderState {
                 is_abstract,
                 heritage_names,
                 parent_namespace,
+                is_global_augmentation: self.in_global_augmentation,
             },
         );
     }
