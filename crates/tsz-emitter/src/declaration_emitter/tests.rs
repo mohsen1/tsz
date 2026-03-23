@@ -12810,9 +12810,7 @@ fn probe_constructor_type_in_conditional_check_position() {
     // Constructor type in check position of conditional type needs parentheses.
     // Without parens: `new () => T extends U ? X : Y` would be parsed as
     // `new () => (T extends U ? X : Y)` rather than `(new () => T) extends U ? X : Y`.
-    let output = emit_dts(
-        "export type X = (new () => T) extends U ? string : number;",
-    );
+    let output = emit_dts("export type X = (new () => T) extends U ? string : number;");
     assert!(
         output.contains("(new () => T) extends"),
         "constructor type should be parenthesized in check position: {output}"
@@ -12825,9 +12823,8 @@ fn probe_constructor_type_with_conditional_return_in_extends() {
     // must be parenthesized to avoid ambiguous `extends` parsing.
     // Without parens: `T extends new () => U extends V ? A : B ? C : D`
     // would be mis-parsed as `T extends (new () => U) extends V ? A : B ? C : D`
-    let output = emit_dts(
-        "export type X<T> = T extends (new () => (U extends V ? A : B)) ? C : D;",
-    );
+    let output =
+        emit_dts("export type X<T> = T extends (new () => (U extends V ? A : B)) ? C : D;");
     // The constructor type with conditional return should be parenthesized
     assert!(
         output.contains("(new () => U extends V ? A : B)")
