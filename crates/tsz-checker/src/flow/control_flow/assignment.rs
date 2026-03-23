@@ -1681,6 +1681,6 @@ impl<'a> FlowAnalyzer<'a> {
             return resolved;
         };
         let env = env.borrow();
-        evaluate_application_type(self.interner, &*env, resolved)
+        evaluate_application_type(self.interner, &env, resolved)
     }
 }
