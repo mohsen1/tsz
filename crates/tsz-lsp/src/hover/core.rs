@@ -69,15 +69,15 @@ impl<'a> HoverProvider<'a> {
 
         // Handle `this` and `super` keyword hover early — before symbol query filtering
         if let Some(node) = self.arena.get(node_idx) {
-            if node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
-                if let Some(hover) = self.hover_for_this_keyword(node_idx, type_cache) {
-                    return Some(hover);
-                }
+            if node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                && let Some(hover) = self.hover_for_this_keyword(node_idx, type_cache)
+            {
+                return Some(hover);
             }
-            if node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16 {
-                if let Some(hover) = self.hover_for_super_keyword(node_idx) {
-                    return Some(hover);
-                }
+            if node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
+                && let Some(hover) = self.hover_for_super_keyword(node_idx)
+            {
+                return Some(hover);
             }
         }
 
@@ -629,7 +629,7 @@ impl<'a> HoverProvider<'a> {
             if hd.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
-            for &type_idx in &hd.types.nodes {
+            if let Some(&type_idx) = hd.types.nodes.first() {
                 let type_node = self.arena.get(type_idx)?;
                 let expr_idx = if type_node.kind
                     == tsz_parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
