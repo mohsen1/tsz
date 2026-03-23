@@ -146,7 +146,15 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        // Return the cached constructor type unless we're currently in the
+        // middle of resolving it (symbol is in resolution set). During
+        // resolution, a stale cached type may lack partially-built static
+        // members; we must fall through to the cycle-detection path which
+        // returns the up-to-date partial type from `symbol_types`.
+        let in_resolution =
+            current_sym.is_some_and(|s| self.ctx.class_constructor_resolution_set.contains(&s));
         if request.is_empty()
+            && !in_resolution
             && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
         {
             return cached;
@@ -627,12 +635,73 @@ impl<'a> CheckerState<'a> {
                             self.widen_literal_type(init_type)
                         }
                     } else if self.has_accessor_modifier(&prop.modifiers) {
-                        self.infer_property_type_from_class_member_assignments(
-                            &class.members.nodes,
-                            prop.name,
-                            true,
-                        )
-                        .unwrap_or(TypeId::ANY)
+                        // Auto-accessor without initializer: infer type from
+                        // assignments in static blocks (e.g., `this.z = ...`).
+                        // Build and cache a partial constructor type first so
+                        // that self-referential lookups (e.g., `this.y` in the
+                        // assignment RHS) can resolve via cycle detection
+                        // instead of producing a spurious TS2339.
+                        let prev_sym_cached = current_sym
+                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let prev_name_sym_cached = class_name_sym
+                            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
+                        let partial_ctor = self.build_partial_static_constructor_type(
+                            current_sym,
+                            &properties,
+                            &methods,
+                            &accessors,
+                            &static_string_index,
+                            &static_number_index,
+                            Some(PropertyInfo {
+                                name: name_atom,
+                                type_id: TypeId::ANY,
+                                write_type: TypeId::ANY,
+                                optional: prop.question_token,
+                                readonly,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility,
+                                parent_id: current_sym,
+                                declaration_order: 0,
+                            }),
+                            &inherited_static_props,
+                            &all_static_member_names,
+                            &rough_construct_signatures,
+                        );
+                        if let Some(sym_id) = current_sym {
+                            self.ctx.symbol_types.insert(sym_id, partial_ctor);
+                            if let Some(name_sym) = class_name_sym {
+                                self.ctx.symbol_types.insert(name_sym, partial_ctor);
+                            }
+                        }
+                        // Push partial_ctor onto this_type_stack so that `this`
+                        // in static blocks resolves to the constructor type
+                        // (even when enclosing_class is not yet set, e.g.,
+                        // during early symbol resolution).
+                        self.ctx.this_type_stack.push(partial_ctor);
+                        let inferred = self
+                            .infer_property_type_from_class_member_assignments(
+                                &class.members.nodes,
+                                prop.name,
+                                true,
+                            )
+                            .unwrap_or(TypeId::ANY);
+                        self.ctx.this_type_stack.pop();
+                        if let Some(sym_id) = current_sym {
+                            if let Some(prev_type) = prev_sym_cached {
+                                self.ctx.symbol_types.insert(sym_id, prev_type);
+                            } else {
+                                self.ctx.symbol_types.remove(&sym_id);
+                            }
+                        }
+                        if let Some(name_sym) = class_name_sym {
+                            if let Some(prev_type) = prev_name_sym_cached {
+                                self.ctx.symbol_types.insert(name_sym, prev_type);
+                            } else {
+                                self.ctx.symbol_types.remove(&name_sym);
+                            }
+                        }
+                        inferred
                     } else {
                         // Static properties without type annotation or initializer
                         // get implicit 'any' type (same as instance properties).
