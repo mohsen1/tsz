@@ -2425,6 +2425,12 @@ fn needs_property_name_quoting(name: &str) -> bool {
     if name.chars().all(|ch| ch.is_ascii_digit()) {
         return false;
     }
+    // `new` must be quoted because `new(...)` in a type literal is parsed
+    // as a construct signature, not a method named "new".
+    // tsc emits `"new"(x: number): number` in .d.ts output.
+    if name == "new" {
+        return true;
+    }
     // In ES5+ and TypeScript, reserved keywords are valid property names
     // and do NOT need quoting. tsc emits them unquoted in .d.ts output.
     // e.g., `{ delete: boolean; class: string; }` — not `{ "delete": boolean; }`.
