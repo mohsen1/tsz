@@ -1028,8 +1028,7 @@ fn enum_shared_reference_resolves_with_memoization() {
     let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
         !error_codes.iter().any(|&c| c == 2474 || c == 2565),
-        "Unexpected errors for valid shared reference, got: {:?}",
-        error_codes
+        "Unexpected errors for valid shared reference, got: {error_codes:?}"
     );
 }
 
@@ -1084,9 +1083,9 @@ fn enum_deeply_nested_parenthesized_no_overflow() {
     // Create a deeply nested expression: (((((...(42)...)))))
     let mut expr = "42".to_string();
     for _ in 0..150 {
-        expr = format!("({})", expr);
+        expr = format!("({expr})");
     }
-    let source = format!("enum E {{ A = {} }}", expr);
+    let source = format!("enum E {{ A = {expr} }}");
     let diags = check_source_diagnostics(&source);
     // Should not panic or overflow. The value may or may not resolve
     // depending on the depth limit, but no crash.
@@ -1099,9 +1098,9 @@ fn enum_deeply_nested_unary_no_overflow() {
     // Create: ~~~...~~~42
     let mut expr = "42".to_string();
     for _ in 0..150 {
-        expr = format!("~{}", expr);
+        expr = format!("~{expr}");
     }
-    let source = format!("enum E {{ A = {} }}", expr);
+    let source = format!("enum E {{ A = {expr} }}");
     let diags = check_source_diagnostics(&source);
     let _ = diags;
 }
@@ -1141,8 +1140,7 @@ fn enum_repeated_bare_identifier_references() {
 // Template literal element access: self-reference and forward reference
 // =========================================================================
 
-/// `enum E { A = E[\`A\`] }` — self-reference via template literal element access.
-/// Should emit TS2565.
+/// Self-reference via template literal element access should emit TS2565.
 #[test]
 fn enum_self_reference_template_literal_element_access() {
     let diags = check_source_diagnostics("enum E { A = E[`A`] }");
@@ -1153,8 +1151,7 @@ fn enum_self_reference_template_literal_element_access() {
     );
 }
 
-/// `const enum E { A = E[\`A\`] }` — self-reference via template literal in const enum.
-/// Should emit TS2565.
+/// Const enum self-reference via template literal should emit TS2565.
 #[test]
 fn const_enum_self_reference_template_literal() {
     let diags = check_source_diagnostics("const enum E { A = E[`A`] }");
@@ -1165,8 +1162,7 @@ fn const_enum_self_reference_template_literal() {
     );
 }
 
-/// `enum E { A = E[\`B\`], B = 1 }` — forward reference via template literal.
-/// Should emit TS2651.
+/// Forward reference via template literal should emit TS2651.
 #[test]
 fn enum_forward_reference_template_literal() {
     let diags = check_source_diagnostics("enum E { A = E[`B`], B = 1 }");
@@ -1177,8 +1173,7 @@ fn enum_forward_reference_template_literal() {
     );
 }
 
-/// `const enum E { A = E[\`B\`], B = 1 }` — forward reference via template literal in const enum.
-/// Should emit TS2651.
+/// Const enum forward reference via template literal should emit TS2651.
 #[test]
 fn const_enum_forward_reference_template_literal() {
     let diags = check_source_diagnostics("const enum E { A = E[`B`], B = 1 }");

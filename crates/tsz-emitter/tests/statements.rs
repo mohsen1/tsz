@@ -1167,3 +1167,70 @@ fn await_using_declaration_has_semicolon_at_esnext() {
         "await using declaration at ESNext should have trailing semicolon.\nOutput:\n{output}"
     );
 }
+
+/// Comments inside erased `as` type annotations should not leak into JS output.
+/// `expr as /* comment */ T` should emit `expr`, not `expr /* comment */`.
+#[test]
+fn as_expression_comment_in_type_skipped() {
+    let source = "var x = (1 as /* type comment */ number);\nvar y = 2;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("type comment"),
+        "Comment inside erased `as` type annotation should not appear in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var x = 1;"),
+        "Expression value should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Comments inside erased `satisfies` type annotations should not leak into JS output.
+#[test]
+fn satisfies_expression_comment_in_type_skipped() {
+    let source = "var x = (42 satisfies /* check */ number);\nvar y = 2;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("check"),
+        "Comment inside erased `satisfies` type annotation should not appear in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var x = 42;"),
+        "Expression value should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Comments inside `<T>` prefix type assertions are emitted before the expression.
+/// `</* comment */T>expr` should emit `/* comment */ expr` (tsc behavior).
+#[test]
+fn type_assertion_prefix_comment_emitted() {
+    let source = "var x = </* cast */ any>42;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("/* cast */"),
+        "Comment inside `<T>` type assertion should be preserved (tsc behavior).\nOutput:\n{output}"
+    );
+}

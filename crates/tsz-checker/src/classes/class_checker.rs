@@ -646,16 +646,17 @@ impl<'a> CheckerState<'a> {
                 // A parameter property like `constructor(public p: string)` acts as an
                 // instance property. If the base class defines the same name as an
                 // accessor (get/set), this is an accessor/property kind mismatch.
-                if let Some(ref base_info) = base_member {
-                    if base_info.is_accessor && !base_info.is_abstract {
-                        self.error_at_node(
+                if let Some(ref base_info) = base_member
+                    && base_info.is_accessor
+                    && !base_info.is_abstract
+                {
+                    self.error_at_node(
                             param.name,
                             &format!(
                                 "'{param_name}' is defined as an accessor in class '{base_class_name}', but is overridden here in '{derived_class_name}' as an instance property."
                             ),
                             diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
                         );
-                    }
                 }
             }
         }

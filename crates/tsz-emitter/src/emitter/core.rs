@@ -1733,9 +1733,23 @@ impl<'a> Printer<'a> {
             // e.g. `f<string>` becomes `(f)`.
             k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
                 if let Some(data) = self.arena.get_expr_type_args(node) {
+                    let expression = data.expression;
+                    let type_arg_nodes: Vec<NodeIndex> = data
+                        .type_arguments
+                        .as_ref()
+                        .map_or_else(Vec::new, |ta| ta.nodes.clone());
                     self.write("(");
-                    self.emit(data.expression);
+                    self.emit(expression);
                     self.write(")");
+                    // Skip comments inside the erased type arguments so they
+                    // don't leak into subsequent output.
+                    if !self.ctx.options.remove_comments {
+                        for ta_idx in &type_arg_nodes {
+                            if let Some(ta_node) = self.arena.get(*ta_idx) {
+                                self.skip_comments_in_range(ta_node.pos, ta_node.end);
+                            }
+                        }
+                    }
                 }
             }
 

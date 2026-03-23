@@ -1188,11 +1188,21 @@ impl<'a> Printer<'a> {
             return;
         };
         // Emit comments in the erased type assertion region before the inner expression.
+        // For `<T>expr` (TypeAssertion): comments inside `<T>` are before the expression.
         if let Some(expr_node) = self.arena.get(assertion.expression) {
             self.emit_comments_before_pos(expr_node.pos);
         }
         self.emit_expression(assertion.expression);
-        // Trailing comments after the type are preserved by the statement emitter.
+        // For `expr as T` and `expr satisfies T`: skip comments inside the erased
+        // type annotation so they don't leak into subsequent output.
+        if (node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && !self.ctx.options.remove_comments
+            && assertion.type_node.is_some()
+            && let Some(type_node) = self.arena.get(assertion.type_node)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
     }
 
     pub(in crate::emitter) fn emit_non_null_expression(&mut self, node: &Node) {
