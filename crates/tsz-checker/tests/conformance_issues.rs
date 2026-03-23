@@ -5071,7 +5071,8 @@ interface Z extends X, Y {}
 
 #[test]
 fn test_instance_member_initializer_constructor_param_capture_reports_ts2301() {
-    let diagnostics = compile_and_get_diagnostics(
+    // Use ES5 target so useDefineForClassFields is false and TS2301 applies
+    let diagnostics = compile_and_get_diagnostics_with_options(
         r"
 declare var console: {
     log(msg?: any): void;
@@ -5086,6 +5087,11 @@ class Test1 {
     };
 }
         ",
+        {
+            let mut opts = CheckerOptions::default();
+            opts.target = tsz_common::common::ScriptTarget::ES5;
+            opts
+        },
     );
 
     assert!(
@@ -5096,7 +5102,8 @@ class Test1 {
 
 #[test]
 fn test_instance_member_initializer_plain_constructor_names_report_ts2301() {
-    let diagnostics = compile_and_get_diagnostics(
+    // Use ES5 target so useDefineForClassFields is false and TS2301 applies
+    let diagnostics = compile_and_get_diagnostics_with_options(
         r"
 class A {
     private a = x;
@@ -5115,6 +5122,11 @@ class B {
     }
 }
         ",
+        {
+            let mut opts = CheckerOptions::default();
+            opts.target = tsz_common::common::ScriptTarget::ES5;
+            opts
+        },
     );
 
     let ts2301_count = diagnostics.iter().filter(|(code, _)| *code == 2301).count();
@@ -5135,7 +5147,8 @@ class B {
 
 #[test]
 fn test_instance_member_initializer_missing_name_reports_ts2663() {
-    let diagnostics = compile_and_get_diagnostics(
+    // Use ES5 target so useDefineForClassFields is false and TS2663 applies
+    let diagnostics = compile_and_get_diagnostics_with_options(
         r"
 declare var console: {
     log(msg?: any): void;
@@ -5149,6 +5162,11 @@ export class Test1 {
     };
 }
         ",
+        {
+            let mut opts = CheckerOptions::default();
+            opts.target = tsz_common::common::ScriptTarget::ES5;
+            opts
+        },
     );
 
     assert!(
