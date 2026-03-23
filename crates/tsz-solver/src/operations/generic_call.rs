@@ -2832,10 +2832,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && !self.checker.is_assignable_to(inferred_ty, constraint)
             && !self.is_function_union_compat(inferred_ty, constraint)
         {
-            return Some(CallResult::TypeParameterConstraintViolation {
-                inferred_type: inferred_ty,
-                constraint_type: constraint,
-                return_type: inferred_ty,
+            // In the trivial single-type-param fast path, the parameter IS the
+            // type parameter itself, so a constraint violation means the argument
+            // doesn't match the effective parameter type (the constraint).
+            // tsc reports TS2345 ("Argument of type X is not assignable to
+            // parameter of type Y") here, not TS2322.
+            return Some(CallResult::ArgumentTypeMismatch {
+                index: 0,
+                expected: constraint,
+                actual: inferred_ty,
+                fallback_return: inferred_ty,
             });
         }
 
