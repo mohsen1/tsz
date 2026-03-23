@@ -1,5 +1,5 @@
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeInterner, type_queries};
 
@@ -22,7 +22,7 @@ const a = E.A;
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 

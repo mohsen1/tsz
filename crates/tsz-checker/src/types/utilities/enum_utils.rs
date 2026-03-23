@@ -10,6 +10,27 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+// Thread-local visited set for non-const enum evaluation cycle detection.
+//
+// Tracks which enum member declarations are currently being evaluated by
+// `evaluate_enum_member_access`, preventing infinite recursion from self-references
+// (e.g., `B = E.B`) and mutual recursion across enums
+// (e.g., `enum E { A = F.B }; enum F { B = E.A }`).
+thread_local! {
+    static EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<NodeIndex>>
+        = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+}
+
+// RAII guard that removes a `NodeIndex` from `EVAL_VISITED` on drop.
+struct VisitedGuard(NodeIndex);
+impl Drop for VisitedGuard {
+    fn drop(&mut self) {
+        EVAL_VISITED.with(|v| {
+            v.borrow_mut().remove(&self.0);
+        });
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PrimitiveOverlapKind {
     String,
@@ -426,23 +447,11 @@ impl<'a> CheckerState<'a> {
         // Without this, the recursive evaluate_constant_expression call creates
         // infinite recursion → stack overflow.
         //
-        // Uses a drop guard to ensure the visited set is cleaned up even if
-        // evaluation panics.
-        thread_local! {
-            static EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<tsz_parser::parser::NodeIndex>>
-                = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-        }
+        // Uses the module-level EVAL_VISITED thread-local with an RAII drop guard
+        // to ensure cleanup even if evaluation panics.
         let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
         if already_visiting {
             return None; // Circular — treat as non-constant
-        }
-        struct VisitedGuard(tsz_parser::parser::NodeIndex);
-        impl Drop for VisitedGuard {
-            fn drop(&mut self) {
-                EVAL_VISITED.with(|v| {
-                    v.borrow_mut().remove(&self.0);
-                });
-            }
         }
         let _guard = VisitedGuard(member_decl);
         self.evaluate_constant_expression(member_data.initializer)
