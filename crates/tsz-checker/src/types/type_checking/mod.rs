@@ -7,6 +7,7 @@
 //! - `duplicate_identifiers` — duplicate identifier/declaration conflict detection
 //! - `global` — global-scope type checking
 //! - `property_init` — property initializer validation
+//! - `type_alias_checking` — type alias declaration checking, type node validation
 //! - `unused` — unused variable/parameter detection
 
 mod core;
@@ -20,4 +21,5 @@ mod duplicate_identifiers_helpers;
 mod global;
 mod indexed_access;
 mod property_init;
+mod type_alias_checking;
 mod unused;
