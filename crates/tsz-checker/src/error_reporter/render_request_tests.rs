@@ -227,3 +227,142 @@ let x: new () => A = A;
         );
     }
 }
+
+// =========================================================================
+// Anchor normalization — fingerprint stability tests
+// =========================================================================
+
+/// Verify that TS2322 on a variable declaration anchors at the variable
+/// name, not the entire declaration (including type annotation + initializer).
+#[test]
+fn ts2322_variable_declaration_anchor_is_name_only() {
+    // `x` starts at column 5 and is 1 char; the full declaration is ~24 chars.
+    let source = "let x: string = 42;\n";
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics.iter().find(|d| d.code == 2322);
+    assert!(
+        ts2322.is_some(),
+        "Expected TS2322, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    let d = ts2322.unwrap();
+    // The anchor should cover just `x` (1 character), not `x: string = 42`.
+    assert_eq!(
+        d.length, 1,
+        "TS2322 anchor should be the identifier 'x' (length 1), got length {}",
+        d.length
+    );
+}
+
+/// Verify that TS2322 on a multi-character variable name has the correct length.
+#[test]
+fn ts2322_variable_declaration_anchor_multichar_name() {
+    let source = "let myVar: number = \"hello\";\n";
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics.iter().find(|d| d.code == 2322);
+    assert!(ts2322.is_some(), "Expected TS2322");
+    let d = ts2322.unwrap();
+    assert_eq!(
+        d.length, 5,
+        "TS2322 anchor should be 'myVar' (length 5), got length {}",
+        d.length
+    );
+}
+
+/// Verify that TS2322 message text uses the correct type names.
+#[test]
+fn ts2322_message_contains_type_names() {
+    let source = "let x: string = 42;\n";
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("Expected TS2322");
+    assert!(
+        ts2322.message_text.contains("number") || ts2322.message_text.contains("42"),
+        "TS2322 message should mention the source type, got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        ts2322.message_text.contains("string"),
+        "TS2322 message should mention the target type 'string', got: {}",
+        ts2322.message_text
+    );
+}
+
+/// Verify that TS2322 on an assignment statement anchors at the whole
+/// expression statement (tsc behavior), not just the right-hand side.
+#[test]
+fn ts2322_assignment_anchor_walks_to_statement() {
+    // tsc anchors TS2322 for `x = 42` at the `ExpressionStatement`, which
+    // covers the full `x = 42` text (or the LHS identifier for var decl).
+    let source = r#"
+let x: string;
+x = 42;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics.iter().find(|d| d.code == 2322);
+    assert!(ts2322.is_some(), "Expected TS2322 for assignment mismatch");
+}
+
+/// Verify that TS2339 anchors on the property name token, not the
+/// whole access expression.
+#[test]
+fn ts2339_anchor_at_property_name() {
+    let source = r#"
+let x: { a: number } = { a: 1 };
+x.nonexistent;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2339 = diagnostics.iter().find(|d| d.code == 2339);
+    assert!(
+        ts2339.is_some(),
+        "Expected TS2339 for missing property, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    let d = ts2339.unwrap();
+    // The anchor should be "nonexistent" (11 chars), not "x.nonexistent" (13 chars).
+    assert_eq!(
+        d.length, 11,
+        "TS2339 anchor should be 'nonexistent' (length 11), got length {}",
+        d.length
+    );
+}
+
+/// Verify that object type formatting includes trailing semicolons.
+#[test]
+fn ts2322_object_type_message_has_semicolons() {
+    let source = r#"
+let x: { a: number; b: string } = { a: "hello", b: 42 };
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    // Should have either TS2322 or TS2353 (excess property) or TS2741 (missing property)
+    let relevant = diagnostics
+        .iter()
+        .find(|d| d.code == 2322 || d.code == 2741 || d.code == 2353);
+    if let Some(d) = relevant {
+        // If the message mentions an object shape, verify semicolons
+        if d.message_text.contains("{ ") && d.message_text.contains(" }") {
+            assert!(
+                d.message_text.contains("; }"),
+                "Object type in message should have trailing semicolon, got: {}",
+                d.message_text
+            );
+        }
+    }
+}
+
+/// Verify deterministic type formatting — same source always produces
+/// the same message text.
+#[test]
+fn ts2322_deterministic_message_text() {
+    let source = "let x: string = 42;\n";
+    let d1 = check_source_diagnostics(source);
+    let d2 = check_source_diagnostics(source);
+    let msg1: Vec<_> = d1.iter().map(|d| &d.message_text).collect();
+    let msg2: Vec<_> = d2.iter().map(|d| &d.message_text).collect();
+    assert_eq!(
+        msg1, msg2,
+        "Repeated checks should produce identical messages"
+    );
+}

@@ -32,7 +32,12 @@ impl<'a> CheckerState<'a> {
         let (start, length) = self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
             .map(|anchor| (anchor.start, anchor.length))
-            .unwrap_or_else(|| self.get_node_span(idx).unwrap_or((0, 0)));
+            .unwrap_or_else(|| {
+                // get_node_span returns (pos, end), convert to (start, length)
+                // and apply the same span normalization as the primary path.
+                let (pos, end) = self.get_node_span(idx).unwrap_or((0, 0));
+                self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
+            });
         let file_name = self.ctx.file_name.clone();
 
         match reason {
