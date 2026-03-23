@@ -4150,6 +4150,25 @@ fn inlay_hints_constructor_parameters() {
 }
 
 #[test]
+fn inlay_hints_skip_obvious_args() {
+    let t = FourslashTest::new(
+        "
+        function setConfig(options: { a: number }, callback: () => void) {}
+        setConfig({ a: 1 }, () => {});
+    ",
+    );
+    let result = t.inlay_hints("test.ts");
+    // Object literal and arrow function args should NOT have parameter hints
+    let has_options = result.hints.iter().any(|h| h.label.contains("options"));
+    let has_callback = result.hints.iter().any(|h| h.label.contains("callback"));
+    assert!(
+        !has_options && !has_callback,
+        "Should skip hints for object literal and callback args, got: {:?}",
+        result.hints.iter().map(|h| &h.label).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn type_hierarchy_deep_inheritance() {
     let t = FourslashTest::new(
         "
