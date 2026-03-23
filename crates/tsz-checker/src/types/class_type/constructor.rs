@@ -200,33 +200,54 @@ impl<'a> CheckerState<'a> {
 
         // Register constructor type -> DefId(ClassConstructor) so the formatter
         // displays it as "typeof ClassName" instead of expanding the object shape.
+        //
+        // Prefer pre-populated ClassConstructor companion from binder-owned
+        // identity (created during pre-population). If a companion exists,
+        // set its body to the computed type rather than creating a new DefId.
+        // This moves constructor identity from checker on-demand creation to
+        // binder-owned stable identity.
         if result != TypeId::ERROR {
-            let display_name = self.class_constructor_display_name(class_idx, class);
-            let symbol_id = current_sym.map(|sym_id| sym_id.0);
-            let name = self.ctx.types.intern_string(&display_name);
-            let ctor_def_id = self
-                .ctx
-                .definition_store
-                .register(tsz_solver::def::DefinitionInfo {
-                    kind: tsz_solver::def::DefKind::ClassConstructor,
-                    name,
-                    type_params: Vec::new(),
-                    body: Some(result),
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: None,
-                    span: None,
-                    symbol_id,
-                    heritage_names: Vec::new(),
-                    is_abstract: false,
-                    is_const: false,
-                    is_exported: false,
-                    is_global_augmentation: false,
-                });
+            let class_def_id = current_sym
+                .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied());
+
+            let ctor_def_id = if let Some(class_def) = class_def_id
+                && let Some(pre_populated_ctor) =
+                    self.ctx.definition_store.get_constructor_def(class_def)
+            {
+                // Reuse the pre-populated companion identity, just set its body.
+                self.ctx
+                    .definition_store
+                    .set_body(pre_populated_ctor, result);
+                pre_populated_ctor
+            } else {
+                // Fallback: create a new DefId (anonymous classes, or classes
+                // not covered by pre-population).
+                let display_name = self.class_constructor_display_name(class_idx, class);
+                let symbol_id = current_sym.map(|sym_id| sym_id.0);
+                let name = self.ctx.types.intern_string(&display_name);
+                self.ctx
+                    .definition_store
+                    .register(tsz_solver::def::DefinitionInfo {
+                        kind: tsz_solver::def::DefKind::ClassConstructor,
+                        name,
+                        type_params: Vec::new(),
+                        body: Some(result),
+                        instance_shape: None,
+                        static_shape: None,
+                        extends: None,
+                        implements: Vec::new(),
+                        enum_members: Vec::new(),
+                        exports: Vec::new(),
+                        file_id: None,
+                        span: None,
+                        symbol_id,
+                        heritage_names: Vec::new(),
+                        is_abstract: false,
+                        is_const: false,
+                        is_exported: false,
+                        is_global_augmentation: false,
+                    })
+            };
             self.ctx
                 .definition_store
                 .register_type_to_def(result, ctor_def_id);
