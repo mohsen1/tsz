@@ -56,19 +56,76 @@ python3 scripts/conformance/query-conformance.py --campaign big3
 python3 scripts/conformance/query-conformance.py --false-positives
 ```
 
-### Step 2: Pick a target
+### Step 2: Pick a target RANDOMLY
 
-**Prefer** (in order):
-1. Tests where removing 1 extra code fixes the test (false positives)
-2. Tests where adding 1 missing code fixes the test
-3. Tests within diff ≤ 2 of passing
-4. Patterns shared by multiple tests (root-cause campaigns)
+**Multiple agents may run this prompt in parallel.** To avoid duplicate work,
+always pick your target randomly from the candidate pool — never take the
+first item from a sorted list.
+
+```bash
+# Pick a random one-extra (false positive) target
+python3 -c "
+import json, random
+with open('scripts/conformance/conformance-detail.json') as f:
+    d = json.load(f)
+candidates = [(t, data) for t, data in d.get('failures', {}).items()
+              if len(data.get('x', [])) == 1 and not data.get('m')]
+if candidates:
+    t, data = random.choice(candidates)
+    print(f'TARGET: {t}')
+    print(f'  extra codes: {data[\"x\"]}')
+else:
+    print('No one-extra targets available')
+"
+
+# Or pick a random one-missing target
+python3 -c "
+import json, random
+with open('scripts/conformance/conformance-detail.json') as f:
+    d = json.load(f)
+candidates = [(t, data) for t, data in d.get('failures', {}).items()
+              if len(data.get('m', [])) == 1 and not data.get('x')]
+if candidates:
+    t, data = random.choice(candidates)
+    print(f'TARGET: {t}')
+    print(f'  missing codes: {data[\"m\"]}')
+else:
+    print('No one-missing targets available')
+"
+
+# Or pick a random close-to-passing target (diff ≤ 2)
+python3 -c "
+import json, random
+with open('scripts/conformance/conformance-detail.json') as f:
+    d = json.load(f)
+candidates = [(t, data) for t, data in d.get('failures', {}).items()
+              if len(data.get('m', [])) + len(data.get('x', [])) <= 2]
+if candidates:
+    t, data = random.choice(candidates)
+    print(f'TARGET: {t}')
+    print(f'  missing: {data.get(\"m\", [])}  extra: {data.get(\"x\", [])}')
+else:
+    print('No close targets available')
+"
+```
+
+**Category preference** (try the first category that has candidates):
+1. One-extra (false positives — removing a wrong diagnostic)
+2. One-missing (adding a diagnostic tsc emits)
+3. Close-to-passing (diff ≤ 2)
+4. Random failure from a root-cause campaign
+
+**If your random pick turns out to be intractable** (multi-file module resolution,
+deep solver visitor changes, template literal evaluation), discard it and pick
+another random target. Do not waste time on targets that need campaign-level work.
 
 **Avoid**:
-- Multi-file tests (complex module resolution)
-- JSDoc/JSX/Salsa tests (broad integration surface)
+- Multi-file tests (`@Filename:` directives) — complex module resolution
+- JSDoc/JSX/Salsa tests — broad integration surface
 - Tests requiring template literal type evaluation
-- Tests requiring deep flow analysis unification
+- Tests requiring flow analysis cache unification (instanceof narrowing)
+- Tests where the extra/missing code is TS2322/TS2339/TS2345 with no obvious
+  single root cause (these are the "big3" campaign — systemic issues)
 
 ### Step 3: Understand the failure
 
