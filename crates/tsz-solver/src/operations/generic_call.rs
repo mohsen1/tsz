@@ -757,12 +757,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &mut placeholder_visited,
             );
             // Skip contextual return type seeding only when ALL return type vars
-            // are already covered by round-1 (direct argument) inference. When some
-            // return type vars have no argument source, they need contextual seeding.
-            // Example: `new Right<L, A>(value: A)` with return type `Either<L, B>` —
-            // A is seeded from the argument, but L has no argument source and must be
-            // seeded from the contextual type to avoid defaulting to `unknown`.
-            let all_return_vars_covered = !return_seed_vars.is_empty()
+            // are already covered by round-1 (direct argument) inference AND the
+            // return type is not a bare type parameter. When the return type is a
+            // bare type parameter (e.g., `<T>(f: () => T): T`), the contextual type
+            // provides a critical upper bound that prevents literal widening.
+            // Without this, `let x: 0|1|2 = invoke(() => 1)` would widen T to
+            // `number` because the contextual `0|1|2` upper bound is never set.
+            let return_is_bare_var = var_map.contains_key(&return_type_with_placeholders);
+            let all_return_vars_covered = !return_is_bare_var
+                && !return_seed_vars.is_empty()
                 && return_seed_vars
                     .iter()
                     .all(|var| round1_direct_seed_vars.contains(var));
