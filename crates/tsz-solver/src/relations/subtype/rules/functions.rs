@@ -814,16 +814,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This matches tsc's behavior where contextual signature instantiation
         // for subtype checking uses parameter inference over return-type inference.
         //
-        // However, this recovery only applies to unconstrained type params (e.g.,
-        // `<T>(x: T) => T` vs `(x: string) => Object`). When a type param has a
-        // declared constraint (e.g., `<V extends T1>`), a BoundsViolation means
-        // the inferred type doesn't satisfy that constraint, and the caller should
-        // fall back to constraint erasure (`getErasedSignature` in tsc).
+        // When a type param has a declared constraint and the inference fails
+        // because actual inferred candidates violate the constraint, the caller
+        // should fall back to constraint erasure (`getErasedSignature` in tsc).
+        // However, when no actual inference happened (all target types were
+        // uninformative like `unknown`), we should NOT fall back — the fallback
+        // logic below will correctly default to `unknown`, matching tsc's
+        // `getDefaultTypeArgumentType`.
         let inferred = infer_ctx.resolve_all_with_constraints();
         if let Err(e) = &inferred
             && source.type_params.iter().any(|tp| tp.constraint.is_some())
         {
-            return Err(e.clone());
+            // Check if actual inference candidates were collected. If so, the
+            // constraint violation is meaningful and we should fall back to
+            // constraint erasure. If not (all inputs were uninformative), let
+            // the fallback logic below handle it.
+            let has_actual_candidates = source
+                .type_params
+                .iter()
+                .zip(renamed_source.type_params.iter())
+                .any(|(_, renamed_tp)| {
+                    infer_ctx
+                        .find_type_param(renamed_tp.name)
+                        .map_or(false, |var| infer_ctx.var_has_candidates(var))
+                });
+            if has_actual_candidates {
+                return Err(e.clone());
+            }
         }
         let mut substitution = TypeSubstitution::new();
         for (original_tp, renamed_tp) in source
@@ -854,6 +871,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .iter()
                     .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty))
             });
+            // When inference collected no actual candidates (all inputs were
+            // uninformative, e.g., `unknown` from a canonicalized target), the
+            // resolver defaults to the declared constraint. But tsc's
+            // `instantiateSignatureInContextOf` defaults to `unknown` when no
+            // candidates exist (`getDefaultTypeArgumentType`). Detect this case
+            // and use `unknown` instead, so that the subsequent structural
+            // comparison doesn't fail due to contravariant parameter positions.
+            let no_actual_inference_candidates = lower_bounds.is_empty()
+                && original_tp.constraint.is_some()
+                && upper_bounds
+                    .iter()
+                    .all(|&ub| original_tp.constraint == Some(ub));
+            let inferred_ty = if no_actual_inference_candidates
+                && inferred_ty.is_some()
+                && inferred_ty == original_tp.constraint
+            {
+                Some(TypeId::UNKNOWN)
+            } else {
+                inferred_ty
+            };
             let fallback_ty = if inferred_ty.is_none() {
                 // No inference result — try using parameter-based upper bounds.
                 // When parameters provide a concrete type (e.g., T <: string from

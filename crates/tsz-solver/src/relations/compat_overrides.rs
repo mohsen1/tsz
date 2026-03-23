@@ -680,21 +680,24 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// parameter structures, or if the types are not Object types (in which case
     /// we defer to the bidirectional subtype check).
     fn callable_signatures_have_identical_type_params(&mut self, a: TypeId, b: TypeId) -> bool {
-        // Only applies when both are Object types; non-objects defer to bidirectional subtype.
-        let (a_shape_id, b_shape_id) = match (self.interner.lookup(a), self.interner.lookup(b)) {
+        // Collect constraint pairs from type parameter lists.
+        // Applies to Object types (properties with callable signatures),
+        // Callable types (direct call signatures), and Function types.
+        let constraint_pairs = match (self.interner.lookup(a), self.interner.lookup(b)) {
             (
                 Some(TypeData::Object(a_id) | TypeData::ObjectWithIndex(a_id)),
                 Some(TypeData::Object(b_id) | TypeData::ObjectWithIndex(b_id)),
-            ) => (a_id, b_id),
+            ) => Self::collect_constraint_pairs(self.interner, a_id, b_id),
+            (Some(TypeData::Callable(a_cid)), Some(TypeData::Callable(b_cid))) => {
+                Self::collect_callable_constraint_pairs(self.interner, a_cid, b_cid)
+            }
+            (Some(TypeData::Function(a_fid)), Some(TypeData::Function(b_fid))) => {
+                Self::collect_function_constraint_pairs(self.interner, a_fid, b_fid)
+            }
             _ => return true,
         };
 
-        // Phase 1: Collect constraint pairs without borrowing self.subtype.
-        // We need the interner borrow to end before calling is_subtype_of.
-        let constraint_pairs =
-            Self::collect_constraint_pairs(self.interner, a_shape_id, b_shape_id);
-
-        // Phase 2: Check collected constraints via subtype relation.
+        // Check collected constraints via subtype relation.
         for (a_constraint, b_constraint) in constraint_pairs {
             if a_constraint != b_constraint {
                 let fwd = self.subtype.is_subtype_of(a_constraint, b_constraint);
@@ -776,6 +779,73 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 || a_callable.construct_signatures.len() != b_callable.construct_signatures.len()
             {
                 pairs.push((TypeId::NEVER, TypeId::STRING));
+            }
+        }
+
+        pairs
+    }
+
+    /// Collect type parameter constraint pairs from two Callable types' signatures.
+    fn collect_callable_constraint_pairs(
+        interner: &dyn crate::TypeDatabase,
+        a_cid: crate::types::CallableShapeId,
+        b_cid: crate::types::CallableShapeId,
+    ) -> Vec<(TypeId, TypeId)> {
+        let a_callable = interner.callable_shape(a_cid);
+        let b_callable = interner.callable_shape(b_cid);
+        let mut pairs = Vec::new();
+
+        let all_sig_pairs = a_callable
+            .call_signatures
+            .iter()
+            .zip(b_callable.call_signatures.iter())
+            .chain(
+                a_callable
+                    .construct_signatures
+                    .iter()
+                    .zip(b_callable.construct_signatures.iter()),
+            );
+
+        for (a_sig, b_sig) in all_sig_pairs {
+            if a_sig.type_params.len() != b_sig.type_params.len() {
+                pairs.push((TypeId::NEVER, TypeId::STRING));
+                continue;
+            }
+            for (a_tp, b_tp) in a_sig.type_params.iter().zip(b_sig.type_params.iter()) {
+                pairs.push((
+                    a_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    b_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                ));
+            }
+        }
+
+        if a_callable.call_signatures.len() != b_callable.call_signatures.len()
+            || a_callable.construct_signatures.len() != b_callable.construct_signatures.len()
+        {
+            pairs.push((TypeId::NEVER, TypeId::STRING));
+        }
+
+        pairs
+    }
+
+    /// Collect type parameter constraint pairs from two Function types.
+    fn collect_function_constraint_pairs(
+        interner: &dyn crate::TypeDatabase,
+        a_fid: crate::types::FunctionShapeId,
+        b_fid: crate::types::FunctionShapeId,
+    ) -> Vec<(TypeId, TypeId)> {
+        let a_fn = interner.function_shape(a_fid);
+        let b_fn = interner.function_shape(b_fid);
+        let mut pairs = Vec::new();
+
+        if a_fn.type_params.len() != b_fn.type_params.len() {
+            pairs.push((TypeId::NEVER, TypeId::STRING));
+        } else {
+            for (a_tp, b_tp) in a_fn.type_params.iter().zip(b_fn.type_params.iter()) {
+                pairs.push((
+                    a_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    b_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                ));
             }
         }
 
