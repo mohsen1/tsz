@@ -1,6 +1,6 @@
 use super::lib_resolution::{
-    collect_lib_decls_with_arenas, lib_def_id_from_node, resolve_lib_fallback_arena,
-    resolve_lib_node_in_arenas,
+    collect_lib_decls_with_arenas, lib_def_id_from_node, no_value_resolver,
+    resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
 use crate::state::CheckerState;
 use tsz_lowering::TypeLowering;
@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &resolver,
             &def_id_resolver,
-            &|_| None,
+            &no_value_resolver,
         )
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
