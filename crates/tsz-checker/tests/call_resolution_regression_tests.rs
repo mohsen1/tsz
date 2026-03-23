@@ -1248,3 +1248,132 @@ let result: string = create();
         "Generic call with default type param should work"
     );
 }
+
+// =============================================================================
+// Regression tests for call.rs query boundary refactoring
+// =============================================================================
+
+/// Tests that generic calls with Application-typed params and args
+/// correctly preserve raw applications during inference.
+#[test]
+fn generic_call_preserves_application_during_inference() {
+    let source = r#"
+interface Box<T> { value: T }
+declare function unbox<T>(b: Box<T>): T;
+declare const boxed: Box<number>;
+let result: number = unbox(boxed);
+"#;
+    assert!(
+        no_errors(source),
+        "Generic call should preserve application types during inference"
+    );
+}
+
+/// Tests that the type-parameter-or-intersection check correctly skips
+/// excess property checking for generic params.
+#[test]
+fn generic_call_skips_excess_for_type_param() {
+    let source = r#"
+interface Named { name: string }
+declare function parrot<T extends Named>(t: T): T;
+parrot({ name: "hello", extra: 42 });
+"#;
+    // tsc allows extra properties when param is a bare type parameter
+    // (the type parameter captures the full object shape).
+    assert!(
+        no_errors(source),
+        "Generic call with type param should skip excess property checking"
+    );
+}
+
+/// Tests that intersection-containing-type-parameter is correctly detected
+/// for excess property skip.
+#[test]
+fn generic_call_intersection_param_skips_excess() {
+    let source = r#"
+interface Printable { print(): void }
+declare function create<T extends Printable>(t: T & Printable): T;
+create({ print() {}, extra: true });
+"#;
+    assert!(
+        no_errors(source),
+        "Intersection with type param should skip excess property checking"
+    );
+}
+
+/// Tests that callable argument types are correctly detected during
+/// generic call refinement.
+#[test]
+fn generic_call_callable_arg_refinement() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+let result = map([1, 2, 3], x => String(x));
+"#;
+    // The key behavior: the callback parameter `x` gets contextual type `number`
+    // from inference, so no TS7006 (implicit any) should be emitted.
+    assert!(
+        !has_error(source, 7006),
+        "Generic call with callable arg should provide contextual type to callback"
+    );
+}
+
+/// Tests that overloaded function calls resolve to the correct signature.
+#[test]
+fn overload_resolution_picks_correct_signature() {
+    let source = r#"
+declare function convert(x: string): number;
+declare function convert(x: number): string;
+let a: number = convert("hello");
+let b: string = convert(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Overload resolution should pick the correct signature for each call"
+    );
+}
+
+/// Tests that overload resolution reports mismatches.
+#[test]
+fn overload_resolution_reports_mismatch() {
+    let source = r#"
+declare function convert(x: string): number;
+declare function convert(x: number): string;
+let a: string = convert("hello");
+"#;
+    assert!(
+        has_error(source, 2322),
+        "Overload return type mismatch should emit TS2322"
+    );
+}
+
+/// Tests that property/method calls work correctly through optional chaining.
+#[test]
+fn optional_chain_method_call() {
+    let source = r#"
+interface Obj { method(x: number): string }
+declare const obj: Obj | undefined;
+let result: string | undefined = obj?.method(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Optional chain method call should return T | undefined"
+    );
+}
+
+/// Tests that unresolved inference results don't pollute outer generic inference.
+#[test]
+fn nested_generic_call_doesnt_pollute_inference() {
+    let source = r#"
+declare function identity<T>(x: T): T;
+declare function wrap<U>(fn: (x: U) => U): U;
+let result: number = wrap(identity);
+"#;
+    // This exercises the round1-skip-outer-context path where unresolved
+    // inference results are replaced with UNKNOWN to avoid pollution.
+    let codes = get_codes(source);
+    // Should not produce false TS2345/TS7006 from polluted inference
+    assert!(
+        !codes.contains(&7006),
+        "Nested generic call should not produce false TS7006"
+    );
+}

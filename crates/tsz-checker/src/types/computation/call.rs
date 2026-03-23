@@ -882,10 +882,8 @@ impl<'a> CheckerState<'a> {
                         if !round1_skip_outer_context.get(i).copied().unwrap_or(false) {
                             continue;
                         }
-                        let unresolved = *arg_type == TypeId::ERROR
-                            || common::contains_infer_types(self.ctx.types, *arg_type)
-                            || common::collect_referenced_types(self.ctx.types, *arg_type)
-                                .contains(&TypeId::ERROR);
+                        let unresolved =
+                            common::is_unresolved_inference_result(self.ctx.types, *arg_type);
                         if unresolved {
                             *arg_type = TypeId::UNKNOWN;
                         }
@@ -903,13 +901,11 @@ impl<'a> CheckerState<'a> {
                             .map(|(i, p)| {
                                 let arg_type = round1_arg_types.get(i).copied();
                                 let preserve_raw_application = arg_type.is_some_and(|arg_type| {
-                                    query::get_application_info(self.ctx.types, p.type_id).is_some()
-                                        && query::get_application_info(self.ctx.types, arg_type)
-                                            .is_some()
-                                        && common::contains_type_parameters(
-                                            self.ctx.types,
-                                            p.type_id,
-                                        )
+                                    common::should_preserve_application_for_inference(
+                                        self.ctx.types,
+                                        p.type_id,
+                                        arg_type,
+                                    )
                                 });
 
                                 common::ParamInfo {
@@ -1200,17 +1196,10 @@ impl<'a> CheckerState<'a> {
                                         || n.kind == syntax_kind_ext::ARROW_FUNCTION
                                 })
                                 && shape.params.get(i).is_some_and(|p| {
-                                    // Check if the param type is a bare type parameter
-                                    // or an intersection containing a type parameter
-                                    let pt = p.type_id;
-                                    common::type_param_info(self.ctx.types, pt).is_some()
-                                        || common::intersection_members(self.ctx.types, pt)
-                                            .is_some_and(|members| {
-                                                members.iter().any(|&m| {
-                                                    common::type_param_info(self.ctx.types, m)
-                                                        .is_some()
-                                                })
-                                            })
+                                    common::is_type_parameter_or_intersection_with_type_parameter(
+                                        self.ctx.types,
+                                        p.type_id,
+                                    )
                                 })
                             {
                                 TypeId::UNKNOWN
@@ -1462,9 +1451,7 @@ impl<'a> CheckerState<'a> {
                                     || common::contains_type_parameters(self.ctx.types, expected)
                             });
                             let arg_is_callable =
-                                query::get_function_shape(self.ctx.types, arg_type).is_some()
-                                    || common::callable_shape_for_type(self.ctx.types, arg_type)
-                                        .is_some();
+                                common::is_callable_type(self.ctx.types, arg_type);
                             let skip_return_only_refinement = self
                                 .ctx
                                 .arena
