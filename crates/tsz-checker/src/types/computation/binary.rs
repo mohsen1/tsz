@@ -759,7 +759,22 @@ impl<'a> CheckerState<'a> {
                     (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
                         || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
                 });
+                // Also suppress when a parse error exists near this expression
+                // (e.g., `{ a, b } = fn()` where TS2809 is emitted for the `=`).
+                // The comma in the block is side-effect-free but tsc suppresses
+                // TS2695 because TS2809 already indicates the parse failure.
+                let nearby_parse_error = {
+                    if let Some(node) = self.ctx.arena.get(node_idx) {
+                        let end = node.end;
+                        self.ctx.all_parse_error_positions.iter().any(|&pos| {
+                            pos >= node.pos && pos <= end + 5
+                        })
+                    } else {
+                        false
+                    }
+                };
                 if !node_has_parse_error
+                    && !nearby_parse_error
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
