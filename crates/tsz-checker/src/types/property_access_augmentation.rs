@@ -3,7 +3,9 @@
 //!
 //! Extracted from `property_access_type.rs` to keep module size manageable.
 
-use super::queries::lib_resolution::{augmentation_def_id_from_node, resolve_augmentation_node};
+use super::queries::lib_resolution::{
+    augmentation_def_id_from_node, no_value_resolver, resolve_augmentation_node,
+};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -138,7 +140,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &resolver,
                 &def_id_resolver,
-                &|_| None,
+                &no_value_resolver,
             )
             .with_name_def_id_resolver(&name_resolver);
             let (aug_type, params) =
@@ -359,7 +361,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &resolver,
                 &def_id_resolver,
-                &|_| None,
+                &no_value_resolver,
             )
             .with_name_def_id_resolver(&name_resolver);
             let (aug_type, _params) =

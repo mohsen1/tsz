@@ -30,6 +30,15 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+/// Stub value resolver for lib lowering — lib declarations have no runtime values.
+///
+/// All four lib-lowering sites (resolve_lib_type_by_name, prime_lib_type_params,
+/// resolve_lib_type_with_params, lower_augmentation_for_arena) pass this as the
+/// `value_resolver` argument to `TypeLowering::with_hybrid_resolver`.
+pub(crate) fn no_value_resolver(_: NodeIndex) -> Option<u32> {
+    None
+}
+
 /// Map a `SyntaxKind` keyword to a built-in `TypeId`.
 ///
 /// Returns `None` for non-keyword syntax kinds, letting callers fall through
@@ -831,7 +840,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     &resolver,
                     &def_id_resolver,
-                    &|_| None,
+                    &no_value_resolver,
                 )
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
@@ -1130,7 +1139,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &resolver,
             &def_id_resolver,
-            &|_| None,
+            &no_value_resolver,
         )
         .with_name_def_id_resolver(&name_resolver);
         lowering.lower_interface_declarations(decls)
@@ -1421,6 +1430,15 @@ mod tests {
             2,
             "Different indices from same arena should be kept"
         );
+    }
+
+    // ---- no_value_resolver ----
+
+    #[test]
+    fn no_value_resolver_always_returns_none() {
+        assert_eq!(super::no_value_resolver(NodeIndex(0)), None);
+        assert_eq!(super::no_value_resolver(NodeIndex(42)), None);
+        assert_eq!(super::no_value_resolver(NodeIndex(u32::MAX)), None);
     }
 }
 
