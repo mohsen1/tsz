@@ -175,5 +175,21 @@ path = "tests/generic_call_inference_tests.rs"
 name = "call_resolution_regression_tests"
 path = "tests/call_resolution_regression_tests.rs"
 
+[[test]]
+name = "enum_recursion_tests"
+path = "tests/enum_recursion_tests.rs"
+
+[[test]]
+name = "enum_nominality_tests"
+path = "tests/enum_nominality_tests.rs"
+
+[[test]]
+name = "enum_member_cache_tests"
+path = "tests/enum_member_cache_tests.rs"
+
+[[test]]
+name = "enum_merge_tests"
+path = "tests/enum_merge_tests.rs"
+
 [lints]
 workspace = true

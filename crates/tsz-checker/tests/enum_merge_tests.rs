@@ -1,7 +1,7 @@
 //! Tests for enum member visibility across merged declarations
 
-use crate::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -18,7 +18,7 @@ fn get_error_codes(source: &str) -> Vec<u32> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);

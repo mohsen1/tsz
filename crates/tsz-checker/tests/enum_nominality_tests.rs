@@ -4,8 +4,8 @@
 //! even when the values are the same. This validates TypeScript's nominal
 //! typing for enums.
 
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -22,7 +22,7 @@ fn collect_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -48,7 +48,7 @@ fn test_enum_assignability(source: &str, expected_errors: usize) {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
