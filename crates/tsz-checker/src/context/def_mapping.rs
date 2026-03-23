@@ -939,12 +939,11 @@ impl<'a> CheckerContext<'a> {
 
                 // For classes, also warm the ClassConstructor companion's
                 // DefKind so the checker doesn't need to create one on demand.
-                if info.kind == tsz_solver::def::DefKind::Class {
-                    if let Some(ctor_def_id) = self.definition_store.get_constructor_def(*def_id) {
-                        if let Some(ctor_info) = self.definition_store.get(ctor_def_id) {
-                            self.register_def_kind_in_envs(ctor_def_id, ctor_info.kind);
-                        }
-                    }
+                if info.kind == tsz_solver::def::DefKind::Class
+                    && let Some(ctor_def_id) = self.definition_store.get_constructor_def(*def_id)
+                    && let Some(ctor_info) = self.definition_store.get(ctor_def_id)
+                {
+                    self.register_def_kind_in_envs(ctor_def_id, ctor_info.kind);
                 }
             }
 
