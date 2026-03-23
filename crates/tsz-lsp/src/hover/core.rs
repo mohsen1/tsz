@@ -70,10 +70,9 @@ impl<'a> HoverProvider<'a> {
         // Handle `this` keyword hover early — before symbol query filtering
         if let Some(node) = self.arena.get(node_idx)
             && node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+            && let Some(this_hover) = self.hover_for_this_keyword(node_idx, type_cache)
         {
-            if let Some(this_hover) = self.hover_for_this_keyword(node_idx, type_cache) {
-                return Some(this_hover);
-            }
+            return Some(this_hover);
         }
 
         if !crate::utils::is_symbol_query_node(self.arena, node_idx)

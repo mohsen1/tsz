@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
 
     /// Ensure a DefId has its type parameters cached and body registered before lowering.
     ///
-    /// This is the stable-identity helper for the "prime DefId before TypeLowering"
+    /// This is the stable-identity helper for the "prime DefId before `TypeLowering`"
     /// pattern.  It consolidates the ad hoc inline block that manually iterated
     /// declarations to find type parameters and then checked body registration.
     ///
