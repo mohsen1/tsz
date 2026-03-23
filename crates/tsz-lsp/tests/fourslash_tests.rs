@@ -2187,6 +2187,38 @@ fn code_actions_at_marker() {
     let _ = t.code_actions_at("x");
 }
 
+#[test]
+fn code_actions_on_function_no_crash() {
+    let t = FourslashTest::new(
+        "
+        function /*f*/add(a: number, b: number) {
+            return a + b;
+        }
+    ",
+    );
+    let _ = t.code_actions_at("f");
+}
+
+#[test]
+fn code_actions_on_type_error_no_crash() {
+    let t = FourslashTest::new(
+        "
+        const x: number = /*e*/'hello';
+    ",
+    );
+    let _ = t.code_actions_at("e");
+}
+
+#[test]
+fn code_actions_on_inline_type_no_crash() {
+    let t = FourslashTest::new(
+        "
+        function process(data: /*t*/{ name: string; age: number }) {}
+    ",
+    );
+    let _ = t.code_actions_at("t");
+}
+
 // =============================================================================
 // Combined Feature Tests (testing multiple features on same code)
 // =============================================================================
