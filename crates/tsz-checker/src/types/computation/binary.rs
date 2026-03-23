@@ -340,7 +340,9 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type "may represent a primitive value" for TS2638.
     /// In tsc, this check fires for type parameters (`InstantiableNonPrimitive`) whose
-    /// constraint is missing or could also represent a primitive.
+    /// constraint is missing or could also represent a primitive. Empty object types
+    /// like `{}` are NOT flagged — they structurally accept primitives, but an empty
+    /// object value at runtime is always an object, not a primitive.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
         // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
@@ -373,13 +375,6 @@ impl<'a> CheckerState<'a> {
             return members
                 .iter()
                 .all(|&m| self.type_may_represent_primitive(m));
-        }
-
-        // Empty object type `{}` may represent primitive values (string, number,
-        // boolean all extend `{}`). tsc emits TS2638 for `"a" in y` when y
-        // has been narrowed to `{}` from `unknown`.
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
         }
 
         false
@@ -758,19 +753,24 @@ impl<'a> CheckerState<'a> {
                 // our parser but by tsc's checker, so they set has_parse_errors in our
                 // pipeline but shouldn't suppress TS2695. Only suppress when the binary
                 // expression itself has structural parse errors (e.g., `(a, new)`).
-                // In tsc, TS2695 is emitted via grammarErrorOnNode which checks
-                // !hasParseDiagnostics(sourceFile). Use has_syntax_parse_errors
-                // which matches tsc's hasParseDiagnostics() (excludes grammar-only
-                // codes like TS1009/TS1014/TS1185 that don't suppress grammar errors).
-                // Also check node-level flags as a fallback for inline parse errors.
                 let node_has_parse_error = self.ctx.arena.get(node_idx).is_some_and(|n| {
                     use tsz_parser::parser::node_flags;
                     let flags = n.flags as u32;
                     (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
                         || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
                 });
+                // Also suppress TS2695 when the comma expression is inside a bare
+                // block statement (not a function/method body) and the file has
+                // parse errors.  This matches tsc's behavior: when `{ a, b } = fn()`
+                // is parsed as a block followed by `=`, tsc emits TS2809 for the `=`
+                // and suppresses TS2695 for the comma inside the block because the
+                // parse diagnostic overlaps with the expression's range.  Our
+                // node-level error check misses this because TS2809 is on a sibling
+                // node (`=`), not on the comma binary expression itself.
+                let in_bare_block_with_parse_errors =
+                    self.ctx.has_parse_errors && self.is_inside_bare_block(node_idx);
                 if !node_has_parse_error
-                    && !self.ctx.has_syntax_parse_errors
+                    && !in_bare_block_with_parse_errors
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)

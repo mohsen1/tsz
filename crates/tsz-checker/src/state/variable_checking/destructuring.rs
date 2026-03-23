@@ -956,20 +956,26 @@ impl<'a> CheckerState<'a> {
                 let key_is_number = key_type == TypeId::NUMBER;
 
                 // TS2538: Type cannot be used as an index type.
-                // tsc uses strict validation for computed property keys in destructuring:
-                // string, number, bigint, symbol, unique symbol, enum, string/number
-                // literals, template literals, and string mappings are valid. Rejects
-                // `any`, `void`, `null`, `undefined`, `boolean`, `object`,
-                // `function`, and structural types.
+                // For computed property names in destructuring, tsc allows
+                // `symbol` and `unique symbol` types (they are valid property
+                // keys), but rejects `any`, `void`, `boolean`, etc. through
+                // its `isValidIndexType` check.  We match this by allowing
+                // symbol-like types to pass without the strict validation.
                 // ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
                 let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
                     key_type,
                 );
+                let key_is_symbol_like =
+                    crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                        self.ctx.types,
+                        key_type,
+                    );
                 if !key_is_string
                     && !key_is_number
                     && !key_is_type_param
+                    && !key_is_symbol_like
                     && key_type != TypeId::NEVER
                 {
                     let check_key = if key_type == TypeId::ERROR {
@@ -977,19 +983,28 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    if let Some(invalid_member) =
-                        crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key) {
-                        let key_type_str = self.format_type(invalid_member);
-                        let message = crate::diagnostics::format_message(
-                            crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                            &[&key_type_str],
+                    // Re-check after resolution (lazy types may resolve to
+                    // valid key types like symbol or unique symbol).
+                    let resolved_is_symbol_like =
+                        crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                            self.ctx.types,
+                            check_key,
                         );
-                        let error_node = computed_expr.unwrap_or(element_data.property_name);
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                        );
+                    if !resolved_is_symbol_like {
+                        if let Some(invalid_member) =
+                            crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key) {
+                            let key_type_str = self.format_type(invalid_member);
+                            let message = crate::diagnostics::format_message(
+                                crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                                &[&key_type_str],
+                            );
+                            let error_node = computed_expr.unwrap_or(element_data.property_name);
+                            self.error_at_node(
+                                error_node,
+                                &message,
+                                crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            );
+                        }
                     }
                 }
 
