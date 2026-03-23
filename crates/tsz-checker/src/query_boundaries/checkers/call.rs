@@ -24,6 +24,10 @@ pub(crate) fn get_contextual_signature_for_arity(
     tsz_solver::get_contextual_signature_for_arity_with_compat_checker(db, type_id, arg_count)
 }
 
+pub(crate) fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    tsz_solver::type_queries::get_function_parameter_types(db, type_id)
+}
+
 pub(crate) fn stable_call_recovery_return_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

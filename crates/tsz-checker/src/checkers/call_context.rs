@@ -7,6 +7,8 @@
 
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -20,8 +22,8 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         type_id == TypeId::UNKNOWN
             || type_id == TypeId::ERROR
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
-            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            || common::contains_infer_types(self.ctx.types, type_id)
+            || common::contains_type_parameters(self.ctx.types, type_id)
     }
 
     pub(crate) fn is_immediate_call_or_new_callee(&self, idx: NodeIndex) -> bool {
@@ -290,10 +292,8 @@ impl<'a> CheckerState<'a> {
         let resolved_expected = self.evaluate_type_with_env(expected);
         let resolved_expected = self.resolve_type_for_property_access(resolved_expected);
         let resolved_expected = self.resolve_lazy_type(resolved_expected);
-        let expected_params = tsz_solver::type_queries::get_function_parameter_types(
-            self.ctx.types,
-            resolved_expected,
-        );
+        let expected_params =
+            call_checker::get_function_parameter_types(self.ctx.types, resolved_expected);
         if expected_params.is_empty() {
             return false;
         }
@@ -305,7 +305,7 @@ impl<'a> CheckerState<'a> {
         let resolved_actual = self.resolve_type_for_property_access(resolved_actual);
         let resolved_actual = self.resolve_lazy_type(resolved_actual);
         let actual_params =
-            tsz_solver::type_queries::get_function_parameter_types(self.ctx.types, resolved_actual);
+            call_checker::get_function_parameter_types(self.ctx.types, resolved_actual);
 
         // For each explicitly-annotated parameter, check if its type conflicts with
         // the expected parameter type.
@@ -395,11 +395,9 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
     ) -> bool {
         let return_type_params: FxHashSet<_> =
-            tsz_solver::collect_referenced_types(self.ctx.types, shape.return_type)
+            common::collect_referenced_types(self.ctx.types, shape.return_type)
                 .into_iter()
-                .filter_map(|ty| {
-                    tsz_solver::type_param_info(self.ctx.types, ty).map(|info| info.name)
-                })
+                .filter_map(|ty| common::type_param_info(self.ctx.types, ty).map(|info| info.name))
                 .collect();
 
         if return_type_params.is_empty() {
@@ -426,10 +424,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let param_type_params =
-                tsz_solver::collect_referenced_types(self.ctx.types, param_type);
+            let param_type_params = common::collect_referenced_types(self.ctx.types, param_type);
             if param_type_params.into_iter().any(|ty| {
-                tsz_solver::type_param_info(self.ctx.types, ty)
+                common::type_param_info(self.ctx.types, ty)
                     .is_some_and(|info| return_type_params.contains(&info.name))
             }) {
                 return true;
@@ -460,31 +457,29 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
-        let callback_shape = tsz_solver::get_contextual_signature_with_compat_checker(
-            self.ctx.types,
-            callback_param_type,
-        )
-        .or_else(|| {
-            let evaluated = self.evaluate_type_with_env(callback_param_type);
-            (evaluated != callback_param_type).then(|| {
-                tsz_solver::get_contextual_signature_with_compat_checker(self.ctx.types, evaluated)
-            })?
-        })
-        .or_else(|| {
-            let evaluated = self.evaluate_application_type(callback_param_type);
-            (evaluated != callback_param_type).then(|| {
-                tsz_solver::get_contextual_signature_with_compat_checker(self.ctx.types, evaluated)
-            })?
-        });
+        let callback_shape =
+            call_checker::get_contextual_signature(self.ctx.types, callback_param_type)
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(callback_param_type);
+                    (evaluated != callback_param_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                })
+                .or_else(|| {
+                    let evaluated = self.evaluate_application_type(callback_param_type);
+                    (evaluated != callback_param_type).then(|| {
+                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
+                    })?
+                });
         let Some(callback_shape) = callback_shape else {
             return Vec::new();
         };
 
         let return_mentions: FxHashSet<_> =
-            tsz_solver::collect_referenced_types(self.ctx.types, callback_shape.return_type)
+            common::collect_referenced_types(self.ctx.types, callback_shape.return_type)
                 .into_iter()
                 .filter_map(|ty| {
-                    tsz_solver::type_param_info(self.ctx.types, ty).and_then(|info| {
+                    common::type_param_info(self.ctx.types, ty).and_then(|info| {
                         tracked_type_params
                             .contains(&info.name)
                             .then_some(info.name)
@@ -499,10 +494,10 @@ impl<'a> CheckerState<'a> {
             .params
             .iter()
             .flat_map(|param| {
-                tsz_solver::collect_referenced_types(self.ctx.types, param.type_id).into_iter()
+                common::collect_referenced_types(self.ctx.types, param.type_id).into_iter()
             })
             .filter_map(|ty| {
-                tsz_solver::type_param_info(self.ctx.types, ty).and_then(|info| {
+                common::type_param_info(self.ctx.types, ty).and_then(|info| {
                     tracked_type_params
                         .contains(&info.name)
                         .then_some(info.name)
@@ -534,7 +529,7 @@ impl<'a> CheckerState<'a> {
         inferred == TypeId::ANY
             || inferred == TypeId::UNKNOWN
             || inferred == TypeId::ERROR
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, inferred)
+            || common::contains_infer_types(self.ctx.types, inferred)
     }
 
     pub(crate) fn suppress_initializer_contextual_type_for_generic_call(
