@@ -1050,11 +1050,15 @@ impl QueryDatabase for QueryCache<'_> {
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
+            self.subtype_cache_hits
+                .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
             }
             return result;
         }
+        self.subtype_cache_misses
+            .set(self.subtype_cache_misses.get() + 1);
 
         let result = crate::relations::subtype::is_subtype_of_with_flags(
             self.as_type_database(),
@@ -1086,11 +1090,15 @@ impl QueryDatabase for QueryCache<'_> {
         let key = RelationCacheKey::assignability(source, target, flags, 0);
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
+            self.assignability_cache_hits
+                .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
             }
             return result;
         }
+        self.assignability_cache_misses
+            .set(self.assignability_cache_misses.get() + 1);
 
         // Use CompatChecker with all compatibility rules
         let mut checker = CompatChecker::new(self.as_type_database());
