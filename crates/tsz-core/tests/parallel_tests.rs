@@ -7653,3 +7653,296 @@ declare class AmbientClass {}
         "DefinitionStore should have same size after remerge"
     );
 }
+
+// =============================================================================
+// Stable identity tests: solver-owned DefinitionStore::from_semantic_defs
+// =============================================================================
+
+/// Verify that `DefinitionStore::from_semantic_defs` (solver factory) produces
+/// the same DefId structure as `create_definition_store_from_binder` (core helper).
+#[test]
+fn solver_from_semantic_defs_matches_core_helper() {
+    use tsz_solver::def::{DefKind, DefinitionStore};
+
+    let source = r#"
+        export class Animal<T> {}
+        export interface Serializable { toJSON(): string; }
+        export type ID = string | number;
+        export enum Color { Red, Green, Blue }
+        export namespace Utils { export function helper(): void {} }
+        export function identity<T>(x: T): T { return x; }
+        export const VERSION = "1.0";
+    "#;
+
+    let parsed = crate::parallel::parse_file_single("test.ts".to_string(), source.to_string());
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(&parsed.arena, parsed.source_file);
+
+    let interner = tsz_solver::TypeInterner::new();
+
+    // Path A: core helper (delegates to solver factory internally)
+    let store_a = crate::parallel::create_definition_store_from_binder(&binder, &interner);
+
+    // Path B: solver factory directly
+    let store_b =
+        DefinitionStore::from_semantic_defs(&binder.semantic_defs, |s| interner.intern_string(s));
+
+    let stats_a = store_a.statistics();
+    let stats_b = store_b.statistics();
+
+    assert_eq!(
+        stats_a.total_definitions, stats_b.total_definitions,
+        "Both paths should produce the same number of definitions"
+    );
+
+    // Verify each declaration family is present in both stores
+    let families = [
+        ("Animal", DefKind::Class),
+        ("Serializable", DefKind::Interface),
+        ("ID", DefKind::TypeAlias),
+        ("Color", DefKind::Enum),
+        ("Utils", DefKind::Namespace),
+        ("identity", DefKind::Function),
+        ("VERSION", DefKind::Variable),
+    ];
+
+    for (name, expected_kind) in &families {
+        let name_atom = interner.intern_string(name);
+        let def_a = store_a
+            .find_defs_by_name(name_atom)
+            .and_then(|d: Vec<tsz_solver::def::DefId>| d.first().copied());
+        let def_b = store_b
+            .find_defs_by_name(name_atom)
+            .and_then(|d: Vec<tsz_solver::def::DefId>| d.first().copied());
+
+        assert!(def_a.is_some(), "{name} should exist in store_a");
+        assert!(def_b.is_some(), "{name} should exist in store_b");
+
+        let info_a = store_a.get(def_a.unwrap()).unwrap();
+        let info_b = store_b.get(def_b.unwrap()).unwrap();
+        assert_eq!(
+            info_a.kind, *expected_kind,
+            "{name} kind mismatch in store_a"
+        );
+        assert_eq!(
+            info_b.kind, *expected_kind,
+            "{name} kind mismatch in store_b"
+        );
+        assert_eq!(
+            info_a.type_params.len(),
+            info_b.type_params.len(),
+            "{name} type_param count mismatch"
+        );
+    }
+}
+
+/// Verify stable identity for all declaration families across merge/rebind.
+/// Bind two files, merge, then verify all top-level declarations from both
+/// files have stable DefIds in the merged DefinitionStore.
+#[test]
+fn stable_identity_survives_multi_file_merge() {
+    use tsz_solver::def::DefKind;
+
+    let file_a = r#"
+        export class Base<T> { value: T; }
+        export interface Printable { print(): void; }
+        export type StringOrNumber = string | number;
+        export enum Direction { North, South, East, West }
+    "#;
+
+    let file_b = r#"
+        export class Child extends Base<string> {}
+        export interface Loggable { log(): void; }
+        export type ID = number;
+        export enum Status { Active, Inactive }
+    "#;
+
+    let sources = vec![
+        ("a.ts".to_string(), file_a.to_string()),
+        ("b.ts".to_string(), file_b.to_string()),
+    ];
+
+    let program = merge_bind_results(parse_and_bind_parallel(sources));
+
+    let interner = &program.type_interner;
+    let store = &program.definition_store;
+
+    // File A declarations
+    let check = |name: &str, kind: DefKind| {
+        let atom = interner.intern_string(name);
+        let def = store
+            .find_defs_by_name(atom)
+            .and_then(|d: Vec<tsz_solver::def::DefId>| d.first().copied());
+        assert!(def.is_some(), "{name} should have stable DefId after merge");
+        let info = store.get(def.unwrap()).unwrap();
+        assert_eq!(info.kind, kind, "{name} should be {kind:?} after merge");
+        def.unwrap()
+    };
+
+    let base_def = check("Base", DefKind::Class);
+    check("Printable", DefKind::Interface);
+    check("StringOrNumber", DefKind::TypeAlias);
+    check("Direction", DefKind::Enum);
+
+    // File B declarations
+    let child_def = check("Child", DefKind::Class);
+    check("Loggable", DefKind::Interface);
+    check("ID", DefKind::TypeAlias);
+    check("Status", DefKind::Enum);
+
+    // Class companion constructors should exist
+    let base_ctor = store.get_constructor_def(base_def);
+    assert!(
+        base_ctor.is_some(),
+        "Base class should have ClassConstructor companion"
+    );
+    let base_ctor_info = store.get(base_ctor.unwrap()).unwrap();
+    assert_eq!(base_ctor_info.kind, DefKind::ClassConstructor);
+
+    let child_ctor = store.get_constructor_def(child_def);
+    assert!(
+        child_ctor.is_some(),
+        "Child class should have ClassConstructor companion"
+    );
+
+    // Verify type param arity
+    let base_info = store.get(base_def).unwrap();
+    assert_eq!(
+        base_info.type_params.len(),
+        1,
+        "Base<T> should have 1 type param"
+    );
+
+    // Direction enum should have 4 members
+    let dir_atom = interner.intern_string("Direction");
+    let dir_def = store
+        .find_defs_by_name(dir_atom)
+        .and_then(|d: Vec<tsz_solver::def::DefId>| d.first().copied())
+        .unwrap();
+    let dir_info = store.get(dir_def).unwrap();
+    assert_eq!(
+        dir_info.enum_members.len(),
+        4,
+        "Direction should have 4 members"
+    );
+}
+
+/// Verify heritage resolution survives merge: `extends` and `implements`
+/// are wired at the DefId level during pre-population.
+#[test]
+fn heritage_resolution_survives_merge() {
+    use tsz_solver::def::DefKind;
+
+    let source = r#"
+        export interface Readable { read(): string; }
+        export interface Writable { write(data: string): void; }
+        export class Stream implements Readable, Writable {
+            read() { return ""; }
+            write(data: string) {}
+        }
+        export class FileStream extends Stream {
+            path: string;
+        }
+    "#;
+
+    let sources = vec![("io.ts".to_string(), source.to_string())];
+    let program = merge_bind_results(parse_and_bind_parallel(sources));
+
+    let interner = &program.type_interner;
+    let store = &program.definition_store;
+
+    let find = |name: &str| -> tsz_solver::def::DefId {
+        let atom = interner.intern_string(name);
+        store
+            .find_defs_by_name(atom)
+            .and_then(|d: Vec<tsz_solver::def::DefId>| {
+                d.iter().copied().find(|&id| {
+                    store.get(id).is_some_and(|info| {
+                        matches!(info.kind, DefKind::Class | DefKind::Interface)
+                    })
+                })
+            })
+            .expect(&format!("{name} should have a DefId"))
+    };
+
+    let readable_def = find("Readable");
+    let _writable_def = find("Writable");
+    let stream_def = find("Stream");
+    let file_stream_def = find("FileStream");
+
+    // Stream implements Readable and Writable
+    let stream_info = store.get(stream_def).unwrap();
+    assert!(
+        !stream_info.implements.is_empty(),
+        "Stream should have implements entries from heritage resolution"
+    );
+
+    // FileStream extends Stream
+    let fs_info = store.get(file_stream_def).unwrap();
+    assert_eq!(
+        fs_info.extends,
+        Some(stream_def),
+        "FileStream.extends should point to Stream's DefId"
+    );
+
+    // Verify Readable is one of the implements targets
+    assert!(
+        stream_info.implements.contains(&readable_def),
+        "Stream.implements should contain Readable's DefId"
+    );
+}
+
+/// Verify that namespace-member export wiring survives merge.
+/// Declarations inside namespaces should be wired as exports of their parent.
+#[test]
+fn namespace_export_wiring_survives_merge() {
+    use tsz_solver::def::DefKind;
+
+    let source = r#"
+        export namespace Geo {
+            export interface Point { x: number; y: number; }
+            export type Distance = number;
+            export class Vector { magnitude: number; }
+        }
+    "#;
+
+    let sources = vec![("geo.ts".to_string(), source.to_string())];
+    let program = merge_bind_results(parse_and_bind_parallel(sources));
+
+    let interner = &program.type_interner;
+    let store = &program.definition_store;
+
+    // Find the namespace
+    let geo_atom = interner.intern_string("Geo");
+    let geo_def = store
+        .find_defs_by_name(geo_atom)
+        .and_then(|d: Vec<tsz_solver::def::DefId>| d.first().copied())
+        .expect("Geo namespace should have a DefId");
+    let geo_info = store.get(geo_def).unwrap();
+    assert_eq!(geo_info.kind, DefKind::Namespace);
+
+    // Namespace should have exports wired
+    assert!(
+        !geo_info.exports.is_empty(),
+        "Geo namespace should have exports from namespace-member wiring"
+    );
+
+    // Check that Point, Distance, and Vector are among the exports
+    let export_names: Vec<_> = geo_info.exports.iter().map(|(name, _)| *name).collect();
+    let point_atom = interner.intern_string("Point");
+    let distance_atom = interner.intern_string("Distance");
+    let vector_atom = interner.intern_string("Vector");
+
+    assert!(
+        export_names.contains(&point_atom),
+        "Geo should export Point"
+    );
+    assert!(
+        export_names.contains(&distance_atom),
+        "Geo should export Distance"
+    );
+    assert!(
+        export_names.contains(&vector_atom),
+        "Geo should export Vector"
+    );
+}

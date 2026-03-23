@@ -250,10 +250,10 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a new `CheckerContext`.
     ///
-    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`
-    /// at construction time. This moves top-level declaration identity creation
-    /// from checker hot paths (on-demand via `get_or_create_def_id` fallback)
-    /// to construction time (deterministic, early), reducing `def_fallback_count`.
+    /// Creates a pre-populated `DefinitionStore` from the binder's
+    /// `semantic_defs` at construction time, using the solver-owned
+    /// `DefinitionStore::from_semantic_defs` factory. This moves
+    /// identity creation entirely out of checker code into the solver.
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -267,7 +267,7 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        let ctx = Self::base(
+        let mut ctx = Self::base(
             arena,
             binder,
             types,
@@ -275,11 +275,14 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
         );
-        // Pre-populate DefIds from the binder's semantic_defs at construction
-        // time. This is idempotent — if check_source_file later calls
-        // pre_populate_def_ids_from_binder() again, the dedup checks skip
-        // already-registered entries.
-        ctx.pre_populate_def_ids_from_binder();
+        // Create pre-populated DefinitionStore from binder's semantic_defs
+        // using the solver-owned factory. This is the canonical identity
+        // creation path — no checker-side conversion needed.
+        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
+            &binder.semantic_defs,
+            |s| types.intern_string(s),
+        ));
+        ctx.warm_local_caches_from_shared_store();
         ctx
     }
 
@@ -324,8 +327,8 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a new `CheckerContext` with explicit compiler options.
     ///
-    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`
-    /// at construction time.
+    /// Creates a pre-populated `DefinitionStore` from the binder's
+    /// `semantic_defs` using the solver-owned factory.
     pub fn with_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -339,7 +342,7 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        let ctx = Self::base(
+        let mut ctx = Self::base(
             arena,
             binder,
             types,
@@ -347,7 +350,11 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
         );
-        ctx.pre_populate_def_ids_from_binder();
+        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
+            &binder.semantic_defs,
+            |s| types.intern_string(s),
+        ));
+        ctx.warm_local_caches_from_shared_store();
         ctx
     }
 
@@ -402,14 +409,19 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
         );
+        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
+            &binder.semantic_defs,
+            |s| types.intern_string(s),
+        ));
         ctx.apply_cache(cache);
-        ctx.pre_populate_def_ids_from_binder();
+        ctx.warm_local_caches_from_shared_store();
         ctx
     }
 
     /// Create a new `CheckerContext` with explicit compiler options and a persistent cache.
     ///
-    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`.
+    /// Creates a pre-populated `DefinitionStore` from the binder's
+    /// `semantic_defs` using the solver-owned factory.
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -432,8 +444,12 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
         );
+        ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
+            &binder.semantic_defs,
+            |s| types.intern_string(s),
+        ));
         ctx.apply_cache(cache);
-        ctx.pre_populate_def_ids_from_binder();
+        ctx.warm_local_caches_from_shared_store();
         ctx
     }
 

@@ -1314,6 +1314,204 @@ impl DefinitionStore {
 
         size
     }
+
+    /// Create a pre-populated `DefinitionStore` from binder `SemanticDefEntry` data.
+    ///
+    /// This is the canonical factory for converting binder-owned stable identity
+    /// into solver `DefId`s. It runs as a standalone function (no checker context
+    /// needed), enabling identity creation at merge time or single-file
+    /// construction time rather than as checker-side repair.
+    ///
+    /// The function performs three passes:
+    /// 1. Create `DefId`s and `DefinitionInfo` for each `SemanticDefEntry`.
+    /// 2. Wire namespace exports from `parent_namespace` relationships.
+    /// 3. Resolve heritage names (extends/implements) to `DefId`s.
+    ///
+    /// The `intern_string` callback abstracts over `TypeInterner::intern_string`
+    /// vs `QueryDatabase::intern_string`, so both the merge pipeline and checker
+    /// constructors can use this without coupling to a specific interner type.
+    pub fn from_semantic_defs(
+        semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
+        intern_string: impl Fn(&str) -> Atom,
+    ) -> Self {
+        let store = Self::new();
+
+        if semantic_defs.is_empty() {
+            return store;
+        }
+
+        // Pass 1: Create DefIds and DefinitionInfo for each entry.
+        for (&sym_id, entry) in semantic_defs {
+            let kind = match entry.kind {
+                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
+                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
+                tsz_binder::SemanticDefKind::Class => DefKind::Class,
+                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
+                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
+                tsz_binder::SemanticDefKind::Function => DefKind::Function,
+                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
+            };
+
+            let name = intern_string(&entry.name);
+
+            let type_params = if entry.type_param_count > 0 {
+                (0..entry.type_param_count)
+                    .map(|i| {
+                        let param_name = entry
+                            .type_param_names
+                            .get(i as usize)
+                            .map(|n| intern_string(n))
+                            .unwrap_or(Atom(0));
+                        crate::TypeParamInfo {
+                            name: param_name,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let enum_members: Vec<(Atom, EnumMemberValue)> = entry
+                .enum_member_names
+                .iter()
+                .map(|n| (intern_string(n), EnumMemberValue::Computed))
+                .collect();
+
+            let info = DefinitionInfo {
+                kind,
+                name,
+                type_params,
+                body: None,
+                instance_shape: None,
+                static_shape: None,
+                extends: None,
+                implements: Vec::new(),
+                enum_members,
+                exports: Vec::new(),
+                file_id: Some(entry.file_id),
+                span: Some((entry.span_start, entry.span_start)),
+                symbol_id: Some(sym_id.0),
+                heritage_names: entry.heritage_names(),
+                is_abstract: entry.is_abstract,
+                is_const: entry.is_const,
+                is_exported: entry.is_exported,
+                is_global_augmentation: entry.is_global_augmentation,
+                is_declare: entry.is_declare,
+            };
+
+            let def_id = store.register(info);
+            store.register_symbol_mapping(sym_id.0, entry.file_id, def_id);
+
+            // For classes, create a ClassConstructor companion DefId.
+            if kind == DefKind::Class {
+                let ctor_info = DefinitionInfo {
+                    kind: DefKind::ClassConstructor,
+                    name: intern_string(&entry.name),
+                    type_params: Vec::new(),
+                    body: None,
+                    instance_shape: None,
+                    static_shape: None,
+                    extends: None,
+                    implements: Vec::new(),
+                    enum_members: Vec::new(),
+                    exports: Vec::new(),
+                    file_id: Some(entry.file_id),
+                    span: Some((entry.span_start, entry.span_start)),
+                    symbol_id: Some(sym_id.0),
+                    heritage_names: Vec::new(),
+                    is_abstract: entry.is_abstract,
+                    is_const: false,
+                    is_exported: entry.is_exported,
+                    is_global_augmentation: false,
+                    is_declare: entry.is_declare,
+                };
+                let ctor_def_id = store.register(ctor_info);
+                store.register_constructor_companion(def_id, ctor_def_id);
+            }
+        }
+
+        // Pass 2: Wire namespace exports from parent_namespace relationships.
+        for (&sym_id, entry) in semantic_defs {
+            if let Some(parent_sym) = entry.parent_namespace {
+                let child_def = store.find_def_by_symbol(sym_id.0);
+                let parent_def = store.find_def_by_symbol(parent_sym.0);
+                if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
+                    let name = intern_string(&entry.name);
+                    store.add_export(parent_def_id, name, child_def_id);
+                }
+            }
+        }
+
+        // Pass 3: Resolve heritage names to DefIds.
+        for (&sym_id, entry) in semantic_defs {
+            let def_id = match store.find_def_by_symbol(sym_id.0) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            // Resolve extends_names → DefinitionInfo.extends
+            if !entry.extends_names.is_empty() {
+                for name_str in &entry.extends_names {
+                    if name_str.contains('.') {
+                        continue; // property-access names resolved by checker
+                    }
+                    let name_atom = intern_string(name_str);
+                    if let Some(candidates) = store.find_defs_by_name(name_atom) {
+                        for &candidate_id in &candidates {
+                            if candidate_id == def_id {
+                                continue;
+                            }
+                            if let Some(candidate_info) = store.get(candidate_id)
+                                && matches!(
+                                    candidate_info.kind,
+                                    DefKind::Class | DefKind::Interface
+                                )
+                            {
+                                store.set_extends(def_id, candidate_id);
+                                break;
+                            }
+                        }
+                    }
+                    break; // only first extends name for the extends field
+                }
+            }
+
+            // Resolve implements_names → DefinitionInfo.implements
+            if !entry.implements_names.is_empty() {
+                let mut resolved_implements = Vec::new();
+                for name_str in &entry.implements_names {
+                    if name_str.contains('.') {
+                        continue;
+                    }
+                    let name_atom = intern_string(name_str);
+                    if let Some(candidates) = store.find_defs_by_name(name_atom) {
+                        for &candidate_id in &candidates {
+                            if candidate_id == def_id {
+                                continue;
+                            }
+                            if let Some(candidate_info) = store.get(candidate_id)
+                                && matches!(
+                                    candidate_info.kind,
+                                    DefKind::Interface | DefKind::Class
+                                )
+                            {
+                                resolved_implements.push(candidate_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !resolved_implements.is_empty() {
+                    store.set_implements(def_id, resolved_implements);
+                }
+            }
+        }
+
+        store
+    }
 }
 
 // =============================================================================
