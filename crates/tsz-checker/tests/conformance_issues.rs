@@ -5088,7 +5088,10 @@ class Test1 {
 }
         ",
         {
-            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
+            CheckerOptions {
+                target: tsz_common::common::ScriptTarget::ES5,
+                ..Default::default()
+            }
         },
     );
 
@@ -5121,7 +5124,10 @@ class B {
 }
         ",
         {
-            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
+            CheckerOptions {
+                target: tsz_common::common::ScriptTarget::ES5,
+                ..Default::default()
+            }
         },
     );
 
@@ -5159,7 +5165,10 @@ export class Test1 {
 }
         ",
         {
-            CheckerOptions { target: tsz_common::common::ScriptTarget::ES5, ..Default::default() }
+            CheckerOptions {
+                target: tsz_common::common::ScriptTarget::ES5,
+                ..Default::default()
+            }
         },
     );
 
