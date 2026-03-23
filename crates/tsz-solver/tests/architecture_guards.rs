@@ -4,12 +4,11 @@
 //! expressed through Rust's module system or Cargo dependency declarations.
 //!
 //! Guards:
-//! - Solver file size ratchet (prevents monolith modules)
 //! - Emitter must not perform semantic type validation (rule 13)
 //! - Binder must not import solver or checker (rule 4)
+//!
+//! Note: Solver file size ratchets are in `solver_file_size_ceiling_tests.rs`.
 
-#[allow(unused_imports)]
-use super::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -26,75 +25,6 @@ fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
-}
-
-// =============================================================================
-// Solver file size ratchet
-// =============================================================================
-
-/// Guard that solver source files do not grow beyond current ceilings.
-///
-/// Per CLAUDE.md section 19: "Avoid growth of monolith modules; split before
-/// crossing maintainability threshold."
-///
-/// Current state: 8 files over 2000 lines, largest is ~4100 lines.
-/// These ceilings must only decrease over time as files are split.
-#[test]
-fn solver_file_size_ratchet() {
-    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    walk_rs_files(&solver_src, &mut files);
-
-    let mut oversized = Vec::new();
-    let mut max_lines = 0usize;
-
-    for path in &files {
-        let rel = path
-            .strip_prefix(&solver_src)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        // Skip test files
-        if rel.starts_with("tests/") || rel.contains("/tests/") || rel.contains("/test") {
-            continue;
-        }
-
-        let line_count = match fs::read_to_string(path) {
-            Ok(s) => s.lines().count(),
-            Err(_) => continue,
-        };
-
-        if line_count > max_lines {
-            max_lines = line_count;
-        }
-
-        if line_count > 2000 {
-            oversized.push(format!("  {} ({} lines)", rel, line_count));
-        }
-    }
-
-    // Ceiling: number of solver source files exceeding 2000 LOC.
-    // Must only shrink as files are split into smaller modules.
-    const FILE_COUNT_CEILING: usize = 8;
-    assert!(
-        oversized.len() <= FILE_COUNT_CEILING,
-        "Number of solver source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
-         Split oversized files into smaller modules before adding new code. \
-         Current oversized files:\n{}",
-        oversized.len(),
-        oversized.join("\n")
-    );
-
-    // Ceiling: maximum line count of any single solver source file.
-    // Prevents existing large files from growing further.
-    const MAX_LOC_CEILING: usize = 4200;
-    assert!(
-        max_lines <= MAX_LOC_CEILING,
-        "Largest solver source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
-         Split the file into smaller modules. Current oversized files:\n{}",
-        oversized.join("\n")
-    );
 }
 
 // =============================================================================
