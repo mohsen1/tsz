@@ -40,8 +40,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// When `Lazy(DefId(X))` resolves to `Enum(DefId(X), ...)`, the recursive call
     /// in `check_subtype` would extract the same DefId and falsely detect a cycle.
-    /// This helper identifies that case so the caller can release the def_guard.
-    /// For non-enum resolutions (e.g., recursive interfaces), the def_guard is
+    /// This helper identifies that case so the caller can release the `def_guard`.
+    /// For non-enum resolutions (e.g., recursive interfaces), the `def_guard` is
     /// critical for preventing infinite recursion and must NOT be released.
     fn is_lazy_to_same_enum(&self, original: TypeId, resolved: TypeId) -> bool {
         if let Some(lazy_def) = lazy_def_id(self.interner, original)

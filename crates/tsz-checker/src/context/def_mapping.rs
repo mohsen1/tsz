@@ -907,7 +907,7 @@ impl<'a> CheckerContext<'a> {
     /// re-iterating each binder's `semantic_defs` and re-converting
     /// `SemanticDefEntry` → `DefinitionInfo`.
     ///
-    /// Also discovers ClassConstructor companion DefIds for any class DefIds
+    /// Also discovers `ClassConstructor` companion `DefId`s for any class `DefId`s
     /// encountered, ensuring constructor identity is warm from the start
     /// rather than being created on-demand in checker hot paths.
     ///
