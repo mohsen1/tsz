@@ -439,6 +439,17 @@ impl<'a> CheckerState<'a> {
             // Auto-incremented member — we need to compute its position value.
             // Walk through all declarations of the parent enum to find this member's
             // auto-incremented value.
+            //
+            // Add to EVAL_VISITED before entering compute_auto_increment_value:
+            // that function evaluates prior members' initializers, which can cycle
+            // back to this auto-incremented member via cross-enum references.
+            // e.g., `enum E { A = F.C }; enum F { B = E.A, C }`
+            // E.A -> F.C (auto-inc) -> compute_auto_inc walks F.B -> E.A -> F.C -> ...
+            let already_visiting = EVAL_VISITED.with(|v| !v.borrow_mut().insert(member_decl));
+            if already_visiting {
+                return None; // Circular — treat as non-constant
+            }
+            let _guard = VisitedGuard(member_decl);
             return self.compute_auto_increment_value(current_sym_id, member_decl);
         }
 

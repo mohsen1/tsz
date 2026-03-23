@@ -499,3 +499,44 @@ fn const_enum_six_deep_chain() {
         "Unexpected TS2474 for valid 6-deep const enum chain"
     );
 }
+
+// =========================================================================
+// Auto-increment cycle protection
+// =========================================================================
+
+/// Cycle through auto-incremented member:
+/// `enum E { A = F.C }; enum F { B = E.A, C }`
+/// F.C is auto-incremented but depends on F.B which depends on E.A which depends on F.C.
+/// Must not stack-overflow.
+#[test]
+fn enum_cycle_through_auto_increment_member() {
+    let diags = check_source_diagnostics("enum E { A = F.C }\nenum F { B = E.A, C }");
+    // The critical invariant is no panic / stack overflow.
+    let _ = diags;
+}
+
+/// Const enum cycle through auto-incremented member.
+#[test]
+fn const_enum_cycle_through_auto_increment_member() {
+    let diags = check_source_diagnostics("const enum E { A = F.C }\nconst enum F { B = E.A, C }");
+    // Must not overflow. The circular dependency prevents constant evaluation.
+    let _ = diags;
+}
+
+/// Auto-increment member referencing another auto-increment member across enums.
+/// `enum E { A, B = F.D }; enum F { C = E.B, D }`
+#[test]
+fn enum_mutual_auto_increment_cycle() {
+    let diags = check_source_diagnostics("enum E { A, B = F.D }\nenum F { C = E.B, D }");
+    let _ = diags;
+}
+
+/// Three-enum cycle going through auto-increment:
+/// `enum E { A = F.C }; enum F { B = G.C, C }; enum G { B = E.A, C }`
+#[test]
+fn enum_three_way_cycle_through_auto_increment() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.C }\nenum F { B = G.C, C }\nenum G { B = E.A, C }",
+    );
+    let _ = diags;
+}
