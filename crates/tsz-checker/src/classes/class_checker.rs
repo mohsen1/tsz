@@ -377,6 +377,7 @@ impl<'a> CheckerState<'a> {
             None,
             None,
             base_class_name,
+            derived_class_name,
             base_member_names,
             no_implicit_override,
         );
@@ -444,6 +445,7 @@ impl<'a> CheckerState<'a> {
             class_data,
             None,
             None,
+            derived_class_name,
             derived_class_name,
             &rustc_hash::FxHashSet::default(),
             no_implicit_override,
@@ -545,6 +547,7 @@ impl<'a> CheckerState<'a> {
         base_class_idx: Option<NodeIndex>,
         base_chain_summary: Option<&ClassChainSummary>,
         base_class_name: &str,
+        derived_class_name: &str,
         base_instance_member_names: &rustc_hash::FxHashSet<String>,
         no_implicit_override: bool,
     ) {
@@ -637,6 +640,22 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::THIS_PARAMETER_PROPERTY_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_ME,
                     );
+                }
+
+                // TS2610: constructor parameter property overrides a base accessor
+                // A parameter property like `constructor(public p: string)` acts as an
+                // instance property. If the base class defines the same name as an
+                // accessor (get/set), this is an accessor/property kind mismatch.
+                if let Some(ref base_info) = base_member {
+                    if base_info.is_accessor && !base_info.is_abstract {
+                        self.error_at_node(
+                            param.name,
+                            &format!(
+                                "'{param_name}' is defined as an accessor in class '{base_class_name}', but is overridden here in '{derived_class_name}' as an instance property."
+                            ),
+                            diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
+                        );
+                    }
                 }
             }
         }
@@ -1193,6 +1212,7 @@ impl<'a> CheckerState<'a> {
             Some(base_idx),
             Some(&base_chain_summary),
             &base_class_name,
+            &derived_class_name,
             &base_instance_member_names,
             no_implicit_override,
         );
