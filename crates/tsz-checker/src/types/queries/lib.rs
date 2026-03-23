@@ -107,8 +107,7 @@ impl<'a> CheckerState<'a> {
                         // For the first definition, record canonical type parameter TypeIds
                         if first_params.is_none() && !params.is_empty() {
                             first_params = Some(params.clone());
-                            // Compute TypeIds for these canonical params
-                            let factory = self.ctx.types.factory();
+                            // Compute TypeIds for these canonical params (reuse outer factory)
                             canonical_param_type_ids =
                                 params.iter().map(|p| factory.type_param(*p)).collect();
 
