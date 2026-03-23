@@ -112,8 +112,8 @@ impl<'a> CheckerState<'a> {
                             // Cache type parameters for Application expansion.
                             // Use the canonical (merged-binder) SymbolId so the DefId
                             // matches what type reference resolution produces.
-                            let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
-                            self.ctx.insert_def_type_params(def_id, params.clone());
+                            self.ctx
+                                .cache_canonical_lib_type_params(name, sym_id, params.clone());
 
                             lib_types.push(ty);
                         } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
@@ -151,8 +151,8 @@ impl<'a> CheckerState<'a> {
                                 // Cache type parameters for Application expansion.
                                 // Use the canonical (merged-binder) SymbolId to avoid
                                 // collisions between per-lib-context and main binder identities.
-                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
-                                self.ctx.insert_def_type_params(def_id, params);
+                                self.ctx
+                                    .cache_canonical_lib_type_params(name, sym_id, params);
                                 lib_types.push(ty);
                                 break;
                             }
