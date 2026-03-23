@@ -473,6 +473,16 @@ pub struct SemanticDefEntry {
     /// placeholder parameters (e.g., `Map<unknown, unknown>`) before the full
     /// checker walk fills in the real `TypeParamInfo`.
     pub type_param_count: u16,
+    /// Names of type parameters on the declaration (empty for non-generic).
+    ///
+    /// Captured at bind time from the identifier names of each type parameter
+    /// node. For example, `class Foo<T, U>` yields `["T", "U"]`. This allows
+    /// the pre-populated `DefinitionInfo` to have `TypeParamInfo` with real
+    /// names instead of `Atom(0)` stubs, improving diagnostic and formatting
+    /// quality before the full checker walk fills in constraints/defaults.
+    ///
+    /// Invariant: `type_param_names.len() == type_param_count as usize`.
+    pub type_param_names: Vec<String>,
     /// Whether the declaration has an `export` modifier or is otherwise exported.
     ///
     /// Captured at bind time so the checker and file-skeleton infrastructure can
@@ -536,9 +546,10 @@ impl SemanticDefEntry {
             }
         }
         // If the first declaration had no type params but a later file does
-        // (e.g., augmentation adds generics), update the arity.
+        // (e.g., augmentation adds generics), update the arity and names.
         if self.type_param_count == 0 && other.type_param_count > 0 {
             self.type_param_count = other.type_param_count;
+            self.type_param_names = other.type_param_names.clone();
         }
         // If the later declaration is exported, mark as exported.
         if other.is_exported {

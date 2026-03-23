@@ -3985,6 +3985,87 @@ namespace MyNS {}
 }
 
 #[test]
+fn semantic_defs_captures_type_param_names_for_generics() {
+    let binder = bind_source(
+        "
+class MyClass<T, U> {}
+interface MyInterface<A, B, C> {}
+type MyType<X> = X[];
+function myFunc<R>(): R { return undefined as any; }
+enum MyEnum { A }
+const myVar = 1;
+namespace MyNS {}
+",
+    );
+
+    let class_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyClass")
+        .expect("MyClass");
+    assert_eq!(
+        class_entry.type_param_names,
+        vec!["T", "U"],
+        "MyClass should capture type param names T, U"
+    );
+
+    let iface_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyInterface")
+        .expect("MyInterface");
+    assert_eq!(
+        iface_entry.type_param_names,
+        vec!["A", "B", "C"],
+        "MyInterface should capture type param names A, B, C"
+    );
+
+    let alias_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyType")
+        .expect("MyType");
+    assert_eq!(
+        alias_entry.type_param_names,
+        vec!["X"],
+        "MyType should capture type param name X"
+    );
+
+    let func_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "myFunc")
+        .expect("myFunc");
+    assert_eq!(
+        func_entry.type_param_names,
+        vec!["R"],
+        "myFunc should capture type param name R"
+    );
+
+    // Non-generic declarations: empty names
+    let enum_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyEnum")
+        .expect("MyEnum");
+    assert!(enum_entry.type_param_names.is_empty());
+
+    let var_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "myVar")
+        .expect("myVar");
+    assert!(var_entry.type_param_names.is_empty());
+
+    let ns_entry = binder
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "MyNS")
+        .expect("MyNS");
+    assert!(ns_entry.type_param_names.is_empty());
+}
+
+#[test]
 fn semantic_defs_type_param_count_zero_for_non_generic() {
     let binder = bind_source("class Plain {} interface Simple {} type Alias = string;");
 
@@ -5449,6 +5530,7 @@ fn merge_cross_file_accumulates_heritage() {
         file_id: 0,
         span_start: 0,
         type_param_count: 0,
+        type_param_names: Vec::new(),
         is_exported: false,
         enum_member_names: Vec::new(),
         is_const: false,
@@ -5462,6 +5544,7 @@ fn merge_cross_file_accumulates_heritage() {
         file_id: 1,
         span_start: 100,
         type_param_count: 2,
+        type_param_names: vec!["T".to_string(), "U".to_string()],
         is_exported: true,
         enum_member_names: Vec::new(),
         is_const: false,
@@ -5474,8 +5557,9 @@ fn merge_cross_file_accumulates_heritage() {
 
     // Heritage: Bar (already present, not duplicated) + Baz (new)
     assert_eq!(first.heritage_names, vec!["Bar", "Baz"]);
-    // Type param arity updated from 0 to 2
+    // Type param arity and names updated from 0 to 2
     assert_eq!(first.type_param_count, 2);
+    assert_eq!(first.type_param_names, vec!["T", "U"]);
     // Export promoted
     assert!(first.is_exported);
     // Core identity preserved from first
@@ -5491,6 +5575,7 @@ fn merge_cross_file_accumulates_enum_members() {
         file_id: 0,
         span_start: 0,
         type_param_count: 0,
+        type_param_names: Vec::new(),
         is_exported: false,
         enum_member_names: vec!["Red".to_string(), "Green".to_string()],
         is_const: false,
@@ -5504,6 +5589,7 @@ fn merge_cross_file_accumulates_enum_members() {
         file_id: 1,
         span_start: 50,
         type_param_count: 0,
+        type_param_names: Vec::new(),
         is_exported: false,
         enum_member_names: vec!["Green".to_string(), "Blue".to_string()],
         is_const: true,
@@ -5532,6 +5618,7 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         file_id: 0,
         span_start: 0,
         type_param_count: 3,
+        type_param_names: vec!["A".to_string(), "B".to_string(), "C".to_string()],
         is_exported: true,
         enum_member_names: Vec::new(),
         is_const: false,
@@ -5545,6 +5632,7 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         file_id: 1,
         span_start: 50,
         type_param_count: 0,
+        type_param_names: Vec::new(),
         is_exported: false,
         enum_member_names: Vec::new(),
         is_const: false,
