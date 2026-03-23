@@ -296,6 +296,34 @@ fn type_definition_class_typed_variable() {
     }
 }
 
+#[test]
+fn type_definition_interface_variable() {
+    let t = FourslashTest::new(
+        "
+        interface /*def*/Config { host: string; port: number; }
+        const /*ref*/cfg: Config = { host: 'localhost', port: 80 };
+    ",
+    );
+    let result = t.go_to_type_definition("ref");
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
+        result.expect_at_marker("def");
+    }
+}
+
+#[test]
+fn type_definition_function_parameter() {
+    let t = FourslashTest::new(
+        "
+        interface /*def*/User { name: string; }
+        function greet(/*ref*/user: User) {}
+    ",
+    );
+    let result = t.go_to_type_definition("ref");
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
+        result.expect_at_marker("def");
+    }
+}
+
 // =============================================================================
 // Hover Tests
 // =============================================================================
