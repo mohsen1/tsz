@@ -255,7 +255,11 @@ impl<'a> FlowAnalyzer<'a> {
             let element_node = self.arena.get(element)?;
             if let Some(prop) = self.arena.get_property_assignment(element_node) {
                 let name_atom = self.fallback_object_property_name_atom(prop.name)?;
-                let value_type = self.fallback_expression_type_from_syntax(prop.initializer)?;
+                // Preserve literal types in object literal properties (don't widen).
+                // This allows accurate structural comparison during assignment narrowing.
+                let value_type = self
+                    .literal_type_from_node(prop.initializer)
+                    .or_else(|| self.fallback_expression_type_from_syntax(prop.initializer))?;
                 properties.push(PropertyInfo::new(name_atom, value_type));
                 continue;
             }
@@ -266,7 +270,9 @@ impl<'a> FlowAnalyzer<'a> {
                     .node_types
                     .and_then(|nt| nt.get(&shorthand.name.0).copied())
                     .or_else(|| self.fallback_type_for_reference(shorthand.name))?;
-                properties.push(PropertyInfo::new(ident.atom, value_type));
+                // Re-intern through solver to match solver's Atom namespace.
+                let name_atom = self.interner.intern_string(&ident.escaped_text);
+                properties.push(PropertyInfo::new(name_atom, value_type));
                 continue;
             }
             return None;
@@ -278,7 +284,9 @@ impl<'a> FlowAnalyzer<'a> {
     fn fallback_object_property_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
         let name_node = self.arena.get(name_idx)?;
         if let Some(ident) = self.arena.get_identifier(name_node) {
-            return Some(ident.atom);
+            // Re-intern through solver to ensure Atom namespace matches solver types.
+            // Scanner-interned atoms (ident.atom) use a different interner than the solver.
+            return Some(self.interner.intern_string(&ident.escaped_text));
         }
         if let Some(literal) = self.arena.get_literal(name_node) {
             return Some(self.interner.intern_string(&literal.text));
