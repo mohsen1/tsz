@@ -2885,6 +2885,21 @@ fn definition_inherited_via_type_annotation() {
 }
 
 #[test]
+fn hover_this_keyword() {
+    let mut t = FourslashTest::new(
+        "
+        class MyClass {
+            value: number = 42;
+            getValue() {
+                return /*h*/this.value;
+            }
+        }
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
 fn hover_optional_chaining() {
     let mut t = FourslashTest::new(
         "
