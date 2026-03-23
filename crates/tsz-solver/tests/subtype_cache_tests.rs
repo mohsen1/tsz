@@ -369,16 +369,19 @@ fn assignability_result_does_not_contaminate_subtype_cache() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
+    // Use non-trivial pairs to avoid QueryCache fast-path (identity/top/bottom/error/any).
+    let hello = interner.literal_string("hello");
+
     // Assignability uses CompatChecker rules which may differ from SubtypeChecker
     // Ensure results do not cross-contaminate
-    assert!(db.is_assignable_to(TypeId::ANY, TypeId::NUMBER));
+    assert!(db.is_assignable_to(hello, TypeId::STRING));
     let sub_entries_after_assign = db.relation_cache_stats().subtype_entries;
     assert_eq!(
         sub_entries_after_assign, 0,
         "Assignability check should not populate subtype cache"
     );
 
-    assert!(db.is_subtype_of(TypeId::ANY, TypeId::NUMBER));
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     let sub_entries_after_sub = db.relation_cache_stats().subtype_entries;
     assert!(
         sub_entries_after_sub >= 1,

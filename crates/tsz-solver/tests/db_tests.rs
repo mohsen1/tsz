@@ -97,19 +97,22 @@ fn test_cache_poisoning_prevention() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
+    // Use non-trivial pairs to avoid QueryCache fast-paths (identity/top/bottom/error/any).
+    let hello = interner.literal_string("hello");
+
     // 1. Check assignability - uses CompatChecker with TS rules
-    assert!(db.is_assignable_to(TypeId::ANY, TypeId::NUMBER));
+    assert!(db.is_assignable_to(hello, TypeId::STRING));
     assert_eq!(db.assignability_cache_len(), 1);
     assert_eq!(db.subtype_cache_len(), 0);
 
-    // 2. Check subtype - uses SubtypeChecker (also handles any propagation)
-    assert!(db.is_subtype_of(TypeId::ANY, TypeId::NUMBER));
+    // 2. Check subtype - uses SubtypeChecker
+    assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.assignability_cache_len(), 1);
     assert_eq!(db.subtype_cache_len(), 1);
 
     // 3. Verify caches are separate - both have 1 entry proving they're independent
-    assert!(db.is_assignable_to(TypeId::ANY, TypeId::NUMBER)); // Cache hit
-    assert!(db.is_subtype_of(TypeId::ANY, TypeId::NUMBER)); // Cache hit
+    assert!(db.is_assignable_to(hello, TypeId::STRING)); // Cache hit
+    assert!(db.is_subtype_of(hello, TypeId::STRING)); // Cache hit
 
     // Check cache hit (no growth)
     assert_eq!(db.assignability_cache_len(), 1);
@@ -277,14 +280,15 @@ fn query_cache_statistics_reflects_cache_population() {
     let stats = cache.statistics();
     assert_eq!(stats, QueryCacheStatistics::default());
 
-    // Use non-trivial pairs to avoid QueryCache fast-path (identity/top/bottom/error).
+    // Use non-trivial pairs to avoid QueryCache fast-path (identity/top/bottom/error/any).
     let hello = interner.literal_string("hello");
+    let world = interner.literal_string("world");
 
     // Subtype check populates the subtype cache.
     let _ = cache.is_subtype_of(hello, TypeId::STRING);
 
     // Assignability check populates the assignability cache.
-    let _ = cache.is_assignable_to(TypeId::STRING, TypeId::ANY);
+    let _ = cache.is_assignable_to(world, TypeId::STRING);
 
     let stats = cache.statistics();
     // Relation caches should have entries from the checks above.
