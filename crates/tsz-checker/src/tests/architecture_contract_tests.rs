@@ -1681,7 +1681,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "def::resolver::TypeResolver",
         "expression_ops",
         "instantiate_generic",
-        "instantiate_type",
         "instantiate_type_with_depth_status",
         "judge::DefaultJudge",
         "judge::Judge",
@@ -1935,7 +1934,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] Centralized assignability gateways                -> multiple existing tests
 //
 // RATCHET GUARDS (debt tracking):
-// - [x] TEMPORARILY_ALLOWED bypass list capped at 44      -> test_temporarily_allowed_bypass_list_does_not_grow
+// - [x] TEMPORARILY_ALLOWED bypass list capped at 43      -> test_temporarily_allowed_bypass_list_does_not_grow
 // - [x] Direct interner type construction capped at 13    -> test_direct_interner_type_construction_ceiling
 // - [x] Checker file size ceiling (4 files > 2000 LOC)    -> test_checker_file_size_ceiling
 // - [x] Max single file LOC ceiling (2650 lines)          -> test_checker_file_size_ceiling
@@ -3224,7 +3223,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
         }
     }
 
-    const CEILING: usize = 44;
+    const CEILING: usize = 43;
     assert!(
         count <= CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
