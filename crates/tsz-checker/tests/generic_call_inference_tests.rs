@@ -186,20 +186,9 @@ declare function wrap<T>(x: T): Box<T>;
 const b: Box<number> = wrap(42);
 "#;
     let diags = relevant_diagnostics(source);
-    // Known conformance gap: checker reports Box<T> not assignable to Box<number>
-    // instead of properly instantiating T=number in the return type.
-    // This test documents current behavior and guards against regressions.
-    let has_2322 = diags.iter().any(|(code, _)| *code == 2322);
-    let has_crash = diags.iter().any(|(code, _)| *code == 0);
     assert!(
-        !has_crash,
-        "Should not crash on application contextual types. Diagnostics: {diags:#?}"
-    );
-    // When this conformance gap is fixed, this assertion can be flipped to
-    // assert no TS2322 is emitted.
-    assert!(
-        has_2322,
-        "Expected TS2322 for known conformance gap (Box<T> vs Box<number>). Diagnostics: {diags:#?}"
+        diags.is_empty(),
+        "Return context should instantiate T=number through Box<T>. Diagnostics: {diags:#?}"
     );
 }
 
@@ -313,13 +302,9 @@ declare function consume(w: Wrapper<number>): void;
 consume(make(42));
 "#;
     let diags = relevant_diagnostics(source);
-    // Known conformance gap: Wrapper<T> not fully instantiated through return
-    // context when passing to a function parameter. Documents current behavior.
-    // When fixed, flip to assert no TS2345.
-    let has_2345 = diags.iter().any(|(code, _)| *code == 2345);
     assert!(
-        has_2345,
-        "Known gap: Wrapper<T> vs Wrapper<number> mismatch. Diagnostics: {diags:#?}"
+        diags.is_empty(),
+        "Return context should match Application<T> against Application<concrete>. Diagnostics: {diags:#?}"
     );
 }
 
@@ -462,13 +447,9 @@ declare function config<T>(v: T): Config<T>;
 const c: { value: number; label: string } = config(42);
 "#;
     let diags = relevant_diagnostics(source);
-    // Known conformance gap: Config<T> not fully resolved through return
-    // context structural matching. Documents current behavior.
-    // When fixed, flip to assert no TS2322.
-    let has_2322 = diags.iter().any(|(code, _)| *code == 2322);
     assert!(
-        has_2322,
-        "Known gap: Config<T> vs object literal type mismatch. Diagnostics: {diags:#?}"
+        diags.is_empty(),
+        "Return context should match structurally through object properties. Diagnostics: {diags:#?}"
     );
 }
 
@@ -645,5 +626,173 @@ const result: Container<number> = box_it(42);
     assert!(
         diags.is_empty(),
         "Application matching should work in return context. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Contextual instantiation through intersections ────────────────────
+
+#[test]
+fn generic_callback_in_intersection_parameter() {
+    // When a generic parameter type is an intersection involving a callback,
+    // inference should still provide contextual types for callback params.
+    let source = r#"
+declare function register<T>(value: T, handler: (x: T) => void): void;
+register(42, (x) => {
+    const _n: number = x;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "Intersection callback should get contextual type. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Generic inference with mapped type return ──────────────────────────
+
+#[test]
+fn generic_inference_with_conditional_return() {
+    // Generic inference should work when return type involves a conditional
+    let source = r#"
+declare function check<T>(x: T): T extends string ? true : false;
+const result = check("hello");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Conditional return type should not break inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Generic call with spread arguments ─────────────────────────────────
+
+#[test]
+fn generic_call_infers_from_spread_args() {
+    // Spread arguments should participate in generic inference
+    let source = r#"
+declare function first<T>(arr: T[]): T;
+const arr = [1, 2, 3];
+const result = first(arr);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Spread args should participate in inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Widening with number literal constraint ────────────────────────────
+
+#[test]
+fn number_literal_constraint_preserves_literal_type() {
+    // T extends number should preserve the literal 42, not widen to number
+    let source = r#"
+declare function num<T extends number>(x: T): T;
+const result = num(42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Number literal should be preserved with number constraint. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Boolean literal constraint ──────────────────────────────────────────
+
+#[test]
+fn boolean_literal_constraint_preserves_literal_type() {
+    let source = r#"
+declare function bool<T extends boolean>(x: T): T;
+const result = bool(true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Boolean literal should be preserved with boolean constraint. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Contextual type propagation through Promise-like ────────────────────
+
+#[test]
+fn generic_call_with_promise_return_context() {
+    // Return context from a Promise<T> target should propagate T inference
+    let source = r#"
+declare function resolve<T>(x: T): Promise<T>;
+async function test() {
+    const result: Promise<string> = resolve("hello");
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "Promise return context should propagate inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Generic call recheck with real types ────────────────────────────────
+
+#[test]
+fn recheck_generic_call_detects_argument_mismatch_after_inference() {
+    // After inference resolves T, rechecking should catch argument mismatches
+    let source = r#"
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+const result = map([1, 2, 3], (x) => "not a number");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        "Recheck should detect type mismatch after inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Generic call with optional parameter ────────────────────────────────
+
+#[test]
+fn generic_inference_with_optional_params() {
+    let source = r#"
+declare function opt<T>(required: T, optional?: T): T;
+const result = opt("hello");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Optional params should not break generic inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Multiple constraints interacting ────────────────────────────────────
+
+#[test]
+fn generic_with_extends_keyof_constraint() {
+    // T extends keyof U should constrain T to string literal union keys of U
+    let source = r#"
+declare function pick<U, T extends keyof U>(obj: U, key: T): U[T];
+const result = pick({ a: 1, b: "hello" }, "a");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "keyof constraint should work with inference. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Recursive generic callback ──────────────────────────────────────────
+
+#[test]
+fn recursive_generic_callback_does_not_stack_overflow() {
+    // Self-referential constraints should not cause stack overflow
+    let source = r#"
+interface Tree<T> { value: T; children: Tree<T>[]; }
+declare function traverse<T>(tree: Tree<T>, fn: (node: Tree<T>) => void): void;
+declare const tree: Tree<number>;
+traverse(tree, (node) => {
+    const _v: number = node.value;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "Recursive generic callback should not overflow. Diagnostics: {diags:#?}"
     );
 }
