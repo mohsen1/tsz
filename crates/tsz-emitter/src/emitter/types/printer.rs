@@ -2254,18 +2254,25 @@ impl<'a> TypePrinter<'a> {
     fn print_conditional(&self, cond_id: tsz_solver::types::ConditionalTypeId) -> String {
         let cond = self.interner.conditional_type(cond_id);
 
-        // Check type needs parens when it's a conditional, function, union, or intersection
+        // Check type needs parens when it's a conditional, function, constructor,
+        // union, or intersection. Constructor/function types need parens because
+        // their return type parsing greedily consumes the `extends` keyword.
         let check_str = self.print_type(cond.check_type);
         let check_needs_parens = visitor::conditional_type_id(self.interner, cond.check_type)
             .is_some()
             || visitor::function_shape_id(self.interner, cond.check_type).is_some()
+            || self.type_renders_as_constructor(cond.check_type)
             || visitor::union_list_id(self.interner, cond.check_type).is_some()
             || visitor::intersection_list_id(self.interner, cond.check_type).is_some();
 
-        // Extends type needs parens when it's a conditional type
+        // Extends type needs parens when it's a conditional type or when it's
+        // a function/constructor type whose return contains `extends` (i.e., a
+        // conditional return type). Without parens the inner `extends` would be
+        // mis-parsed as the outer conditional's extends clause.
         let extends_str = self.print_type(cond.extends_type);
         let extends_needs_parens =
-            visitor::conditional_type_id(self.interner, cond.extends_type).is_some();
+            visitor::conditional_type_id(self.interner, cond.extends_type).is_some()
+                || self.function_like_has_conditional_return(cond.extends_type);
 
         let check = if check_needs_parens {
             format!("({check_str})")
@@ -2380,6 +2387,70 @@ impl<'a> TypePrinter<'a> {
             tsz_solver::types::StringIntrinsicKind::Uncapitalize => "Uncapitalize",
         };
         format!("{}<{}>", kind_name, self.print_type(type_arg))
+    }
+
+    /// Check if a type renders as a constructor type (`new (...) => T`).
+    /// These need special parenthesization in conditional check/extends positions.
+    fn type_renders_as_constructor(&self, type_id: TypeId) -> bool {
+        let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) else {
+            return false;
+        };
+        let callable = self.interner.callable_shape(callable_id);
+        let has_properties = callable.properties.iter().any(|p| {
+            let name = self.resolve_atom(p.name);
+            name != "prototype" && !name.starts_with("__private_brand_")
+        });
+        // A callable renders as `new (...) => T` when it has a single construct
+        // signature and no call signatures or extra members.
+        callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+    }
+
+    /// Check if a type is a function-like (FunctionShape or single-call-sig Callable)
+    /// whose return type is a conditional type. Used to decide whether the type needs
+    /// parentheses in the extends position of a conditional type.
+    fn function_like_has_conditional_return(&self, type_id: TypeId) -> bool {
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            let func = self.interner.function_shape(func_id);
+            return visitor::conditional_type_id(self.interner, func.return_type).is_some();
+        }
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            // Only arrow-form callables (single call or single construct sig with
+            // no extra members) would produce `extends` in the printed output.
+            let has_properties = callable.properties.iter().any(|p| {
+                let name = self.resolve_atom(p.name);
+                name != "prototype" && !name.starts_with("__private_brand_")
+            });
+            if callable.call_signatures.len() == 1
+                && callable.construct_signatures.is_empty()
+                && !has_properties
+                && callable.string_index.is_none()
+                && callable.number_index.is_none()
+            {
+                return visitor::conditional_type_id(
+                    self.interner,
+                    callable.call_signatures[0].return_type,
+                )
+                .is_some();
+            }
+            if callable.call_signatures.is_empty()
+                && callable.construct_signatures.len() == 1
+                && !has_properties
+                && callable.string_index.is_none()
+                && callable.number_index.is_none()
+            {
+                return visitor::conditional_type_id(
+                    self.interner,
+                    callable.construct_signatures[0].return_type,
+                )
+                .is_some();
+            }
+        }
+        false
     }
 }
 

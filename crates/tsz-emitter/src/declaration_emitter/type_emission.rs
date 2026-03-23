@@ -544,11 +544,16 @@ impl<'a> DeclarationEmitter<'a> {
             // Conditional type (T extends U ? X : Y)
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
                 if let Some(conditional) = self.arena.get_conditional_type(type_node) {
-                    // check_type needs parens for conditional/function/union/intersection
+                    // check_type needs parens for conditional/function/constructor/union/intersection.
+                    // Constructor types need parens because their return type parsing
+                    // greedily consumes the `extends` keyword:
+                    // `new () => T extends U ? X : Y` parses as
+                    // `new () => (T extends U ? X : Y)` without parens.
                     let check_needs_parens =
                         if let Some(node) = self.arena.get(conditional.check_type) {
                             node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                                 || node.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || node.kind == syntax_kind_ext::UNION_TYPE
                                 || node.kind == syntax_kind_ext::INTERSECTION_TYPE
                         } else {
@@ -566,17 +571,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(" extends ");
 
                     // extends_type needs parens for conditional types.
-                    // Function types also need parens when their return type is
-                    // a conditional (the inner `extends` would be mis-parsed as
-                    // the outer conditional's extends clause). The parser doesn't
+                    // Function/constructor types also need parens when their return
+                    // type is a conditional (the inner `extends` would be mis-parsed
+                    // as the outer conditional's extends clause). The parser doesn't
                     // create PARENTHESIZED_TYPE nodes, so we must add parens here.
                     let extends_needs_parens =
                         if let Some(node) = self.arena.get(conditional.extends_type) {
                             if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
                                 true
-                            } else if node.kind == syntax_kind_ext::FUNCTION_TYPE {
-                                // Only parenthesize function types whose return type
-                                // is itself a conditional (contains `extends`)
+                            } else if node.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                            {
+                                // Only parenthesize function/constructor types whose
+                                // return type is itself a conditional (contains `extends`)
                                 self.function_type_has_conditional_return(node)
                             } else {
                                 false
