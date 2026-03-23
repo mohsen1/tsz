@@ -785,10 +785,14 @@ impl<'a> CheckerState<'a> {
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
                     // TS1170: Computed property in type literal must have literal/unique symbol type
-                    if let Some(member_node) = self.ctx.arena.get(member_idx)
-                        && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                    {
-                        self.check_type_literal_computed_property_name(sig.name);
+                    if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                        if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            self.check_type_literal_computed_property_name(sig.name);
+                        } else if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                            // For get/set accessors in type literals, use TS2464
+                            // (general computed property check) matching tsc behavior
+                            self.check_computed_property_name(accessor.name);
+                        }
                     }
                 }
                 // TS2411: Check that properties are assignable to index signature types.
