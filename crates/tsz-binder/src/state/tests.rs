@@ -5862,13 +5862,13 @@ interface Child extends Base { }
 
     let my_class = find("MyClass").expect("Missing MyClass");
     assert!(
-        my_class.heritage_names.contains(&"Base".to_string()),
+        my_class.heritage_names().contains(&"Base".to_string()),
         "class should capture extends name"
     );
 
     let child = find("Child").expect("Missing Child");
     assert!(
-        child.heritage_names.contains(&"Base".to_string()),
+        child.heritage_names().contains(&"Base".to_string()),
         "interface should capture extends name"
     );
 }
@@ -5930,7 +5930,8 @@ fn merge_cross_file_propagates_global_augmentation_flag() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: Vec::new(),
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
         parent_namespace: None,
         is_global_augmentation: false,
     };
@@ -5945,7 +5946,8 @@ fn merge_cross_file_propagates_global_augmentation_flag() {
         enum_member_names: Vec::new(),
         is_const: false,
         is_abstract: false,
-        heritage_names: Vec::new(),
+        extends_names: Vec::new(),
+        implements_names: Vec::new(),
         parent_namespace: None,
         is_global_augmentation: true,
     };
