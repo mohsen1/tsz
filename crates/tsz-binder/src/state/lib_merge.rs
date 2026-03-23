@@ -363,7 +363,8 @@ impl BinderState {
                         enum_member_names: entry.enum_member_names.clone(),
                         is_const: entry.is_const,
                         is_abstract: entry.is_abstract,
-                        heritage_names: entry.heritage_names.clone(),
+                        extends_names: entry.extends_names.clone(),
+                        implements_names: entry.implements_names.clone(),
                         parent_namespace: remapped_parent,
                     };
                     if let Some(existing) = self.semantic_defs.get_mut(&new_id) {

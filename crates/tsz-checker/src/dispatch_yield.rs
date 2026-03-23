@@ -169,7 +169,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         Some(declared_return_type)
     }
 
-    pub(crate) fn get_type_of_yield_expression(&mut self, idx: NodeIndex, request: &TypingRequest) -> TypeId {
+    pub(crate) fn get_type_of_yield_expression(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };

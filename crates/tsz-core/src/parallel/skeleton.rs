@@ -169,7 +169,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             let heritage_names = result
                 .semantic_defs
                 .get(&sym_id)
-                .map_or_else(Vec::new, |def| def.heritage_names.clone());
+                .map_or_else(Vec::new, |def| def.heritage_names());
             symbols.push(SkeletonSymbol {
                 name: name.clone(),
                 flags: sym.flags,
@@ -197,7 +197,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
                 let heritage_names = result
                     .semantic_defs
                     .get(&sym_id)
-                    .map_or_else(Vec::new, |def| def.heritage_names.clone());
+                    .map_or_else(Vec::new, |def| def.heritage_names());
                 symbols.push(SkeletonSymbol {
                     name: name.clone(),
                     flags: sym.flags,

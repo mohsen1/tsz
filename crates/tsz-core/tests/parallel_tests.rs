@@ -4973,15 +4973,15 @@ interface Merged extends C { c: boolean }
         .find(|e| e.name == "Merged")
         .expect("Merged should be in semantic_defs");
     assert!(
-        entry.heritage_names.contains(&"A".to_string()),
+        entry.heritage_names().contains(&"A".to_string()),
         "heritage should include A after merge"
     );
     assert!(
-        entry.heritage_names.contains(&"B".to_string()),
+        entry.heritage_names().contains(&"B".to_string()),
         "heritage should include B after merge"
     );
     assert!(
-        entry.heritage_names.contains(&"C".to_string()),
+        entry.heritage_names().contains(&"C".to_string()),
         "heritage should include C after merge"
     );
 }
@@ -5065,11 +5065,11 @@ interface Extended extends Extra { b: number }
         .find(|e| e.name == "Extended")
         .expect("Extended should be in BoundFile.semantic_defs");
     assert!(
-        file_entry.heritage_names.contains(&"Base".to_string()),
+        file_entry.heritage_names().contains(&"Base".to_string()),
         "per-file entry should have Base heritage"
     );
     assert!(
-        file_entry.heritage_names.contains(&"Extra".to_string()),
+        file_entry.heritage_names().contains(&"Extra".to_string()),
         "per-file entry should have Extra heritage"
     );
 }
@@ -5101,11 +5101,11 @@ interface Composed extends B { b: number }
         .find(|e| e.name == "Composed")
         .expect("Composed should be in reconstructed binder's semantic_defs");
     assert!(
-        entry.heritage_names.contains(&"A".to_string()),
+        entry.heritage_names().contains(&"A".to_string()),
         "reconstructed binder should preserve heritage A"
     );
     assert!(
-        entry.heritage_names.contains(&"B".to_string()),
+        entry.heritage_names().contains(&"B".to_string()),
         "reconstructed binder should preserve heritage B"
     );
 }
@@ -5687,14 +5687,14 @@ fn cross_file_interface_heritage_accumulated_in_semantic_defs() {
         .expect("expected semantic def for Foo");
 
     assert!(
-        foo_entry.heritage_names.contains(&"Bar".to_string()),
+        foo_entry.heritage_names().contains(&"Bar".to_string()),
         "Foo should have heritage name 'Bar' from file a.ts, got {:?}",
-        foo_entry.heritage_names
+        foo_entry.heritage_names()
     );
     assert!(
-        foo_entry.heritage_names.contains(&"Baz".to_string()),
+        foo_entry.heritage_names().contains(&"Baz".to_string()),
         "Foo should have heritage name 'Baz' from file b.ts, got {:?}",
-        foo_entry.heritage_names
+        foo_entry.heritage_names()
     );
 }
 
@@ -5867,14 +5867,14 @@ fn cross_file_class_heritage_accumulated_in_semantic_defs() {
         .expect("expected semantic def for Foo");
 
     assert!(
-        foo_entry.heritage_names.contains(&"Base".to_string()),
+        foo_entry.heritage_names().contains(&"Base".to_string()),
         "Foo should have heritage 'Base' from class declaration, got {:?}",
-        foo_entry.heritage_names
+        foo_entry.heritage_names()
     );
     assert!(
-        foo_entry.heritage_names.contains(&"Extra".to_string()),
+        foo_entry.heritage_names().contains(&"Extra".to_string()),
         "Foo should have heritage 'Extra' from interface merge, got {:?}",
-        foo_entry.heritage_names
+        foo_entry.heritage_names()
     );
 }
 
@@ -5912,13 +5912,13 @@ fn cross_file_semantic_def_identity_stable_in_definition_store() {
     let (&widget_sym, widget_entry) = widget_entries[0];
     assert!(
         widget_entry
-            .heritage_names
+            .heritage_names()
             .contains(&"Renderable".to_string()),
         "Widget heritage should include Renderable"
     );
     assert!(
         widget_entry
-            .heritage_names
+            .heritage_names()
             .contains(&"Serializable".to_string()),
         "Widget heritage should include Serializable"
     );
@@ -5937,6 +5937,214 @@ fn cross_file_semantic_def_identity_stable_in_definition_store() {
     assert_eq!(info.kind, tsz_solver::def::DefKind::Interface);
     assert!(info.heritage_names.contains(&"Renderable".to_string()));
     assert!(info.heritage_names.contains(&"Serializable".to_string()));
+}
+
+// =============================================================================
+// Heritage resolution at pre-populate time (Pass 3)
+// =============================================================================
+
+#[test]
+fn heritage_resolution_wires_class_extends_in_definition_store() {
+    // When a class extends another class and both are in semantic_defs,
+    // pre_populate_definition_store should wire DefinitionInfo.extends.
+    let files = vec![(
+        "classes.ts".to_string(),
+        "class Base {} class Derived extends Base {}".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let base_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Base")
+        .map(|(&sym, _)| sym)
+        .expect("Base should be in semantic_defs");
+    let derived_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Derived")
+        .map(|(&sym, _)| sym)
+        .expect("Derived should be in semantic_defs");
+
+    let base_def = program
+        .definition_store
+        .find_def_by_symbol(base_sym.0)
+        .expect("Base should have a DefId");
+    let derived_def = program
+        .definition_store
+        .find_def_by_symbol(derived_sym.0)
+        .expect("Derived should have a DefId");
+
+    let derived_info = program
+        .definition_store
+        .get(derived_def)
+        .expect("Derived DefinitionInfo should exist");
+    assert_eq!(
+        derived_info.extends,
+        Some(base_def),
+        "Derived.extends should point to Base's DefId"
+    );
+}
+
+#[test]
+fn heritage_resolution_wires_class_implements_in_definition_store() {
+    // When a class implements interfaces, pre_populate should wire implements.
+    let files = vec![(
+        "impl.ts".to_string(),
+        "interface IFoo {} interface IBar {} class Baz implements IFoo, IBar {}".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let ifoo_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "IFoo")
+        .map(|(&sym, _)| sym)
+        .expect("IFoo should be in semantic_defs");
+    let ibar_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "IBar")
+        .map(|(&sym, _)| sym)
+        .expect("IBar should be in semantic_defs");
+    let baz_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Baz")
+        .map(|(&sym, _)| sym)
+        .expect("Baz should be in semantic_defs");
+
+    let ifoo_def = program
+        .definition_store
+        .find_def_by_symbol(ifoo_sym.0)
+        .expect("IFoo DefId");
+    let ibar_def = program
+        .definition_store
+        .find_def_by_symbol(ibar_sym.0)
+        .expect("IBar DefId");
+    let baz_def = program
+        .definition_store
+        .find_def_by_symbol(baz_sym.0)
+        .expect("Baz DefId");
+
+    let baz_info = program
+        .definition_store
+        .get(baz_def)
+        .expect("Baz DefinitionInfo");
+    assert!(
+        baz_info.implements.contains(&ifoo_def),
+        "Baz.implements should contain IFoo, got {:?}",
+        baz_info.implements
+    );
+    assert!(
+        baz_info.implements.contains(&ibar_def),
+        "Baz.implements should contain IBar, got {:?}",
+        baz_info.implements
+    );
+}
+
+#[test]
+fn heritage_resolution_skips_property_access_names() {
+    // Heritage names like "ns.Base" contain dots and cannot be resolved by
+    // simple name lookup. Pre-populate should leave extends as None.
+    let files = vec![(
+        "dotted.ts".to_string(),
+        "namespace ns { export class Base {} } class Derived extends ns.Base {}".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let derived_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Derived")
+        .map(|(&sym, _)| sym)
+        .expect("Derived should be in semantic_defs");
+    let derived_def = program
+        .definition_store
+        .find_def_by_symbol(derived_sym.0)
+        .expect("Derived DefId");
+    let derived_info = program
+        .definition_store
+        .get(derived_def)
+        .expect("Derived DefinitionInfo");
+
+    assert_eq!(
+        derived_info.extends, None,
+        "Dotted heritage names should not be resolved at pre-populate time"
+    );
+}
+
+#[test]
+fn heritage_resolution_survives_cross_file_merge() {
+    // Heritage should be resolved even when class and its parent are in
+    // different files (both are script files so they share the global scope).
+    let files = vec![
+        ("a.ts".to_string(), "class Parent {}".to_string()),
+        (
+            "b.ts".to_string(),
+            "class Child extends Parent {}".to_string(),
+        ),
+    ];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let parent_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Parent")
+        .map(|(&sym, _)| sym)
+        .expect("Parent should be in semantic_defs");
+    let child_sym = program
+        .semantic_defs
+        .iter()
+        .find(|(_, e)| e.name == "Child")
+        .map(|(&sym, _)| sym)
+        .expect("Child should be in semantic_defs");
+
+    let parent_def = program
+        .definition_store
+        .find_def_by_symbol(parent_sym.0)
+        .expect("Parent DefId");
+    let child_def = program
+        .definition_store
+        .find_def_by_symbol(child_sym.0)
+        .expect("Child DefId");
+
+    let child_info = program
+        .definition_store
+        .get(child_def)
+        .expect("Child DefinitionInfo");
+    assert_eq!(
+        child_info.extends,
+        Some(parent_def),
+        "Child.extends should point to Parent's DefId across files"
+    );
+}
+
+#[test]
+fn split_heritage_names_in_semantic_defs() {
+    // Verify that extends_names and implements_names are split correctly
+    // in the merged semantic_defs.
+    let files = vec![(
+        "split.ts".to_string(),
+        "interface I {} class Base {} class Derived extends Base implements I {}".to_string(),
+    )];
+    let results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(results);
+
+    let derived = program
+        .semantic_defs
+        .values()
+        .find(|e| e.name == "Derived")
+        .expect("Derived should be in semantic_defs");
+
+    assert_eq!(derived.extends_names, vec!["Base"]);
+    assert_eq!(derived.implements_names, vec!["I"]);
+    // Combined accessor should include both
+    assert_eq!(derived.heritage_names(), vec!["Base", "I"]);
 }
 
 // =============================================================================
