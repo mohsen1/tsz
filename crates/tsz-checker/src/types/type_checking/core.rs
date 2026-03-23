@@ -1360,6 +1360,101 @@ impl<'a> CheckerState<'a> {
                     self.check_using_declaration_disposable(decl_idx, is_await_using);
                 }
             }
+
+            // TS2492: Check if let/const declarations inside a catch block shadow
+            // the catch clause variable. `var` is allowed (different scoping), but
+            // `let`/`const` are not.
+            let is_let_or_const =
+                (flags_u32 & (node_flags::LET | node_flags::CONST)) != 0 && !is_using;
+            if is_let_or_const {
+                self.check_catch_clause_variable_redeclaration(
+                    list_idx,
+                    &var_list.declarations.nodes,
+                );
+            }
+        }
+    }
+
+    /// TS2492: Check if any `let`/`const` declaration in a catch block shadows
+    /// the catch clause variable name.
+    ///
+    /// In TypeScript, `try {} catch (x) { let x; }` is an error because the
+    /// block-scoped `x` would shadow the catch clause binding `x`.
+    fn check_catch_clause_variable_redeclaration(
+        &mut self,
+        list_idx: NodeIndex,
+        declarations: &[NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // Walk up: VarDeclList -> VarStatement -> Block -> CatchClause
+        let var_stmt_idx = self
+            .ctx
+            .arena
+            .get_extended(list_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        let block_idx = self
+            .ctx
+            .arena
+            .get_extended(var_stmt_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        let catch_clause_idx = self
+            .ctx
+            .arena
+            .get_extended(block_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+
+        // Check if the ancestor is a CatchClause
+        let Some(catch_node) = self.ctx.arena.get(catch_clause_idx) else {
+            return;
+        };
+        if catch_node.kind != syntax_kind_ext::CATCH_CLAUSE {
+            return;
+        }
+        let Some(catch_data) = self.ctx.arena.get_catch_clause(catch_node) else {
+            return;
+        };
+        if catch_data.variable_declaration.is_none() {
+            return;
+        }
+
+        // Get the catch clause variable name
+        let catch_var_name = (|| {
+            let var_node = self.ctx.arena.get(catch_data.variable_declaration)?;
+            let var_decl = self.ctx.arena.get_variable_declaration(var_node)?;
+            let name_node = self.ctx.arena.get(var_decl.name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            Some(ident.escaped_text.clone())
+        })();
+        let Some(catch_var_name) = catch_var_name else {
+            return;
+        };
+
+        // Check each declaration in the list
+        for &decl_idx in declarations {
+            let decl_name = (|| {
+                let decl_node = self.ctx.arena.get(decl_idx)?;
+                let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                let name_node = self.ctx.arena.get(var_decl.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                Some((ident.escaped_text.clone(), var_decl.name))
+            })();
+            if let Some((name, name_idx)) = decl_name {
+                if name == catch_var_name {
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        name_idx,
+                        &message,
+                        diagnostic_codes::CANNOT_REDECLARE_IDENTIFIER_IN_CATCH_CLAUSE,
+                    );
+                }
+            }
         }
     }
 
