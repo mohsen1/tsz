@@ -1423,6 +1423,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if current_body.is_some() {
+            // Check if the body is an empty block — tsc emits `namespace X { }` on one line
+            let is_empty_body = self
+                .arena
+                .get(current_body)
+                .and_then(|body_node| self.arena.get_module_block(body_node))
+                .map_or(true, |module_block| {
+                    module_block
+                        .statements
+                        .as_ref()
+                        .map_or(true, |stmts| stmts.nodes.is_empty())
+                });
+
+            if is_empty_body {
+                self.write(" { }");
+                self.write_line();
+                return;
+            }
+
             self.write(" {");
             self.write_line();
             self.increase_indent();
