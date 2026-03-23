@@ -9,31 +9,17 @@
 //! (`enum E { A = F.B }; enum F { B = E.A }`).  A drop guard ensures cleanup even
 //! on panic.
 
+use super::cycle_guard::{self, CycleSetId};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-
-thread_local! {
-    static CONST_EVAL_VISITED: std::cell::RefCell<rustc_hash::FxHashSet<NodeIndex>>
-        = std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-}
 
 // Memoization cache for const enum member evaluation results.
 // Avoids redundant evaluation when multiple members reference the same target.
 thread_local! {
     static CONST_EVAL_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<NodeIndex, Option<f64>>>
         = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
-}
-
-/// RAII guard that removes a `NodeIndex` from `CONST_EVAL_VISITED` on drop.
-struct ConstEvalGuard(NodeIndex);
-impl Drop for ConstEvalGuard {
-    fn drop(&mut self) {
-        CONST_EVAL_VISITED.with(|v| {
-            v.borrow_mut().remove(&self.0);
-        });
-    }
 }
 
 /// Clear the const enum evaluation memo cache.
@@ -283,11 +269,7 @@ fn resolve_external_enum_member(
                 let m_data = arena.get_enum_member(m_node)?;
 
                 // Cycle detection: if we're already evaluating this member, bail out.
-                let already_visiting = CONST_EVAL_VISITED.with(|v| !v.borrow_mut().insert(m_idx));
-                if already_visiting {
-                    return None; // Circular — treat as non-constant
-                }
-                let _guard = ConstEvalGuard(m_idx);
+                let _guard = cycle_guard::try_enter(m_idx, CycleSetId::ConstEnum)?;
 
                 let result = if m_data.initializer.is_some() {
                     evaluate_const_enum_initializer(
@@ -340,7 +322,7 @@ fn resolve_external_enum_member(
 /// For auto-incremented members, finds the nearest prior explicit initializer,
 /// evaluates it, then adds the offset.
 ///
-/// Uses `CONST_EVAL_VISITED` to detect self-referencing initializers
+/// Uses the shared `CycleGuard` to detect self-referencing initializers
 /// (e.g., `const enum E { A = A }`).
 fn resolve_enum_member_value(
     arena: &tsz_parser::parser::NodeArena,
@@ -363,11 +345,7 @@ fn resolve_enum_member_value(
     let m_data = arena.get_enum_member(m_node)?;
 
     // Cycle detection: if we're already evaluating this member, bail out.
-    let already_visiting = CONST_EVAL_VISITED.with(|v| !v.borrow_mut().insert(m_idx));
-    if already_visiting {
-        return None; // Circular — treat as non-constant
-    }
-    let _guard = ConstEvalGuard(m_idx);
+    let _guard = cycle_guard::try_enter(m_idx, CycleSetId::ConstEnum)?;
 
     let result = if m_data.initializer.is_some() {
         // Explicit initializer — evaluate it directly
