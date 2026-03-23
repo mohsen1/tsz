@@ -645,9 +645,10 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.no_implicit_any() {
             return;
         }
-        // Suppress when types are unresolved
-        if index_type == TypeId::ANY || index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN
-        {
+        // Suppress when types are unresolved (but NOT for `any` — tsc reports
+        // TS7053 when `any` is used to index a type without an index signature
+        // under noImplicitAny, e.g., `emptyObj[hi]` where `hi: any`).
+        if index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN {
             return;
         }
         if object_type == TypeId::ANY
@@ -660,6 +661,21 @@ impl<'a> CheckerState<'a> {
         if self.is_element_access_on_this_or_super_with_any_base(expr_idx) {
             return;
         }
+
+        // For literal indices on simple (non-union/non-intersection) types, emit
+        // TS2339 ("Property X does not exist") instead of TS7053. tsc uses TS2339
+        // for literal element access keys on simple types like `{}`, but uses
+        // TS7053 for unions with partial index signature presence.
+        let is_union_or_intersection =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, object_type).is_some()
+                || tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
+                    .is_some();
+        // Check if the object has any index signature. If so, the more specific
+        // TS7015/TS7053 diagnostics below should handle the error, not TS2339.
+        let idx_resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_any_index_signature = idx_resolver.resolve_string_index(object_type).is_some()
+            || idx_resolver.resolve_number_index(object_type).is_some();
 
         if let Some(atom) =
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
@@ -679,6 +695,44 @@ impl<'a> CheckerState<'a> {
                 // If there's a suggestion, TypeScript emits TS2551 instead of TS7053.
                 // TS2551 is reported at the argument node (e.g., "foo" in i["foo"]).
                 self.error_property_not_exist_at(prop_name_str, object_type, arg_idx);
+                return;
+            }
+
+            // For non-union types without index signatures, emit TS2339.
+            // Skip if the object has any index signature — TS7015 handles those.
+            if !is_union_or_intersection && !has_any_index_signature {
+                let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
+                let message =
+                    format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
+                self.error_at_anchor(
+                    expr_idx,
+                    DiagnosticAnchorKind::ElementAccessExpr,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return;
+            }
+        }
+
+        // For non-union types with number literal indices and no index sigs, emit TS2339.
+        if !is_union_or_intersection && !has_any_index_signature {
+            if let Some(num) =
+                tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+            {
+                let prop_name = if num.fract() == 0.0 && num.is_finite() {
+                    format!("{}", num as i64)
+                } else {
+                    num.to_string()
+                };
+                let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
+                let message =
+                    format!("Property '{prop_name}' does not exist on type '{object_str}'.");
+                self.error_at_anchor(
+                    expr_idx,
+                    DiagnosticAnchorKind::ElementAccessExpr,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
                 return;
             }
         }
