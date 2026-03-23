@@ -209,3 +209,57 @@ fn attached_pinned_comments_stripped_when_remove_comments_true() {
         "Attached pinned comments should be stripped with removeComments.\nOutput:\n{output}"
     );
 }
+
+/// Comments inside erased type arguments of heritage clauses (extends)
+/// must not leak into the JS output. tsc strips `<T>` in `extends Base<T>`
+/// along with any comments inside.
+#[test]
+fn test_heritage_type_arg_comments_do_not_leak() {
+    let source = "class Foo extends Bar</* type comment */ string> { }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("type comment"),
+        "Comments inside erased heritage type arguments should not appear in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("extends Bar"),
+        "The extends clause should still be present.\nOutput:\n{output}"
+    );
+}
+
+/// Multiple type arguments with comments in heritage clauses should all be stripped.
+#[test]
+fn test_heritage_multiple_type_arg_comments_do_not_leak() {
+    let source = "class Foo extends Map</* key */ string, /* value */ number> { }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("key"),
+        "Comments inside erased heritage type arguments should not appear in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("value"),
+        "Comments inside erased heritage type arguments should not appear in JS output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("extends Map"),
+        "The extends clause should still be present.\nOutput:\n{output}"
+    );
+}
