@@ -742,21 +742,9 @@ impl TypeInterner {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             return TypeId::ERROR;
         }
-        // Circuit breaker 2: total operation count (catches infinite loops
-        // that repeatedly look up cached types without creating new ones).
-        thread_local! {
-            static OP_COUNT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        }
-        if OP_COUNT.with(|c| {
-            let v = c.get() + 1;
-            c.set(v);
-            v
-        }) > 10_000_000
-        {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            return TypeId::ERROR;
-        }
+        // Note: infinite-loop protection is handled by solver-level recursion
+        // depth limits and fuel budgets, not here. The type count limit above
+        // prevents unbounded memory growth from new type creation.
 
         let mut hasher = FxHasher::default();
         key.hash(&mut hasher);
@@ -900,15 +888,11 @@ impl TypeInterner {
     /// Get an approximate count of interned types.
     /// This is cheaper than `len()` as it samples only a few shards.
     /// Used for the circuit breaker to avoid OOM.
+    /// Uses the global allocation counter for an exact count (single atomic load)
+    /// instead of sampling shards and extrapolating.
     #[inline]
     fn approximate_count(&self) -> usize {
-        // Sample first 4 shards and extrapolate (assumes uniform distribution)
-        let mut sample_total: usize = 0;
-        for shard in self.shards.iter().take(4) {
-            sample_total += shard.next_index.load(Ordering::Relaxed) as usize;
-        }
-        // Extrapolate to all 64 shards
-        (sample_total * SHARD_COUNT / 4) + TypeId::FIRST_USER as usize
+        self.alloc_counter.load(Ordering::Relaxed) as usize
     }
 
     #[inline]
