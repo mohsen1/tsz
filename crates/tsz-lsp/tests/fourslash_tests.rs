@@ -2831,6 +2831,43 @@ fn definition_inherited_method_deep_chain() {
 }
 
 #[test]
+fn definition_interface_inherited_member() {
+    let mut t = FourslashTest::new(
+        "
+        interface Readable {
+            /*def*/read(): string;
+        }
+        interface BufferedReadable extends Readable {
+            buffer(): void;
+        }
+        const r: BufferedReadable = { read() { return ''; }, buffer() {} };
+        r./*ref*/read();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_interface_deep_inheritance() {
+    let mut t = FourslashTest::new(
+        "
+        interface A {
+            /*def*/method(): void;
+        }
+        interface B extends A {
+            other(): void;
+        }
+        interface C extends B {
+            third(): void;
+        }
+        const c: C = { method() {}, other() {}, third() {} };
+        c./*ref*/method();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
 fn definition_inherited_via_type_annotation() {
     let mut t = FourslashTest::new(
         "
