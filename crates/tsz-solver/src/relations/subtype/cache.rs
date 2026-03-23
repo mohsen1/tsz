@@ -76,7 +76,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.interner.lookup(evaluated),
                 Some(TypeData::Intersection(_))
             );
-        if eval_is_compound { evaluated } else { original }
+        if eval_is_compound {
+            evaluated
+        } else {
+            original
+        }
     }
 
     /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
