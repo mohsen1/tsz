@@ -1731,6 +1731,35 @@ pub fn pre_populate_definition_store(
 
         let def_id = store.register(info);
         store.register_symbol_mapping(sym_id.0, entry.file_id, def_id);
+
+        // For classes, create a ClassConstructor companion DefId so the checker
+        // can reuse stable identity instead of creating one on demand. The body
+        // is left empty (filled lazily when the checker computes the constructor
+        // type), but the identity itself is stable from pre-population time.
+        if kind == DefKind::Class {
+            let ctor_info = DefinitionInfo {
+                kind: DefKind::ClassConstructor,
+                name: interner.intern_string(&entry.name),
+                type_params: Vec::new(),
+                body: None,
+                instance_shape: None,
+                static_shape: None,
+                extends: None,
+                implements: Vec::new(),
+                enum_members: Vec::new(),
+                exports: Vec::new(),
+                file_id: Some(entry.file_id),
+                span: Some((entry.span_start, entry.span_start)),
+                symbol_id: Some(sym_id.0),
+                heritage_names: Vec::new(),
+                is_abstract: entry.is_abstract,
+                is_const: false,
+                is_exported: entry.is_exported,
+                is_global_augmentation: false,
+            };
+            let ctor_def_id = store.register(ctor_info);
+            store.register_constructor_companion(def_id, ctor_def_id);
+        }
     }
 
     // Pass 2: Wire namespace exports from parent_namespace relationships.
