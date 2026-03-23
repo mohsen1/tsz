@@ -188,7 +188,9 @@ fn test_import_attributes_no_ts2823_with_preserve() {
 
 #[test]
 fn test_nolib_emits_ts2318_via_capabilities() {
-    let diags = check_with_options(
+    // When core types are defined but CallableFunction/NewableFunction are missing,
+    // tsc does NOT emit TS2318 for them (they're auxiliary Function extensions).
+    let diags_with_function = check_with_options(
         r#"
 interface Array<T> {}
 interface Boolean {}
@@ -205,10 +207,28 @@ declare function foo(): void;
             ..CheckerOptions::default()
         },
     );
-    let ts2318: Vec<_> = diags.iter().filter(|d| d.code == 2318).collect();
+    let ts2318_with_fn: Vec<_> = diags_with_function
+        .iter()
+        .filter(|d| d.code == 2318)
+        .collect();
     assert!(
-        !ts2318.is_empty(),
-        "Expected TS2318 for missing CallableFunction/NewableFunction with --noLib, got: {diags:?}"
+        ts2318_with_fn.is_empty(),
+        "Should NOT emit TS2318 for CallableFunction/NewableFunction when Function is defined, got: {ts2318_with_fn:?}"
+    );
+
+    // When Function itself is missing (true --noLib with nothing defined),
+    // tsc DOES emit TS2318 for CallableFunction/NewableFunction.
+    let diags_no_types = check_with_options(
+        "declare function foo(): void;",
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2318_no_types: Vec<_> = diags_no_types.iter().filter(|d| d.code == 2318).collect();
+    assert!(
+        !ts2318_no_types.is_empty(),
+        "Expected TS2318 for all missing core types with --noLib and no declarations, got: {diags_no_types:?}"
     );
 }
 

@@ -35,15 +35,20 @@ impl<'a> CheckerState<'a> {
         const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
-            "CallableFunction",
             "Function",
             "IArguments",
-            "NewableFunction",
             "Number",
             "Object",
             "RegExp",
             "String",
         ];
+
+        // CallableFunction/NewableFunction extend Function and provide better
+        // typing for .call/.apply/.bind. tsc only emits TS2318 for them when
+        // Function itself is also missing (i.e., true --noLib with no manual
+        // declarations). When the user defines Function manually, these are
+        // treated as optional.
+        const FUNCTION_AUX_TYPES: &[&str] = &["CallableFunction", "NewableFunction"];
 
         // Emit TS2318 errors when core global types are not available.
         // TypeScript always requires these core global types to exist.
@@ -63,6 +68,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let function_available = self.ctx.has_name_in_lib("Function");
+
         // We check if types exist globally (in libs or current file scope).
         // This matches tsc behavior where missing core types are reported
         // even when some libs are loaded (e.g., if --lib es6 is missing Array).
@@ -75,8 +82,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // CallableFunction/NewableFunction: only check when core types are also
-        // missing. When a user provides the core 8 manually (e.g., noLib tests
+        // Only check CallableFunction/NewableFunction when Function is also missing
+        if !function_available {
+            for &type_name in FUNCTION_AUX_TYPES {
+                if !self.ctx.has_name_in_lib(type_name) {
+                    self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
+                }
+            }
+        }
         // Check for feature-specific global types that may be missing
         // These are checked regardless of --noLib, but only if the feature appears to be used
         self.check_feature_specific_global_types();
