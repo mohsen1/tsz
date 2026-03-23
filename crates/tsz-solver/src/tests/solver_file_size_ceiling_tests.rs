@@ -81,7 +81,8 @@ fn test_solver_file_size_ceiling() {
 
     // Ceiling: maximum line count of any single solver source file.
     // This prevents existing large files from growing further.
-    const MAX_LOC_CEILING: usize = 4150;
+    // Current largest: operations/generic_call.rs and diagnostics/format.rs at ~3451
+    const MAX_LOC_CEILING: usize = 3500;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest solver source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
