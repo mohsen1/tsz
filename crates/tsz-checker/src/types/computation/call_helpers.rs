@@ -1511,25 +1511,41 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = self.resolve_property_access_with_env(this_type, &property_name);
-        if matches!(
-            result,
-            crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
-        ) {
-            self.error_property_not_exist_at(&property_name, this_type, access.name_or_argument);
-            return true;
+        match result {
+            crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. } => {
+                self.error_property_not_exist_at(
+                    &property_name,
+                    this_type,
+                    access.name_or_argument,
+                );
+                true
+            }
+            crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. }
+                if type_id == TypeId::ANY =>
+            {
+                // Property exists but is explicitly typed as `any` — the call target
+                // is genuinely untyped. Do NOT suppress TS2347.
+                // e.g., `private foo: any; this.foo<string>()` should emit TS2347.
+                false
+            }
+            _ => {
+                // Property exists on a concrete `this` type — the callee resolved to ANY
+                // due to generic instantiation limitations, not because it's genuinely untyped.
+                // Suppress TS2347 (e.g., `this.one<T>(...)` in static generic methods).
+                true
+            }
         }
-
-        // Property exists on a concrete `this` type — the callee resolved to ANY
-        // due to generic instantiation limitations, not because it's genuinely untyped.
-        // Suppress TS2347 (e.g., `this.one<T>(...)` in static generic methods).
-        true
     }
 
     /// Suppress TS2347 for `this.property<T>(...)` inside a class.
-    /// When an enclosing class exists, either the property is a known member
-    /// (suppress — callee is typed, ANY came from resolution limitations) or
-    /// the property doesn't exist (suppress — TS2339 already covers it).
-    pub(crate) fn is_this_property_access_in_class_context(&self, callee_expr: NodeIndex) -> bool {
+    /// When an enclosing class exists and the property is a known member that is NOT
+    /// explicitly typed as `any`, suppress — the callee is typed, ANY came from
+    /// resolution limitations. When the property is explicitly `any`, do NOT suppress
+    /// because the call target is genuinely untyped.
+    pub(crate) fn is_this_property_access_in_class_context(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> bool {
         let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
             return false;
         };
@@ -1546,8 +1562,28 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // If we're inside a class, suppress TS2347 — either the property
-        // exists (typed, not genuinely untyped) or doesn't (TS2339 handles it).
-        self.nearest_enclosing_class(callee_expr).is_some()
+        if self.nearest_enclosing_class(callee_expr).is_none() {
+            return false;
+        }
+
+        // Check if the property resolves to `any` — if so, the call target is genuinely
+        // untyped and TS2347 should fire.
+        let this_type = self.get_type_of_node(access.expression);
+        if this_type != TypeId::ANY && this_type != TypeId::ERROR {
+            if let Some(property_name) = self.get_property_name(access.name_or_argument) {
+                let result = self.resolve_property_access_with_env(this_type, &property_name);
+                if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id,
+                    ..
+                } = result
+                {
+                    if type_id == TypeId::ANY {
+                        return false; // genuinely `any` — don't suppress TS2347
+                    }
+                }
+            }
+        }
+
+        true
     }
 }
