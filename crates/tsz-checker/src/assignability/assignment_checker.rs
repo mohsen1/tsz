@@ -1138,6 +1138,14 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
         let right_type = self.resolve_type_query_type(right_raw);
 
+        // Ensure the RHS type is also available in node_types for flow analysis.
+        // When clear_type_cache_recursive removes the RHS entry for contextual
+        // re-checking, the result ends up only in request_node_types. Flow analysis
+        // needs node_types to compute assignment-based narrowing (e.g., `d ?? (d = x ?? "x")`).
+        if right_raw != TypeId::ERROR && right_raw != TypeId::DELEGATE {
+            self.ctx.node_types.entry(right_idx.0).or_insert(right_raw);
+        }
+
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // No need to manually track freshness removal here.
 
