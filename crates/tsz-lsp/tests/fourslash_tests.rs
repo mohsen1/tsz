@@ -3666,6 +3666,51 @@ fn completions_class_this_members() {
 }
 
 #[test]
+fn completions_this_with_private_members() {
+    let mut t = FourslashTest::new(
+        "
+        class SecretKeeper {
+            private secret = 'hidden';
+            protected level = 5;
+            public name = 'keeper';
+            reveal() {
+                this./*c*/
+            }
+        }
+    ",
+    );
+    // Inside the class, all members (including private/protected) should show
+    t.completions("c")
+        .expect_found()
+        .expect_includes("secret")
+        .expect_includes("level")
+        .expect_includes("name")
+        .expect_includes("reveal");
+}
+
+#[test]
+fn completions_external_no_private_members() {
+    let mut t = FourslashTest::new(
+        "
+        class SecretKeeper {
+            private secret = 'hidden';
+            public name = 'keeper';
+        }
+        const sk = new SecretKeeper();
+        sk./*c*/
+    ",
+    );
+    let result = t.completions("c");
+    result.expect_found().expect_includes("name");
+    // Private members should NOT appear when accessing from outside
+    let has_secret = result.items.iter().any(|item| item.label == "secret");
+    assert!(
+        !has_secret,
+        "Private member 'secret' should not appear in external completions"
+    );
+}
+
+#[test]
 fn completions_no_completions_in_string() {
     let mut t = FourslashTest::new(
         "
