@@ -692,7 +692,25 @@ impl<'a> CheckerState<'a> {
                 {
                     declared_type
                 } else if prop.initializer.is_some() {
-                    let init_type = self.get_type_of_node(prop.initializer);
+                    // Use cached initializer type if available. Calling get_type_of_node
+                    // when no cache exists can trigger false diagnostics (e.g., TS2551)
+                    // if this method is invoked during constructor type building: the
+                    // this_type_stack may contain the constructor type rather than the
+                    // instance type, causing `this.prop` in instance initializers to
+                    // resolve against the static side. If no cache exists and we're
+                    // outside the member-checking context, use ANY.
+                    let init_type =
+                        if let Some(&cached) = self.ctx.node_types.get(&prop.initializer.0) {
+                            cached
+                        } else if !is_static && self.ctx.enclosing_class.is_none() {
+                            // Instance property initializer evaluated outside of
+                            // member-checking context (e.g., during class summary
+                            // construction triggered by constructor type building).
+                            // The this_type_stack is unreliable here — use ANY.
+                            TypeId::ANY
+                        } else {
+                            self.get_type_of_node(prop.initializer)
+                        };
                     if self.has_readonly_modifier(&prop.modifiers) {
                         init_type
                     } else {
