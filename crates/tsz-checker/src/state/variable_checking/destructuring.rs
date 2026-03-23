@@ -46,9 +46,12 @@ impl<'a> CheckerState<'a> {
         element_data: &tsz_parser::parser::node::BindingElementData,
         request: &TypingRequest,
     ) -> bool {
-        if element_data.initializer.is_none() {
-            return false;
-        }
+        // When the binding element itself has an initializer (e.g., `{ cause = "default" } = {}`),
+        // we check if the parent has an object literal default.
+        // When the binding element has NO initializer (e.g., `{ cause } = {}`), we also check
+        // the parent — tsc treats properties as implicitly optional when destructuring from
+        // an object literal default parameter/variable.
+        let element_has_initializer = element_data.initializer.is_some();
 
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
             return false;
@@ -70,7 +73,8 @@ impl<'a> CheckerState<'a> {
                 // in a for-of statement where the type comes from the iterable.
                 // Check if the for-of expression contains object literals.
                 if decl.initializer.is_none() {
-                    return self.is_for_of_with_object_literal_elements(parent_idx);
+                    return element_has_initializer
+                        && self.is_for_of_with_object_literal_elements(parent_idx);
                 }
                 decl.initializer
             }
