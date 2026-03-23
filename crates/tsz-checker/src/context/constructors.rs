@@ -134,6 +134,7 @@ impl<'a> CheckerContext<'a> {
             syntax_parse_error_positions: Vec::new(),
             has_real_syntax_errors: false,
             real_syntax_error_positions: Vec::new(),
+            all_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             callback_return_type_errors: Vec::new(),

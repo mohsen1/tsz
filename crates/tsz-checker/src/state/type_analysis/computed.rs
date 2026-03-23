@@ -876,8 +876,14 @@ impl<'a> CheckerState<'a> {
                 // 2. circular_type_aliases: marked by a previous cycle member
                 // 3. is_cross_file_circular_alias: cross-file cycles by following
                 //    Lazy → body → Lazy chain through shared DefinitionStore
+                // Suppress circularity checking when the type alias declaration
+                // contains parse errors. tsc skips TS2456 for malformed
+                // declarations (e.g. `type T1<in in> = T1`) where syntax errors
+                // take priority over semantic circularity detection.
+                let decl_has_parse_error = self.node_contains_any_parse_error(decl_idx);
                 let circularity_eligible =
-                    flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE) == 0;
+                    flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE) == 0
+                        && !decl_has_parse_error;
                 let is_circular = circularity_eligible
                     && (self.is_direct_circular_reference(
                         sym_id,

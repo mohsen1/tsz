@@ -568,6 +568,9 @@ pub struct CheckerContext<'a> {
     /// Used for per-node TS2564 suppression — only real parse failures (not grammar
     /// checks like TS1030 "modifier already seen") suppress property initialization.
     pub real_syntax_error_positions: Vec<u32>,
+    /// Positions of ALL parse errors (including non-suppressing ones like TS1359).
+    /// Used for TS2456 suppression when a parse error falls within a type alias.
+    pub all_parse_error_positions: Vec<u32>,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,

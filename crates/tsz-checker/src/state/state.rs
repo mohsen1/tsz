@@ -499,6 +499,24 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if ANY parse error (including non-suppressing ones like TS1359)
+    /// falls within a node's span. Used for TS2456 suppression where reserved-
+    /// word parse errors in type parameter lists should prevent false circularity.
+    pub(crate) fn node_contains_any_parse_error(&self, idx: NodeIndex) -> bool {
+        if !self.ctx.has_parse_errors || self.ctx.all_parse_error_positions.is_empty() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        for &err_pos in &self.ctx.all_parse_error_positions {
+            if err_pos >= node.pos && err_pos < node.end {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.

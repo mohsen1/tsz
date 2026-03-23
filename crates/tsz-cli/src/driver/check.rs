@@ -755,6 +755,11 @@ pub(super) fn collect_diagnostics(
                 .filter(|d| !is_non_suppressing_parse_error(d.code))
                 .map(|d| d.start)
                 .collect();
+            checker.ctx.all_parse_error_positions = file
+                .parse_diagnostics
+                .iter()
+                .map(|d| d.start)
+                .collect();
             // Track whether the file has "real" syntax errors (actual parse
             // failures like missing tokens or invalid characters) vs grammar
             // checks (strict mode violations, decorator errors, etc.).
@@ -1289,6 +1294,11 @@ pub(super) fn check_file_for_parallel<'a>(
         .parse_diagnostics
         .iter()
         .filter(|d| !is_non_suppressing_parse_error(d.code))
+        .map(|d| d.start)
+        .collect();
+    checker.ctx.all_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
         .map(|d| d.start)
         .collect();
     checker.ctx.has_real_syntax_errors = file
