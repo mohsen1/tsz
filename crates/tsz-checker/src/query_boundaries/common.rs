@@ -346,6 +346,14 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::widen_type(db, type_id)
 }
 
+/// Widen a type for diagnostic display, preserving boolean literal intrinsics.
+///
+/// Like `widen_type` but keeps `true`/`false` literals so narrowed types
+/// display correctly (e.g., `string | false` instead of `string | boolean`).
+pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widen_type_for_display(db, type_id)
+}
+
 /// Extract the element type from a rest-argument array/tuple type.
 pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::rest_argument_element_type(db, type_id)

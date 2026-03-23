@@ -806,7 +806,7 @@ impl<'a> CheckerState<'a> {
     /// let z = true;     // Type: boolean (not true)
     /// ```
     pub(crate) fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
-        tsz_solver::widening::widen_type(self.ctx.types, type_id)
+        crate::query_boundaries::common::widen_type(self.ctx.types, type_id)
     }
 
     /// Widen a type for diagnostic display purposes.
@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
     /// (`true`/`false`), so narrowed types like `string | false` display
     /// correctly instead of being widened to `string | boolean`.
     pub(crate) fn widen_type_for_display(&self, type_id: TypeId) -> TypeId {
-        tsz_solver::widening::widen_type_for_display(self.ctx.types, type_id)
+        crate::query_boundaries::common::widen_type_for_display(self.ctx.types, type_id)
     }
 
     /// Widen a mutable binding initializer type (let/var semantics).

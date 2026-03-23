@@ -1104,7 +1104,7 @@ impl<'a> CheckerState<'a> {
                             let refined_return_type = if matches!(return_type, TypeId::ERROR | TypeId::VOID) {
                                 TypeId::ANY
                             } else {
-                                tsz_solver::operations::widening::widen_type(
+                                crate::query_boundaries::common::widen_type(
                                     self.ctx.types,
                                     return_type,
                                 )
@@ -1125,7 +1125,7 @@ impl<'a> CheckerState<'a> {
                                 Some(refined_method_type),
                             );
                         let refined_this_display = Self::widen_primitive_literal_type_display(
-                            &self.format_type(tsz_solver::operations::widening::widen_type(
+                            &self.format_type(crate::query_boundaries::common::widen_type(
                                 self.ctx.types,
                                 tsz_solver::relations::freshness::widen_freshness(
                                     self.ctx.types,

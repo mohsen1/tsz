@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
                     {
                         // Widen literal types (e.g., 1 → number)
                         // since non-const type params don't preserve literals
-                        inferred = Some(tsz_solver::operations::widening::widen_type(
+                        inferred = Some(crate::query_boundaries::common::widen_type(
                             self.ctx.types,
                             arg_ty,
                         ));

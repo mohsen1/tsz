@@ -4,12 +4,14 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
+use crate::query_boundaries::type_computation::core::{
+    self as expr_ops, evaluate_contextual_structure_with,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::{TypeId, expression_ops};
 
 // =============================================================================
 // Type Computation Methods
@@ -366,7 +368,7 @@ impl<'a> CheckerState<'a> {
         //   const c2: "foo" | "bar" = c1;            // should pass
 
         // Use Solver API for type computation (Solver-First architecture)
-        expression_ops::compute_conditional_expression_type(
+        expr_ops::compute_conditional_expression_type(
             self.ctx.types,
             condition_type,
             when_true,
@@ -908,19 +910,19 @@ impl<'a> CheckerState<'a> {
         // 2. Inside a const assertion (as const)
         let in_template_context = self.ctx.in_const_assertion
             || request.contextual_type.is_some_and(|ct| {
-                expression_ops::is_template_literal_contextual_type(self.ctx.types, ct)
+                expr_ops::is_template_literal_contextual_type(self.ctx.types, ct)
             });
 
         if in_template_context {
             // Construct a template literal type preserving type parameter shapes
-            expression_ops::compute_template_expression_type_contextual(
+            expr_ops::compute_template_expression_type_contextual(
                 self.ctx.types,
                 &texts,
                 &part_types,
             )
         } else {
             // Default: template literals produce string type
-            expression_ops::compute_template_expression_type(self.ctx.types, &texts, &part_types)
+            expr_ops::compute_template_expression_type(self.ctx.types, &texts, &part_types)
         }
     }
 
