@@ -1830,6 +1830,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return result;
                 }
+                // Check tuple elements against numeric target properties.
+                // In tsc, tuples have numeric properties ("0", "1", ...) that are
+                // structurally compatible with object types having those properties.
+                // e.g., [number] <: { "0": number } is valid.
+                if let Some(tuple_id) = tuple_list_id(self.interner, source) {
+                    let elements = self.interner.tuple_list(tuple_id);
+                    let all_satisfied = t_shape.properties.iter().all(|t_prop| {
+                        let name = self.interner.resolve_atom(t_prop.name);
+                        if name == "length" {
+                            // length property: tuple length is a numeric literal
+                            return self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true();
+                        }
+                        // Check if the property name is a numeric index matching a tuple element
+                        if let Ok(idx) = name.parse::<usize>() {
+                            if let Some(elem) = elements.get(idx) {
+                                return self.check_subtype(elem.type_id, t_prop.type_id).is_true();
+                            }
+                        }
+                        // Non-numeric property: try the Array interface
+                        t_prop.optional
+                    });
+                    if all_satisfied {
+                        return SubtypeResult::True;
+                    }
+                }
                 // Trace: Array/tuple not compatible with object
                 if let Some(tracer) = &mut self.tracer
                     && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
