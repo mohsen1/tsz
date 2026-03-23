@@ -748,7 +748,18 @@ impl<'a> CheckerState<'a> {
                 // TS2695: Emit when left side has no side effects
                 // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
                 // TypeScript DOES emit this even when left operand has type errors or is typed as any
-                if !self.ctx.has_parse_errors
+                // Use node-level error flags instead of file-level has_parse_errors:
+                // Grammar errors like TS1171 (comma in computed property) are emitted by
+                // our parser but by tsc's checker, so they set has_parse_errors in our
+                // pipeline but shouldn't suppress TS2695. Only suppress when the binary
+                // expression itself has structural parse errors (e.g., `(a, new)`).
+                let node_has_parse_error = self.ctx.arena.get(node_idx).is_some_and(|n| {
+                    use tsz_parser::parser::node_flags;
+                    let flags = n.flags as u32;
+                    (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                        || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                });
+                if !node_has_parse_error
                     && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
