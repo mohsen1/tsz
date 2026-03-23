@@ -130,6 +130,40 @@ fn is_coinductive_return_type_cycle(
     true
 }
 
+/// Check if a property type mismatch should be reported (TS2430).
+///
+/// Uses regular `is_assignable_to` (NOT `no_erase_generics`) because property
+/// types in interface extends are compared with standard assignability in tsc.
+/// This allows generic function types like `<T>(a: T) => T` to be correctly
+/// recognized as assignable to concrete function types like `(a: Derived) => Derived`
+/// through generic instantiation, matching tsc's `isTypeRelatedTo` behavior
+/// for property type checking (as opposed to `compareSignaturesRelated` used
+/// for method signatures).
+pub(crate) fn should_report_property_type_mismatch(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+    node_idx: NodeIndex,
+) -> bool {
+    let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if checker.should_suppress_assignability_diagnostic(source, target) {
+        return false;
+    }
+    if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
+        return false;
+    }
+    if checker.is_assignable_to(source, target) {
+        return false;
+    }
+    if checker.should_skip_weak_union_error(source, target, node_idx) {
+        return false;
+    }
+    if is_coinductive_return_type_cycle(checker, source, target) {
+        return false;
+    }
+    true
+}
+
 pub(crate) fn should_report_member_type_mismatch_bivariant(
     checker: &mut CheckerState<'_>,
     source: TypeId,

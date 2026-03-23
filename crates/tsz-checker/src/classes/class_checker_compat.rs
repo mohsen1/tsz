@@ -3,7 +3,9 @@
 
 use crate::class_checker::{ClassMemberInfo, MemberVisibility};
 use crate::diagnostics::diagnostic_codes;
-use crate::query_boundaries::class::should_report_member_type_mismatch;
+use crate::query_boundaries::class::{
+    should_report_member_type_mismatch, should_report_property_type_mismatch,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1181,14 +1183,28 @@ impl<'a> CheckerState<'a> {
                             false
                         };
 
-                        if param_count_incompatible
-                            || should_report_member_type_mismatch(
+                        // For property signatures, use regular assignability
+                        // (allows generic instantiation). For method signatures,
+                        // use no_erase_generics mode (tsc's compareSignaturesRelated).
+                        let type_mismatch = if *derived_kind == PROPERTY_SIGNATURE
+                            && base_member_node.kind == PROPERTY_SIGNATURE
+                        {
+                            should_report_property_type_mismatch(
                                 self,
                                 *member_type,
                                 base_type,
                                 *derived_member_idx,
                             )
-                        {
+                        } else {
+                            should_report_member_type_mismatch(
+                                self,
+                                *member_type,
+                                base_type,
+                                *derived_member_idx,
+                            )
+                        };
+
+                        if param_count_incompatible || type_mismatch {
                             self.error_at_node(
                                     iface_data.name,
                                     &format!(
