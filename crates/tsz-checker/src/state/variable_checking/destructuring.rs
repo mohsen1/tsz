@@ -963,16 +963,12 @@ impl<'a> CheckerState<'a> {
                 // `function`, and structural types.
                 // ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
-                // tsc allows symbol, unique symbol, and type parameter keys
-                let key_is_symbol = key_type == TypeId::SYMBOL
-                    || tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type).is_some();
                 let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
                     key_type,
                 );
                 if !key_is_string
                     && !key_is_number
-                    && !key_is_symbol
                     && !key_is_type_param
                     && key_type != TypeId::NEVER
                 {
