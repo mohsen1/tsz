@@ -5,6 +5,7 @@
 
 pub mod accessor_checker;
 pub mod call_checker;
+pub mod call_context;
 pub mod enum_checker;
 pub mod generic_checker;
 pub mod iterable_checker;
