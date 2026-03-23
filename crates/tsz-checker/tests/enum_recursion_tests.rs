@@ -540,3 +540,315 @@ fn enum_three_way_cycle_through_auto_increment() {
     );
     let _ = diags;
 }
+
+// =========================================================================
+// Bare identifier cycles and resolution
+// =========================================================================
+
+/// Bare identifier mutual reference within same enum: `enum E { A = B, B = A }`.
+/// A references B (forward) and B references A. Must not stack-overflow.
+/// A = B is a forward reference → TS2651.
+#[test]
+fn enum_bare_identifier_mutual_reference() {
+    let diags = check_source_diagnostics("enum E { A = B, B = A }");
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for forward reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Three bare identifier cycle: `enum E { A = C, B = A, C = B }`.
+/// A and C are forward refs. Must not overflow.
+#[test]
+fn enum_bare_identifier_three_way_cycle() {
+    let diags = check_source_diagnostics("enum E { A = C, B = A, C = B }");
+    // A = C is a forward reference → TS2651
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for forward reference in three-member bare cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Bare identifier referencing earlier member should resolve correctly.
+/// `enum E { A = 10, B = A + 5 }` → B should resolve to 15.
+#[test]
+fn enum_bare_identifier_back_reference_resolves() {
+    let diags = check_source_diagnostics("enum E { A = 10, B = A + 5 }");
+    // No forward ref, no self-ref — should be clean
+    let ts2651 = diags.iter().filter(|d| d.code == 2651).count();
+    let ts2565 = diags.iter().filter(|d| d.code == 2565).count();
+    assert_eq!(
+        ts2651, 0,
+        "Unexpected TS2651 for valid bare identifier back-reference"
+    );
+    assert_eq!(
+        ts2565, 0,
+        "Unexpected TS2565 for valid bare identifier back-reference"
+    );
+}
+
+/// Mixed bare identifier and property access in expressions.
+/// `enum E { A = 1, B = A | E.A }` — both forms should resolve.
+#[test]
+fn enum_mixed_bare_and_property_access() {
+    let diags = check_source_diagnostics("enum E { A = 1, B = A | E.A }");
+    let ts2651 = diags.iter().filter(|d| d.code == 2651).count();
+    let ts2565 = diags.iter().filter(|d| d.code == 2565).count();
+    assert_eq!(ts2651, 0, "Unexpected TS2651 for valid mixed references");
+    assert_eq!(ts2565, 0, "Unexpected TS2565 for valid mixed references");
+}
+
+// =========================================================================
+// Multiple mutually recursive enums (broader patterns)
+// =========================================================================
+
+/// Five-enum chain cycle: E → F → G → H → I → E.
+/// Must not stack-overflow.
+#[test]
+fn enum_mutual_recursion_five_enums() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.B }\n\
+         enum F { B = G.C }\n\
+         enum G { C = H.D }\n\
+         enum H { D = I.X }\n\
+         enum I { X = E.A }",
+    );
+    let _ = diags;
+}
+
+/// Five-enum const cycle: all const enums in a ring.
+/// Should emit TS2474.
+#[test]
+fn const_enum_mutual_recursion_five_enums() {
+    let diags = check_source_diagnostics(
+        "const enum E { A = F.B }\n\
+         const enum F { B = G.C }\n\
+         const enum G { C = H.D }\n\
+         const enum H { D = I.X }\n\
+         const enum I { X = E.A }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for five-way const enum cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Two enums with multiple members referencing each other.
+/// `enum E { A = F.X, B = F.Y }; enum F { X = E.B, Y = 1 }`.
+/// E.A -> F.X -> E.B -> F.Y = 1 (resolves). No cycle in this path.
+/// Must not stack-overflow or emit spurious errors.
+#[test]
+fn enum_cross_reference_multiple_members_no_cycle() {
+    let diags = check_source_diagnostics("enum E { A = F.X, B = F.Y }\nenum F { X = E.B, Y = 1 }");
+    let _ = diags;
+}
+
+/// Two enums where both members cycle: `enum E { A = F.B, C = F.D }; enum F { B = E.C, D = E.A }`.
+/// E.A -> F.B -> E.C -> F.D -> E.A (cycle). Must not overflow.
+#[test]
+fn enum_cross_reference_double_cycle() {
+    let diags =
+        check_source_diagnostics("enum E { A = F.B, C = F.D }\nenum F { B = E.C, D = E.A }");
+    let _ = diags;
+}
+
+/// Const enum double cycle should emit TS2474.
+#[test]
+fn const_enum_cross_reference_double_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum E { A = F.B, C = F.D }\nconst enum F { B = E.C, D = E.A }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum double cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Nested binary expressions referencing multiple enums in a cycle.
+/// `enum E { A = F.B + G.C }; enum F { B = G.C + E.A }; enum G { C = E.A + F.B }`.
+#[test]
+fn enum_mutual_recursion_nested_binary_three_enums() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.B + G.C }\n\
+         enum F { B = G.C + E.A }\n\
+         enum G { C = E.A + F.B }",
+    );
+    let _ = diags;
+}
+
+/// Const enum version of the same nested binary three-enum cycle.
+#[test]
+fn const_enum_mutual_recursion_nested_binary_three_enums() {
+    let diags = check_source_diagnostics(
+        "const enum E { A = F.B + G.C }\n\
+         const enum F { B = G.C + E.A }\n\
+         const enum G { C = E.A + F.B }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum nested binary three-way cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Template literal element access in cycle:
+/// `enum E { A = F[\`B\`] }; enum F { B = E[\`A\`] }`.
+#[test]
+fn enum_mutual_recursion_template_literal_access() {
+    let diags = check_source_diagnostics("enum E { A = F[`B`] }\nenum F { B = E[`A`] }");
+    let _ = diags;
+}
+
+/// Const enum template literal cycle should emit TS2474.
+#[test]
+fn const_enum_mutual_recursion_template_literal_access() {
+    let diags =
+        check_source_diagnostics("const enum E { A = F[`B`] }\nconst enum F { B = E[`A`] }");
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum template literal cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Self-reference in const enum (TS2565)
+// =========================================================================
+
+/// `const enum E { A = E.A + 1 }` — self-reference in const enum binary expr.
+#[test]
+fn const_enum_self_reference_in_binary_expression() {
+    let diags = check_source_diagnostics("const enum E { A = E.A + 1 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum self-reference in binary expr, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = ~E.A }` — self-reference in const enum unary expr.
+#[test]
+fn const_enum_self_reference_in_unary_expression() {
+    let diags = check_source_diagnostics("const enum E { A = ~E.A }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum self-reference in unary expr, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = (E.A) }` — self-reference in const enum parenthesized expr.
+#[test]
+fn const_enum_self_reference_in_parenthesized_expression() {
+    let diags = check_source_diagnostics("const enum E { A = (E.A) }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum self-reference in parenthesized expr, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = E["A"] }` — element access self-reference in const enum.
+#[test]
+fn const_enum_self_reference_element_access() {
+    let diags = check_source_diagnostics("const enum E { A = E[\"A\"] }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum element-access self-reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = A }` — bare identifier self-reference in const enum.
+#[test]
+fn const_enum_self_reference_bare_identifier() {
+    let diags = check_source_diagnostics("const enum E { A = A }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum bare identifier self-reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Forward references in const enums (TS2651)
+// =========================================================================
+
+/// `const enum E { A = E.B, B = 1 }` — forward reference via property access in const enum.
+#[test]
+fn const_enum_forward_reference_property_access() {
+    let diags = check_source_diagnostics("const enum E { A = E.B, B = 1 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for const enum forward reference via property access, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = E["B"], B = 1 }` — forward reference via element access in const enum.
+#[test]
+fn const_enum_forward_reference_element_access() {
+    let diags = check_source_diagnostics("const enum E { A = E[\"B\"], B = 1 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for const enum forward reference via element access, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Mixed patterns: cycle + valid members in same enum
+// =========================================================================
+
+/// Enum with some valid members and some cycling members.
+/// `enum E { X = 1, Y = F.Z, W = 3 }; enum F { Z = E.Y }`.
+/// Y -> F.Z -> E.Y is a cycle. X and W are fine.
+#[test]
+fn enum_mixed_valid_and_cycling_members() {
+    let diags = check_source_diagnostics("enum E { X = 1, Y = F.Z, W = 3 }\nenum F { Z = E.Y }");
+    // Must not crash. The cycling members should not affect valid members.
+    let _ = diags;
+}
+
+/// Const enum version: valid members + cycling members.
+/// Only the cycling members should get TS2474.
+#[test]
+fn const_enum_mixed_valid_and_cycling_members() {
+    let diags = check_source_diagnostics(
+        "const enum E { X = 1, Y = F.Z, W = 3 }\nconst enum F { Z = E.Y }",
+    );
+    // Y and Z cycle → TS2474 for at least one
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for cycling const enum members, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Deeply nested expressions with cycles
+// =========================================================================
+
+/// Cycle hidden inside deeply nested expression:
+/// `enum E { A = ((F.B)) }; enum F { B = -(E.A) }`.
+#[test]
+fn enum_cycle_in_deeply_nested_expression() {
+    let diags = check_source_diagnostics("enum E { A = ((F.B)) }\nenum F { B = -(E.A) }");
+    let _ = diags;
+}
+
+/// Const enum cycle in deeply nested expression should emit TS2474.
+#[test]
+fn const_enum_cycle_in_deeply_nested_expression() {
+    let diags =
+        check_source_diagnostics("const enum E { A = ((F.B)) }\nconst enum F { B = -(E.A) }");
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for const enum cycle in nested expression, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
