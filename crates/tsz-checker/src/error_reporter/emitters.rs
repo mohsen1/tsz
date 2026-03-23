@@ -10,9 +10,15 @@ use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
     /// Report an error at a specific node.
+    ///
+    /// The span is normalized via `normalized_anchor_span` so that, for
+    /// example, a `VariableDeclaration` node is trimmed to its leading
+    /// identifier — matching the anchor policy used by `emit_render_request`
+    /// and keeping diagnostic fingerprints stable.
     pub(crate) fn error_at_node(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
         if let Some((start, end)) = self.get_node_span(node_idx) {
-            let length = end.saturating_sub(start);
+            let raw_length = end.saturating_sub(start);
+            let (start, length) = self.normalized_anchor_span(node_idx, start, raw_length);
             // Use the error() function which has deduplication by (start, code)
             self.error(start, length, message.to_string(), code);
         }
