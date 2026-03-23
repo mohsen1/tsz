@@ -614,6 +614,29 @@ pub(crate) fn params_to_tuple_elements(params: &[ParamInfo]) -> Vec<TupleElement
         .collect()
 }
 
+/// Sanitize binding-pattern parameters in a callable shape.
+///
+/// Like [`sanitize_params_at_positions`] but operates on a [`CallableShape`]:
+/// each call signature's parameters at the given positions are replaced with
+/// `replacement`.  Returns a new `CallableShape` ready for interning.
+pub(crate) fn sanitize_callable_shape_binding_pattern_params(
+    shape: &CallableShape,
+    positions: &[usize],
+    replacement: TypeId,
+) -> CallableShape {
+    let mut sanitized = shape.clone();
+    sanitized.call_signatures = sanitized
+        .call_signatures
+        .iter()
+        .map(|sig| {
+            let mut new_sig = sig.clone();
+            new_sig.params = sanitize_params_at_positions(&sig.params, positions, replacement);
+            new_sig
+        })
+        .collect();
+    sanitized
+}
+
 /// Find a property by name in a property slice.
 ///
 /// Thin wrapper around `PropertyInfo::find_in_slice` so that checker code

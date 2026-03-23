@@ -561,3 +561,89 @@ const result = create();
         "Default type parameter should be used when not inferable. Diagnostics: {diags:#?}"
     );
 }
+
+// ─── Callable shape sanitization with overloads ───────────────────────
+
+#[test]
+fn callable_binding_pattern_param_sanitization_single_signature() {
+    // A callable argument with a destructured param should not break inference.
+    // The callable shape's call signature params at binding-pattern positions
+    // are replaced with `unknown` to avoid polluting the inference constraint.
+    let source = r#"
+declare function apply<T extends { a: number; b: string }>(
+    items: T[],
+    fn: (item: T) => void
+): void;
+apply([{ a: 1, b: "x" }], ({ a, b }) => {
+    const _n: number = a;
+    const _s: string = b;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345 && *code != 7031),
+        "Callable shape sanitization should not break inference. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn callable_binding_pattern_does_not_leak_unknown_into_inferred_type() {
+    // When a callback destructures its parameter, the inferred type for the
+    // generic should still be correct (not unknown).
+    let source = r#"
+declare function first<T>(arr: T[], fn: (item: T) => boolean): T;
+const result = first([1, 2, 3], (item) => item > 0);
+const check: number = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Inferred T should still be number. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── Contextual instantiation edge cases ──────────────────────────────
+
+#[test]
+fn contextual_instantiation_through_readonly() {
+    // Return context substitution should unwrap Readonly<T> when matching
+    let source = r#"
+declare function wrap<T>(value: T): Readonly<T>;
+const result: Readonly<string> = wrap("hello");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Return context should match through Readonly. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_call_with_union_return_context() {
+    // Return context substitution should handle union target types
+    let source = r#"
+declare function id<T>(x: T): T;
+const result: string | number = id("hello");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Return context should work with union target. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_call_application_matching_in_return_context() {
+    // When source and target are both applications of the same generic,
+    // their type arguments should be matched structurally.
+    let source = r#"
+interface Container<T> { value: T; }
+declare function box_it<T>(value: T): Container<T>;
+const result: Container<number> = box_it(42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Application matching should work in return context. Diagnostics: {diags:#?}"
+    );
+}
