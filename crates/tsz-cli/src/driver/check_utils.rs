@@ -792,6 +792,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1473 // Module declaration names
         | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
         | 1489 // Duplicate identifier
+        | 17008 // JSX element '{0}' has no corresponding closing tag
     )
 }
 
