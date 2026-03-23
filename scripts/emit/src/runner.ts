@@ -37,6 +37,7 @@ interface Config {
   dtsOnly: boolean;
   concurrency: number;
   timeoutMs: number;
+  jsonOut: string | null;
 }
 
 interface TestCase {
@@ -83,6 +84,7 @@ interface TestCase {
 
 interface TestResult {
   name: string;
+  testPath: string | null;
   jsMatch: boolean | null;
   dtsMatch: boolean | null;
   jsError?: string;
@@ -708,6 +710,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 
   const result: TestResult = {
     name: testName,
+    testPath: testCase.testPath,
     jsMatch: null,
     dtsMatch: null,
   };
@@ -934,6 +937,7 @@ function parseArgs(): Config {
     dtsOnly: false,
     concurrency: Math.max(1, os.cpus().length),
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    jsonOut: null,
   };
 
   for (const arg of args) {
@@ -963,6 +967,10 @@ function parseArgs(): Config {
       config.jsOnly = true;
     } else if (arg === '--dts-only') {
       config.dtsOnly = true;
+    } else if (arg.startsWith('--json-out=')) {
+      config.jsonOut = arg.slice(11);
+    } else if (arg === '--json-out') {
+      config.jsonOut = path.join(__dirname, '../emit-detail.json');
     } else if (arg === '--help' || arg === '-h') {
       console.log(`
 TSZ Emit Test Runner
@@ -977,6 +985,7 @@ Options:
   --verbose, -v         Detailed output with diffs
   --js-only             Test JavaScript emit only
   --dts-only            Test declaration emit only
+  --json-out[=PATH]     Write machine-readable results JSON (default: emit-detail.json)
   --help, -h            Show this help
 `);
       process.exit(0);
@@ -1028,11 +1037,13 @@ async function main() {
   let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
   let dtsPass = 0, dtsFail = 0, dtsSkip = 0;
   const failures: TestResult[] = [];
+  const allTestResults: TestResult[] = [];
   const startTime = Date.now();
   let completed = 0;
 
   function recordResult(result: TestResult) {
     completed++;
+    allTestResults.push(result);
     if (result.skipped) {
       jsSkip++;
     } else if (result.timeout) {
@@ -1153,6 +1164,69 @@ async function main() {
     if (timeouts.length > 5) {
       console.log(`  ${pc.dim(`... and ${timeouts.length - 5} more`)}`);
     }
+  }
+
+  // Write machine-readable JSON if requested
+  if (config.jsonOut) {
+    const allResults: Array<{
+      name: string;
+      baselineFile: string;
+      testPath: string | null;
+      jsStatus: 'pass' | 'fail' | 'skip' | 'timeout';
+      dtsStatus: 'pass' | 'fail' | 'skip' | 'timeout';
+      jsError?: string;
+      dtsError?: string;
+      elapsed?: number;
+    }> = [];
+
+    for (const r of allTestResults) {
+      let jsStatus: 'pass' | 'fail' | 'skip' | 'timeout' = 'skip';
+      if (r.timeout) jsStatus = 'timeout';
+      else if (r.jsMatch === true) jsStatus = 'pass';
+      else if (r.jsMatch === false) jsStatus = 'fail';
+
+      let dtsStatus: 'pass' | 'fail' | 'skip' | 'timeout' = 'skip';
+      if (r.timeout) dtsStatus = 'timeout';
+      else if (r.dtsMatch === true) dtsStatus = 'pass';
+      else if (r.dtsMatch === false) dtsStatus = 'fail';
+
+      const record: any = {
+        name: r.name,
+        baselineFile: r.name + '.js',
+        testPath: r.testPath,
+        jsStatus,
+        dtsStatus,
+      };
+      if (r.jsError) record.jsError = r.jsError;
+      if (r.dtsError) record.dtsError = r.dtsError;
+      if (r.elapsed !== undefined) record.elapsed = r.elapsed;
+      allResults.push(record);
+    }
+
+    const jsTotal = jsPass + jsFail;
+    const dtsTotal = dtsPass + dtsFail;
+    const detail = {
+      timestamp: new Date().toISOString(),
+      summary: {
+        jsTotal,
+        jsPass,
+        jsFail,
+        jsSkip,
+        jsTimeout,
+        jsPassRate: jsTotal > 0 ? Math.round(jsPass / jsTotal * 1000) / 10 : 0,
+        dtsTotal,
+        dtsPass,
+        dtsFail,
+        dtsSkip,
+        dtsPassRate: dtsTotal > 0 ? Math.round(dtsPass / dtsTotal * 1000) / 10 : 0,
+      },
+      results: allResults,
+    };
+
+    const outPath = path.resolve(config.jsonOut);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, JSON.stringify(detail, null, 2));
+    console.log(pc.dim(`\nJSON results written to ${outPath}`));
   }
 
   process.exit(jsFail > 0 || dtsFail > 0 ? 1 : 0);
