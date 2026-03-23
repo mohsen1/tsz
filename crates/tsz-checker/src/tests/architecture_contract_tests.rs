@@ -1492,10 +1492,10 @@ fn checker_files_stay_under_loc_limit() {
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
     //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805), checkers/call_checker.rs (1396)
+    //   types/computation/call.rs (1805), checkers/call_checker.rs (1396),
+    //   checkers/jsx/props.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("types/function_type.rs", 1920),
-        ("checkers/jsx/props.rs", 2070),
     ];
 
     let mut violations = Vec::new();
@@ -1937,9 +1937,9 @@ fn test_solver_imports_go_through_query_boundaries() {
 // - [x] Centralized assignability gateways                -> multiple existing tests
 //
 // RATCHET GUARDS (debt tracking):
-// - [x] TEMPORARILY_ALLOWED bypass list capped at 45      -> test_temporarily_allowed_bypass_list_does_not_grow
-// - [x] Direct interner type construction capped at 15    -> test_direct_interner_type_construction_ceiling
-// - [x] Checker file size ceiling (15 files > 2000 LOC)   -> test_checker_file_size_ceiling
+// - [x] TEMPORARILY_ALLOWED bypass list capped at 44      -> test_temporarily_allowed_bypass_list_does_not_grow
+// - [x] Direct interner type construction capped at 13    -> test_direct_interner_type_construction_ceiling
+// - [x] Checker file size ceiling (4 files > 2000 LOC)    -> test_checker_file_size_ceiling
 // - [x] Max single file LOC ceiling (2650 lines)          -> test_checker_file_size_ceiling
 // - [x] CLI must not import checker internals             -> test_cli_must_not_import_checker_internals
 //
@@ -3196,7 +3196,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
 /// they should remove it from `TEMPORARILY_ALLOWED`, shrinking the count.
 /// Adding new bypasses requires updating this ceiling (which reviewers will see).
 ///
-/// Current ceiling: 45 items. This number must only decrease over time.
+/// Current ceiling: 44 items. This number must only decrease over time.
 #[test]
 fn test_temporarily_allowed_bypass_list_does_not_grow() {
     // The authoritative list lives in test_solver_imports_go_through_query_boundaries.
@@ -3226,7 +3226,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
         }
     }
 
-    const CEILING: usize = 45;
+    const CEILING: usize = 44;
     assert!(
         count <= CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
@@ -3377,7 +3377,7 @@ fn test_error_reporter_does_not_perform_type_construction() {
 /// This ratchet captures the current state (14 files over 2000 lines) and prevents
 /// regression. As files are split, this ceiling must be lowered.
 ///
-/// Current ceiling: 12 files over 2000 lines. This number must only decrease over time.
+/// Current ceiling: 4 files over 2000 lines. This number must only decrease over time.
 #[test]
 fn test_checker_file_size_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -3415,7 +3415,10 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
-    const FILE_COUNT_CEILING: usize = 12;
+    // Current oversized files (as of 2026-03-23):
+    //   types/function_type.rs, types/computation/call.rs,
+    //   symbols/symbol_resolver.rs, flow/flow_analysis/usage.rs
+    const FILE_COUNT_CEILING: usize = 4;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
         "Number of checker source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
@@ -3427,7 +3430,7 @@ fn test_checker_file_size_ceiling() {
 
     // Ceiling: maximum line count of any single checker source file.
     // This prevents existing large files from growing further.
-    const MAX_LOC_CEILING: usize = 2610;
+    const MAX_LOC_CEILING: usize = 2400;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
