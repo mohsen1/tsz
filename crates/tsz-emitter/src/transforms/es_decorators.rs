@@ -257,9 +257,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i1}let _classThis;\n"));
             // When a decorated class extends a base class, tsc captures the super class
             // in a _classSuper variable so it can be used for metadata and super access.
-            if has_extends
-                && let Some(extends_text) = self.get_extends_text(class_data)
-            {
+            if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
                 out.push_str(&format!("{i1}let _classSuper = {extends_text};\n"));
             }
         }

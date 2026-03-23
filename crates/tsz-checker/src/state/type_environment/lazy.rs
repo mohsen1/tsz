@@ -251,7 +251,7 @@ impl<'a> CheckerState<'a> {
         final_result
     }
 
-    /// Persist evaluator cache entries to the shared env_eval_cache.
+    /// Persist evaluator cache entries to the shared `env_eval_cache`.
     ///
     /// Filters out entries that would poison the cache:
     /// - Entries containing unbound `infer` types (from partially-evaluated conditionals)

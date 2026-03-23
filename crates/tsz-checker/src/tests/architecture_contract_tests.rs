@@ -3771,7 +3771,7 @@ fn test_def_mapping_and_speculation_do_not_cross_reference() {
 /// Guard: no `CompatChecker::new()` or `CompatChecker::with_resolver()` outside
 /// `query_boundaries/` and `tests/`.
 ///
-/// CompatChecker is the solver's Lawyer layer. Checker code should never construct
+/// `CompatChecker` is the solver's Lawyer layer. Checker code should never construct
 /// it directly — the relation should flow through `query_boundaries/assignability`
 /// via `execute_relation()` and related helpers (CLAUDE.md §5, §22).
 #[test]

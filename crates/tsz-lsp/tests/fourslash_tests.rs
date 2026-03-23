@@ -2585,7 +2585,6 @@ fn definition_interface_optional_property() {
 }
 
 #[test]
-#[ignore = "requires class inheritance chain resolution"]
 fn definition_inherited_class_member() {
     let mut t = FourslashTest::new(
         "

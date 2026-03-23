@@ -17347,8 +17347,8 @@ const arr: any[] = r;
 
 /// Test: union type alias return type should not produce false TS2322.
 ///
-/// Regression test for union→Application cache poisoning in env_eval_cache.
-/// When the TypeEvaluator produces an intermediate result mapping a union type
+/// Regression test for union->Application cache poisoning in `env_eval_cache`.
+/// When the `TypeEvaluator` produces an intermediate result mapping a union type
 /// to an Application type (due to incomplete type environment resolution at that
 /// point in time), caching that result poisons later lookups and causes false
 /// assignability failures.

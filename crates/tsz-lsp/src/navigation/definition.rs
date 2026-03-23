@@ -527,13 +527,14 @@ impl<'a> GoToDefinition<'a> {
                         let mut walker2 = ScopeWalker::new(self.arena, self.binder);
                         if let Some(class_symbol_id) =
                             walker2.resolve_node(root, new_data.expression)
+                            && let Some(member_id) = self.resolve_member_in_class_chain(
+                                root,
+                                class_symbol_id,
+                                member_name,
+                                0,
+                            )
                         {
-                            let class_symbol = self.binder.symbols.get(class_symbol_id)?;
-                            if let Some(ref members) = class_symbol.members
-                                && let Some(member_id) = members.get(member_name)
-                            {
-                                return Some(member_id);
-                            }
+                            return Some(member_id);
                         }
                     }
                 }
@@ -701,6 +702,89 @@ impl<'a> GoToDefinition<'a> {
                             {
                                 return Some(sym_id);
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a member by walking the class inheritance chain via `extends` clauses.
+    /// Returns the SymbolId of the member if found in any ancestor class.
+    fn resolve_member_in_class_chain(
+        &self,
+        root: NodeIndex,
+        class_symbol_id: tsz_binder::SymbolId,
+        member_name: &str,
+        depth: u8,
+    ) -> Option<tsz_binder::SymbolId> {
+        if depth > 10 {
+            return None; // guard against circular inheritance
+        }
+        let class_symbol = self.binder.symbols.get(class_symbol_id)?;
+
+        // Check direct members first
+        if let Some(ref members) = class_symbol.members
+            && let Some(member_id) = members.get(member_name)
+        {
+            return Some(member_id);
+        }
+
+        // Check exports (for static members)
+        if let Some(ref exports) = class_symbol.exports
+            && let Some(member_id) = exports.get(member_name)
+        {
+            return Some(member_id);
+        }
+
+        // Walk class declarations to find the member in the AST
+        for &decl_idx in &class_symbol.declarations {
+            if let Some(member_id) = self.find_member_in_declaration(decl_idx, member_name) {
+                return Some(member_id);
+            }
+        }
+
+        // Walk up the extends chain
+        for &decl_idx in &class_symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            let class = self.arena.get_class(decl_node)?;
+            let heritage_clauses = class.heritage_clauses.as_ref()?;
+            for &clause_idx in &heritage_clauses.nodes {
+                let clause_node = self.arena.get(clause_idx)?;
+                let heritage = self.arena.get_heritage(clause_node)?;
+                // Only follow 'extends', not 'implements'
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                for &type_idx in &heritage.types.nodes {
+                    let type_node = self.arena.get(type_idx)?;
+                    // ExpressionWithTypeArguments — get the expression
+                    let expr_idx =
+                        if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
+                            self.arena
+                                .get_expr_type_args(type_node)
+                                .map(|e| e.expression)
+                        } else {
+                            Some(type_idx)
+                        };
+                    if let Some(expr_idx) = expr_idx {
+                        let mut walker = ScopeWalker::new(self.arena, self.binder);
+                        if let Some(base_symbol_id) = walker.resolve_node(root, expr_idx)
+                            && let Some(member_id) = self.resolve_member_in_class_chain(
+                                root,
+                                base_symbol_id,
+                                member_name,
+                                depth + 1,
+                            )
+                        {
+                            return Some(member_id);
                         }
                     }
                 }

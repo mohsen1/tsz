@@ -412,10 +412,10 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
 /// must not construct `tsz_solver::TypeEvaluator` directly.
 ///
-/// TypeEvaluator is the solver's internal evaluation engine. Checker code should
+/// `TypeEvaluator` is the solver's internal evaluation engine. Checker code should
 /// use the boundary wrappers in `query_boundaries/state/type_environment.rs`
 /// (`evaluate_type_with_resolver`, `evaluate_type_with_cache`,
-/// `evaluate_type_suppressing_this`) instead of constructing TypeEvaluator directly.
+/// `evaluate_type_suppressing_this`) instead of constructing `TypeEvaluator` directly.
 #[test]
 fn test_no_direct_type_evaluator_construction_outside_query_boundaries() {
     fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {

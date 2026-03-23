@@ -569,7 +569,7 @@ fn nested_speculation_with_type_assertion_no_corruption() {
 }
 
 /// Variable declaration with overloaded call as initializer and explicit
-/// type annotation: exercises the variable_checking snapshot interacting
+/// type annotation: exercises the `variable_checking` snapshot interacting
 /// with overload resolution speculation.
 #[test]
 fn variable_decl_overloaded_init_with_annotation() {
@@ -711,8 +711,8 @@ fn nested_overload_deferred_ts2454_consistency() {
 }
 
 /// Overloaded call as a variable initializer with type annotation:
-/// exercises the variable_checking snapshot interacting with overload
-/// take_speculative_diagnostics + re-insertion pattern.
+/// exercises the `variable_checking` snapshot interacting with overload
+/// `take_speculative_diagnostics` + re-insertion pattern.
 #[test]
 fn overload_take_and_reinsert_diagnostics_no_duplicate() {
     let diags = check(
@@ -735,7 +735,7 @@ fn overload_take_and_reinsert_diagnostics_no_duplicate() {
 
 /// Overload resolution where a successful candidate's diagnostics are
 /// taken and then the outer context rolls back to an even earlier snapshot.
-/// This exercises take_speculative_diagnostics followed by outer rollback.
+/// This exercises `take_speculative_diagnostics` followed by outer rollback.
 #[test]
 fn take_diagnostics_then_outer_rollback_no_panic() {
     let diags = check(
