@@ -3365,6 +3365,55 @@ fn hover_destructured_parameter() {
 }
 
 // =============================================================================
+// Definition: Extends/Implements Resolution
+// =============================================================================
+
+#[test]
+fn definition_class_extends_target() {
+    let mut t = FourslashTest::new(
+        "
+        class /*def*/Animal {
+            name: string = '';
+        }
+        class Dog extends /*ref*/Animal {
+            breed: string = '';
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_interface_extends_target() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Serializable {
+            serialize(): string;
+        }
+        interface JsonSerializable extends /*ref*/Serializable {
+            toJSON(): object;
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_class_implements_target() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Disposable {
+            dispose(): void;
+        }
+        class Resource implements /*ref*/Disposable {
+            dispose() {}
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+// =============================================================================
 // Rename: Advanced Patterns (NEW)
 // =============================================================================
 
