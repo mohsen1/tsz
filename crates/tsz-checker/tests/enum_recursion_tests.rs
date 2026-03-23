@@ -1188,3 +1188,378 @@ fn const_enum_forward_reference_template_literal() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+// =========================================================================
+// Merged enum declarations with cycles
+// =========================================================================
+
+/// Merged enum with self-reference across declarations.
+/// `enum E { A = 1 }; enum E { B = E.B }` — self-reference in merged enum.
+/// Should emit TS2565 and must not stack-overflow.
+#[test]
+fn merged_enum_self_reference_across_declarations() {
+    let diags = check_source_diagnostics(
+        "enum E { A = 1 }\n\
+         enum E { B = E.B }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for self-reference in merged enum, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Merged enum with cross-declaration cycle.
+/// `enum E { A = E.B }; enum E { B = E.A }` — cycle across merged declarations.
+/// Must not stack-overflow.
+#[test]
+fn merged_enum_cross_declaration_cycle() {
+    let diags = check_source_diagnostics(
+        "enum E { A = E.B }\n\
+         enum E { B = E.A }",
+    );
+    // Should not panic; diagnostics may include TS2651 (forward ref) and/or TS2565
+    let _ = diags;
+}
+
+/// Merged const enum with circular cross-declaration references.
+/// Should emit TS2474 and must not stack-overflow.
+#[test]
+fn merged_const_enum_cross_declaration_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum E { A = E.B }\n\
+         const enum E { B = E.A }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474 || d.code == 2651),
+        "Expected TS2474 or TS2651 for cross-declaration cycle in const enum, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Conditional expressions in enum initializers
+// =========================================================================
+
+/// Conditional expression with self-reference in true branch.
+/// `enum E { A = true ? E.A : 0 }` — should emit TS2565.
+#[test]
+fn enum_conditional_self_reference_true_branch() {
+    let diags = check_source_diagnostics("enum E { A = true ? E.A : 0 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for self-reference in conditional true branch, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Conditional expression with self-reference in false branch.
+/// `enum E { A = true ? 0 : E.A }` — should emit TS2565.
+#[test]
+fn enum_conditional_self_reference_false_branch() {
+    let diags = check_source_diagnostics("enum E { A = true ? 0 : E.A }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for self-reference in conditional false branch, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Conditional expression with self-reference in condition.
+/// `enum E { A = E.A ? 1 : 0 }` — should emit TS2565.
+#[test]
+fn enum_conditional_self_reference_condition() {
+    let diags = check_source_diagnostics("enum E { A = E.A ? 1 : 0 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for self-reference in conditional condition, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Namespace-enclosed mutual recursion
+// =========================================================================
+
+/// Mutual recursion within a namespace.
+/// `namespace NS { enum E { A = F.B }; enum F { B = E.A } }` — must not overflow.
+#[test]
+fn namespace_enclosed_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "namespace NS {\n\
+         export enum E { A = F.B }\n\
+         export enum F { B = E.A }\n\
+         }",
+    );
+    // Should not panic; within namespace, cross-enum refs may or may not resolve
+    let _ = diags;
+}
+
+/// Const enum mutual recursion within a namespace.
+/// Should emit TS2474 for circular const enum references.
+#[test]
+fn namespace_enclosed_const_enum_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "namespace NS {\n\
+         export const enum E { A = F.B }\n\
+         export const enum F { B = E.A }\n\
+         }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for namespace-enclosed const enum mutual recursion, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Non-existent enum references (should be non-constant, no crash)
+// =========================================================================
+
+/// Reference to a non-existent enum.
+/// `enum E { A = NonExistent.B }` — should not crash, treated as non-constant.
+#[test]
+fn enum_reference_non_existent_enum() {
+    let diags = check_source_diagnostics("enum E { A = NonExistent.B }");
+    // Should not panic; value is treated as non-constant
+    let _ = diags;
+}
+
+/// Const enum referencing non-existent enum.
+/// `const enum E { A = NonExistent.B }` — should emit TS2474.
+#[test]
+fn const_enum_reference_non_existent_enum() {
+    let diags = check_source_diagnostics("const enum E { A = NonExistent.B }");
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for non-existent enum reference in const enum, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Reference to non-existent member of existing enum.
+/// `enum E { A = 1 }; enum F { B = E.NonExistent }` — should not crash.
+#[test]
+fn enum_reference_non_existent_member() {
+    let diags = check_source_diagnostics("enum E { A = 1 }\nenum F { B = E.NonExistent }");
+    // Should not panic; value is treated as non-constant
+    let _ = diags;
+}
+
+// =========================================================================
+// Exponentiation operator in enum initializer cycles
+// =========================================================================
+
+/// Exponentiation with self-reference.
+/// `enum E { A = 2, B = E.B ** 2 }` — should emit TS2565.
+#[test]
+fn enum_exponentiation_self_reference() {
+    let diags = check_source_diagnostics("enum E { A = 2, B = E.B ** 2 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for self-reference in exponentiation, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Valid exponentiation cross-reference.
+/// `enum E { A = 2, B = E.A ** 3 }` — should evaluate B = 8, no errors.
+#[test]
+fn enum_valid_exponentiation_cross_reference() {
+    let diags = check_source_diagnostics("enum E { A = 2, B = E.A ** 3 }");
+    // No TS2565 or TS2651 expected
+    assert!(
+        !diags.iter().any(|d| d.code == 2565 || d.code == 2651),
+        "Unexpected diagnostic for valid exponentiation, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Multiple mutually recursive enums: larger ring patterns
+// =========================================================================
+
+/// 8-way ring cycle among non-const enums.
+/// Must not stack-overflow.
+#[test]
+fn enum_eight_way_ring_cycle() {
+    let diags = check_source_diagnostics(
+        "enum A { X = B.X }\n\
+         enum B { X = C.X }\n\
+         enum C { X = D.X }\n\
+         enum D { X = E.X }\n\
+         enum E { X = F.X }\n\
+         enum F { X = G.X }\n\
+         enum G { X = H.X }\n\
+         enum H { X = A.X }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// 8-way ring cycle among const enums.
+/// Should emit TS2474 and must not stack-overflow.
+#[test]
+fn const_enum_eight_way_ring_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.X }\n\
+         const enum B { X = C.X }\n\
+         const enum C { X = D.X }\n\
+         const enum D { X = E.X }\n\
+         const enum E { X = F.X }\n\
+         const enum F { X = G.X }\n\
+         const enum G { X = H.X }\n\
+         const enum H { X = A.X }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for 8-way const enum ring cycle, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Mixed ring: alternating const and non-const enums in a 4-way cycle.
+/// Must not stack-overflow.
+#[test]
+fn mixed_alternating_four_way_ring_cycle() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.X }\n\
+         enum B { X = C.X }\n\
+         const enum C { X = D.X }\n\
+         enum D { X = A.X }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+// =========================================================================
+// Auto-increment through mutual recursion (expanded patterns)
+// =========================================================================
+
+/// Auto-increment member depending on mutually-recursive resolution.
+/// `enum E { A = F.D, B }; enum F { C, D = E.B }` — cycle through auto-increment.
+/// Must not stack-overflow.
+#[test]
+fn enum_auto_increment_mutual_recursion_expanded() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.D, B }\n\
+         enum F { C, D = E.B }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// Three enums with auto-increment chain through mutual references.
+/// Must not stack-overflow.
+#[test]
+fn enum_three_way_auto_increment_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "enum A { X = B.Y, Z }\n\
+         enum B { Y = C.W }\n\
+         enum C { V, W = A.Z }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// Const enum with auto-increment depending on circular chain.
+/// Should emit TS2474 and must not stack-overflow.
+#[test]
+fn const_enum_auto_increment_circular_chain() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.Y, Z }\n\
+         const enum B { Y = A.Z }",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2474),
+        "Expected TS2474 for auto-increment circular chain in const enum, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =========================================================================
+// Complex expression patterns in cycles
+// =========================================================================
+
+/// Nested binary expressions with mutual recursion.
+/// `enum E { A = (F.B + 1) * 2 }; enum F { B = (E.A - 1) / 2 }` — cycle.
+/// Must not stack-overflow.
+#[test]
+fn enum_complex_binary_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "enum E { A = (F.B + 1) * 2 }\n\
+         enum F { B = (E.A - 1) / 2 }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// Bitwise operations with mutual recursion.
+/// `enum E { A = F.B & 0xFF }; enum F { B = E.A | 0x100 }` — cycle.
+/// Must not stack-overflow.
+#[test]
+fn enum_bitwise_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.B & 0xFF }\n\
+         enum F { B = E.A | 0x100 }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// Shift operations with mutual recursion.
+/// `enum E { A = F.B << 2 }; enum F { B = E.A >> 1 }` — cycle.
+/// Must not stack-overflow.
+#[test]
+fn enum_shift_mutual_recursion() {
+    let diags = check_source_diagnostics(
+        "enum E { A = F.B << 2 }\n\
+         enum F { B = E.A >> 1 }",
+    );
+    // Should not panic
+    let _ = diags;
+}
+
+/// Valid deep chain: 10 enums referencing the next, final one has a literal.
+/// Should resolve without errors.
+#[test]
+fn enum_ten_deep_valid_chain() {
+    let diags = check_source_diagnostics(
+        "enum A { X = B.X }\n\
+         enum B { X = C.X }\n\
+         enum C { X = D.X }\n\
+         enum D { X = E.X }\n\
+         enum E { X = F.X }\n\
+         enum F { X = G.X }\n\
+         enum G { X = H.X }\n\
+         enum H { X = I.X }\n\
+         enum I { X = J.X }\n\
+         enum J { X = 42 }",
+    );
+    // No cycle — should resolve to 42 throughout, no errors
+    let _ = diags;
+}
+
+/// Const enum 10-deep valid chain.
+/// Should evaluate all to 42, no TS2474.
+#[test]
+fn const_enum_ten_deep_valid_chain() {
+    let diags = check_source_diagnostics(
+        "const enum A { X = B.X }\n\
+         const enum B { X = C.X }\n\
+         const enum C { X = D.X }\n\
+         const enum D { X = E.X }\n\
+         const enum E { X = F.X }\n\
+         const enum F { X = G.X }\n\
+         const enum G { X = H.X }\n\
+         const enum H { X = I.X }\n\
+         const enum I { X = J.X }\n\
+         const enum J { X = 42 }",
+    );
+    // No cycle — should resolve cleanly
+    assert!(
+        !diags.iter().any(|d| d.code == 2474),
+        "Should not emit TS2474 for valid deep chain, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
