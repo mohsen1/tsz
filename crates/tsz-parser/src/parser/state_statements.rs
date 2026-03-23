@@ -237,6 +237,29 @@ impl ParserState {
                 continue;
             }
 
+            // Handle bare `#` that can't become a PrivateIdentifier.
+            // In tsc, the scanner emits TS1127 for a standalone `#` that is not
+            // followed by a valid identifier character. We try to rescan as a
+            // PrivateIdentifier; if that fails, emit TS1127 and skip.
+            if self.is_token(SyntaxKind::HashToken) {
+                let rescanned = self.scanner.re_scan_hash_token();
+                if rescanned == SyntaxKind::PrivateIdentifier {
+                    // Got a valid private identifier — let the normal statement
+                    // parser handle it (it will likely fail with a meaningful error).
+                    self.current_token = rescanned;
+                } else {
+                    // Bare `#` — emit TS1127 and skip, matching tsc.
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                        diagnostic_codes::INVALID_CHARACTER,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+            }
+
             // If we see a closing brace at the top level, report error 1128
             if self.is_token(SyntaxKind::CloseBraceToken) {
                 // Only emit error if we haven't already emitted one at this position

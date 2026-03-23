@@ -1640,8 +1640,21 @@ impl ParserState {
                     }
                     self.next_token();
                     // Handle both regular identifiers and private identifiers (#name)
+                    // Also try rescanning HashToken as PrivateIdentifier.
+                    if self.is_token(SyntaxKind::HashToken) {
+                        let rescanned = self.scanner.re_scan_hash_token();
+                        self.current_token = rescanned;
+                    }
                     let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
                         self.parse_private_identifier()
+                    } else if self.is_token(SyntaxKind::HashToken) {
+                        // Bare `#` after `.` — emit TS1127 like tsc's scanner does.
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                        );
+                        self.next_token();
+                        NodeIndex::NONE
                     } else if self.is_identifier_or_keyword() {
                         // When there's a line break after the dot and the current token
                         // starts a declaration (e.g. `foo.\nvar y = 1;`), don't consume
