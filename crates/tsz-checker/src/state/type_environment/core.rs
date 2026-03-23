@@ -307,6 +307,7 @@ impl<'a> CheckerState<'a> {
         // Previously we called type_reference_symbol_type and get_type_params_for_symbol
         // separately, which created DIFFERENT TypeIds for the same type parameters.
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return type_id;
         }
