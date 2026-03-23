@@ -315,6 +315,9 @@ mod async_promise_comprehensive_tests;
 mod class_comprehensive_tests;
 // compound_assignment_tests: loaded from operations/compound_assignment.rs
 #[cfg(test)]
+#[path = "../tests/architecture_guards.rs"]
+mod architecture_guards;
+#[cfg(test)]
 #[path = "../tests/bct_tests.rs"]
 mod bct_tests;
 #[cfg(test)]
@@ -410,6 +413,3 @@ mod variance_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
-#[cfg(test)]
-#[path = "../tests/architecture_guards.rs"]
-mod architecture_guards;
