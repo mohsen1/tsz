@@ -3575,7 +3575,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
 /// calls outside `query_boundaries/`, `tests/`, and `types/utilities/core.rs` must not grow.
 ///
 /// Callers should use `query_boundaries::common::widen_type` (free function) or
-/// `self.widen_literal_type()` (method on CheckerState) instead.
+/// `self.widen_literal_type()` (method on `CheckerState`) instead.
 ///
 /// Current ceiling: 8 occurrences. This number must only decrease over time.
 #[test]
@@ -3724,8 +3724,8 @@ fn test_no_direct_application_evaluator_outside_query_boundaries() {
     );
 }
 
-/// Guard: context/def_mapping.rs and context/speculation.rs must not cross-reference
-/// each other. def_mapping owns SymbolId<->DefId identity mapping, speculation owns
+/// Guard: `context/def_mapping.rs` and context/speculation.rs must not cross-reference
+/// each other. `def_mapping` owns SymbolId<->DefId identity mapping, speculation owns
 /// checker state transaction boundaries. Mixing these concerns would violate the
 /// clean context module separation (BOUNDARIES.md §4 Identity Boundary).
 #[test]

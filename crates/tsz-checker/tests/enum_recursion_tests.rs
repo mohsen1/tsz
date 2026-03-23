@@ -695,8 +695,7 @@ fn const_enum_mutual_recursion_nested_binary_three_enums() {
     );
 }
 
-/// Template literal element access in cycle:
-/// `enum E { A = F[\`B\`] }; enum F { B = E[\`A\`] }`.
+/// Template literal element access in cycle.
 #[test]
 fn enum_mutual_recursion_template_literal_access() {
     let diags = check_source_diagnostics("enum E { A = F[`B`] }\nenum F { B = E[`A`] }");
