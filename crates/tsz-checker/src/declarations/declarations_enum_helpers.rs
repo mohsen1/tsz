@@ -88,7 +88,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
                     if is_enum_ref {
                         if let Some(right_node) = self.ctx.arena.get(elem.name_or_argument) {
-                            if right_node.kind == SyntaxKind::StringLiteral as u16 {
+                            if right_node.kind == SyntaxKind::StringLiteral as u16
+                                || right_node.kind
+                                    == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                            {
                                 if let Some(lit) = self.ctx.arena.get_literal(right_node)
                                     && lit.text == member_name
                                 {
@@ -205,7 +208,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         && let Some(left_name) = self.ctx.arena.get_identifier_text(elem.expression)
                         && Some(left_name) == enum_name
                         && let Some(arg_node) = self.ctx.arena.get(elem.name_or_argument)
-                        && arg_node.kind == SyntaxKind::StringLiteral as u16
+                        && (arg_node.kind == SyntaxKind::StringLiteral as u16
+                            || arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
                         && let Some(lit) = self.ctx.arena.get_literal(arg_node)
                     {
                         return later_members.contains(&lit.text.as_str());

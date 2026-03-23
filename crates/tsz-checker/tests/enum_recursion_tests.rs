@@ -1136,3 +1136,55 @@ fn enum_repeated_bare_identifier_references() {
     assert_eq!(ts2651, 0, "Unexpected TS2651 for valid repeated bare refs");
     assert_eq!(ts2565, 0, "Unexpected TS2565 for valid repeated bare refs");
 }
+
+// =========================================================================
+// Template literal element access: self-reference and forward reference
+// =========================================================================
+
+/// `enum E { A = E[\`A\`] }` — self-reference via template literal element access.
+/// Should emit TS2565.
+#[test]
+fn enum_self_reference_template_literal_element_access() {
+    let diags = check_source_diagnostics("enum E { A = E[`A`] }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for template literal self-reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = E[\`A\`] }` — self-reference via template literal in const enum.
+/// Should emit TS2565.
+#[test]
+fn const_enum_self_reference_template_literal() {
+    let diags = check_source_diagnostics("const enum E { A = E[`A`] }");
+    assert!(
+        diags.iter().any(|d| d.code == 2565),
+        "Expected TS2565 for const enum template literal self-reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `enum E { A = E[\`B\`], B = 1 }` — forward reference via template literal.
+/// Should emit TS2651.
+#[test]
+fn enum_forward_reference_template_literal() {
+    let diags = check_source_diagnostics("enum E { A = E[`B`], B = 1 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for template literal forward reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `const enum E { A = E[\`B\`], B = 1 }` — forward reference via template literal in const enum.
+/// Should emit TS2651.
+#[test]
+fn const_enum_forward_reference_template_literal() {
+    let diags = check_source_diagnostics("const enum E { A = E[`B`], B = 1 }");
+    assert!(
+        diags.iter().any(|d| d.code == 2651),
+        "Expected TS2651 for const enum template literal forward reference, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
