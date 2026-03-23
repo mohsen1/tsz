@@ -249,6 +249,11 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Create a new `CheckerContext`.
+    ///
+    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`
+    /// at construction time. This moves top-level declaration identity creation
+    /// from checker hot paths (on-demand via `get_or_create_def_id` fallback)
+    /// to construction time (deterministic, early), reducing `def_fallback_count`.
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -262,14 +267,20 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        Self::base(
+        let ctx = Self::base(
             arena,
             binder,
             types,
             file_name,
             compiler_options,
             capabilities,
-        )
+        );
+        // Pre-populate DefIds from the binder's semantic_defs at construction
+        // time. This is idempotent — if check_source_file later calls
+        // pre_populate_def_ids_from_binder() again, the dedup checks skip
+        // already-registered entries.
+        ctx.pre_populate_def_ids_from_binder();
+        ctx
     }
 
     /// Create a new `CheckerContext` with a shared `DefinitionStore`.
@@ -308,6 +319,9 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Create a new `CheckerContext` with explicit compiler options.
+    ///
+    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`
+    /// at construction time.
     pub fn with_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -321,14 +335,16 @@ impl<'a> CheckerContext<'a> {
                 &compiler_options,
                 false,
             );
-        Self::base(
+        let ctx = Self::base(
             arena,
             binder,
             types,
             file_name,
             compiler_options,
             capabilities,
-        )
+        );
+        ctx.pre_populate_def_ids_from_binder();
+        ctx
     }
 
     /// Apply `TypeCache` fields to a context, overriding the defaults.
@@ -383,10 +399,13 @@ impl<'a> CheckerContext<'a> {
             capabilities,
         );
         ctx.apply_cache(cache);
+        ctx.pre_populate_def_ids_from_binder();
         ctx
     }
 
     /// Create a new `CheckerContext` with explicit compiler options and a persistent cache.
+    ///
+    /// Automatically pre-populates `DefIds` from the binder's `semantic_defs`.
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -410,6 +429,7 @@ impl<'a> CheckerContext<'a> {
             capabilities,
         );
         ctx.apply_cache(cache);
+        ctx.pre_populate_def_ids_from_binder();
         ctx
     }
 

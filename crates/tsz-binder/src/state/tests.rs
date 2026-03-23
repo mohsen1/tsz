@@ -5537,6 +5537,7 @@ fn merge_cross_file_accumulates_heritage() {
         is_abstract: false,
         heritage_names: vec!["Bar".to_string()],
         parent_namespace: None,
+        is_global_augmentation: false,
     };
     let second = super::SemanticDefEntry {
         kind: super::SemanticDefKind::Interface,
@@ -5551,6 +5552,7 @@ fn merge_cross_file_accumulates_heritage() {
         is_abstract: false,
         heritage_names: vec!["Bar".to_string(), "Baz".to_string()],
         parent_namespace: None,
+        is_global_augmentation: false,
     };
 
     first.merge_cross_file(&second);
@@ -5582,6 +5584,7 @@ fn merge_cross_file_accumulates_enum_members() {
         is_abstract: false,
         heritage_names: Vec::new(),
         parent_namespace: None,
+        is_global_augmentation: false,
     };
     let second = super::SemanticDefEntry {
         kind: super::SemanticDefKind::Enum,
@@ -5596,6 +5599,7 @@ fn merge_cross_file_accumulates_enum_members() {
         is_abstract: false,
         heritage_names: Vec::new(),
         parent_namespace: None,
+        is_global_augmentation: false,
     };
 
     first.merge_cross_file(&second);
@@ -5625,6 +5629,7 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         is_abstract: false,
         heritage_names: Vec::new(),
         parent_namespace: None,
+        is_global_augmentation: false,
     };
     let second = super::SemanticDefEntry {
         kind: super::SemanticDefKind::Interface,
@@ -5639,6 +5644,7 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
         is_abstract: false,
         heritage_names: vec!["Extra".to_string()],
         parent_namespace: None,
+        is_global_augmentation: false,
     };
 
     first.merge_cross_file(&second);
@@ -5649,4 +5655,287 @@ fn merge_cross_file_does_not_downgrade_type_param_count() {
     );
     assert!(first.is_exported, "export flag should not be lost");
     assert_eq!(first.heritage_names, vec!["Extra"]);
+}
+
+// =============================================================================
+// Stable Identity Tests: All Declaration Families
+// =============================================================================
+
+#[test]
+fn semantic_defs_capture_all_top_level_declaration_families() {
+    // Verify that the binder captures semantic_defs for all top-level
+    // declaration families: class, interface, type alias, enum, namespace,
+    // function, and variable.
+    let binder = bind_source(
+        r"
+class MyClass<T> { }
+interface MyInterface<A, B> { x: number }
+type MyAlias = string;
+enum MyEnum { Red, Green, Blue }
+namespace MyNS { export type Inner = number }
+function myFunc<U>(): void { }
+const myVar: string = 'hello';
+",
+    );
+
+    // All 7 top-level declarations should have semantic_defs.
+    // MyNS.Inner is namespace-scoped, so it also gets captured (Module scope).
+    assert!(
+        binder.semantic_defs.len() >= 7,
+        "Expected at least 7 semantic_defs for all families, got {}",
+        binder.semantic_defs.len()
+    );
+
+    // Verify each family is present by checking names.
+    let names: Vec<&str> = binder
+        .semantic_defs
+        .values()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(names.contains(&"MyClass"), "Missing class");
+    assert!(names.contains(&"MyInterface"), "Missing interface");
+    assert!(names.contains(&"MyAlias"), "Missing type alias");
+    assert!(names.contains(&"MyEnum"), "Missing enum");
+    assert!(names.contains(&"MyNS"), "Missing namespace");
+    assert!(names.contains(&"myFunc"), "Missing function");
+    assert!(names.contains(&"myVar"), "Missing variable");
+
+    // Verify kinds match.
+    let find_kind = |name: &str| -> Option<super::SemanticDefKind> {
+        binder
+            .semantic_defs
+            .values()
+            .find(|e| e.name == name)
+            .map(|e| e.kind)
+    };
+    assert_eq!(find_kind("MyClass"), Some(super::SemanticDefKind::Class));
+    assert_eq!(
+        find_kind("MyInterface"),
+        Some(super::SemanticDefKind::Interface)
+    );
+    assert_eq!(
+        find_kind("MyAlias"),
+        Some(super::SemanticDefKind::TypeAlias)
+    );
+    assert_eq!(find_kind("MyEnum"), Some(super::SemanticDefKind::Enum));
+    assert_eq!(find_kind("MyNS"), Some(super::SemanticDefKind::Namespace));
+    assert_eq!(find_kind("myFunc"), Some(super::SemanticDefKind::Function));
+    assert_eq!(find_kind("myVar"), Some(super::SemanticDefKind::Variable));
+}
+
+#[test]
+fn semantic_defs_capture_type_param_arity_and_names() {
+    // Verify that type parameter arity and names are captured at bind time.
+    let binder = bind_source(
+        r"
+class Foo<T, U extends string> { }
+interface Bar<A, B, C> { }
+type Baz<X> = X[];
+function qux<Y, Z>(): void { }
+",
+    );
+
+    let find = |name: &str| -> Option<&super::SemanticDefEntry> {
+        binder.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let foo = find("Foo").expect("Missing Foo");
+    assert_eq!(foo.type_param_count, 2);
+    assert_eq!(foo.type_param_names, vec!["T", "U"]);
+
+    let bar = find("Bar").expect("Missing Bar");
+    assert_eq!(bar.type_param_count, 3);
+    assert_eq!(bar.type_param_names, vec!["A", "B", "C"]);
+
+    let baz = find("Baz").expect("Missing Baz");
+    assert_eq!(baz.type_param_count, 1);
+    assert_eq!(baz.type_param_names, vec!["X"]);
+
+    let qux = find("qux").expect("Missing qux");
+    assert_eq!(qux.type_param_count, 2);
+    assert_eq!(qux.type_param_names, vec!["Y", "Z"]);
+}
+
+#[test]
+fn semantic_defs_capture_class_and_enum_metadata() {
+    // Verify that abstract class flag, const enum flag, and enum member names
+    // are captured at bind time.
+    let binder = bind_source(
+        r"
+abstract class Base { }
+const enum Colors { Red, Green, Blue }
+class Concrete { }
+enum Direction { Up, Down }
+",
+    );
+
+    let find = |name: &str| -> Option<&super::SemanticDefEntry> {
+        binder.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let base = find("Base").expect("Missing Base");
+    assert!(
+        base.is_abstract,
+        "abstract class should have is_abstract=true"
+    );
+
+    let colors = find("Colors").expect("Missing Colors");
+    assert!(colors.is_const, "const enum should have is_const=true");
+    assert_eq!(colors.enum_member_names, vec!["Red", "Green", "Blue"]);
+
+    let concrete = find("Concrete").expect("Missing Concrete");
+    assert!(!concrete.is_abstract);
+
+    let dir = find("Direction").expect("Missing Direction");
+    assert!(!dir.is_const);
+    assert_eq!(dir.enum_member_names, vec!["Up", "Down"]);
+}
+
+#[test]
+fn semantic_defs_capture_declare_global_augmentations() {
+    // Declarations inside `declare global { }` blocks should be captured
+    // as semantic_defs with is_global_augmentation=true.
+    let binder = bind_source(
+        r#"
+export {};
+declare global {
+    interface MyGlobal {
+        foo: string;
+    }
+    type GlobalAlias = number;
+}
+"#,
+    );
+
+    let find = |name: &str| -> Option<&super::SemanticDefEntry> {
+        binder.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let my_global = find("MyGlobal").expect("declare global interface should be in semantic_defs");
+    assert_eq!(my_global.kind, super::SemanticDefKind::Interface);
+    assert!(
+        my_global.is_global_augmentation,
+        "declare global declaration should have is_global_augmentation=true"
+    );
+
+    let global_alias =
+        find("GlobalAlias").expect("declare global type alias should be in semantic_defs");
+    assert_eq!(global_alias.kind, super::SemanticDefKind::TypeAlias);
+    assert!(
+        global_alias.is_global_augmentation,
+        "declare global declaration should have is_global_augmentation=true"
+    );
+}
+
+#[test]
+fn semantic_defs_capture_heritage_names() {
+    // Verify that heritage clause names (extends/implements) are captured.
+    let binder = bind_source(
+        r"
+interface Base { x: number }
+interface Other { y: string }
+class MyClass extends Base implements Other { }
+interface Child extends Base { }
+",
+    );
+
+    let find = |name: &str| -> Option<&super::SemanticDefEntry> {
+        binder.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let my_class = find("MyClass").expect("Missing MyClass");
+    assert!(
+        my_class.heritage_names.contains(&"Base".to_string()),
+        "class should capture extends name"
+    );
+
+    let child = find("Child").expect("Missing Child");
+    assert!(
+        child.heritage_names.contains(&"Base".to_string()),
+        "interface should capture extends name"
+    );
+}
+
+#[test]
+fn semantic_defs_namespace_members_have_parent_namespace() {
+    // Namespace members should have parent_namespace set to the namespace's SymbolId.
+    let binder = bind_source(
+        r"
+namespace MyNS {
+    export class Inner { }
+    export interface InnerIface { }
+    export type InnerAlias = string;
+}
+",
+    );
+
+    let find = |name: &str| -> Option<&super::SemanticDefEntry> {
+        binder.semantic_defs.values().find(|e| e.name == name)
+    };
+
+    let ns = find("MyNS").expect("Missing MyNS");
+    assert!(
+        ns.parent_namespace.is_none(),
+        "top-level namespace should not have parent_namespace"
+    );
+
+    let inner = find("Inner").expect("Missing Inner");
+    assert!(
+        inner.parent_namespace.is_some(),
+        "namespace member should have parent_namespace"
+    );
+
+    let inner_iface = find("InnerIface").expect("Missing InnerIface");
+    assert!(
+        inner_iface.parent_namespace.is_some(),
+        "namespace member should have parent_namespace"
+    );
+
+    let inner_alias = find("InnerAlias").expect("Missing InnerAlias");
+    assert!(
+        inner_alias.parent_namespace.is_some(),
+        "namespace member should have parent_namespace"
+    );
+}
+
+#[test]
+fn merge_cross_file_propagates_global_augmentation_flag() {
+    // merge_cross_file should promote is_global_augmentation when the second
+    // entry is from a declare global block.
+    let mut first = super::SemanticDefEntry {
+        kind: super::SemanticDefKind::Interface,
+        name: "Foo".to_string(),
+        file_id: 0,
+        span_start: 0,
+        type_param_count: 0,
+        type_param_names: Vec::new(),
+        is_exported: false,
+        enum_member_names: Vec::new(),
+        is_const: false,
+        is_abstract: false,
+        heritage_names: Vec::new(),
+        parent_namespace: None,
+        is_global_augmentation: false,
+    };
+    let second = super::SemanticDefEntry {
+        kind: super::SemanticDefKind::Interface,
+        name: "Foo".to_string(),
+        file_id: 1,
+        span_start: 50,
+        type_param_count: 0,
+        type_param_names: Vec::new(),
+        is_exported: false,
+        enum_member_names: Vec::new(),
+        is_const: false,
+        is_abstract: false,
+        heritage_names: Vec::new(),
+        parent_namespace: None,
+        is_global_augmentation: true,
+    };
+
+    first.merge_cross_file(&second);
+    assert!(
+        first.is_global_augmentation,
+        "is_global_augmentation should be promoted by merge_cross_file"
+    );
 }
