@@ -228,6 +228,9 @@ fn is_invalid_index_type_strict_inner(
                     | crate::LiteralValue::BigInt(_)
             ),
             Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
+            // Unique symbols (e.g., `typeof mySymbol`) are valid index types in tsc.
+            // Only the generic `symbol` primitive is invalid.
+            Some(TypeData::UniqueSymbol(_)) => true,
             Some(TypeData::Intersection(list_id)) => {
                 // An intersection is valid only if ALL members are valid
                 for &member in db.type_list(list_id).iter() {
