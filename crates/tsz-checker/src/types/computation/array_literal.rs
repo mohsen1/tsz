@@ -5,10 +5,11 @@
 //! to keep module sizes manageable.
 
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
+use tsz_solver::{ContextualTypeContext, TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
@@ -679,7 +680,7 @@ impl<'a> CheckerState<'a> {
         let element_type = if self.ctx.preserve_literal_types {
             self.ctx.types.union(element_types.clone())
         } else {
-            expression_ops::compute_best_common_type(
+            expr_ops::compute_best_common_type(
                 self.ctx.types,
                 &element_types,
                 Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
