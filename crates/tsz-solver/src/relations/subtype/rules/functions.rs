@@ -1688,24 +1688,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        let Some(s_sig) = s_callable.call_signatures.last() else {
+        if s_callable.call_signatures.is_empty() {
             return SubtypeResult::False;
-        };
-
-        if self
-            .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-            .is_true()
-        {
-            return SubtypeResult::True;
         }
 
-        if !s_sig.type_params.is_empty()
-            && t_fn.type_params.is_empty()
-            && self
-                .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
+        // Check ALL source call signatures against the target function,
+        // matching tsc's signaturesRelatedTo behavior where any compatible
+        // source signature suffices (not just the last/implementation one).
+        for s_sig in &s_callable.call_signatures {
+            if self
+                .check_call_signature_subtype_to_fn(s_sig, &t_fn)
                 .is_true()
-        {
-            return SubtypeResult::True;
+            {
+                return SubtypeResult::True;
+            }
+
+            // Try generic instantiation if the source sig has type params
+            // but the target doesn't
+            if !s_sig.type_params.is_empty()
+                && t_fn.type_params.is_empty()
+                && self
+                    .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
+                    .is_true()
+            {
+                return SubtypeResult::True;
+            }
         }
         SubtypeResult::False
     }
