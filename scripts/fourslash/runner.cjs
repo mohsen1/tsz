@@ -69,6 +69,7 @@ function parseArgs() {
         sequential: false,
         testTimeout: 15000,
         memoryLimitMB: 512,
+        jsonOut: null,
     };
 
     for (const arg of args) {
@@ -95,6 +96,10 @@ function parseArgs() {
             opts.testTimeout = parseInt(arg.substring("--timeout=".length), 10);
         } else if (arg.startsWith("--memory-limit=")) {
             opts.memoryLimitMB = parseInt(arg.substring("--memory-limit=".length), 10);
+        } else if (arg.startsWith("--json-out=")) {
+            opts.jsonOut = arg.substring("--json-out=".length);
+        } else if (arg === "--json-out") {
+            opts.jsonOut = path.join(__dirname, "fourslash-detail.json");
         }
     }
 
@@ -169,6 +174,7 @@ async function runSequential(opts, testsToRun) {
     let failed = 0;
     let timedOut = 0;
     const errors = [];
+    const testResults = [];
 
     for (let i = 0; i < testsToRun.length; i++) {
         const testFile = testsToRun[i];
@@ -189,6 +195,7 @@ async function runSequential(opts, testsToRun) {
                 throw new Error(`Test completed but took ${elapsed}ms (timeout: ${opts.testTimeout}ms)`);
             }
             passed++;
+            testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
             if (opts.verbose) {
                 console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
             } else if ((passed + failed) % 50 === 0) {
@@ -199,6 +206,7 @@ async function runSequential(opts, testsToRun) {
             const errMsg = err.message || String(err);
             if (isBaselineOnlyFailure(errMsg)) {
                 passed++;
+                testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
                 } else if ((passed + failed) % 50 === 0) {
@@ -211,6 +219,7 @@ async function runSequential(opts, testsToRun) {
             const isTimeout = elapsed >= opts.testTimeout || errMsg.includes("Timeout");
             if (isTimeout) timedOut++;
             errors.push({ file: testFile, error: errMsg, timedOut: isTimeout });
+            testResults.push({ file: testFile, status: isTimeout ? "timeout" : "fail", timedOut: isTimeout, error: errMsg, elapsed });
 
             if (opts.verbose) {
                 const tag = isTimeout ? "\x1b[33mTIMEOUT\x1b[0m" : "\x1b[31mFAIL\x1b[0m";
@@ -221,7 +230,7 @@ async function runSequential(opts, testsToRun) {
     }
 
     bridge.shutdown();
-    return { passed, failed, timedOut, errors };
+    return { passed, failed, timedOut, errors, testResults };
 }
 
 function setupGlobals(tsDir) {
@@ -1144,6 +1153,7 @@ async function runParallel(opts, testsToRun) {
     let bridgeRestarts = 0;
     let memoryWarnings = 0;
     const errors = [];
+    const testResults = [];
     const workerStats = [];
     const workerFile = path.join(__dirname, "test-worker.cjs");
 
@@ -1167,7 +1177,7 @@ async function runParallel(opts, testsToRun) {
             activeWorkers--;
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
-                resolve({ passed, failed, timedOut, errors, bridgeRestarts, memoryWarnings, workerStats });
+                resolve({ passed, failed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
 
@@ -1190,9 +1200,11 @@ async function runParallel(opts, testsToRun) {
                 } else if (msg.type === "result") {
                     if (msg.passed) {
                         passed++;
+                        testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
                     } else {
                         if (isBaselineOnlyFailure(msg.error)) {
                             passed++;
+                            testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
                             completed++;
 
                             const wp = workerProgress.get(msg.workerId);
@@ -1206,6 +1218,7 @@ async function runParallel(opts, testsToRun) {
                         failed++;
                         if (msg.timedOut) timedOut++;
                         errors.push({ file: msg.testFile, error: msg.error, timedOut: msg.timedOut });
+                        testResults.push({ file: msg.testFile, status: msg.timedOut ? "timeout" : "fail", timedOut: msg.timedOut, error: msg.error, elapsed: msg.elapsed });
                     }
                     completed++;
 
@@ -1380,6 +1393,66 @@ async function main() {
         const errDump = errors.map(({file, error}) => path.basename(file, ".ts") + ": " + error.split("\n")[0]).join("\n");
         require("fs").writeFileSync("/tmp/all-errors.txt", errDump);
     } catch (_) {}
+
+    // Write machine-readable JSON if requested
+    if (opts.jsonOut && results.testResults) {
+        const FEATURE_PATTERNS = {
+            completion: /completion|getCompletions|verifyCompletionList|CompletionEntry/i,
+            quickinfo: /quickInfo|quickinfo|QuickInfo/i,
+            definition: /definition|goToDefinition|getDefinition/i,
+            references: /references|findAllReferences|findReferences/i,
+            rename: /rename|getRenameLocations/i,
+            "signature-help": /signatureHelp|getSignatureHelp/i,
+            formatting: /formatting|format|indent/i,
+            "code-fix": /codeFix|codeAction|getCodeFix/i,
+            refactor: /refactor|getApplicableRefactors/i,
+            navigation: /navigation|navigationBar|navBar/i,
+            organize: /organizeImports/i,
+        };
+
+        function inferBucket(testFile, errorMsg) {
+            const combined = testFile + " " + (errorMsg || "");
+            for (const [bucket, pattern] of Object.entries(FEATURE_PATTERNS)) {
+                if (pattern.test(combined)) return bucket;
+            }
+            return "other";
+        }
+
+        const jsonResults = results.testResults.map(r => {
+            const testName = path.basename(r.file, ".ts");
+            const record = {
+                file: r.file,
+                name: testName,
+                status: r.status,
+                timedOut: r.timedOut || false,
+                bucket: inferBucket(r.file, r.error),
+            };
+            if (r.error) record.firstFailure = r.error.split("\n")[0].substring(0, 200);
+            if (r.elapsed !== undefined) record.elapsed = r.elapsed;
+            return record;
+        });
+
+        // Sort deterministically by file path
+        jsonResults.sort((a, b) => a.file.localeCompare(b.file));
+
+        const total = testsToRun.length;
+        const detail = {
+            timestamp: new Date().toISOString(),
+            summary: {
+                total,
+                passed,
+                failed,
+                timedOut,
+                passRate: total > 0 ? Math.round(passed / total * 1000) / 10 : 0,
+            },
+            results: jsonResults,
+        };
+
+        const outPath = path.resolve(opts.jsonOut);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, JSON.stringify(detail, null, 2));
+        console.log(`\nJSON results written to ${outPath}`);
+    }
 
     process.exit(failed > 0 ? 1 : 0);
 }

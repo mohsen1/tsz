@@ -93,6 +93,7 @@ Options:
   --verbose, -v         Detailed output with diffs
   --js-only             Test JavaScript emit only
   --dts-only            Test declaration emit only
+  --json-out[=PATH]     Write machine-readable results JSON (default: emit-detail.json)
   --help, -h            Show this help
 EOF
 }
